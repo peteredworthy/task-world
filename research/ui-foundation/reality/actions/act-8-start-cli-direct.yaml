@@ -42,10 +42,12 @@ test_status: unexercised
 documentation_status: conflicting
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-8-start-cli-direct.yaml::durable_effect.
-    Implementation locator: src/orchestrator/cli/runs.py::start_run. ACT-8 directly applies start from
-    the CLI implementation.'
+  implementation: ACT-8 directly applies start from the CLI implementation.
   test: No command-level pytest invokes the direct CLI start action.
   documentation: ACT-8 conflicts with queue-first lifecycle descriptions.
   capability: Source presence does not prove CLI availability.
   epistemic: ACT-8 is observed by EVD-7/EVD-40.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-8-start-cli-direct.yaml::durable_effect
+- src/orchestrator/cli/runs.py::start_run
+test_locators: []

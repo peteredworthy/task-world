@@ -67,11 +67,13 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-49-graph-cancel-paused-node-consequence.yaml::durable_effect.
-    Implementation locator: src/orchestrator/graph/commands/lifecycle.py::handle_cancel. ACT-49 declares
-    suspended-lease node cancellation.'
+  implementation: ACT-49 declares suspended-lease node cancellation.
   test: The suspended-lease cancellation test uses an already failed node and explicitly preserves failed,
     so it does not prove this proposition.
   documentation: ACT-49 paused-node consequence is documented separately.
   capability: Source presence does not prove this node outcome path.
   epistemic: ACT-49 implementation is observed by EVD-20/EVD-38-40.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-49-graph-cancel-paused-node-consequence.yaml::durable_effect
+- src/orchestrator/graph/commands/lifecycle.py::handle_cancel
+test_locators: []

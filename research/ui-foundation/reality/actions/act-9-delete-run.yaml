@@ -54,14 +54,17 @@ domain_eligibility: Ordinary route eligibility is draft, stopping, completed, fa
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: unexercised
+test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-9-delete-run.yaml::durable_effect.
-    Implementation locator: src/orchestrator/api/routers/runs.py::delete_run. ACT-9 synchronously deletes
-    an eligible run and owned rows.'
-  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  implementation: ACT-9 synchronously deletes an eligible run and owned rows.
+  test: The API test deletes and verifies subsequent absence.
   documentation: ACT-9 delete contract is documented.
   capability: One exercised route does not prove every cleanup side effect.
   epistemic: ACT-9 is observed by EVD-43/EVD-38-40.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-9-delete-run.yaml::durable_effect
+- src/orchestrator/api/routers/runs.py::delete_run
+test_locators:
+- tests/integration/test_api_runs.py::test_delete_run

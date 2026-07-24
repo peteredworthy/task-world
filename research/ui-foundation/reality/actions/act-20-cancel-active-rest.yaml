@@ -59,16 +59,19 @@ conflict_ids:
 - CON-7
 question_ids:
 - Q-5
-test_status: unexercised
+test_status: exercised
 limitations:
 - Current classification is blocked by an unresolved canonical conflict or question.
 documentation_status: conflicting
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-20-cancel-active-rest.yaml::durable_effect.
-    Implementation locator: src/orchestrator/api/routers/runs.py::cancel_run. ACT-20 accepts active-run
-    cancellation and consumer later applies cancelled.'
-  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  implementation: ACT-20 accepts active-run cancellation and consumer later applies cancelled.
+  test: The queue test asserts 202 then cancelled after drain.
   documentation: ACT-20 remains qualified by legacy/graph and stopping-source differences.
   capability: One active path does not prove every cancellation race.
   epistemic: ACT-20 is observed by EVD-7/EVD-11/EVD-20/EVD-38-40.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-20-cancel-active-rest.yaml::durable_effect
+- src/orchestrator/api/routers/runs.py::cancel_run
+test_locators:
+- tests/integration/test_signal_queue.py::test_cancel_active_run_via_queue

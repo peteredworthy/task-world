@@ -61,14 +61,17 @@ domain_eligibility: PER-3 paused legacy-row cancel eligibility and PER-4 graph p
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: unexercised
+test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-51-graph-cancel-paused-run-entry.yaml::durable_effect.
-    Implementation locator: src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS. ACT-51 applies
-    graph paused-to-cancelling entry.'
-  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  implementation: ACT-51 applies graph paused-to-cancelling entry.
+  test: The paused/cancel parametrized case asserts cancelling.
   documentation: ACT-51 entry is paired, not conflated, with ACT-48.
   capability: The pure command path does not prove REST/runner cancellation.
   epistemic: ACT-51 is observed by EVD-11/EVD-20/EVD-38-40.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-51-graph-cancel-paused-run-entry.yaml::durable_effect
+- src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS
+test_locators:
+- tests/unit/test_graph_commands.py::test_lifecycle_legal_transitions

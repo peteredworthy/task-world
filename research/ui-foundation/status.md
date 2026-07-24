@@ -2,7 +2,7 @@
 
 Phase 2 is complete with 132 one-to-one scope-demand classifications and 132 projected claims.
 
-Task15 in progress: SV-001 through SV-008 adjudicated; independent re-review pending.
+Task15 in progress: SV-001 through SV-008 adjudicated; the exact-evidence projection is REL 23/12, STA 67/5, ACT 58/13, EVI 5/4, and INV 6/0 exercised/unexercised with 113 unique exact pytest locators. Independent re-review remains pending.
 
 - **current (1)**: `CAP-69`
 - **derived (0)**: none

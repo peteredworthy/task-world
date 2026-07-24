@@ -64,10 +64,12 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-12-graph-oversight.yaml::durable_effect.
-    Implementation locator: src/orchestrator/api/routers/graph.py::record_graph_decision. ACT-12 records
-    an oversight decision projection without output DecisionRecord.'
+  implementation: ACT-12 records an oversight decision projection without output DecisionRecord.
   test: Synthetic oversight events and appeal requests do not execute this routed oversight action.
   documentation: ACT-12 oversight/no-output boundary is documented.
   capability: Source presence does not establish routed availability or authorization.
   epistemic: ACT-12 is observed by EVD-27.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-12-graph-oversight.yaml::durable_effect
+- src/orchestrator/api/routers/graph.py::record_graph_decision
+test_locators: []

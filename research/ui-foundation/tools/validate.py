@@ -1011,6 +1011,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         and isinstance(item.get("id"), str)
     }
     for identifier, action in action_records.items():
+        location = package.root / f"reality/actions/{identifier}.yaml"
         evidence_ids = action.get("audit_evidence_ids")
         records = (
             [
@@ -1021,19 +1022,38 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             if isinstance(evidence_ids, list)
             else []
         )
+        status_basis = action.get("status_basis")
+        if not isinstance(status_basis, dict) or any(
+            not isinstance(status_basis.get(dimension), str)
+            or len(str(status_basis[dimension]).strip()) < 12
+            for dimension in STATUS_BASIS_DIMENSIONS
+        ):
+            issues.append(_issue("STATUS_BASIS_MISSING", location, identifier))
+        test_locators = action.get("test_locators")
+        approved_test_locators = _exact_test_locators_are_snapshot_resolvable(
+            test_locators,
+            snapshot_paths,
+            repository_root,
+            active_snapshot_hashes,
+        )
         if action.get("test_status") != "exercised":
             pass
-        elif not any(
-            _is_direct_evidence(record)
-            and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
-            and record.get("test_status") == "exercised"
-            and _has_valid_direct_locator(record, snapshot_paths)
-            for record in records
+        elif not isinstance(test_locators, list) or not test_locators:
+            issues.append(_issue("EXERCISED_TEST_LOCATORS_EMPTY", location, identifier))
+        elif not (
+            approved_test_locators
+            or any(
+                _is_direct_evidence(record)
+                and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
+                and record.get("test_status") == "exercised"
+                and _has_valid_direct_locator(record, snapshot_paths)
+                for record in records
+            )
         ):
             issues.append(
                 _issue(
                     "EXERCISED_DIRECT_TEST_EVIDENCE_MISSING",
-                    package.root / f"reality/actions/{identifier}.yaml",
+                    location,
                     identifier,
                 )
             )
@@ -1051,6 +1071,26 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     identifier,
                 )
             )
+    if (
+        action_records
+        and all(action.get("test_status") == "unexercised" for action in action_records.values())
+        and any(
+            _exact_test_locators_are_snapshot_resolvable(
+                action.get("test_locators"),
+                snapshot_paths,
+                repository_root,
+                active_snapshot_hashes,
+            )
+            for action in action_records.values()
+        )
+    ):
+        issues.append(
+            _issue(
+                "STATUS_FAMILY_MECHANICAL_UNEXERCISED",
+                package.root / "reality/actions",
+                "ACT",
+            )
+        )
     for item in conflict_document.items if conflict_document else []:
         if item.get("status") != "unresolved":
             continue
@@ -2547,7 +2587,9 @@ def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
         "",
         f"Phase 2 is complete with {len(items)} one-to-one scope-demand classifications and {sum(counts.values())} projected claims.",
         "",
-        "Task15 in progress: SV-001 through SV-008 adjudicated; independent re-review pending.",
+        "Task15 in progress: SV-001 through SV-008 adjudicated; the exact-evidence projection is "
+        "REL 23/12, STA 67/5, ACT 58/13, EVI 5/4, and INV 6/0 exercised/unexercised with "
+        "113 unique exact pytest locators. Independent re-review remains pending.",
         "",
     ]
     for status in CAPABILITY_STATUSES:
@@ -2754,11 +2796,17 @@ def _basis_test_locator_is_snapshot_resolvable(
 ) -> bool:
     """Resolve only exact pytest symbols whose active-snapshot bytes remain current."""
     locator_pattern = re.compile(r"(tests/[\w/.-]+\.py)::([A-Za-z_]\w*)(?:::(test_[A-Za-z_]\w*))?")
+    if re.search(r"tests/[\w/.-]+\.py::[A-Za-z_]\w*::(?!test_)[A-Za-z_]\w*", basis):
+        return False
     locators = locator_pattern.findall(basis)
     if not locators:
         return False
     active_paths = set(active_snapshot_hashes)
     for path, first, method in locators:
+        if (not method and not first.startswith("test_")) or (
+            method and not first.startswith("Test")
+        ):
+            return False
         if path not in active_paths or path not in set().union(*snapshot_paths.values()):
             return False
         candidate = repository_root / path
@@ -2790,6 +2838,26 @@ def _basis_test_locator_is_snapshot_resolvable(
             ):
                 return False
     return True
+
+
+def _exact_test_locators_are_snapshot_resolvable(
+    locators: object,
+    snapshot_paths: dict[str, set[str]],
+    repository_root: Path,
+    active_snapshot_hashes: dict[str, str],
+) -> bool:
+    """Resolve a non-empty list of exact pytest function or class-method locators."""
+    if not isinstance(locators, list) or not locators:
+        return False
+    exact = re.compile(r"tests/[\w/.-]+\.py::[A-Za-z_]\w*(?:::(?:test_)[A-Za-z_]\w*)?")
+    return all(
+        isinstance(locator, str)
+        and exact.fullmatch(locator) is not None
+        and _basis_test_locator_is_snapshot_resolvable(
+            locator, snapshot_paths, repository_root, active_snapshot_hashes
+        )
+        for locator in locators
+    )
 
 
 def _basis_implementation_locator_is_snapshot_resolvable(
@@ -2889,17 +2957,28 @@ def _validate_status_adjudication(
             for record in records
         ):
             issues.append(_issue("PRESENT_IMPLEMENTATION_EVIDENCE_MISSING", location, identifier))
+        implementation_locators = (
+            semantic.model_extra.get("implementation_locators") if semantic.model_extra else None
+        )
         if semantic.implementation_status in {
             "present",
             "partial",
         } and not _basis_implementation_locator_is_snapshot_resolvable(
-            str(basis["implementation"]), package.root.parents[1], active_snapshot_hashes
+            " ".join(implementation_locators)
+            if isinstance(implementation_locators, list)
+            else str(basis["implementation"]),
+            package.root.parents[1],
+            active_snapshot_hashes,
         ):
             issues.append(_issue("IMPLEMENTATION_BASIS_UNRESOLVED", location, identifier))
-        if semantic.test_status == "exercised" and not _basis_test_locator_is_snapshot_resolvable(
-            str(basis["test"]), snapshot_paths, package.root.parents[1], active_snapshot_hashes
-        ):
-            issues.append(_issue("EXERCISED_TEST_BASIS_UNRESOLVED", location, identifier))
+        test_locators = semantic.model_extra.get("test_locators") if semantic.model_extra else None
+        if semantic.test_status == "exercised":
+            if not isinstance(test_locators, list) or not test_locators:
+                issues.append(_issue("EXERCISED_TEST_LOCATORS_EMPTY", location, identifier))
+            elif not _exact_test_locators_are_snapshot_resolvable(
+                test_locators, snapshot_paths, package.root.parents[1], active_snapshot_hashes
+            ):
+                issues.append(_issue("EXERCISED_TEST_BASIS_UNRESOLVED", location, identifier))
     for family, items in family_items.items():
         vectors = {
             (
@@ -2916,6 +2995,37 @@ def _validate_status_adjudication(
             issues.append(
                 _issue(
                     "STATUS_FAMILY_MECHANICAL_VECTOR",
+                    package.root / declarations.get(items[0].id, "unknown"),
+                    family,
+                )
+            )
+        if (
+            items
+            and all(item.test_status == "unexercised" for item in items)
+            and any(
+                (
+                    _exact_test_locators_are_snapshot_resolvable(
+                        item.model_extra.get("test_locators") if item.model_extra else None,
+                        snapshot_paths,
+                        package.root.parents[1],
+                        active_snapshot_hashes,
+                    )
+                    or (
+                        isinstance(item.model_extra.get("status_basis"), dict)
+                        and _basis_test_locator_is_snapshot_resolvable(
+                            str(item.model_extra["status_basis"].get("test", "")),
+                            snapshot_paths,
+                            package.root.parents[1],
+                            active_snapshot_hashes,
+                        )
+                    )
+                )
+                for item in items
+            )
+        ):
+            issues.append(
+                _issue(
+                    "STATUS_FAMILY_MECHANICAL_UNEXERCISED",
                     package.root / declarations.get(items[0].id, "unknown"),
                     family,
                 )
@@ -2984,7 +3094,13 @@ def _validate_semantic_evidence_admission(
         ]
         location = package.root / declarations.get(identifier, "unknown")
         status_basis = semantic.model_extra.get("status_basis") if semantic.model_extra else None
-        approved_test_index = (
+        test_locators = semantic.model_extra.get("test_locators") if semantic.model_extra else None
+        approved_test_index = _exact_test_locators_are_snapshot_resolvable(
+            test_locators,
+            snapshot_paths,
+            package.root.parents[1],
+            active_snapshot_hashes,
+        ) or (
             isinstance(status_basis, dict)
             and isinstance(status_basis.get("test"), str)
             and _basis_test_locator_is_snapshot_resolvable(

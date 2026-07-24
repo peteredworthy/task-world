@@ -36,14 +36,17 @@ domain_eligibility: PER-7 git prerequisite
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: unexercised
+test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-55-review-undo-back-merge.yaml::durable_effect.
-    Implementation locator: src/orchestrator/git/ops/branch_ops.py::revert_back_merge. ACT-55 creates
-    a qualifying merge revert and evidence.'
-  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  implementation: ACT-55 creates a qualifying merge revert and evidence.
+  test: The real-repo route test reverts a clean back merge and asserts success.
   documentation: ACT-55 compensation is documented as a revert, not exact undo of all effects.
   capability: One revert path does not prove universal reversibility.
   epistemic: ACT-55 is observed by EVD-29.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-55-review-undo-back-merge.yaml::durable_effect
+- src/orchestrator/git/ops/branch_ops.py::revert_back_merge
+test_locators:
+- tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds

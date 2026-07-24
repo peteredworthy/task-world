@@ -36,14 +36,17 @@ domain_eligibility: PER-7 review prerequisites
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: unexercised
+test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-61-prune-preview.yaml::durable_effect.
-    Implementation locator: src/orchestrator/git/ops/prune_ops.py::preview_prune. ACT-61 returns a non-mutating
-    prune diff/count preview.'
-  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  implementation: ACT-61 returns a non-mutating prune diff/count preview.
+  test: The test snapshots the worktree and asserts preview does not mutate it.
   documentation: ACT-61 preview contract is documented.
   capability: One preview mode does not prove all prune selection modes.
   epistemic: ACT-61 is observed by EVD-28.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-61-prune-preview.yaml::durable_effect
+- src/orchestrator/git/ops/prune_ops.py::preview_prune
+test_locators:
+- tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree

@@ -4362,23 +4362,296 @@ snapshots:
   audited_at: '2026-07-24T04:00:00Z'
   files:
   - path: research/ui-foundation/tools/validate.py
-    sha256: 30dace8ba775c7fa8ba6ac243e05f6f2921119458271d52cd44acf90d355045d
-    audited_at: '2026-07-24T04:00:00Z'
-  - path: tests/integration/test_ui_foundation_tools.py
-    sha256: cec4b9a475976c0cd2f6f78c175d6fe8e1060d1ef41424a1c012dff73a6918fd
-    audited_at: '2026-07-24T04:00:00Z'
-  - path: tests/integration/test_graph_fr08_acceptance.py
-    sha256: 5bfe1f8e6a77789dd5182c3f53e156044a2b91db9f9870e5dcee228bd449838a
-    audited_at: '2026-07-24T04:00:00Z'
+    sha256: f5accf8b8a008555de1560619117b84e7d87552b8abdc1304d54eaaeacd1035e
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/presenters/cost_rollup.py
+    sha256: b4b0a9add82f04db331d02b9c0577badf1438843046b1935d1580657b5caf9c9
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/agents.py
+    sha256: ae30914b0e591604a59e9e330de7efc02406587851ef8adf0a99bfb8100e8b0e
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/clarifications.py
+    sha256: 60f6412deede833b08e0944354e3197dba94c5a3100b7e010b72237c4879cd24
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/envfiles.py
+    sha256: d3c9b6ba5fe2354ef7f3d99306a05d5c982ae254aff853906f631c415851a6b8
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/graph.py
+    sha256: bcf5b7dbc453cf112d1222159c8fcf187a59ab5126e161ac7cc017d64c332b1e
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/repos.py
+    sha256: 42bd050acb5aa6f66ca2044a684d64341909a4961e658ef3a138476ca0c9e04d
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/review.py
+    sha256: 6e20324181cd8ad90bf8032a3333bdfcb814f335a7d4c4780936d216e3a3e043
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/routines.py
+    sha256: 953780b2259d0de8c4b2217edc591f397b217a7f70b7165031045b7ee0b8ebb6
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/runners.py
+    sha256: 598ddc3386b9268959416c11e1ae9103d498c6782c952a6a3aaecbe6ffda58f0
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/runs.py
+    sha256: b8129d12e777abb2cb1516605605829b514b27a69b05b23e8c91b331687cdf10
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/api/routers/tasks.py
+    sha256: de56e20285f731f9658d5695c6e379d2fffc091c1468632ec87b7e4788cad707
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/artifacts/store.py
+    sha256: c5c4bb06c9db9865b3402584ee6edf07285502d62d1da7d4d5e40dc3b886e733
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/cli/runs.py
+    sha256: 94d46e6082806d6287ae9c53e5d832a73a9d483bb4b869e6c43d3352842f5b79
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/config/enums.py
+    sha256: 0c0e539f24f72efed2f9631ca1ba5547c8dbc889d9d186bec8f7e972d805b699
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/db/access/event_store_v2.py
+    sha256: ea1e4f2797c762f6f40f82e37ce97f9e5a6fb9cef7052fcb71918d224d746f89
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/db/access/repositories.py
+    sha256: de59f97a7f029306e9c38097b7895f49269aacc88910a4f43c85ae321433e4bf
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/db/bootstrap.py
+    sha256: bc11e819c18cd96754b0605d24c0defffca68a3fd5ddedb62602a9c8e32908d0
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/db/orm/models.py
+    sha256: 819ff6bfac32cce481f4a7418251fef9e284fb6ebbd3ba9a897fc5390d72a992
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/db/recovery/backup.py
+    sha256: 69b6e8d9da15930938bce41b3f4a338dc0836f24e701cb69b2a3e018279ab7a1
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/git/errors.py
+    sha256: a07d1666d555eee31546267e8b907535657fd6e29e874bf41614b79f20f1591f
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/git/ops/branch_ops.py
+    sha256: 64ac376b566a87809b8ab0dca6742da05908fa945007055cfc081169f3f71fdf
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/git/ops/conflict_ops.py
+    sha256: 5cb4eb431aad0f15ce1778883d83b0b0e0c710a336a022de2f792716c78f6067
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/git/ops/prune_ops.py
+    sha256: ae7b174ab2104a3bf6b9bdcf7ff40d272eb35688095f64b9b2f2976f3f2206ae
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph/_commands.py
+    sha256: f2d20d04ad97c5c70ec09a267e589275a7509b46e2788698ae3135c65ef9729d
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph/commands/lifecycle.py
+    sha256: 9da9f11dc7f2ed4d4a8f41d4606d86f4bb1392798988a69f1f3016add1deedde
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph/commands/patches.py
+    sha256: 917717fd38bfc56e5d7eb03727ba00612b96bfc8f456761d15313e8f9ec5c382
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph/file_state.py
+    sha256: 0b31414bba82c6b20c78da0658f85cb29a929e4975a75b707bc7bfa44b5a3225
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph/models.py
+    sha256: d765b49408d681cd2d25264587bdd2460d353523c350829679ad1c9c9c445f1b
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph/patch_validator.py
+    sha256: ef7398c140b37f793e091aafac48c87690bae4f586a38b0b1fb383e4dee8c92a
+    audited_at: '2026-07-24T20:44:27Z'
   - path: src/orchestrator/graph/projections.py
     sha256: 443d34f8887a5f869de8daa71b48f9a2f8d17d5ce0891a83c3ff62bbe7e66610
-    audited_at: '2026-07-24T04:00:00Z'
-  - path: src/orchestrator/graph_runtime/dispatch.py
-    sha256: b54d37fb70848152f73167c714fe6142e70caa87fa92e6397a5befcb2263e53a
-    audited_at: '2026-07-24T04:00:00Z'
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph/scheduler.py
+    sha256: 82aff756a12098cada0b8627b8db774b0e2d68c7fbe9dbd61453287da6a4c50b
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph_runtime/controller.py
+    sha256: 69adee7cfa35283c32b6a65bd0b2152dfef915c0bd2d9d2ae01532b0c8c286f4
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph_runtime/file_state.py
+    sha256: f4e25942e49f2f13969e538bcde2692fa9d55a2bb1a1fd8faaf1010ae09287af
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph_runtime/outbox.py
+    sha256: a4e12ecce9b8fb0757ce2c85884d2d325db5f800957aba8a447241cd3cd4764f
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph_runtime/prompts.py
+    sha256: 5594a22b3a8eaa9b9af75a400603fc34a61a4b360a9e2cbabf388b793080fa9f
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/graph_runtime/store.py
+    sha256: 42c1b1783ae20f1dfadb22d4e1386b59dedeb91bc0122eac0fd2f1c49884e637
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/runners/costs.py
+    sha256: a9ad226fe3dc7b8e5423b01fb1d18abb59a76a9935b9d895203539c11effba1f
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/runners/detection/profile_resolution.py
+    sha256: 0a79706f0b09175cf54368b032b432363fd0c713ef4cbc0061659923a296cca3
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/runners/execution/attempt_store.py
+    sha256: 92fb34c4229f70b5f62fdec72280016d10a1933d4be860d5c8529dcd52ccf9bb
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/runners/execution/output_batcher.py
+    sha256: de02725996a67f62cbec17803f4758db9a2028215cf787d4c8afcca23c603d7f
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/runners/profiles/models.py
+    sha256: 8873246153427a4a649fe0abd43fca995f5d595cea2d87b3da13e4d5e305c98b
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/state/factory.py
+    sha256: 74dec50705b133e6971c2a14029d23c6356197257dc3d708a68ca37598dc743a
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/workflow/engine/engine.py
+    sha256: cb7a47cdab1ee217628196746dbce589a84506aa6bfcac22b791abbe72350c8b
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/workflow/engine/transitions.py
+    sha256: d75e3be4044bc385063024b58783336984b7b8f5f9e57147a7f184911dac2f6b
+    audited_at: '2026-07-24T20:44:27Z'
   - path: src/orchestrator/workflow/graph_driver.py
     sha256: d60b7bb2dee1327405fd95cdf1beaa31101f8f5111072ecf5ea61003bb548bfa
-    audited_at: '2026-07-24T04:00:00Z'
-  - path: tests/integration/test_graph_run_driver.py
-    sha256: 0af76569d53dd59c2b541595dec53700c1bf9a8d7d21a67f80697fc0ef8d89f8
-    audited_at: '2026-07-24T04:00:00Z'
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/workflow/merge_readiness.py
+    sha256: b6ea6a662e839c1a66cc741823abecf6dcddc506e1fb3f2f788299fbdb998e82
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: src/orchestrator/workflow/service.py
+    sha256: 0382bf2ea3b083acdca7892c85e7bf5cb65d33618d93ee972a998ac5ac5615e0
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_agent_configs.py
+    sha256: 41dd0a093728cdb2bc3cbe948f041619f78a25af76d37a88dfeb1384f8480225
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_backward_transitions.py
+    sha256: 8ef7473147b774cb8383a1a79ff4ff3caefadadf5e30984cb125e4ded500ab27
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_branch_ops.py
+    sha256: 91c4f2a3d0499d97366a7e99bc7a762268b6eae21dd8365b7fccce46cf2c1c5c
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_clarifications.py
+    sha256: 86aaa6e6094b5d5586f0a813e42fb99933f40cdaa4b820f252668435f9164336
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_human_approval.py
+    sha256: 3ffb0031b941db43d8fcf4de3e6bd25e94466e35380b0dc3fce8c1e8743f6a71
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_model_profiles.py
+    sha256: e4e1eadd36dedadfacc8abf1733564abe52468715efe67260ac2ab587419bfa3
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_repos.py
+    sha256: 41a2cb00800bc223fc869623c22150cccb04b65163d06c6df8631d2709ef2a1d
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_routines.py
+    sha256: d5cb9f30f039c566ccbbca2cec2005ff9fdd5c918707fe469e16061f0f786881
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_runs.py
+    sha256: 8f3fdd86ba9c55b0c649ac0de86c1f89804d12f247fce252636de4e1bb869cf2
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_runs_recover.py
+    sha256: 1ebad12565d66db851d9b25947f3f258ed1d87eb22a8bf1c927a2d12cbb8c2de
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_api_tasks.py
+    sha256: 86a233c00974eedde3289c4fe35b82af6dd8d66c4d085e0443288a51af6c7729
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_approval_workflow.py
+    sha256: 390771c4f991d1326fa07000e9f770b608fb1afd3a2fbdd9aa511c5c9d176e2f
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_clarification_repository.py
+    sha256: 52707d1d1d420a69b6375121bf5f1aa15b5b22c9baef1741d35ddf985eda30ad
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_clarification_workflow.py
+    sha256: 776b97f394ab3b18a0775ae9b5d7583d2054563717b250b1143676285b2b25df
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_conflict_api.py
+    sha256: 06179d1b7d5de4e8afdce78f8d2b9ddeadb955d9db60df96a834fd7e1505e012
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_cost_records.py
+    sha256: aa617df892f21b6744d63ba1ab811c99fad11f3f059f64299bd4da6564a2ef93
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_database.py
+    sha256: 316b1c5885fe64373f67c694a9f46f9a707c774ce7016dc066cd44ad6f4b760d
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_envfile_revert.py
+    sha256: c7eb0b6f732eabebe255d6fab41de4a01753d68d042e12692b95594bed56c25b
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_event_log_durability.py
+    sha256: 3f74a8c3648c5d042d3eba2aee7e56f086c05d723b42aa1082da6c00235f5839
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_event_store_wiring.py
+    sha256: fc84e9e7e9c6c1ebcce81cadceeaa0ef2c71adfefa140279a5752527f88697c0
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_fan_out.py
+    sha256: e52d7fa0db0f49ab756ee7bf372272fc2e8e05ee31054481050dba1652430b5a
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_full_persistence.py
+    sha256: 53cbb76a5b0e87baf2633a2a3b8cf172d9f2492193d769367c8baaf31cfccc4b
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_api.py
+    sha256: 31b8e7a538d99f0451fef76bba6bf0f22ca730d682acb047c3d24b373c83e9c7
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_decisions_api.py
+    sha256: 049abd5874eeed5ee460dfc649e79e43ad0a3967f9ff94fe8862d8b1381556e3
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_dynamic_e2e.py
+    sha256: ed9cc60536ba8fcaf6de7f3a2d368c5c9d4fc9adcd4267fabae70ead26c589f7
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_event_store.py
+    sha256: f4694f217bbadfc1e7fb3f754e2137f1077a111edfc5120b3713ba4dd2a82ca7
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_file_state_boundary.py
+    sha256: df2034b420bcba85c9596f61b76e2005abb190c3c420e89be4b7c917cee3791d
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_fr07_acceptance.py
+    sha256: 6a51dcde41cd1a12e50b0b2c8bfa800392f1fa40b8bd117ba14adca06eac93f7
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_fr08_acceptance.py
+    sha256: 5bfe1f8e6a77789dd5182c3f53e156044a2b91db9f9870e5dcee228bd449838a
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_fr09_acceptance.py
+    sha256: d86751dd7ded37c1eef581834f18a776ecb5b9957b37a95670cb0b352f7c11ea
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_outbox_crash_points.py
+    sha256: f7f76cb2b894d7a013be7c44bbc14ecfcd6b0669894887ee497f19cb4697b37b
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_read_models.py
+    sha256: f50bbb5df7be741fc45db993db38f7675f6a0a2943fde75387c753be03955e8e
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_graph_usage_persistence.py
+    sha256: 15ac8640681746c410fecd6fb67d85ddbab951e416e0f74edcc6fcce473ee5a6
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_jsonl_rotation_recovery.py
+    sha256: 455c17267d51b75076d3d2ee999fad3fb00d7c38cc0dbd2e7c98e01cd503c601
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_merge_readiness.py
+    sha256: d2760e7fc06b43797fffa218483a0b73a4c59c9e044aa14865e38cb6de6d1f3b
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_output_batching.py
+    sha256: 31d4b9cf608804cc47325cb73eb0964bd03984194cd1eafcf268d613e54ef448
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_prune_api.py
+    sha256: 16e1375b1cdf972238061b5816b3ba75e2874b566b0a4fec9db440f17c8a8533
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_review_test_runner.py
+    sha256: fef71e319c463367fb381802d3d13bea2a75e60c53ff8fd8c756cb8058cb631f
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_signal_queue.py
+    sha256: 53881d6785e6e30a63a5c477841ace16a20db50def2a32e14b1d01ff2bbc3cd8
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: bedc0e12fbedc5a8eaf3bd745e138a40e260d109901bc34f258482d81c07166e
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_workflow_service.py
+    sha256: fc5ea36bc97fcf2d7c1d3c687d64a0bca91e2a91d83b6acbcd16f6200ec6e8db
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_artifact_store.py
+    sha256: 36c5d8493e6bc3b0672f6f1282c47bb6849e17f4a9e4a375d11c8371bb045359
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_backup.py
+    sha256: 7982d246ffda8177edf9c64343be36300c9d0fc57d84e34f84d0f1f654634359
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_cost_rollup.py
+    sha256: 962bec8be2426444ba6678ac273b9c210f172dafb68f48c8d7c6dc789164bc71
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_graph_commands.py
+    sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_graph_models.py
+    sha256: 7adee41702cc5b53ea3e9354b2b5dc7fb06c8e278af0abf04f521b5ddf6a3110
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_graph_scheduler_view.py
+    sha256: 493e4146be310ddeaa98a68d366b75abe90684f80074eceb600e1b9d66a9e94a
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_model_profiles.py
+    sha256: 91f9f152ffc011bc883a45157bfdf000c0ad428b631746d0e256f934af481ddf
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_run_factory.py
+    sha256: ee328fa7c70a5ec8fa0d4a2881f7d3b92b48e52547a82ef2df040942f94a8c93
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/unit/test_workflow_engine.py
+    sha256: 53f89c663b69cf1c4df34f2de26265efff291609b256352ebd95cc1adf95922b
+    audited_at: '2026-07-24T20:44:27Z'

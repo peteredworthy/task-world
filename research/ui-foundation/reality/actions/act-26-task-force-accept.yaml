@@ -46,10 +46,12 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-26-task-force-accept.yaml::durable_effect.
-    Implementation locator: src/orchestrator/workflow/engine/transitions.py::transition_force_accept.
-    ACT-26 force-completes without grades and declares the normal completion cascade.'
+  implementation: ACT-26 force-completes without grades and declares the normal completion cascade.
   test: Transition unit tests do not establish the full route, override record, and step/run cascade proposition.
   documentation: ACT-26 force-accept boundary is documented.
   capability: Availability remains unknown at the full action boundary.
   epistemic: ACT-26 implementation is observed by EVD-16.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-26-task-force-accept.yaml::durable_effect
+- src/orchestrator/workflow/engine/transitions.py::transition_force_accept
+test_locators: []

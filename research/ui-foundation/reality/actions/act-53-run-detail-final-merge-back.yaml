@@ -39,14 +39,17 @@ domain_eligibility: PER-7 git/readiness prerequisites
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: unexercised
+test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-53-run-detail-final-merge-back.yaml::durable_effect.
-    Implementation locator: src/orchestrator/api/routers/runs.py::merge_back_endpoint. ACT-53 merges the
-    run branch into the source branch.'
-  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  implementation: ACT-53 merges the run branch into the source branch.
+  test: The real-repo endpoint test exercises merge strategy and asserts source result.
   documentation: ACT-53 final merge-back is documented.
   capability: One strategy path does not prove every merge policy.
   epistemic: ACT-53 is observed by EVD-29.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-53-run-detail-final-merge-back.yaml::durable_effect
+- src/orchestrator/api/routers/runs.py::merge_back_endpoint
+test_locators:
+- tests/integration/test_merge_readiness.py::test_merge_back_with_strategy_merge

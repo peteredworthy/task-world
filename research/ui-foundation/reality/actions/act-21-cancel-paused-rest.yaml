@@ -59,16 +59,19 @@ conflict_ids:
 - CON-7
 question_ids:
 - Q-5
-test_status: unexercised
+test_status: exercised
 limitations:
 - Current classification is blocked by an unresolved canonical conflict or question.
 documentation_status: conflicting
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-21-cancel-paused-rest.yaml::durable_effect.
-    Implementation locator: src/orchestrator/api/routers/runs.py::cancel_run. ACT-21 accepts paused-run
-    cancellation for later consumer application.'
-  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  implementation: ACT-21 accepts paused-run cancellation for later consumer application.
+  test: The API integration test starts, pauses, cancels, drains, and asserts cancelled.
   documentation: ACT-21 remains qualified by legacy/graph application timing.
   capability: One paused path does not prove every cancellation race.
   epistemic: ACT-21 is observed by EVD-7/EVD-11/EVD-20/EVD-38-40.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-21-cancel-paused-rest.yaml::durable_effect
+- src/orchestrator/api/routers/runs.py::cancel_run
+test_locators:
+- tests/integration/test_api_runs.py::test_cancel_run_from_paused

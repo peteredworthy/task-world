@@ -75,6 +75,16 @@ def load_validator() -> ModuleType:
     return module
 
 
+def copy_foundation_with_source(tmp_path: Path) -> Path:
+    repository = tmp_path / "repo"
+    root = repository / "research/ui-foundation"
+    root.parent.mkdir(parents=True)
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    (repository / "src").symlink_to(REPO_ROOT / "src", target_is_directory=True)
+    (repository / "tests").symlink_to(REPO_ROOT / "tests", target_is_directory=True)
+    return root
+
+
 def write_valid_phase_zero(tmp_path: Path) -> Path:
     root = write_minimal_foundation(tmp_path)
     for relative in (
@@ -255,6 +265,8 @@ def test_status_locator_requires_exact_ast_test_symbol_and_current_snapshot_hash
         "@pytest.mark.parametrize('value', [1])\n"
         "def test_parametrized(value):\n"
         "    assert value == 1\n\n"
+        "def simple_routine():\n"
+        "    return None\n\n"
         "class TestLocator:\n"
         "    def test_method(self):\n"
         "        assert True\n",
@@ -269,6 +281,18 @@ def test_status_locator_requires_exact_ast_test_symbol_and_current_snapshot_hash
     )
     assert validator._basis_test_locator_is_snapshot_resolvable(
         f"Exact method: {relative}::TestLocator::test_method.",
+        snapshot_paths,
+        tmp_path,
+        snapshot_hashes,
+    )
+    assert not validator._basis_test_locator_is_snapshot_resolvable(
+        f"Fixture: {relative}::simple_routine.",
+        snapshot_paths,
+        tmp_path,
+        snapshot_hashes,
+    )
+    assert not validator._basis_test_locator_is_snapshot_resolvable(
+        f"Arbitrary suffix: {relative}::test_parametrized::carrier_boundary.",
         snapshot_paths,
         tmp_path,
         snapshot_hashes,
@@ -305,6 +329,103 @@ def test_status_locator_rejects_stale_active_snapshot_hash(tmp_path: Path) -> No
         tmp_path,
         {"tests/test_locator.py": "stale"},
     )
+
+
+def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
+    root = REPO_ROOT / "research/ui-foundation"
+    records: dict[str, dict[str, object]] = {}
+    for relative in (
+        "reality/domain-model.yaml",
+        "reality/relationships.yaml",
+        "reality/state-model.yaml",
+        "reality/evidence/inventory.yaml",
+        "catalog/invariants.yaml",
+    ):
+        document = yaml.safe_load((root / relative).read_text(encoding="utf-8"))
+        records.update({item["id"]: item for item in document["items"]})
+    for path in sorted((root / "reality/actions").glob("act-*.yaml")):
+        item = yaml.safe_load(path.read_text(encoding="utf-8"))
+        records[item["id"]] = item
+
+    expected_test_statuses = {
+        "REL": {"exercised": 23, "unexercised": 12},
+        "STA": {"exercised": 67, "unexercised": 5},
+        "ACT": {"exercised": 58, "unexercised": 13},
+        "EVI": {"exercised": 5, "unexercised": 4},
+        "INV": {"exercised": 6},
+    }
+    family_ids = {
+        "REL": {f"REL-{number}" for number in range(1, 36)},
+        "STA": {f"STA-{number}" for number in range(1, 74)} - {"STA-28"},
+        "ACT": {f"ACT-{number}" for number in range(1, 72)},
+        "EVI": {f"EVI-{number}" for number in range(1, 10)},
+        "INV": {f"INV-{number}" for number in range(2, 8)},
+    }
+    for family, identifiers in family_ids.items():
+        distribution: dict[str, int] = {}
+        for identifier in identifiers:
+            status = str(records[identifier]["test_status"])
+            distribution[status] = distribution.get(status, 0) + 1
+        assert distribution == expected_test_statuses[family]
+
+    representatives = {
+        "REL-2": "tests/integration/test_database.py::test_crud_with_steps_and_tasks",
+        "STA-17": "tests/unit/test_graph_commands.py::test_lifecycle_legal_transitions",
+        "ACT-10": "tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor",
+        "ACT-11": "tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks",
+        "ACT-13": "tests/integration/test_graph_api.py::test_operator_graph_patch_endpoint_accepts_human_patch",
+        "ACT-44": "tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks",
+        "EVI-8": "tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor",
+        "INV-2": "tests/integration/test_graph_dynamic_e2e.py::test_dynamic_run_does_not_complete_while_final_invariant_check_fails",
+    }
+    for identifier, locator in representatives.items():
+        assert locator in records[identifier]["test_locators"]
+
+    exact_locators = {
+        locator
+        for identifiers in family_ids.values()
+        for identifier in identifiers
+        for field in ("test_locators", "bounded_test_locators")
+        for locator in records[identifier].get(field, [])
+    }
+    assert len(exact_locators) == 113
+
+
+def test_exercised_status_rejects_empty_exact_test_locators(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    state_path = root / "reality/state-model.yaml"
+    state_model = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    next(item for item in state_model["items"] if item["id"] == "STA-17")["test_locators"] = []
+    write_yaml(state_path, state_model)
+
+    result = run_validator(root)
+
+    assert "EXERCISED_TEST_LOCATORS_EMPTY" in issue_codes(result)
+
+
+def test_all_family_unexercised_rejects_resolvable_exact_test_basis(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    relationships_path = root / "reality/relationships.yaml"
+    relationships = yaml.safe_load(relationships_path.read_text(encoding="utf-8"))
+    for item in relationships["items"]:
+        item["test_status"] = "unexercised"
+    write_yaml(relationships_path, relationships)
+
+    result = run_validator(root)
+
+    assert "STATUS_FAMILY_MECHANICAL_UNEXERCISED" in issue_codes(result)
+
+
+def test_all_actions_unexercised_rejects_resolvable_exact_test_locators(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    for path in (root / "reality/actions").glob("act-*.yaml"):
+        action = yaml.safe_load(path.read_text(encoding="utf-8"))
+        action["test_status"] = "unexercised"
+        write_yaml(path, action)
+
+    result = run_validator(root)
+
+    assert "STATUS_FAMILY_MECHANICAL_UNEXERCISED" in issue_codes(result)
 
 
 def test_entity_namespace_rejects_non_entity_and_requires_retired_allocation_history(

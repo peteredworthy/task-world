@@ -40,14 +40,17 @@ domain_eligibility: Legacy recovering task only.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: unexercised
+test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-32-recovery-skip.yaml::durable_effect.
-    Implementation locator: src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_skip.
-    ACT-32 records skipped recovery, completes task, and progresses/resumes.'
-  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  implementation: ACT-32 records skipped recovery, completes task, and progresses/resumes.
+  test: The exact service test asserts task, attempt, step/run, events, and replay.
   documentation: ACT-32 recovery skip is documented.
   capability: One recovery path is not a complete recovery capability.
   epistemic: ACT-32 is observed by EVD-14.
+implementation_locators:
+- research/ui-foundation/reality/actions/act-32-recovery-skip.yaml::durable_effect
+- src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_skip
+test_locators:
+- tests/integration/test_workflow_service.py::test_complete_recovery_skip_projects_attempt_step_and_run_without_save_run

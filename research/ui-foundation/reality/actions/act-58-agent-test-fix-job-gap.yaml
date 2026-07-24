@@ -25,3 +25,5 @@ status_basis:
   documentation: ACT-58 records the UI/backend gap.
   capability: Agent test-fix dispatch is a confirmed gap.
   epistemic: Absence is observed by approved action/UI audits.
+implementation_locators: []
+test_locators: []

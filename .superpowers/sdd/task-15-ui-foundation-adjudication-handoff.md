@@ -10,7 +10,8 @@ The 35 REL, 72 active STA, 71 ACT, 9 EVI, and INV-2 through INV-7 records.
 
 ## Key findings
 
-Exact AST-resolved active-snapshot test locators replace fabricated generic locator text.
+The record-level audit is applied without family-wide downgrades. Its 113 unique exact pytest locators
+(107 qualifying plus bounded nonqualifying carrier locators) resolve against the active snapshot.
 
 ## Important uncertainties
 
@@ -30,7 +31,9 @@ No new product decision is required; independent re-review is required before cl
 
 ## Evidence pointers
 
-See each record's `status_basis`, its exact locator, and the active Task 15 snapshot.
+See each record's five-field `status_basis`, `implementation_locators`, `test_locators`, optional
+`bounded_test_locators`, and the active Task 15 snapshot. The resulting test-status distributions are
+REL 23/12, STA 67/5, ACT 58/13, EVI 5/4, and INV 6/0 exercised/unexercised.
 
 ## Recommended next delegation
 
@@ -56,6 +59,8 @@ was not modified.
   stale hashes, and generic carrier boundaries are rejected. Unexercised
   result/action boundaries remain conservative. Carrier existence does not
   bulk-promote product capability status.
+- **Audit deviations:** none. Every audited implementation and exact pytest locator still resolves;
+  explicit unexercised recommendations, including bounded EVI carrier evidence, remain unexercised.
 
 - **SV-003:** `CON-1` and `Q-1` now target the actual attempt-reference
   relationships, `REL-26` (cost) and `REL-29` (interaction), with reciprocal
@@ -82,7 +87,9 @@ was not modified.
   its Task 14 membership, hashes, timestamps, and 902-file count. Current
   rechecks use `snapshot-2026-07-24-task-15-adjudication`, explicitly parented
   to Phase 1; the validator digest-checks the historical snapshot instead of
-  rewriting it.
+  rewriting it. The active Task 15 snapshot now contains the 98 current source/test members needed by
+  this adjudication; the immutable Phase 1 digest remains
+  `a5081f732fc02989b1e04ca5bca6f03d55ba11d5975542ab3c7816747944b8a0`.
 
 ## Verification handoff
 
