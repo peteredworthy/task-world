@@ -52,3 +52,5 @@ enforced_authorization: absent
 domain_eligibility: Legacy row must be active; stopping is rejected.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

@@ -39,3 +39,5 @@ enforced_authorization: absent
 domain_eligibility: Legacy recovering task only.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

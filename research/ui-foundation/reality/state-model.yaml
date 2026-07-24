@@ -9,7 +9,7 @@ items:
   implementation_status: present
   test_status: exercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: RunStatus and signal tests
@@ -20,6 +20,7 @@ items:
   question_ids: []
   limitations:
   - Row carrier only
+  - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Not graph draft
 - id: STA-2
@@ -28,7 +29,7 @@ items:
   implementation_status: present
   test_status: exercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: Workflow state audit
@@ -39,6 +40,7 @@ items:
   question_ids: []
   limitations:
   - Does not alias graph topology
+  - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Not task state or graph active
 - id: STA-3
@@ -47,7 +49,7 @@ items:
   implementation_status: present
   test_status: exercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: pause signal test
@@ -58,6 +60,7 @@ items:
   question_ids: []
   limitations:
   - REST pause visibility does not prove consumer application
+  - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations: []
 - id: STA-4
   title: Legacy run paused
@@ -99,17 +102,19 @@ items:
   implementation_status: present
   test_status: exercised
   documentation_status: conflicting
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: mode-boundary audit
   evidence_ids:
   - EVD-10
   conflict_ids:
+  - CON-3
   - CON-7
   question_ids: []
   limitations:
   - Graph mode has a qualified reopen path
+  - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Universally terminal
 - id: STA-7
@@ -408,7 +413,7 @@ items:
   implementation_status: present
   test_status: exercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph COMMAND_SPECS
@@ -419,6 +424,7 @@ items:
   question_ids: []
   limitations:
   - May transition through graph resuming
+  - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Legacy row failed
 - id: STA-25

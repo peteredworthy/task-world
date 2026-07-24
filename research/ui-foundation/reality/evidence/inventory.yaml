@@ -19,8 +19,9 @@ items:
   missing_behavior: No workflow event UUID; no public complete cross-stream chronology; position alone supplies no causal
     mechanism.
   current_availability: Reported by the approved bounded audit as implemented and covered by inspected tests for SQL storage,
-    projections, dual-output recovery, and activity readback; implementation/test source freshness is not hash-guarded and
-    no fresh test result is asserted. Activity remains selected/paginated rather than complete cross-stream coverage.
+    projections, dual-output recovery, and activity readback; the current Phase 1 snapshot hash-guards cited implementation/test
+    sources; any later source change invalidates this assessment until the hash snapshot is refreshed. Activity remains selected/paginated
+    rather than complete cross-stream coverage.
   epistemic_limits: An event establishes an emitted fact and its typed payload, not that every related external effect occurred
     or that adjacent events are causal.
   sources:
@@ -39,7 +40,8 @@ items:
   - EVD-69
   - EVD-70
   - EVD-71
-  conflict_ids: []
+  conflict_ids:
+  - CON-8
   question_ids: []
   limitations: []
   prohibited_interpretations:
@@ -64,8 +66,9 @@ items:
   missing_behavior: No endpoint returns the complete joined workflow-plus-graph chronology; callback observed_graph_position
     is not outcome validation evidence.
   current_availability: Reported by the approved bounded audit as implemented and covered by inspected tests for append, typed
-    payloads, replay, compact/full readback, and transaction rollback; implementation/test source freshness is not hash-guarded
-    and no fresh test result is asserted. Projection detail and combined-stream availability remain partial.
+    payloads, replay, compact/full readback, and transaction rollback; the current Phase 1 snapshot hash-guards cited implementation/test
+    sources; any later source change invalidates this assessment until the hash snapshot is refreshed. Projection detail and
+    combined-stream availability remain partial.
   epistemic_limits: Actor/correlation fields aid tracing but do not prove a business-causal relation; a projection can omit
     heavy payload detail.
   sources:
@@ -82,7 +85,8 @@ items:
   evidence_ids:
   - EVD-72
   - EVD-73
-  conflict_ids: []
+  conflict_ids:
+  - CON-8
   question_ids: []
   limitations: []
   prohibited_interpretations:
@@ -106,8 +110,9 @@ items:
     entity equivalence.
   missing_behavior: No universal record store, complete relational joins, or proof that task_region_id identifies a core task/region.
   current_availability: Reported by the approved bounded audit as implemented and covered by inspected tests for typed acceptance,
-    provenance fields, bindings, and node-detail replay; implementation/test source freshness is not hash-guarded and no fresh
-    test result is asserted. Heavy values and core-entity joins remain partial or unknown.
+    provenance fields, bindings, and node-detail replay; the current Phase 1 snapshot hash-guards cited implementation/test
+    sources; any later source change invalidates this assessment until the hash snapshot is refreshed. Heavy values and core-entity
+    joins remain partial or unknown.
   epistemic_limits: Record payload meaning is type-specific; summary omission and optional references constrain what can be
     concluded.
   sources:
@@ -151,8 +156,9 @@ items:
     ingestion, or full truncation accounting.
   missing_behavior: No packet hash, content size, directive binding, complete graph prompt, or model receipt exists.
   current_availability: The approved bounded audit reports legacy full prompts as partial current evidence and graph compact
-    metadata as implemented with inspected-test coverage; implementation/test source freshness is not hash-guarded and no
-    fresh test result is asserted. Full graph prompt retention/delivery coverage remains unknown.
+    metadata as implemented with inspected-test coverage; the current Phase 1 snapshot hash-guards cited implementation/test
+    sources; any later source change invalidates this assessment until the hash snapshot is refreshed. Full graph prompt retention/delivery
+    coverage remains unknown.
   epistemic_limits: Stored or summarized content proves an assembly/persistence boundary only to its carrier-specific extent.
   sources:
   - EVD-77
@@ -196,8 +202,9 @@ items:
   missing_behavior: No complete transcript marker, graph structured action log, graph tool arguments/results, or all-run tool
     coverage.
   current_availability: Reported by the approved bounded audit as implemented with inspected-test coverage for persisted output
-    and legacy parsed traces; implementation/test source freshness is not hash-guarded and no fresh test result is asserted.
-    Graph structured action-log and complete-transcript coverage remain partial/unknown.
+    and legacy parsed traces; the current Phase 1 snapshot hash-guards cited implementation/test sources; any later source
+    change invalidates this assessment until the hash snapshot is refreshed. Graph structured action-log and complete-transcript
+    coverage remain partial/unknown.
   epistemic_limits: A persisted line or parsed entry proves only retained adapter output; it cannot prove complete runner/model/tool
     activity.
   sources:
@@ -244,8 +251,9 @@ items:
   missing_behavior: Generic artifact references are not verified/downloadable CAS blobs; no shared artifact ID or unified
     inventory exists.
   current_availability: The approved bounded audit reports CAS check artifacts as implemented with inspected-test coverage;
-    implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Declared references and
-    interaction logs have distinct, weaker partial coverage and no unified artifact contract.
+    the current Phase 1 snapshot hash-guards cited implementation/test sources; any later source change invalidates this assessment
+    until the hash snapshot is refreshed. Declared references and interaction logs have distinct, weaker partial coverage
+    and no unified artifact contract.
   epistemic_limits: The word artifact denotes several carriers with different identity, authority, and retention boundaries.
   sources:
   - EVD-83
@@ -265,7 +273,8 @@ items:
   - EVD-84
   - EVD-85
   - EVD-86
-  conflict_ids: []
+  conflict_ids:
+  - CON-5
   question_ids: []
   limitations: []
   prohibited_interpretations:
@@ -289,8 +298,9 @@ items:
   missing_behavior: Normal producer does not emit diffstat or content hashes for ordinary tracked/untracked files; no node-only
     causal delta is established.
   current_availability: Reported by the approved bounded audit as implemented and covered by inspected tests for capture,
-    classification, snapshot, rejection, cleanup, and report readback; implementation/test source freshness is not hash-guarded
-    and no fresh test result is asserted. Diff/content and node-exclusive causality coverage remain absent.
+    classification, snapshot, rejection, cleanup, and report readback; the current Phase 1 snapshot hash-guards cited implementation/test
+    sources; any later source change invalidates this assessment until the hash snapshot is refreshed. Diff/content and node-exclusive
+    causality coverage remain absent.
   epistemic_limits: Snapshot/file classification supports a repository boundary observation, not a proof of which node caused
     each change.
   sources:
@@ -336,8 +346,9 @@ items:
   missing_behavior: No universal durable action-result identity, consistently authenticated actor attribution, or complete
     acceptance/rejection/result/next-activity bundle.
   current_availability: The approved bounded audit reports specific graph and workflow decision carriers as implemented, with
-    inspected-test coverage where cited; implementation/test source freshness is not hash-guarded and no fresh test result
-    is asserted. Cross-carrier receipts, actor binding, and result-state coverage remain partial/unknown.
+    inspected-test coverage where cited; the current Phase 1 snapshot hash-guards cited implementation/test sources; any later
+    source change invalidates this assessment until the hash snapshot is refreshed. Cross-carrier receipts, actor binding,
+    and result-state coverage remain partial/unknown.
   epistemic_limits: Recorded actor text or a successful acceptance response does not prove authorization, resulting state,
     or causal downstream effect.
   sources:
@@ -356,7 +367,8 @@ items:
   - EVD-63
   - EVD-90
   - EVD-91
-  conflict_ids: []
+  conflict_ids:
+  - CON-8
   question_ids: []
   limitations: []
   prohibited_interpretations:
@@ -384,8 +396,9 @@ items:
   missing_behavior: No fact for exact-zero versus absent usage, runner exceptions after provider use, complete rate cards,
     fleet-wide denominator, budget pace, price-coverage field, or cost-of-next-attempt algorithm.
   current_availability: The approved bounded audit reports graph returned-execution usage and the graph-only rollup as implemented
-    with inspected-test coverage; implementation/test source freshness is not hash-guarded and no fresh test result is asserted.
-    Legacy, exact-zero/absent, and exception-terminated coverage remain partial/unknown.
+    with inspected-test coverage; the current Phase 1 snapshot hash-guards cited implementation/test sources; any later source
+    change invalidates this assessment until the hash snapshot is refreshed. Legacy, exact-zero/absent, and exception-terminated
+    coverage remain partial/unknown.
   epistemic_limits: Numeric zero may mean legitimate explicit-zero pricing or unavailable numeric cost; absent usage is not
     evidence of zero consumption.
   sources:
@@ -406,7 +419,8 @@ items:
   - EVD-93
   - EVD-94
   - EVD-95
-  conflict_ids: []
+  conflict_ids:
+  - CON-9
   question_ids: []
   limitations: []
   prohibited_interpretations:

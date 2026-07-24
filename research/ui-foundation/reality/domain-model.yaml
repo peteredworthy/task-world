@@ -101,7 +101,8 @@ items:
   - EVD-50
   - EVD-53
   conflict_ids: []
-  question_ids: []
+  question_ids:
+  - Q-2
   limitations:
   - fan-out child identity
   prohibited_interpretations:
@@ -231,7 +232,8 @@ items:
   - EVD-51
   conflict_ids:
   - CON-2
-  question_ids: []
+  question_ids:
+  - Q-3
   limitations:
   - system-wide sole-truth claim
   prohibited_interpretations:
@@ -258,7 +260,8 @@ items:
   - EVD-51
   conflict_ids:
   - CON-2
-  question_ids: []
+  question_ids:
+  - Q-3
   limitations:
   - payload-wide public identity
   prohibited_interpretations:
@@ -334,7 +337,8 @@ items:
   - EVD-59
   - EVD-53
   conflict_ids: []
-  question_ids: []
+  question_ids:
+  - Q-2
   limitations:
   - task_region_id ownership
   prohibited_interpretations:
@@ -710,7 +714,8 @@ items:
   evidence_ids:
   - EVD-56
   conflict_ids: []
-  question_ids: []
+  question_ids:
+  - Q-4
   limitations:
   - complete cohorts
   prohibited_interpretations:
@@ -737,7 +742,8 @@ items:
   - EVD-66
   conflict_ids:
   - CON-1
-  question_ids: []
+  question_ids:
+  - Q-4
   limitations:
   - collision/replay/live-WAL consistency
   prohibited_interpretations:

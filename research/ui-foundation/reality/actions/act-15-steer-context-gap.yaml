@@ -11,3 +11,5 @@ required_evidence: Future directive identity, scope, actor, acceptance, and pack
 unresolved_command_decisions: All command, authority, validation, concurrency, retry, reversal, and retention semantics require
   approved future design.
 conflict_ids: []
+question_ids: []
+test_status: unexercised

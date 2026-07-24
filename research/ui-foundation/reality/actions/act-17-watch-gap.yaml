@@ -9,3 +9,5 @@ implementation_constraints: Current UI has no recorded watch command; no interac
 required_evidence: Future item identity, actor, scope, expiry, and later attention evidence.
 unresolved_command_decisions: All executable semantics require separately approved design.
 conflict_ids: []
+question_ids: []
+test_status: unexercised

@@ -129,3 +129,14 @@ GREEN at 40 passing tests.
 Follow-up checks: `uv run python research/ui-foundation/tools/validate.py --phase
 1` exits without diagnostics and `uv run pytest
 tests/integration/test_ui_foundation_tools.py -q` reports `40 passed`.
+
+## Second re-review remediation
+
+Added exact affected-ID/backlink validation for unresolved conflicts and blocking
+questions, including admission blocking for affected semantic current/derived
+records. Evidence inventory is included in this check. Q7 now has a direct
+snapshot-coverage record and is resolved only after the 890-file Phase 1 snapshot
+and evidence snapshot-path membership are checked. Command test evidence is
+limited to direct exercised test records; commands without one are explicitly
+unexercised, and invariants without direct test records were downgraded. The
+validator regression suite is GREEN at 41 focused tests.

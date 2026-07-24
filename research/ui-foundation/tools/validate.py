@@ -707,6 +707,160 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             ):
                 issues.append(_issue("SCOPE_FINDING_NOT_SUBSTANTIVE", location, evidence_id))
 
+    raw_evidence_document = package.documents.get("catalog/evidence.yaml")
+    snapshot_values: list[dict[str, JsonValue]] = []
+    if isinstance(raw_evidence_document, dict):
+        raw_snapshot = raw_evidence_document.get("snapshot")
+        if isinstance(raw_snapshot, dict):
+            snapshot_values.append(raw_snapshot)
+        extra_snapshots = raw_evidence_document.get("snapshots")
+        if isinstance(extra_snapshots, list):
+            snapshot_values.extend(
+                snapshot for snapshot in extra_snapshots if isinstance(snapshot, dict)
+            )
+    snapshot_paths: dict[str, set[str]] = {}
+    for snapshot in snapshot_values:
+        identifier = snapshot.get("id")
+        files = snapshot.get("files")
+        if isinstance(identifier, str) and isinstance(files, list):
+            snapshot_paths[identifier] = {
+                path
+                for file in files
+                if isinstance(file, dict) and isinstance((path := file.get("path")), str)
+            }
+    raw_items_value = (
+        raw_evidence_document.get("items") if isinstance(raw_evidence_document, dict) else None
+    )
+    raw_evidence_items: list[dict[str, JsonValue]] = (
+        [cast(dict[str, JsonValue], value) for value in raw_items_value if isinstance(value, dict)]
+        if isinstance(raw_items_value, list)
+        else []
+    )
+    for index, item in enumerate(raw_evidence_items):
+        identifier = item.get("id")
+        if not isinstance(identifier, str):
+            continue
+        location = f"{package.root / 'catalog/evidence.yaml'}:items[{index}]"
+        snapshot_id = item.get("snapshot_id")
+        snapshot_path = item.get("snapshot_path")
+        if identifier.startswith("EVD-") and snapshot_id not in snapshot_paths:
+            issues.append(_issue("EVIDENCE_SNAPSHOT_UNRESOLVED", location, identifier))
+        elif (
+            isinstance(snapshot_id, str)
+            and isinstance(snapshot_path, str)
+            and snapshot_path not in snapshot_paths[snapshot_id]
+        ):
+            issues.append(_issue("EVIDENCE_SNAPSHOT_PATH_UNRESOLVED", location, identifier))
+        if item.get("source_kind") == "command":
+            direct_tests = item.get("test_evidence_ids", [])
+            if not isinstance(direct_tests, list):
+                issues.append(_issue("COMMAND_TEST_EVIDENCE_INVALID", location, identifier))
+                continue
+            for test_id in direct_tests:
+                record = evidence.get(test_id) if isinstance(test_id, str) else None
+                raw_record = next(
+                    (
+                        candidate
+                        for candidate in raw_evidence_items
+                        if candidate.get("id") == test_id
+                    ),
+                    None,
+                )
+                if (
+                    record is None
+                    or record.source_kind != "test"
+                    or record.test_status != "exercised"
+                    or not isinstance(raw_record, dict)
+                    or not isinstance(raw_record.get("path"), str)
+                    or not isinstance(raw_record.get("symbol"), str)
+                ):
+                    issues.append(_issue("COMMAND_TEST_EVIDENCE_INVALID", location, test_id))
+
+    affected_semantic = {identifier: item for identifier, item in semantic_items.items()}
+    action_records = {
+        item.get("id"): item
+        for relative, item in package.documents.items()
+        if relative.startswith("reality/actions/")
+        and isinstance(item, dict)
+        and isinstance(item.get("id"), str)
+    }
+    for item in conflict_document.items if conflict_document else []:
+        if item.get("status") != "unresolved":
+            continue
+        conflict_id = item.get("id")
+        affected_ids = item.get("affected_ids")
+        if not isinstance(conflict_id, str) or not isinstance(affected_ids, list):
+            continue
+        for affected_id in affected_ids:
+            target = affected_semantic.get(affected_id) if isinstance(affected_id, str) else None
+            target_raw = action_records.get(affected_id) if isinstance(affected_id, str) else None
+            raw_links = (
+                target.conflict_ids
+                if target
+                else target_raw.get("conflict_ids", [])
+                if target_raw
+                else []
+            )
+            links = (
+                [value for value in raw_links if isinstance(value, str)]
+                if isinstance(raw_links, list)
+                else []
+            )
+            if conflict_id not in links:
+                issues.append(
+                    _issue(
+                        "CONFLICT_BACKLINK_MISSING",
+                        package.root / "catalog/conflicts.yaml",
+                        f"{conflict_id}:{affected_id}",
+                    )
+                )
+            if target and target.capability_status in {"current", "derived"}:
+                issues.append(
+                    _issue(
+                        "UNRESOLVED_ADMISSION_BLOCKED",
+                        package.root / "catalog/conflicts.yaml",
+                        f"{conflict_id}:{affected_id}",
+                    )
+                )
+    for item in question_document.items if question_document else []:
+        if not (item.get("blocking") is True and item.get("status") != "resolved"):
+            continue
+        question_id = item.get("id")
+        affected_ids = item.get("affected_ids")
+        if not isinstance(question_id, str) or not isinstance(affected_ids, list):
+            continue
+        for affected_id in affected_ids:
+            target = affected_semantic.get(affected_id) if isinstance(affected_id, str) else None
+            target_raw = action_records.get(affected_id) if isinstance(affected_id, str) else None
+            raw_links = (
+                target.question_ids
+                if target
+                else target_raw.get("question_ids", [])
+                if target_raw
+                else []
+            )
+            links = (
+                [value for value in raw_links if isinstance(value, str)]
+                if isinstance(raw_links, list)
+                else []
+            )
+            if question_id not in links:
+                issues.append(
+                    _issue(
+                        "QUESTION_BACKLINK_MISSING",
+                        package.root / "catalog/questions.yaml",
+                        f"{question_id}:{affected_id}",
+                    )
+                )
+            if target and target.capability_status in {"current", "derived"}:
+                issues.append(
+                    _issue(
+                        "UNRESOLVED_ADMISSION_BLOCKED",
+                        package.root / "catalog/questions.yaml",
+                        f"{question_id}:{affected_id}",
+                    )
+                )
+
     registry = canonical.get("capabilities/registry.yaml")
     for item in registry.items if registry else []:
         status = item.get("capability_status")

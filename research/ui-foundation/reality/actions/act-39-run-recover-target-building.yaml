@@ -51,3 +51,5 @@ enforced_authorization: absent
 domain_eligibility: Selected target task of a failed or paused legacy run.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

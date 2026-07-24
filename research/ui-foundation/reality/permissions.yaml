@@ -9,7 +9,7 @@ items:
   implementation_status: present
   test_status: exercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: 04-api-actions-authority.md#api-authn-jwt and integration auth tests
@@ -17,9 +17,11 @@ items:
   - EVD-38
   conflict_ids:
   - CON-4
-  question_ids: []
+  question_ids:
+  - Q-5
   limitations:
   - Claims are not bound to a routed action actor
+  - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - A valid token proves product-role authorization
   enforced_authentication: Optional global valid-bearer gate
@@ -40,7 +42,8 @@ items:
   - EVD-39
   conflict_ids:
   - CON-4
-  question_ids: []
+  question_ids:
+  - Q-5
   limitations:
   - Optional authentication can still gate transport
   prohibited_interpretations:
@@ -56,7 +59,7 @@ items:
   implementation_status: present
   test_status: exercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: 03-workflow-state.md and 04-api-actions-authority.md legacy action tables
@@ -64,9 +67,11 @@ items:
   - EVD-40
   conflict_ids:
   - CON-4
-  question_ids: []
+  question_ids:
+  - Q-5
   limitations:
   - Fixed or caller-supplied actor values are attribution only
+  - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Domain transition eligibility is human-role authorization
   - Review or administration eligibility

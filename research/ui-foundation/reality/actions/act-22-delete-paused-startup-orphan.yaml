@@ -55,3 +55,5 @@ enforced_authorization: absent
 domain_eligibility: Only a paused row satisfying the narrow startup-orphan predicate; ordinary paused rows are excluded.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

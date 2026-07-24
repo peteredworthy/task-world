@@ -43,3 +43,5 @@ enforced_authorization: absent
 domain_eligibility: Parent of a failed legacy fan-out child.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

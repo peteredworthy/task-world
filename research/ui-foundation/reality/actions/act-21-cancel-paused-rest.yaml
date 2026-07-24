@@ -54,3 +54,4 @@ conflict_ids:
 - CON-7
 question_ids:
 - Q-5
+test_status: unexercised

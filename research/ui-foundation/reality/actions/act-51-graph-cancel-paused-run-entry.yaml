@@ -58,3 +58,5 @@ enforced_authorization: absent
 domain_eligibility: PER-3 paused legacy-row cancel eligibility and PER-4 graph paused-to-cancelling eligibility.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

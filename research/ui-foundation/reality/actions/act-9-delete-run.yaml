@@ -53,3 +53,5 @@ domain_eligibility: Ordinary route eligibility is draft, stopping, completed, fa
   delete an ordinary paused row; the qualified paused startup-orphan path is ACT-22.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

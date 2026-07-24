@@ -41,3 +41,5 @@ enforced_authorization: absent
 domain_eligibility: Current legacy step while its run is paused at manual_gate.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

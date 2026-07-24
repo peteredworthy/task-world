@@ -51,3 +51,5 @@ enforced_authorization: absent
 domain_eligibility: PER-4 rejected required-approval target and graph-state eligibility.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

@@ -44,3 +44,5 @@ enforced_authorization: absent
 domain_eligibility: Legacy run with an earlier in-bounds target step.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

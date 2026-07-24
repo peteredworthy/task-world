@@ -9,3 +9,5 @@ implementation_constraints: Raw patch and agent macro do not form a typed human 
 required_evidence: Future proposal, decision, topology, validation, and delivery-binding evidence.
 unresolved_command_decisions: All executable semantics require separately approved design.
 conflict_ids: []
+question_ids: []
+test_status: unexercised

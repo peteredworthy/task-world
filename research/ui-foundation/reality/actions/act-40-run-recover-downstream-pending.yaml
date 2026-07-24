@@ -64,3 +64,5 @@ domain_eligibility: Downstream task explicitly selected by compensating run reco
   the qualified completed-task reset.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

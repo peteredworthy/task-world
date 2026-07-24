@@ -1164,3 +1164,82 @@ def test_scope_demand_requires_substantive_finding_not_delegation_assignment(
     )
     result = run_validator(root, phase=0)
     assert "SCOPE_FINDING_NOT_SUBSTANTIVE" in issue_codes(result)
+
+
+def test_validator_rejects_unlinked_conflicts_questions_snapshots_and_weak_direct_evidence(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/conflicts.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "id": "CON-01",
+                    "status": "unresolved",
+                    "claims": [{"proposition": "one"}, {"proposition": "two"}],
+                    "claim_evidence": [
+                        {"claim_index": 0, "evidence_ids": ["EVD-01"]},
+                        {"claim_index": 1, "evidence_ids": ["EVD-02"]},
+                    ],
+                    "affected_ids": ["ENT-01"],
+                    "settlement_method": "settle",
+                }
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/questions.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {"id": "Q-01", "status": "open", "blocking": True, "affected_ids": ["ENT-01"]}
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {"schema_version": "1", "items": [semantic_item("ENT-01", capability_status="current")]},
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "snapshots": [{"id": "snapshot-test", "files": []}],
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "implementation",
+                    "snapshot_id": "missing",
+                    "snapshot_path": "no.py",
+                },
+                {
+                    "id": "EVD-02",
+                    "source_kind": "test",
+                    "test_status": "exercised",
+                    "path": "tests/x.py",
+                    "symbol": "test_x",
+                    "snapshot_id": "snapshot-test",
+                    "snapshot_path": "no.py",
+                },
+                {
+                    "id": "CMD-01",
+                    "source_kind": "command",
+                    "implementation_status": "present",
+                    "reachable": True,
+                    "test_evidence_ids": ["EVD-01"],
+                },
+            ],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert {
+        "CONFLICT_BACKLINK_MISSING",
+        "QUESTION_BACKLINK_MISSING",
+        "UNRESOLVED_ADMISSION_BLOCKED",
+        "EVIDENCE_SNAPSHOT_UNRESOLVED",
+        "EVIDENCE_SNAPSHOT_PATH_UNRESOLVED",
+        "COMMAND_TEST_EVIDENCE_INVALID",
+    } <= set(issue_codes(result))

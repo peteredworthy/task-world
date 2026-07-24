@@ -51,3 +51,5 @@ domain_eligibility: No pre-existing source row for this creation; exactly one ro
   and request schema.
 proposed_role_policy: null
 conflict_ids: []
+question_ids: []
+test_status: unexercised

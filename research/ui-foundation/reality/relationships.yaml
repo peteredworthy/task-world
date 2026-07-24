@@ -83,7 +83,8 @@ items:
   - EVD-62
   - EVD-50
   conflict_ids: []
-  question_ids: []
+  question_ids:
+  - Q-2
   limitations:
   - fan-out qualifier
   prohibited_interpretations: []
@@ -1002,7 +1003,8 @@ items:
   - EVD-51
   conflict_ids:
   - CON-2
-  question_ids: []
+  question_ids:
+  - Q-3
   limitations:
   - unconditional authority
   prohibited_interpretations: []

@@ -8,36 +8,57 @@ items:
   status: open
   settlement_method: Adopt one persisted attempt primary identity, migrate nullable attempt_id references, and pass a repository
     round-trip plus uniqueness regression test.
+  affected_ids:
+  - ENT-5
+  - REL-4
+  - REL-27
 - id: Q-2
   title: Define typed cross-mode conversion and selection contracts
   blocking: true
   status: open
   settlement_method: Publish typed task/region/node/attempt conversion contracts and pass cross-mode selection/readback tests
     for every declared join.
+  affected_ids:
+  - ENT-4
+  - ENT-13
+  - REL-3
 - id: Q-3
   title: Reconcile JSONL authority documentation with executable SQL authority
   blocking: true
   status: open
   settlement_method: Revise the authority documentation and recovery implementation so one normal-write authority is named,
     then pass durable append/bootstrap recovery tests.
+  affected_ids:
+  - ENT-9
+  - ENT-10
+  - REL-35
 - id: Q-4
   title: Define a live-WAL-safe backup and replay contract
   blocking: true
   status: open
   settlement_method: Implement SQLite-consistent backup including WAL/SHM handling, replay marker validation, and a live-write
     restore/replay integration test.
+  affected_ids:
+  - ENT-28
+  - ENT-29
 - id: Q-5
   title: Define product-role authorization before treating actor text as authority
   blocking: true
   status: open
   settlement_method: Bind authenticated subject claims to per-action role/scope/ownership checks and pass allow/deny integration
     tests for each mutating route family.
+  affected_ids:
+  - PER-1
+  - PER-2
+  - PER-3
 - id: Q-6
   title: Decide whether execution-bound graph MCP patch macros need an action contract
   blocking: true
   status: open
   settlement_method: Either add a reachable execution-bound graph MCP action contract with route/tool tests or explicitly
     retire CMD-16 from selectable current surfaces.
+  affected_ids:
+  - ACT-13
 - id: Q-7
   title: Hash-guard decisive implementation and test evidence
   blocking: false
@@ -47,3 +68,5 @@ items:
   decisive_evidence_ids:
   - EVD-105
   - EVD-106
+  affected_ids:
+  - EVI-1
