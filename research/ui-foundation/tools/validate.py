@@ -368,6 +368,10 @@ class StateTransition(BaseModel):
 
     from_state_id: str = Field(pattern=r"^STA-[0-9]+$")
     to_state_id: str = Field(pattern=r"^STA-[0-9]+$")
+    command_id: str | None = Field(default=None, pattern=r"^CMD-[0-9]+$")
+    mechanism: str | None = None
+    evidence_ids: list[str] | None = None
+    limitations: list[str] | None = None
 
 
 class ActionTransition(BaseModel):
@@ -526,7 +530,7 @@ def load_foundation(root: Path) -> FoundationPackage:
 
     source_loads: list[SourceLoad] = []
     evidence = documents.get("catalog/evidence.yaml")
-    snapshot = evidence.get("snapshot") if isinstance(evidence, dict) else None
+    snapshot = _active_snapshot(evidence) if isinstance(evidence, dict) else None
     files = snapshot.get("files") if isinstance(snapshot, dict) else None
     repository_root = root.parents[1].resolve()
     for record in files if isinstance(files, list) else []:
@@ -925,6 +929,24 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         for source in package.source_loads
         if source.content is not None
     }
+    phase_one_snapshot = (
+        raw_evidence_document.get("snapshot") if isinstance(raw_evidence_document, dict) else None
+    )
+    phase_one_files = (
+        phase_one_snapshot.get("files") if isinstance(phase_one_snapshot, dict) else []
+    )
+    repository_root = package.root.parents[1]
+    for record in phase_one_files if isinstance(phase_one_files, list) else []:
+        path = record.get("path") if isinstance(record, dict) else None
+        if not isinstance(path, str) or not path.startswith(
+            "research/ui-foundation/agent-reports/"
+        ):
+            continue
+        candidate = repository_root / path
+        try:
+            source_text.setdefault(path, candidate.read_text(encoding="utf-8"))
+        except OSError:
+            continue
     issues.extend(
         _validate_synthesis_report_anchors(
             package,
@@ -1100,6 +1122,8 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                         f"{question_id}:{affected_id}",
                     )
                 )
+
+    issues.extend(_validate_q5_authorization_coverage(package, question_document, action_records))
 
     registry = canonical.get("capabilities/registry.yaml")
     if phase >= 2:
@@ -1727,6 +1751,58 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     if phase >= 1:
         issues.extend(validate_graph_node_state_contract(package.root))
     issues.extend(_validate_epistemics(package, canonical, evidence))
+    return issues
+
+
+def _validate_q5_authorization_coverage(
+    package: FoundationPackage,
+    questions: QuestionCatalog | None,
+    actions: dict[object, dict[str, JsonValue]],
+) -> list[ValidationIssue]:
+    """Keep the authorization settlement tied to typed action authority fields."""
+    q5 = next(
+        (item for item in (questions.items if questions else []) if item.get("id") == "Q-5"), None
+    )
+    if not isinstance(q5, dict):
+        return []
+    affected = set(_string_list(q5.get("affected_ids")))
+    issues: list[ValidationIssue] = []
+    for identifier in sorted(affected):
+        action = actions.get(identifier)
+        if not isinstance(action, dict):
+            continue
+        actor = action.get("actor")
+        permissions = action.get("permission_requirements")
+        authorization = action.get("enforced_authorization")
+        backlinks = _string_list(action.get("question_ids"))
+        is_authority_candidate = (
+            isinstance(actor, str)
+            and bool(actor.strip())
+            and isinstance(permissions, list)
+            and all(isinstance(permission, str) for permission in permissions)
+            and authorization in {None, "absent", "partial", "unknown"}
+        )
+        if is_authority_candidate and "Q-5" not in backlinks:
+            issues.append(
+                _issue(
+                    "Q5_AUTHORIZATION_COVERAGE_MISSING",
+                    package.root / f"reality/actions/{identifier}.yaml",
+                    identifier,
+                )
+            )
+    for identifier, action in actions.items():
+        if (
+            isinstance(identifier, str)
+            and "Q-5" in _string_list(action.get("question_ids"))
+            and identifier not in affected
+        ):
+            issues.append(
+                _issue(
+                    "Q5_AUTHORIZATION_COVERAGE_EXTRA",
+                    package.root / "catalog/questions.yaml",
+                    identifier,
+                )
+            )
     return issues
 
 
@@ -3213,8 +3289,16 @@ def validate_schema_contracts(package: FoundationPackage) -> list[ValidationIssu
 def validate_source_hashes(package: FoundationPackage, phase: int) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     value = package.documents.get("catalog/evidence.yaml")
-    snapshot = value.get("snapshot") if isinstance(value, dict) else None
-    issues.extend(validate_source_snapshot_coverage(package, snapshot, phase))
+    phase_one_snapshot = value.get("snapshot") if isinstance(value, dict) else None
+    snapshot = _active_snapshot(value) if isinstance(value, dict) else None
+    has_active_snapshot = isinstance(value, dict) and value.get("active_snapshot_id") is not None
+    if not has_active_snapshot:
+        issues.extend(validate_source_snapshot_coverage(package, phase_one_snapshot, phase))
+    if has_active_snapshot:
+        issues.extend(_validate_phase_one_snapshot_immutable(package, phase_one_snapshot))
+        issues.extend(
+            _validate_active_snapshot_lineage(package, phase_one_snapshot, snapshot, phase)
+        )
     if isinstance(snapshot, dict):
         try:
             SourceSnapshot.model_validate(snapshot)
@@ -3289,6 +3373,63 @@ def validate_source_snapshot_coverage(
     ):
         issues.append(_issue("SOURCE_SNAPSHOT_COUNT_MISMATCH", location, snapshot.get("id")))
     return issues
+
+
+def _active_snapshot(evidence: dict[str, JsonValue]) -> dict[str, JsonValue] | None:
+    active_id = evidence.get("active_snapshot_id")
+    snapshots = evidence.get("snapshots")
+    if not isinstance(active_id, str) or not isinstance(snapshots, list):
+        return evidence.get("snapshot") if isinstance(evidence.get("snapshot"), dict) else None
+    return next(
+        (
+            snapshot
+            for snapshot in snapshots
+            if isinstance(snapshot, dict) and snapshot.get("id") == active_id
+        ),
+        None,
+    )
+
+
+def _snapshot_digest(snapshot: dict[str, JsonValue]) -> str:
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _validate_phase_one_snapshot_immutable(
+    package: FoundationPackage, snapshot: JsonValue
+) -> list[ValidationIssue]:
+    if not isinstance(snapshot, dict):
+        return [_issue("PHASE_ONE_SNAPSHOT_IMMUTABLE_MISMATCH", package.root, "snapshot missing")]
+    digest_path = package.root / "catalog/phase-1-snapshot.sha256"
+    try:
+        expected = digest_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return [_issue("PHASE_ONE_SNAPSHOT_BASELINE_MISSING", digest_path, "immutable digest")]
+    if expected != _snapshot_digest(snapshot):
+        return [_issue("PHASE_ONE_SNAPSHOT_IMMUTABLE_MISMATCH", digest_path, snapshot.get("id"))]
+    return []
+
+
+def _validate_active_snapshot_lineage(
+    package: FoundationPackage,
+    phase_one_snapshot: JsonValue,
+    active_snapshot: JsonValue,
+    phase: int,
+) -> list[ValidationIssue]:
+    if phase < 1:
+        return []
+    location = package.root / "catalog/evidence.yaml"
+    if not isinstance(phase_one_snapshot, dict) or not isinstance(active_snapshot, dict):
+        return [_issue("ACTIVE_SNAPSHOT_LINEAGE_INVALID", location, "missing snapshot")]
+    if active_snapshot.get("id") == phase_one_snapshot.get("id"):
+        return [_issue("ACTIVE_SNAPSHOT_LINEAGE_INVALID", location, "active snapshot is Phase 1")]
+    if active_snapshot.get("parent_snapshot_id") != phase_one_snapshot.get("id"):
+        return [_issue("ACTIVE_SNAPSHOT_LINEAGE_INVALID", location, "parent snapshot")]
+    try:
+        SourceSnapshot.model_validate(active_snapshot)
+    except ValidationError as error:
+        return [_issue("ACTIVE_SNAPSHOT_LINEAGE_INVALID", location, error)]
+    return []
 
 
 def _has_valid_snapshot_coverage_shape(snapshot: JsonValue) -> bool:

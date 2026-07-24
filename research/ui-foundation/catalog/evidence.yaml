@@ -54,11 +54,8 @@ snapshot: &id001
   - path: research/ui-foundation/agent-reports/10-evidence-synthesis.md
     sha256: 7ad4caa93e1afd4e728f2b7c2fac4b3c54ca441e100ac51e912ff85196d2f2e7
     audited_at: '2026-07-24T03:00:00Z'
-  - path: research/ui-foundation/agent-reports/11-semantic-verification.md
-    sha256: 1b71ba76d088fa2894572200f848613f0127483972b4250a75b2d79ba0d81675
-    audited_at: '2026-07-24T03:00:00Z'
   - path: research/ui-foundation/tools/validate.py
-    sha256: 51be1c5f1f0705cf6aaf26b4a7a2642de59dedd3dc789381649989007cb3c6e4
+    sha256: 8750a1df32a7dc795c7b8b443c417f045ccea2daa35adaf34ebb5f4ddaba7d22
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/__init__.py
     sha256: b1f14eb507ed5cae44a23dc96212731b2560b970310ef4037e303d90c5271bf4
@@ -646,7 +643,7 @@ snapshot: &id001
     sha256: a9e8b06a4134ce2f3c5d5532c3652b40f3744e1c22b1a3e1f285e2cf0046c9cd
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/graph/projections.py
-    sha256: 443d34f8887a5f869de8daa71b48f9a2f8d17d5ce0891a83c3ff62bbe7e66610
+    sha256: 4f19142ba038e6abb426409dbf1d3833bfb2b429f050b4482b2abb66f013de1d
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/graph/scenario.py
     sha256: 964cdf0b5f09e82256e21f88012c7280a3113d007ce36e59e1dfecf28ad98b1c
@@ -664,7 +661,7 @@ snapshot: &id001
     sha256: 69adee7cfa35283c32b6a65bd0b2152dfef915c0bd2d9d2ae01532b0c8c286f4
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/graph_runtime/dispatch.py
-    sha256: b54d37fb70848152f73167c714fe6142e70caa87fa92e6397a5befcb2263e53a
+    sha256: 92b609b35410ea8914ad945252315123df11224c7bff6c9eb19988ce1cc23338
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/graph_runtime/errors.py
     sha256: 631a1ed4edc8a05200776c8682f7715e4f41686e3c78ff38f6defc7751a44b85
@@ -1009,7 +1006,7 @@ snapshot: &id001
     sha256: 13689644eb0c1d1e0c4102552837fb1c8b05af9b27182bd39b88cf80e9f8a9a0
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/workflow/graph_driver.py
-    sha256: d60b7bb2dee1327405fd95cdf1beaa31101f8f5111072ecf5ea61003bb548bfa
+    sha256: c1b0eb58b4d491e5f16f5cd089acbc6af48da7fab1ebe7b6c8ccc7253d39c056
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/workflow/graph_recovery.py
     sha256: cfcbbce41a57669f3d6048c1e06d2569f6319cfb5db362587b5f09932c81622f
@@ -1357,7 +1354,7 @@ snapshot: &id001
     sha256: ed4eaa60ded974d38e87be5027a93dbe77e9e016bd11013a41d92cac31ad02b8
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_graph_run_driver.py
-    sha256: 0af76569d53dd59c2b541595dec53700c1bf9a8d7d21a67f80697fc0ef8d89f8
+    sha256: 24b0fbc0a9c3413356fdbfb9e2471d5500354551259d9708443c2a62892360ff
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_graph_run_start_routing.py
     sha256: 7943f0283b51e661b6c02c33c6a6a82f15bde5e80583b8deffd99a3b037000b7
@@ -1489,7 +1486,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: ee2e9208737da4692e3d688c161e72eec6b16889d05c1e50d50c82aa31a2f451
+    sha256: a888e02ddc373edfa321920ab575d174f1af56f60612e4d0ce53c70b117f7af4
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236
@@ -2726,8 +2723,9 @@ snapshot: &id001
   - research/ui-foundation/agent-reports/*.md
   - research/ui-foundation/tools/validate.py
   - tests/integration/test_ui_foundation_tools.py
-  expected_count: 903
-  covered_count: 903
+  expected_count: 902
+  covered_count: 902
+active_snapshot_id: snapshot-2026-07-24-task-15-adjudication
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -4365,8 +4363,8 @@ items:
   - research/ui-foundation/agent-reports/*.md
   - research/ui-foundation/tools/validate.py
   - tests/integration/test_ui_foundation_tools.py
-  expected_count: 903
-  covered_count: 903
+  expected_count: 902
+  covered_count: 902
   path: research/ui-foundation/tools/validate.py
   symbol: validate_source_snapshot_coverage
   snapshot_path: research/ui-foundation/tools/validate.py
@@ -4394,3 +4392,29 @@ snapshots:
     sha256: 3ded24752a04598fecef364af0356de8483737e8a6a23cc16abd22a3e710110a
     audited_at: '2026-07-24T00:30:00Z'
 - *id001
+- id: snapshot-2026-07-24-task-15-adjudication
+  parent_snapshot_id: snapshot-2026-07-24-phase-1
+  provenance: Task 15 structural adjudication recheck after ea218204d; Phase 1 remains immutable.
+  audited_at: '2026-07-24T04:00:00Z'
+  files:
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 4100eb26460ba7db798a8541610c83605d05c2495d31a350c5342fcb2ada62c7
+    audited_at: '2026-07-24T04:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 507aa1b2e00c7d7af2333e5020734610c489453f6753b1588fe4bedb2c7a3632
+    audited_at: '2026-07-24T04:00:00Z'
+  - path: tests/integration/test_graph_fr08_acceptance.py
+    sha256: 5bfe1f8e6a77789dd5182c3f53e156044a2b91db9f9870e5dcee228bd449838a
+    audited_at: '2026-07-24T04:00:00Z'
+  - path: src/orchestrator/graph/projections.py
+    sha256: 443d34f8887a5f869de8daa71b48f9a2f8d17d5ce0891a83c3ff62bbe7e66610
+    audited_at: '2026-07-24T04:00:00Z'
+  - path: src/orchestrator/graph_runtime/dispatch.py
+    sha256: b54d37fb70848152f73167c714fe6142e70caa87fa92e6397a5befcb2263e53a
+    audited_at: '2026-07-24T04:00:00Z'
+  - path: src/orchestrator/workflow/graph_driver.py
+    sha256: d60b7bb2dee1327405fd95cdf1beaa31101f8f5111072ecf5ea61003bb548bfa
+    audited_at: '2026-07-24T04:00:00Z'
+  - path: tests/integration/test_graph_run_driver.py
+    sha256: 0af76569d53dd59c2b541595dec53700c1bf9a8d7d21a67f80697fc0ef8d89f8
+    audited_at: '2026-07-24T04:00:00Z'

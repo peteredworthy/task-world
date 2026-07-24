@@ -4730,8 +4730,7 @@ items:
   - EVD-90
   - EVD-91
   conflict_ids: []
-  question_ids:
-  - Q-6
+  question_ids: []
   limitations:
   - No action records a queryable retired-to-replacement mapping.
   prohibited_interpretations:

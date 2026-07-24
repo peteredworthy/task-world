@@ -2,7 +2,8 @@
 
 ## Status
 
-Task 15 remains **IN PROGRESS** pending independent re-review. SV-001 through SV-008 are adjudicated; the
+Task 15 remains **IN PROGRESS** pending independent re-review. Structural findings SV-001 through SV-006 are
+being corrected in this pass; SV-008 status locators are intentionally out of scope. The
 immutable `research/ui-foundation/agent-reports/11-semantic-verification.md`
 was not modified.
 
@@ -40,6 +41,11 @@ was not modified.
   linked authority-sensitive capabilities and actions, while preserving the
   distinction between authentication, domain eligibility, tool exposure, and
   enforced product authorization. `CAP-86` remains unknown after SV-002.
+- **Snapshot lineage:** immutable `snapshot-2026-07-24-phase-1` is restored to
+  its Task 14 membership, hashes, timestamps, and 902-file count. Current
+  rechecks use `snapshot-2026-07-24-task-15-adjudication`, explicitly parented
+  to Phase 1; the validator digest-checks the historical snapshot instead of
+  rewriting it.
 
 ## Verification handoff
 

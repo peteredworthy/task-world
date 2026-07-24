@@ -404,6 +404,65 @@ def test_graph_node_state_contract_rejects_inactive_links_without_ledger_history
     assert "INACTIVE_STATE_REFERENCE" in codes
 
 
+def test_phase_one_snapshot_is_checked_against_its_checked_in_immutable_baseline(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["snapshot"]["files"][0]["sha256"] = "0" * 64
+    evidence_path.write_text(yaml.safe_dump(evidence, sort_keys=False), encoding="utf-8")
+
+    result = run_validator(root)
+
+    assert "PHASE_ONE_SNAPSHOT_IMMUTABLE_MISMATCH" in issue_codes(result)
+
+
+def test_q5_backlinks_cover_every_externally_callable_unauthorized_mutation(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    action_path = root / "reality/actions/act-13-graph-patch.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["question_ids"] = []
+    action_path.write_text(yaml.safe_dump(action, sort_keys=False), encoding="utf-8")
+
+    result = run_validator(root)
+
+    assert "Q5_AUTHORIZATION_COVERAGE_MISSING" in issue_codes(result)
+
+
+def test_retired_node_transitions_are_command_specific_and_do_not_invent_broad_edges() -> None:
+    state = yaml.safe_load(
+        (REPO_ROOT / "research/ui-foundation/reality/state-model.yaml").read_text(encoding="utf-8")
+    )
+    retirement_transitions = [
+        transition for transition in state["transitions"] if transition["to_state_id"] == "STA-73"
+    ]
+
+    patch_sources = {
+        transition["from_state_id"]
+        for transition in retirement_transitions
+        if transition["mechanism"] == "accepted retire_node patch"
+    }
+    reconciliation_sources = {
+        transition["from_state_id"]
+        for transition in retirement_transitions
+        if transition["mechanism"] == "reconciliation retirement after passed terminal evidence"
+    }
+
+    assert patch_sources == {"STA-71", "STA-72", "STA-29", "STA-32"}
+    assert reconciliation_sources == {"STA-71", "STA-72", "STA-29", "STA-32"}
+    assert all(
+        transition.get("command_id") == "CMD-12"
+        for transition in retirement_transitions
+        if transition["mechanism"] == "accepted retire_node patch"
+    )
+    assert {"STA-30", "STA-31"}.isdisjoint(patch_sources | reconciliation_sources)
+
+
 def test_validator_rejects_malformed_items_and_semantic_fields(tmp_path: Path) -> None:
     root = write_valid_phase_zero(tmp_path)
     write_yaml(root / "catalog/claims.yaml", {"schema_version": "1", "items": "bad"})

@@ -1994,6 +1994,50 @@ transitions:
   to_state_id: STA-26
 - from_state_id: STA-53
   to_state_id: STA-53
+- from_state_id: STA-71
+  to_state_id: STA-73
+  command_id: CMD-12
+  mechanism: accepted retire_node patch
+  evidence_ids: [EVD-37, EVD-106]
+  limitations: [Patch validation excludes leased and running nodes; this is a node result, not STA-54 patch-attempt acceptance.]
+- from_state_id: STA-72
+  to_state_id: STA-73
+  command_id: CMD-12
+  mechanism: accepted retire_node patch
+  evidence_ids: [EVD-37, EVD-106]
+  limitations: [Patch validation excludes leased and running nodes; this is a node result, not STA-54 patch-attempt acceptance.]
+- from_state_id: STA-29
+  to_state_id: STA-73
+  command_id: CMD-12
+  mechanism: accepted retire_node patch
+  evidence_ids: [EVD-37, EVD-106]
+  limitations: [Patch validation excludes leased and running nodes; this is a node result, not STA-54 patch-attempt acceptance.]
+- from_state_id: STA-32
+  to_state_id: STA-73
+  command_id: CMD-12
+  mechanism: accepted retire_node patch
+  evidence_ids: [EVD-37, EVD-106]
+  limitations: [Patch validation excludes leased and running nodes; this is a node result, not STA-54 patch-attempt acceptance.]
+- from_state_id: STA-71
+  to_state_id: STA-73
+  mechanism: reconciliation retirement after passed terminal evidence
+  evidence_ids: [EVD-24]
+  limitations: [Reconciliation only retires an unreachable failure branch when the graph is active with no active leases or ready nodes; it is not a patch-attempt result.]
+- from_state_id: STA-72
+  to_state_id: STA-73
+  mechanism: reconciliation retirement after passed terminal evidence
+  evidence_ids: [EVD-24]
+  limitations: [Reconciliation only retires an unreachable failure branch when the graph is active with no active leases or ready nodes; it is not a patch-attempt result.]
+- from_state_id: STA-29
+  to_state_id: STA-73
+  mechanism: reconciliation retirement after passed terminal evidence
+  evidence_ids: [EVD-24]
+  limitations: [Reconciliation only retires an unreachable failure branch when the graph is active with no active leases or ready nodes; it is not a patch-attempt result.]
+- from_state_id: STA-32
+  to_state_id: STA-73
+  mechanism: reconciliation retirement after passed terminal evidence
+  evidence_ids: [EVD-24]
+  limitations: [Reconciliation only retires an unreachable failure branch when the graph is active with no active leases or ready nodes; it is not a patch-attempt result.]
 carrier_synchronization:
 - REST lifecycle acceptance is command evidence and commonly source-preserving; the signal consumer later
   applies the row transition.
@@ -2019,5 +2063,10 @@ carrier_synchronization:
 - Graph node readiness, leasing, running, suspension, retirement, and cancellation are node-local NodeState
   transitions. Graph-run active or paused may independently enter cancelling; cancellation does not use
   planned or blocked as a substitute for an already leased, running, or suspended node.
+- Accepted CMD-12 retire_node patches may produce the explicitly listed node-retirement edges only from planned,
+  blocked, ready, or suspended nodes; leased and running nodes are rejected by the patch validator. Terminal-node
+  behavior is not promoted to a broad transition because the result catalog only records meaningful source-state changes.
+- Reconciliation retirement is a separate internal terminal-evidence mechanism with its own listed eligible node states;
+  it is neither CMD-12 nor a graph patch-attempt (`STA-54`) result.
 - The qualified run-recovery command can reset completed downstream legacy tasks to pending; this does
   not make ordinary completed-task transitions nonterminal.

@@ -28,7 +28,7 @@ claims/status/gaps projections, and focused integration tests.
   patch approval/defer command or its integrated semantics.
 - Typed steering (`CAP-92`) and steering patch (`CAP-93`) are not current.
 - `capabilities/registry.yaml` is the sole canonical source for all 49 gap and
-  56 unknown adjudications. The persisted `task-14-gap-carrier-audit.md` is a
+  57 unknown adjudications. The persisted `task-14-gap-carrier-audit.md` is a
   historical review artifact and is never parsed to create or update YAML. The
   49 gaps are **42 partial** and **7 absent**; all unknown records are partial.
 - Partial carriers are now typed demand bindings with an explicit role,
