@@ -1,0 +1,30 @@
+schema_version: "1"
+key_namespace: provisional
+actions:
+  - key: requirement-steer-context
+    implementation_status: absent
+    capability_status: gap
+    executable: false
+    required_outcome: "Record durable, scoped new human knowledge and make any delivery to a future execution packet auditable."
+    source_demand_ids: [decisions.steer-context, journeys.C.directive-binding, honesty.directive-binding-proof]
+    implementation_constraints: "No steer/directive command, directive record, or packet-binding evidence exists; raw graph patch is not typed steering."
+    required_evidence: "Directive identity, scope, actor attribution, accepted/rejected outcome, packet/execution binding, and freshness/delivery evidence."
+    unresolved_command_decisions: "Actor policy, target scope, validation, concurrency, idempotency, cancellation interaction, reversibility, and audit retention require separately approved command design."
+  - key: requirement-apply-steering-patch
+    implementation_status: absent
+    capability_status: gap
+    executable: false
+    required_outcome: "Propose and apply a human steering change with explicit provenance, validated effect, and binding to the intended future work."
+    source_demand_ids: [decisions.apply-steering-patch]
+    implementation_constraints: "Raw graph patch and agent retire_or_supersede macro exist but do not provide a typed human steering proposal/provenance/binding contract."
+    required_evidence: "Proposal and acceptance identity, affected topology, validation diagnostics, decision provenance, resulting graph position, and delivery/binding evidence."
+    unresolved_command_decisions: "Command shape, role policy, review/confirmation, expected-version rules, race handling, idempotency, compensation, and audit semantics are intentionally unspecified."
+  - key: requirement-ignore-watch
+    implementation_status: absent
+    capability_status: gap
+    executable: false
+    required_outcome: "Record an operator decision to keep watching or suppress an attention item without falsely resolving the underlying condition."
+    source_demand_ids: [decisions.ignore-watch]
+    implementation_constraints: "Current UI has no recorded ignore/watch command; absence of interaction is not an equivalent durable action."
+    required_evidence: "Selected item identity, actor attribution, timestamp, scope/duration, resulting attention presentation, and later restoration/expiry evidence."
+    unresolved_command_decisions: "Eligibility, expiration, authority, source-version, idempotency, reversibility, and cross-mode semantics require future design."

@@ -1,4 +1,344 @@
 schema_version: "1"
-phase_status: incomplete
+phase_status: partial
 completion_phase: 1
-items: []
+key_namespace: domain-synthesis/provisional
+canonical_id_policy: "Task 10 uses only provisional scoped keys; Task 13 allocates REL-* IDs."
+items:
+  - key: DS-REL-config-declares-steps
+    source: DS-ENT-routine-config
+    target: DS-ENT-step
+    relationship_type: template-declares-runtime-lineage
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: config_id preserves template lineage; runtime step is separately owned by a run
+    temporal_semantics: configuration is read when a run is created
+    dependency_semantics: no runtime completion dependency asserted
+    epistemic_status: observed
+    evidence: [DP-ENT-run-config, DP-ENT-step]
+    counter_evidence: []
+    unknowns: [routine source/version semantics across modes]
+    prohibited_causal_interpretations: ["Template declaration does not prove a step was executed."]
+  - key: DS-REL-run-owns-step
+    source: DS-ENT-run
+    target: DS-ENT-step
+    relationship_type: owns
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: non-null steps.run_id with cascade/delete-orphan
+    temporal_semantics: ordered by persisted order_index
+    dependency_semantics: step progression controls legacy run advancement
+    epistemic_status: observed
+    evidence: [DP-ownership-run-steps, WF-step-run-cascade]
+    counter_evidence: []
+    unknowns: []
+    prohibited_causal_interpretations: ["Order index alone does not prove a step caused a run result."]
+  - key: DS-REL-step-owns-task
+    source: DS-ENT-step
+    target: DS-ENT-task
+    relationship_type: owns
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: non-null tasks.step_id with cascade/delete-orphan
+    temporal_semantics: ordered task rows; top-level terminal tasks influence step completion
+    dependency_semantics: task terminality is a legacy step-progression condition
+    epistemic_status: observed
+    evidence: [DP-ownership-step-tasks, WF-step-run-cascade]
+    counter_evidence: []
+    unknowns: [fan-out child treatment is qualified]
+    prohibited_causal_interpretations: ["Task order is not graph dependency direction."]
+  - key: DS-REL-task-owns-attempt
+    source: DS-ENT-task
+    target: DS-ENT-attempt
+    relationship_type: owns
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: non-null attempts.task_id with cascade/delete-orphan
+    temporal_semantics: attempt_num orders within task but lacks asserted unique constraint
+    dependency_semantics: verification/revision can create a later attempt
+    epistemic_status: observed
+    evidence: [DP-ownership-task-attempts, WF-task-edges]
+    counter_evidence: [DP-CON-01]
+    unknowns: [canonical attempt identity and ordinal uniqueness]
+    prohibited_causal_interpretations: ["Ordinal order is not sufficient lineage or supersession proof."]
+  - key: DS-REL-requirement-seeds-checklist
+    source: DS-ENT-requirement-config
+    target: DS-ENT-checklist-item
+    relationship_type: transforms-to-task-local-projection
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: config requirement is copied to checklist req_id for task context
+    temporal_semantics: seed occurs during run/task construction; checklist remains mutable
+    dependency_semantics: checklist gates legacy task progression
+    epistemic_status: observed
+    evidence: [DP-ENT-requirement, DP-temporal-requirement-checklist]
+    counter_evidence: []
+    unknowns: [global requirement identity and revision conversion]
+    prohibited_causal_interpretations: ["A matching req_id does not establish graph requirement-record equivalence."]
+  - key: DS-REL-attempt-retains-grade-snapshot
+    source: DS-ENT-attempt
+    target: DS-ENT-checklist-item
+    relationship_type: retains-historical-snapshot-of
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: attempt stores grade_snapshot JSON, not ownership of current checklist
+    temporal_semantics: snapshot is attempt-scoped historical evidence; checklist is latest mutable projection
+    dependency_semantics: none beyond recorded verification history
+    epistemic_status: observed
+    evidence: [DP-temporal-requirement-checklist]
+    counter_evidence: []
+    unknowns: [whether all snapshot/current values agree]
+    prohibited_causal_interpretations: ["Snapshot difference does not itself identify the actor or cause of a grade change."]
+  - key: DS-REL-run-streams-workflow-events
+    source: DS-ENT-run
+    target: DS-ENT-workflow-event
+    relationship_type: aggregate-stream-association
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: event aggregate_id often equals run id, but events_v2 has no run FK and supports namespaces
+    temporal_semantics: global position orders append; aggregate version orders within aggregate
+    dependency_semantics: event projections update run/step/task state transactionally
+    epistemic_status: observed
+    evidence: [DP-ownership-run-events, ET-01, WF-durable-authority]
+    counter_evidence: []
+    unknowns: [coverage of all aggregate namespaces]
+    prohibited_causal_interpretations: ["Position sequence is not business causality."]
+  - key: DS-REL-graph-events-reduce-projection
+    source: DS-ENT-graph-event-envelope
+    target: DS-ENT-graph-projection
+    relationship_type: reduces-into
+    cardinality: {source: "1", target: "0..1-current-projection-effect"}
+    ownership_semantics: projection is disposable materialization, not event owner
+    temporal_semantics: ordered appends update checkpoints and can rebuild projection
+    dependency_semantics: reducer behavior, not a domain causality assertion
+    epistemic_status: observed
+    evidence: [GR-Durability, ET-02, tests-doc-replay-parity]
+    counter_evidence: []
+    unknowns: [all event-type projection coverage]
+    prohibited_causal_interpretations: ["A projected later state does not alone prove an earlier event caused a business outcome."]
+  - key: DS-REL-run-has-graph-projection
+    source: DS-ENT-run
+    target: DS-ENT-graph-projection
+    relationship_type: projection-associated-with
+    cardinality: {source: "1", target: "0..1-current"}
+    ownership_semantics: graph rows carry run_id without a declared run foreign key
+    temporal_semantics: current projection can be deleted and rebuilt
+    dependency_semantics: graph mode driver consumes durable graph position/projection
+    epistemic_status: observed
+    evidence: [DP-ownership-run-graph-read-models, GR-Durability, WF-legacy-versus-graph]
+    counter_evidence: []
+    unknowns: [whether every run has graph mode/topology]
+    prohibited_causal_interpretations: ["Association by run_id does not make graph projection a Run alias."]
+  - key: DS-REL-projection-contains-node
+    source: DS-ENT-graph-projection
+    target: DS-ENT-graph-node
+    relationship_type: materializes-topology-member
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: node topology is graph-local
+    temporal_semantics: nodes can be dynamically created, retired, or state-changed
+    dependency_semantics: node readiness depends on required inputs, upstream/gate/precondition/resource conditions
+    epistemic_status: observed
+    evidence: [GR-Topology, GR-Dynamic-expansion, GR-Leasing]
+    counter_evidence: []
+    unknowns: [region ownership and all compiler reachability]
+    prohibited_causal_interpretations: ["A node's task_region_id does not establish task identity."]
+  - key: DS-REL-projection-contains-edge
+    source: DS-ENT-graph-projection
+    target: DS-ENT-graph-edge
+    relationship_type: materializes-topology-member
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: graph topology owns edges
+    temporal_semantics: accepted patches add/retire topology under validation
+    dependency_semantics: edge dependency_type distinguishes input binding and completion ordering
+    epistemic_status: observed
+    evidence: [GR-Topology, GR-Dynamic-expansion]
+    counter_evidence: []
+    unknowns: []
+    prohibited_causal_interpretations: ["An edge describes a mechanism only within its typed graph semantics; it is not a general causal claim."]
+  - key: DS-REL-edge-connects-source-node
+    source: DS-ENT-graph-edge
+    target: DS-ENT-graph-node
+    relationship_type: has-source-port-on
+    cardinality: {source: "1", target: "1"}
+    ownership_semantics: edge stores one source node/port
+    temporal_semantics: source endpoint is fixed for an accepted edge
+    dependency_semantics: output may become selectable by matching outgoing input-binding edge
+    epistemic_status: observed
+    evidence: [GR-Cardinality]
+    counter_evidence: []
+    unknowns: []
+    prohibited_causal_interpretations: ["Source precedence is not proof that source output caused target business result."]
+  - key: DS-REL-edge-connects-target-node
+    source: DS-ENT-graph-edge
+    target: DS-ENT-graph-node
+    relationship_type: has-target-port-on
+    cardinality: {source: "1", target: "1"}
+    ownership_semantics: edge stores one target node/port
+    temporal_semantics: target readiness evaluates current bindings and state
+    dependency_semantics: state_dependency supplies completion ordering; input_binding carries selected output records
+    epistemic_status: observed
+    evidence: [GR-Topology, GR-Cardinality]
+    counter_evidence: []
+    unknowns: []
+    prohibited_causal_interpretations: ["Completion ordering does not by itself prove causal effect."]
+  - key: DS-REL-node-produces-record
+    source: DS-ENT-graph-node
+    target: DS-ENT-graph-record
+    relationship_type: produces-at-port
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: accepted record has exactly one producer node/port
+    temporal_semantics: output_record_accepted precedes matching input binding events
+    dependency_semantics: accepted records may satisfy downstream input-binding eligibility
+    epistemic_status: observed
+    evidence: [GR-Cardinality, ET-03]
+    counter_evidence: []
+    unknowns: [whether all record variants retain heavy payloads]
+    prohibited_causal_interpretations: ["Producer attribution is not exclusive authorship of whole-worktree file changes."]
+  - key: DS-REL-binding-selects-record
+    source: DS-ENT-input-binding
+    target: DS-ENT-graph-record
+    relationship_type: selects-input
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: binding records record IDs under target port policy
+    temporal_semantics: latest replaces prior selected record; many/all can accumulate
+    dependency_semantics: required binding absence gates target readiness
+    epistemic_status: observed
+    evidence: [GR-Cardinality, GR-Topology]
+    counter_evidence: []
+    unknowns: []
+    prohibited_causal_interpretations: ["Binding proves a graph dataflow mechanism, not that a model read, understood, or obeyed record content."]
+  - key: DS-REL-edge-has-binding
+    source: DS-ENT-graph-edge
+    target: DS-ENT-input-binding
+    relationship_type: realizes-input-binding
+    cardinality: {source: "1", target: "0..1-per-target-port-context"}
+    ownership_semantics: binding is target node/port/edge context
+    temporal_semantics: emitted after accepted output when selector/contract matches
+    dependency_semantics: carries selected records for input_binding edges only
+    epistemic_status: observed
+    evidence: [GR-Cardinality, GR-Typed-records]
+    counter_evidence: []
+    unknowns: [standalone persistence identity]
+    prohibited_causal_interpretations: ["Not every graph edge has a record binding; state_dependency is distinct."]
+  - key: DS-REL-node-has-lease-history
+    source: DS-ENT-graph-node
+    target: DS-ENT-graph-lease
+    relationship_type: scheduled-by
+    cardinality: {source: "1", target: "0..N-historical; 0..1-active"}
+    ownership_semantics: scheduler denies a second active lease for one node
+    temporal_semantics: grant/renew/release/revoke/expire/suspend transitions
+    dependency_semantics: lease is required for execution and callback validation
+    epistemic_status: observed
+    evidence: [GR-Cardinality, GR-Leasing]
+    counter_evidence: []
+    unknowns: [external runner/process recovery completeness]
+    prohibited_causal_interpretations: ["Lease presence is not proof that the agent started or completed work."]
+  - key: DS-REL-graph-event-creates-outbox-intent
+    source: DS-ENT-graph-event-envelope
+    target: DS-ENT-graph-outbox-intent
+    relationship_type: creates-side-effect-intent
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: only selected events map to outbox rows
+    temporal_semantics: event/outbox rows commit atomically; dispatch is later at-least-once
+    dependency_semantics: agent_dispatch_requested and cleanup_requested trigger respective intents
+    epistemic_status: observed
+    evidence: [GR-Durability, GR-Commands, tests-doc-requeue]
+    counter_evidence: []
+    unknowns: [downstream side-effect idempotency]
+    prohibited_causal_interpretations: ["Outbox intent is not evidence that an external side effect occurred exactly once."]
+  - key: DS-REL-run-owns-clarification-request
+    source: DS-ENT-run
+    target: DS-ENT-clarification-request
+    relationship_type: owns
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: request run FK cascades deletion
+    temporal_semantics: request can pause a qualifying legacy task/run pending response
+    dependency_semantics: unanswered request blocks submission in tested legacy flow
+    epistemic_status: observed
+    evidence: [DP-ownership-run-clarifications, tests-doc-clarification]
+    counter_evidence: []
+    unknowns: [graph-equivalent request relationship]
+    prohibited_causal_interpretations: ["Task_id and attempt_num attribution values are not foreign-key proof."]
+  - key: DS-REL-request-owns-response
+    source: DS-ENT-clarification-request
+    target: DS-ENT-clarification-response
+    relationship_type: owns
+    cardinality: {source: "1", target: "0..1"}
+    ownership_semantics: unique request_id and cascade deletion
+    temporal_semantics: response follows request and may clear pending state
+    dependency_semantics: response is a qualifying input to resume building
+    epistemic_status: observed
+    evidence: [DP-ownership-clarification-response, api-action-clarification-respond]
+    counter_evidence: []
+    unknowns: [response revision/undo semantics]
+    prohibited_causal_interpretations: ["Response existence does not prove every required answer was validly supplied."]
+  - key: DS-REL-run-task-attempt-cost-attribution
+    source: DS-ENT-cost-record
+    target: DS-ENT-attempt
+    relationship_type: optionally-references-primary-key
+    cardinality: {source: "0..N", target: "0..1"}
+    ownership_semantics: cost requires run/task FKs and optional attempt PK FK; uniqueness uses execution tuple
+    temporal_semantics: written after returned execution result
+    dependency_semantics: no scheduling dependency
+    epistemic_status: observed
+    evidence: [DP-ownership-cost, ET-13]
+    counter_evidence: [DP-CON-01, ET-usage-coverage]
+    unknowns: [coverage for exception-terminated execution]
+    prohibited_causal_interpretations: ["Cost record does not prove complete provider usage or canonical attempt_id semantics."]
+  - key: DS-REL-interaction-log-attempt-attribution
+    source: DS-ENT-interaction-log-artifact
+    target: DS-ENT-attempt
+    relationship_type: optionally-references-primary-key
+    cardinality: {source: "0..N", target: "0..1"}
+    ownership_semantics: row requires run/task and optionally cost/attempt PK
+    temporal_semantics: best-effort mutable upsert after execution paths
+    dependency_semantics: no workflow dependency
+    epistemic_status: observed
+    evidence: [DP-ownership-cost, ET-11]
+    counter_evidence: [ET-07]
+    unknowns: [write-failure and graph trace coverage]
+    prohibited_causal_interpretations: ["Stored legacy trace does not establish a complete graph transcript."]
+  - key: DS-REL-profile-resolves-model
+    source: DS-ENT-model-profile
+    target: DS-ENT-resolved-model
+    relationship_type: selects-default-or-override
+    cardinality: {source: "1", target: "0..N-over-time"}
+    ownership_semantics: runner default mapping is unique by runner type/profile; attempt captures model, not profile
+    temporal_semantics: defaults are mutable while a returned execution can capture resolved model
+    dependency_semantics: profile participates in runner model resolution
+    epistemic_status: observed
+    evidence: [DP-ENT-model-profile, DP-Q-04]
+    counter_evidence: []
+    unknowns: [historical profile reconstruction]
+    prohibited_causal_interpretations: ["Same model string does not prove the same profile or policy selected it."]
+  - key: DS-REL-graph-record-references-artifact
+    source: DS-ENT-graph-record
+    target: DS-ENT-artifact-reference
+    relationship_type: may-reference-typed-artifact-carrier
+    cardinality: {source: "1", target: "0..N"}
+    ownership_semantics: variant-specific; generic path declaration and CAS reference have different storage authority
+    temporal_semantics: record snapshot preserves reference assertion at acceptance
+    dependency_semantics: hydration policy may expose metadata or bounded content only when separately wired
+    epistemic_status: observed
+    evidence: [ET-09, ET-10, ET-artifact-conflict]
+    counter_evidence: []
+    unknowns: [unified artifact inventory/type hierarchy]
+    prohibited_causal_interpretations: ["Reference does not prove file existence, content delivery, or model ingestion."]
+  - key: DS-REL-backup-metadata-references-journal
+    source: DS-ENT-backup-metadata
+    target: DS-ENT-journal-segment
+    relationship_type: records-external-path-and-marker
+    cardinality: {source: "1", target: "0..N-observed-segments"}
+    ownership_semantics: metadata owns/copies no journal segment
+    temporal_semantics: DB copy precedes later journal scan; marker is maximum observed position/legacy sequence
+    dependency_semantics: marker is a replay-cut hint only; restore does not replay
+    epistemic_status: observed
+    evidence: [DP-ownership-backup-journal, DP-temporal-backup-cut, DP-CON-06]
+    counter_evidence: [api-cli-db-create-backup]
+    unknowns: [atomicity, journal replay consumer, live WAL safety]
+    prohibited_causal_interpretations: ["Recorded marker does not prove a crash-consistent recovery point or replay completion."]
+  - key: DS-REL-journal-bootstraps-empty-event-store
+    source: DS-ENT-journal-segment
+    target: DS-ENT-workflow-event
+    relationship_type: conditionally-imports-into
+    cardinality: {source: "0..N", target: "0..N"}
+    ownership_semantics: JSONL is secondary normal output but import source only when events_v2 is empty
+    temporal_semantics: archive and active records are read/deduplicated by global position during bootstrap
+    dependency_semantics: bootstrap reconstructs known projections for deserializable types
+    epistemic_status: observed
+    evidence: [DP-temporal-sql-jsonl-bootstrap, DP-CON-02, WF-JSONL-authority-conflict]
+    counter_evidence: [AGENTS-jsonl-first]
+    unknowns: [unconditional authority architecture]
+    prohibited_causal_interpretations: ["Conditional recovery import does not prove JSONL-first normal-write authority."]

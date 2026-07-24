@@ -1,4 +1,144 @@
 schema_version: "1"
 phase_status: incomplete
 completion_phase: 1
-items: []
+normalization_status: provisional
+key_policy: "EVI-P-* keys are Task 12 report-local keys, not canonical EVD-* IDs."
+source_snapshot:
+  baseline_id: snapshot-2026-07-23-phase-0
+  drift_authority: sha256-content
+  recomputed_at: "2026-07-23"
+  files:
+    - {path: docs/jtbd/jobs.md, baseline_sha256: c4b55d721670e0b124bbd2743da5f3dc521001cdfb5037a1b94b6bc5ccccff54, recomputed_sha256: c4b55d721670e0b124bbd2743da5f3dc521001cdfb5037a1b94b6bc5ccccff54, drift: false}
+    - {path: docs/jtbd/journeys.md, baseline_sha256: d0e90b58479433c006817c9abad8b6335ac865d32103a901b72f845609da696f, recomputed_sha256: d0e90b58479433c006817c9abad8b6335ac865d32103a901b72f845609da696f, drift: false}
+    - {path: docs/jtbd/decision-information.md, baseline_sha256: cacb3b12b9a4daab111f0afb408694b4e9e90762cc56858a99d787bf0a0bc56b, recomputed_sha256: cacb3b12b9a4daab111f0afb408694b4e9e90762cc56858a99d787bf0a0bc56b, drift: false}
+    - {path: docs/jtbd/information-architecture.md, baseline_sha256: 4191da5c30f86aad37c2f22d141cca9b9fbd88cf73c4b7b68b7bdb302140521e, recomputed_sha256: 4191da5c30f86aad37c2f22d141cca9b9fbd88cf73c4b7b68b7bdb302140521e, drift: false}
+    - {path: docs/jtbd/evaluation-rubric.md, baseline_sha256: 8866cc0f43d0740f8681e5a61809096cfa17a941b8a04408c291d289ba2adf83, recomputed_sha256: 8866cc0f43d0740f8681e5a61809096cfa17a941b8a04408c291d289ba2adf83, drift: false}
+    - {path: docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md, baseline_sha256: 3ded24752a04598fecef364af0356de8483737e8a6a23cc16abd22a3e710110a, recomputed_sha256: 3ded24752a04598fecef364af0356de8483737e8a6a23cc16abd22a3e710110a, drift: false}
+  coverage_limit: "The Phase 0 snapshot does not hash the implementation and test sources cited by reports 01-07; their present-content drift is unguarded."
+items:
+  - key: EVI-P-01
+    kind: workflow-event
+    identity: "events_v2 global position; (aggregate_id, version) is aggregate-local retry/order identity; no workflow event_id exists."
+    producer: "Workflow services, AttemptStore, and OutputBatcher through SqliteEventStore.append."
+    persistence: "Append-only SQL event row and synchronous SQL projections; JSONL is post-commit secondary output and may lag."
+    attribution: "run_id is required; task, attempt, requirement, and node fields are event-specific and may be absent."
+    query_surface: "GET /api/runs/{run_id}/activity is a selected, paginated activity projection, not a complete graph-inclusive ledger."
+    freshness: "Position is durable database order; timestamp is producer time. JSONL freshness is reconciled after committed SQL positions."
+    consistency: "Projection updates share the SQL append transaction; activity merges workflow events with only selected graph event families."
+    missing_behavior: "No workflow event UUID; no public complete cross-stream chronology; position alone supplies no causal mechanism."
+    current_availability: "implemented and tested for storage, projection, dual-output recovery, and activity readback."
+    epistemic_limits: "An event establishes an emitted fact and its typed payload, not that every related external effect occurred or that adjacent events are causal."
+    prohibited_interpretations: ["Do not equate position with graph event_id, record_id, execution_id, or attempt_id.", "Do not call activity a complete evidence ledger.", "Do not infer causality from order alone."]
+    sources: ["agent-reports/01-domain-persistence.md#DP-ENT-event", "agent-reports/03-workflow-state.md#Durable authority projection and recovery", "agent-reports/05-evidence-telemetry.md#ET-01"]
+  - key: EVI-P-02
+    kind: graph-event
+    identity: "Graph EventEnvelope event_id plus graph-local position; durable SQL aggregate identity is (graph:<run_id>, version)."
+    producer: "GraphController command handling and GraphEventStore.append_events."
+    persistence: "Graph events, compact summaries, node details, checkpoints, usage read model, outbox rows, and JSONL queue update transactionally; projections are disposable."
+    attribution: "Run, actor, and applicable node, lease, execution, and record IDs are carried in typed payloads."
+    query_surface: "GET /api/runs/{run_id}/graph/events provides the graph ledger in summary/full modes; selected events also appear in activity."
+    freshness: "Graph position and event timestamp describe append order/time; rebuilt projections are current only through their applied position."
+    consistency: "Event append and graph read models roll back together; activity is an intentionally incomplete cross-stream projection."
+    missing_behavior: "No endpoint returns the complete joined workflow-plus-graph chronology; callback observed_graph_position is not outcome validation evidence."
+    current_availability: "implemented and tested for append, typed payloads, replay, compact/full readback, and transaction rollback."
+    epistemic_limits: "Actor/correlation fields aid tracing but do not prove a business-causal relation; a projection can omit heavy payload detail."
+    prohibited_interpretations: ["Do not equate graph event_id with SQL position or workflow event identity.", "Do not treat a disposable projection as immutable history.", "Do not label temporal adjacency as causation."]
+    sources: ["agent-reports/02-graph-runtime.md#Events and projections", "agent-reports/05-evidence-telemetry.md#ET-02"]
+  - key: EVI-P-03
+    kind: accepted-graph-record
+    identity: "record_id, record_type, producer_node_id, producer_port, run_id, graph_position, schema version, and typed payload."
+    producer: "Graph dispatch callbacks, check execution, and graph command acceptance paths."
+    persistence: "Accepted-record events are durable; compact node-detail record materializations may omit heavy values and are rebuildable."
+    attribution: "Strong producer node/port and run attribution; selected records add candidate, task-region, attempt, evaluated-record, or file-state references."
+    query_surface: "Graph event and node-detail readbacks expose retained record materialization; no normalized record table was found."
+    freshness: "A record is a boundary snapshot at its graph position and is not automatically current after later graph or repository changes."
+    consistency: "Acceptance and bindings are reduced from events; record IDs in input ports represent binding references, not entity equivalence."
+    missing_behavior: "No universal record store, complete relational joins, or proof that task_region_id identifies a core task/region."
+    current_availability: "implemented and tested for typed acceptance, provenance fields, bindings, and node-detail replay."
+    epistemic_limits: "Record payload meaning is type-specific; summary omission and optional references constrain what can be concluded."
+    prohibited_interpretations: ["Do not equate a record with an event, requirement, artifact, task, or graph node.", "Do not infer a typed core-task join from matching strings.", "Do not treat retained summary fields as the full original record."]
+    sources: ["agent-reports/01-domain-persistence.md#DP-ENT-record", "agent-reports/02-graph-runtime.md#Typed graph-record inventory", "agent-reports/05-evidence-telemetry.md#ET-03"]
+  - key: EVI-P-04
+    kind: prompt-packet
+    identity: "Legacy: run/task/attempt/phase and stored text, with no prompt hash or packet ID. Graph: node/lease/generation/execution/base snapshot compact summary, with no independent packet ID."
+    producer: "Legacy PhaseHandler/AttemptStore before phase execution; graph dispatch _execution_context and acknowledge-start summary."
+    persistence: "Legacy full prompts can be stored on attempts and interaction rows; graph persists only compact start-event summary, not full bytes."
+    attribution: "Legacy associates run/task/attempt/phase/runner; graph associates graph stream/node/kind/role/lease/execution and compact bound-record metadata."
+    query_surface: "Legacy task/attempt prompt and trace surfaces; graph node detail/start-event summary."
+    freshness: "Prompt evidence is fixed at the attempted start boundary; graph summary shares start position/timestamp but cannot replay exact prompt bytes."
+    consistency: "Legacy prompt writes can fail silently; graph summary records assembly metadata, not delivery acknowledgement, ingestion, or full truncation accounting."
+    missing_behavior: "No packet hash, content size, directive binding, complete graph prompt, or model receipt exists."
+    current_availability: "legacy full prompt is partial current evidence; graph compact metadata is implemented/tested partial evidence."
+    epistemic_limits: "Stored or summarized content proves an assembly/persistence boundary only to its carrier-specific extent."
+    prohibited_interpretations: ["Do not equate legacy full prompt with graph prompt summary.", "Do not infer byte-for-byte delivery, model reading, prompt size, or directive binding.", "Do not treat usage input tokens as packet size."]
+    sources: ["agent-reports/05-evidence-telemetry.md#ET-04", "agent-reports/05-evidence-telemetry.md#ET-05", "agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries"]
+  - key: EVI-P-05
+    kind: transcript-and-tool-trace
+    identity: "Output events use workflow global position and line_offset; legacy action logs have sequenced parsed entries and tool IDs where supplied."
+    producer: "Runner on_output through OutputBatcher; runner parsers produce legacy ExecutionResult.action_log."
+    persistence: "Ordered agent_output events persist; legacy action log/final output persist to attempts and interaction rows; graph action log is extracted for usage then discarded."
+    attribution: "Output has run/task/attempt and graph node where applicable; legacy trace includes phase/runner, while graph lacks persisted structured tool-sequence identity."
+    query_surface: "Activity and legacy run-trace/task-detail surfaces; graph has carrier-dependent output lines but no canonical action-log query."
+    freshness: "Final flush is wired, but no canonical stream-complete marker establishes a complete transcript."
+    consistency: "Carrier formatting differs; compact activity pagination and omitted graph action logs prevent a uniform trace contract."
+    missing_behavior: "No complete transcript marker, graph structured action log, graph tool arguments/results, or all-run tool coverage."
+    current_availability: "implemented and tested partial evidence, explicitly carrier- and execution-mode-dependent."
+    epistemic_limits: "A persisted line or parsed entry proves only retained adapter output; it cannot prove complete runner/model/tool activity."
+    prohibited_interpretations: ["Do not call streamed output a complete transcript.", "Do not equate output lines, action-log entries, and tool executions.", "Do not infer graph tool activity from legacy trace availability."]
+    sources: ["agent-reports/05-evidence-telemetry.md#ET-06", "agent-reports/05-evidence-telemetry.md#ET-07", "agent-reports/06-ui-projections.md#UIP-16"]
+  - key: EVI-P-06
+    kind: artifact-reference
+    identity: "CAS artifact identity is content SHA-256 plus size/media metadata; declared graph artifact references have record identity/type/path URI; legacy interaction logs have execution-tuple row identity."
+    producer: "Check-output externalization to CAS; worker artifact declarations; legacy PhaseHandler/AttemptStore interaction-log upsert."
+    persistence: "CAS blobs are content-addressed and verified; declaration records persist without reading the target file; interaction rows are mutable direct DB upserts."
+    attribution: "CAS download authorization follows a run check-result reference; declarations carry run/node/candidate context; interaction logs carry run/task/attempt/runner/phase."
+    query_surface: "Run artifact range endpoint for authorized CAS references; graph record/node details for declarations; no dedicated interaction-log retrieval API."
+    freshness: "CAS integrity is checked on read; a path declaration has no existence/content freshness guarantee; interaction rows are mutable."
+    consistency: "CAS publication/GC are coordinated, but generic declarations and legacy interaction logs do not share the CAS integrity contract."
+    missing_behavior: "Generic artifact references are not verified/downloadable CAS blobs; no shared artifact ID or unified inventory exists."
+    current_availability: "CAS check artifacts implemented/tested; declarations and interaction logs implemented with materially weaker, distinct guarantees."
+    epistemic_limits: "The word artifact denotes several carriers with different identity, authority, and retention boundaries."
+    prohibited_interpretations: ["Do not equate an artifact path declaration with a CAS blob.", "Do not infer file existence or agent access from an artifact reference.", "Do not equate interaction-log rows, expected paths, and graph records."]
+    sources: ["agent-reports/01-domain-persistence.md#DP-ENT-artifact", "agent-reports/05-evidence-telemetry.md#ET-09", "agent-reports/05-evidence-telemetry.md#ET-10", "agent-reports/05-evidence-telemetry.md#ET-11"]
+  - key: EVI-P-07
+    kind: file-state-boundary
+    identity: "file-state-<execution_id>, base/captured snapshot IDs, git commit/tree/ref, classified path sets, residue, rejection, and cleanup lineage."
+    producer: "Graph callback capture_file_state_boundary and file-state acceptance/rejection paths."
+    persistence: "Accepted/rejected file-state facts are durable graph records; referenced snapshots are immutable/restorable while their refs remain."
+    attribution: "Run, producer node, execution, and classified paths are retained."
+    query_surface: "Graph file-state report, node detail, and graph events."
+    freshness: "Fresh only at the captured callback boundary; later worktree state can differ."
+    consistency: "Capture is a whole-worktree observation; concurrent/cumulative writes mean node attribution is observer attribution, not exclusive authorship."
+    missing_behavior: "Normal producer does not emit diffstat or content hashes for ordinary tracked/untracked files; no node-only causal delta is established."
+    current_availability: "implemented and tested for capture, classification, snapshot, rejection, cleanup, and report readback."
+    epistemic_limits: "Snapshot/file classification supports a repository boundary observation, not a proof of which node caused each change."
+    prohibited_interpretations: ["Do not call file-state a node-caused delta.", "Do not infer diff content or diffstat from the normal record.", "Do not equate a snapshot ID with an event, artifact, or candidate ID."]
+    sources: ["agent-reports/05-evidence-telemetry.md#ET-08", "agent-reports/05-evidence-telemetry.md#File-state producer attribution", "agent-reports/06-ui-projections.md#UIP-15"]
+  - key: EVI-P-08
+    kind: decision-evidence
+    identity: "Carrier-specific: graph decision event/record IDs, clarification request/response IDs, approval records, patch attempt/event IDs, or workflow event position."
+    producer: "Graph record_decision/patch commands, clarification and approval workflows, and transport-specific action handlers."
+    persistence: "Many decisions append durable events/records; queued lifecycle acceptance and some administrative/file operations do not supply one uniform result record."
+    attribution: "Graph endpoint identities may be caller-supplied or fixed operator; legacy paths use fixed/injected/caller-supplied values not bound uniformly to JWT claims."
+    query_surface: "Graph decision views/events, clarification histories, run activity, and action-specific responses; no universal decision ledger."
+    freshness: "Decision read models are current through their event/projection position; queued acceptance is not proof that an eventual result has occurred."
+    consistency: "Transport result contracts diverge: REST/MCP/CLI can differ in acceptance timing, response shape, and signal-queue behavior."
+    missing_behavior: "No universal durable action-result identity, consistently authenticated actor attribution, or complete acceptance/rejection/result/next-activity bundle."
+    current_availability: "implemented for specific graph and workflow decision carriers; cross-carrier evidence is partial."
+    epistemic_limits: "Recorded actor text or a successful acceptance response does not prove authorization, resulting state, or causal downstream effect."
+    prohibited_interpretations: ["Do not equate approval, clarification, graph decision, patch proposal, patch command, and applied topology change.", "Do not call recorded identity authenticated identity.", "Do not treat accepted queued command evidence as completed result evidence."]
+    sources: ["agent-reports/04-api-actions-authority.md#Authority model", "agent-reports/04-api-actions-authority.md#Race idempotency and action feedback", "agent-reports/05-evidence-telemetry.md#jobs.J3.evidence"]
+  - key: EVI-P-09
+    kind: cost-and-usage-fact
+    identity: "Graph usage: execution_id:usage_index; legacy: run/task/attempt/runner/phase cost-row tuple plus per-model attempt/run usage."
+    producer: "Post-return ExecutionResult extraction in graph dispatch and legacy PhaseHandler; GraphController.record_node_usage; AttemptStore cost upsert."
+    persistence: "Graph facts are append-oriented events/read models; legacy usage is event-projected while CostRecordModel is mutable best-effort direct upsert."
+    attribution: "Graph carries run/node/kind/role/profile/execution/model; legacy carries run/task/attempt/phase/runner/model. Sub-agent identity/type is not retained in graph usage."
+    query_surface: "Graph-only GET /api/runs/cost-rollup; run/API per-model projections and legacy cost report, each with different coverage."
+    freshness: "Graph UTC day derives from event time; facts are immutable per execution key. Pricing resolution details are not persisted, and cost-row writes can fail."
+    consistency: "Rollup counts latency/actions once per run/execution and exposes rate_missing, but excludes legacy records and unreported/exception-terminated executions."
+    missing_behavior: "No fact for exact-zero versus absent usage, runner exceptions after provider use, complete rate cards, fleet-wide denominator, budget pace, price-coverage field, or cost-of-next-attempt algorithm."
+    current_availability: "graph returned-execution usage and graph-only rollup are implemented/tested; legacy and exception coverage remain partial/unknown."
+    epistemic_limits: "Numeric zero may mean legitimate explicit-zero pricing or unavailable numeric cost; absent usage is not evidence of zero consumption."
+    prohibited_interpretations: ["Do not equate unpriced with free or zero cost.", "Do not call graph-only rollup fleet-wide coverage.", "Do not infer no provider usage from an absent usage fact.", "Do not treat rate_missing false as a complete rate card."]
+    sources: ["agent-reports/05-evidence-telemetry.md#ET-12", "agent-reports/05-evidence-telemetry.md#ET-13", "agent-reports/05-evidence-telemetry.md#ET-14", "agent-reports/06-ui-projections.md#UIP-18"]

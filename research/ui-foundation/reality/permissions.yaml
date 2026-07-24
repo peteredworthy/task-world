@@ -1,4 +1,45 @@
 schema_version: "1"
-phase_status: incomplete
+phase_status: synthesized-provisional
 completion_phase: 1
-items: []
+key_namespace: provisional
+items:
+  - key: permission-authentication-global
+    title: Optional global bearer authentication
+    implementation_status: present
+    enforced_authentication: "When enabled, API and MCP middleware require a valid bearer JWT; authentication is disabled by default."
+    enforced_authorization: absent
+    domain_eligibility: "Not an action eligibility rule."
+    proposed_product_role_policy: null
+    evidence: ["agent-reports/04-api-actions-authority.md#authority-model"]
+  - key: permission-authorization-per-action
+    title: Product-role authorization for mutations
+    implementation_status: absent
+    enforced_authentication: "Optional valid-token gate only."
+    enforced_authorization: "No endpoint verifies JWT subject, role, scope, ownership, membership, or action permission."
+    domain_eligibility: "Commands separately reject invalid state, graph role, target, and input conditions."
+    proposed_product_role_policy: "Unspecified; no role policy is admitted by this synthesis."
+    evidence: ["agent-reports/04-api-actions-authority.md#authority-model"]
+  - key: permission-legacy-operator-assumption
+    title: Legacy endpoint operator attribution assumption
+    implementation_status: present
+    enforced_authentication: "Optional global gate; not bound to recorded actor."
+    enforced_authorization: absent
+    domain_eligibility: "Endpoint/service lifecycle and task-state checks."
+    proposed_product_role_policy: null
+    limitation: "Fixed human-operator/user or caller-supplied identity is audit attribution, not a verified product role."
+  - key: permission-graph-command-eligibility
+    title: Graph command actor and domain eligibility
+    implementation_status: present
+    enforced_authentication: "Outer JWT gate remains optional."
+    enforced_authorization: "Graph command role/context validation is enforced, but it is not authenticated human-role authorization."
+    domain_eligibility: "Target kind/state, decision type/value, graph position, lease, topology, resource, and validator rules are command-specific prerequisites."
+    proposed_product_role_policy: null
+    evidence: ["agent-reports/02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table", "agent-reports/04-api-actions-authority.md#graph-decision-patch-retire-supersede-and-requeue-capability"]
+  - key: permission-scoped-mcp-capability
+    title: Scoped MCP tool exposure
+    implementation_status: present
+    enforced_authentication: "Optional global gate."
+    enforced_authorization: "Tool allowlisting constrains exposed names, not actor authorization."
+    domain_eligibility: "Execution-bound graph closures and command validators still apply."
+    proposed_product_role_policy: null
+    prohibited_interpretation: "Do not represent tool scope as a human permission grant."

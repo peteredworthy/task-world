@@ -1,4 +1,431 @@
 schema_version: "1"
-phase_status: incomplete
+phase_status: partial
 completion_phase: 1
-items: []
+key_namespace: domain-synthesis/provisional
+canonical_id_policy: "Task 10 uses only provisional scoped keys; Task 13 allocates ENT-* IDs."
+items:
+  - key: DS-ENT-routine-config
+    title: Routine configuration
+    definition: Versioned YAML template that declares nested step and task configuration; it is not a run instance.
+    identity: config id in routine source
+    ownership: source-controlled configuration
+    persistence: YAML/discovery boundary; no routine ORM row
+    lifecycle: versioned externally to a run
+    aliases: []
+    mode_boundary: shared template input to legacy and graph execution; does not prove either runtime topology
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-run-config]
+    counter_evidence: []
+    unknowns: [routine_sha meaning across all source modes]
+    prohibited_interpretations: ["Do not equate this template with a Run."]
+  - key: DS-ENT-run
+    title: Run
+    definition: Independently identified mutable execution instance with provenance and row-level lifecycle state.
+    identity: Run.id / runs.id
+    ownership: root persistent aggregate/read model
+    persistence: runs table and event-projected state
+    lifecycle: draft, active, paused, stopping, completed, failed, cancelled; failed reopening is graph-mode-qualified
+    aliases: []
+    mode_boundary: shared row-level carrier; not proof that legacy and graph topologies are equivalent
+    implementation_status: present
+    test_status: exercised
+    documentation_status: conflicting
+    epistemic_status: observed
+    evidence: [DP-ENT-run, WF-run-status, WF-run-edges]
+    counter_evidence: [DP-CON-04, CON-WF-05]
+    unknowns: [complete cross-mode state contract]
+    prohibited_interpretations: ["routine_id is not run identity.", "A queued lifecycle request is not its resulting state."]
+  - key: DS-ENT-step
+    title: Runtime step
+    definition: Ordered run-owned execution step retaining a generated runtime ID and a template config ID.
+    identity: StepState.id / steps.id; config_id is separate lineage
+    ownership: Run owns zero-to-many steps
+    persistence: steps table
+    lifecycle: completed/skipped flags, approval and condition data; no independent status enum
+    aliases: []
+    mode_boundary: legacy workflow carrier; not a graph region
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-step, DP-LIFE-step, WF-step-run-cascade]
+    counter_evidence: []
+    unknowns: [whether both completed and skipped flags are intentionally permitted]
+    prohibited_interpretations: ["List position and config_id are not step identity.", "Do not alias step with region."]
+  - key: DS-ENT-task
+    title: Runtime task
+    definition: Step-owned mutable work unit with checklist, status, attempt counters, and optional fan-out lineage.
+    identity: TaskState.id / tasks.id; config_id remains template lineage
+    ownership: Step owns zero-to-many tasks; optional parent_task_id self-reference
+    persistence: tasks table plus event-projected fields
+    lifecycle: pending, building, pending_user_action, verifying, recovering, fan_out_running, completed, failed
+    aliases: []
+    mode_boundary: legacy workflow carrier; not a graph node
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-task, WF-task-status, WF-task-edges]
+    counter_evidence: [UIP-11]
+    unknowns: [child_id and fan-out lineage semantics, task-to-node mapping]
+    prohibited_interpretations: ["Do not equate task with graph node or task_region_id."]
+  - key: DS-ENT-attempt
+    title: Attempt
+    definition: Task-owned execution occurrence with durable primary-key identity, ordinal, timestamps, outcome, and grade snapshot.
+    identity: Attempt.id / attempts.id is the round-tripped identity; nullable attempts.attempt_id is conflicting
+    ownership: Task owns zero-to-many attempts
+    persistence: attempts table and event-projected snapshots
+    lifecycle: timestamps plus unconstrained nullable outcome; not a closed outcome state machine
+    aliases: []
+    mode_boundary: legacy attempt carrier; graph attempt_number is not a typed join
+    implementation_status: partial
+    test_status: exercised
+    documentation_status: conflicting
+    epistemic_status: observed
+    evidence: [DP-ENT-attempt, DP-CON-01, WF-task-edges]
+    counter_evidence: [DP-ENT-attempt-record]
+    unknowns: [canonical semantic attempt identifier, uniqueness of task plus ordinal]
+    prohibited_interpretations: ["Do not alias id and nullable attempt_id.", "Do not infer lineage solely from attempt_num."]
+  - key: DS-ENT-requirement-config
+    title: Requirement configuration
+    definition: Template requirement that seeds a task-local checklist item.
+    identity: RequirementConfig.id
+    ownership: task configuration
+    persistence: routine configuration, then converted into task checklist JSON
+    lifecycle: template definition; revisions are graph-local evidence and not proven equivalent
+    aliases: []
+    mode_boundary: configuration lineage; not a graph RequirementRecord
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-requirement, DP-ENT-run-config]
+    counter_evidence: []
+    unknowns: [cross-mode requirement identity conversion]
+    prohibited_interpretations: ["Do not equate requirement config with checklist item, graph record, or graph revision."]
+  - key: DS-ENT-checklist-item
+    title: Checklist item
+    definition: Mutable task-local persisted JSON projection of a requirement with status and optional grade.
+    identity: req_id within a task checklist; no requirement table primary key
+    ownership: Task
+    persistence: tasks.checklist JSON; grade snapshots can be copied to attempts
+    lifecycle: ChecklistStatus and separate nullable grade
+    aliases: []
+    mode_boundary: legacy verification carrier
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-requirement, DP-LIFE-requirement]
+    counter_evidence: []
+    unknowns: [SQL shape and consistency between latest checklist and historical grade snapshot]
+    prohibited_interpretations: ["Current checklist is not immutable attempt history."]
+  - key: DS-ENT-workflow-event
+    title: Workflow event row
+    definition: Append-only events_v2 row for a workflow aggregate, globally ordered by position and locally guarded by aggregate_id plus version.
+    identity: global position; aggregate_id plus version is per-aggregate duplicate/order identity
+    ownership: SQL event store
+    persistence: events_v2; JSONL is a secondary/recovery artifact under conditional bootstrap
+    lifecycle: append-only; projections are mutable and rebuildable
+    aliases: []
+    mode_boundary: workflow aggregate stream; graph uses graph:<run_id> aggregate and distinct envelope identity
+    implementation_status: present
+    test_status: exercised
+    documentation_status: conflicting
+    epistemic_status: observed
+    evidence: [DP-ENT-event, ET-01, CON-WF-01]
+    counter_evidence: [DP-CON-02]
+    unknowns: [system-wide sole-truth event-sourcing claim]
+    prohibited_interpretations: ["Timestamp, position, aggregate version, and graph event_id are not aliases.", "Order alone is not causality."]
+  - key: DS-ENT-graph-event-envelope
+    title: Graph event envelope
+    definition: Graph-local event with event_id and run-local position persisted within the graph aggregate stream.
+    identity: event_id in envelope; database append identity remains graph aggregate plus version
+    ownership: graph event store
+    persistence: events_v2 graph aggregate and disposable summaries
+    lifecycle: append-only event; reduces into disposable projections
+    aliases: []
+    mode_boundary: graph-specific; not interchangeable with workflow event row identity
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-graph-event, ET-02, GR-Events]
+    counter_evidence: []
+    unknowns: [complete joined public chronology]
+    prohibited_interpretations: ["Do not call event_id the events_v2 primary key.", "Do not infer causality from adjacent positions."]
+  - key: DS-ENT-graph-projection
+    title: Graph projection
+    definition: Current materialized graph view containing topology, bindings, node state, leases, records, and checkpoints.
+    identity: run_id current projection/snapshot boundary
+    ownership: graph runtime read-model projection
+    persistence: disposable graph projection snapshot and summary/detail tables
+    lifecycle: rebuilt when missing, stale, or schema-mismatched
+    aliases: []
+    mode_boundary: graph read model, not the Run or a backup substitute
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [GR-Topology, GR-Durability, DP-ENT-node]
+    counter_evidence: [DP-ENT-journal-segment]
+    unknowns: [whether all production graph paths are reachable]
+    prohibited_interpretations: ["Projection arrays are not immutable entity ledgers."]
+  - key: DS-ENT-graph-node
+    title: Graph node
+    definition: Typed graph-local work/topology vertex with its own ID, kind, state, ports, and optional task_region_id string.
+    identity: node_id
+    ownership: graph projection/topology
+    persistence: graph events and disposable graph node-detail projection
+    lifecycle: graph-local node state transitions and retirement
+    aliases: []
+    mode_boundary: graph entity; never presumed to be a legacy task or step
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [GR-Topology, DP-ENT-node, WF-legacy-versus-graph]
+    counter_evidence: [UIP-11]
+    unknowns: [task_region_id owner and cardinality, typed core-task join]
+    prohibited_interpretations: ["task_region_id is not a proven Region entity or task foreign key."]
+  - key: DS-ENT-graph-edge
+    title: Directed graph edge
+    definition: Typed directed connection from one source node port to one target node port.
+    identity: graph edge identity in topology event/projection
+    ownership: graph topology
+    persistence: graph events and projection
+    lifecycle: created, validated, and possibly retired by accepted patches
+    aliases: []
+    mode_boundary: input_binding and state_dependency are graph semantics, not generic task dependencies
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [GR-Topology, GR-Cardinality, GR-Dynamic-expansion]
+    counter_evidence: []
+    unknowns: [stable external edge ID readback contract]
+    prohibited_interpretations: ["An edge is not a record and is not automatically causal beyond its documented mechanism."]
+  - key: DS-ENT-graph-record
+    title: Accepted graph record
+    definition: Typed output/evidence record accepted at a producer node port with record-specific payload and durable base fields.
+    identity: record_id
+    ownership: graph event/projection history, attributed to one producer node and port
+    persistence: accepted graph event and compact/full projection materializations
+    lifecycle: accepted snapshot; later bindings and file changes do not mutate its historical assertion
+    aliases: []
+    mode_boundary: graph record is distinct from workflow event, requirement config, and generic artifact term
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [GR-Typed-records, ET-03, DP-ENT-record]
+    counter_evidence: [DP-ENT-artifact]
+    unknowns: [which graph record variants are authoritative versus deliberately lossy projections]
+    prohibited_interpretations: ["Record presence does not prove prompt delivery, file causation, or requirement equivalence."]
+  - key: DS-ENT-input-binding
+    title: Graph input binding
+    definition: Target-node-port and edge-specific selection of accepted record IDs under a PortContract cardinality policy.
+    identity: target node/port/edge binding context; no asserted universal standalone identifier
+    ownership: graph projection
+    persistence: graph input_bound events and binding projection
+    lifecycle: selection can be replaced for latest policy or accumulated for many/all
+    aliases: []
+    mode_boundary: graph dataflow mechanism, not generic workflow dependency
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [GR-Cardinality, GR-Topology]
+    counter_evidence: []
+    unknowns: [public stable binding identity]
+    prohibited_interpretations: ["A temporal record event does not imply it was bound or consumed."]
+  - key: DS-ENT-graph-lease
+    title: Graph lease
+    definition: Scheduler control record for one node execution and generation at a time.
+    identity: node plus execution plus generation in lease context
+    ownership: graph projection/runtime scheduler
+    persistence: graph lease events and projection
+    lifecycle: granted, renewed, released, revoked, expired, or suspended
+    aliases: []
+    mode_boundary: graph durable scheduling lease; not workflow's in-memory task lock
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [GR-Leasing, WF-locking]
+    counter_evidence: [WF-locking]
+    unknowns: [cross-mode exclusive-work guarantee]
+    prohibited_interpretations: ["Do not call the process-local task lock this lease or claim a distributed lock."]
+  - key: DS-ENT-graph-outbox-intent
+    title: Graph outbox intent
+    definition: Durable at-least-once side-effect dispatch intent associated with selected graph events.
+    identity: graph outbox row/event_id association
+    ownership: graph runtime persistence
+    persistence: graph_outbox table
+    lifecycle: pending, dispatching, retried/backed-off, failed, or completed by dispatcher behavior
+    aliases: []
+    mode_boundary: side-effect intent, not a GraphProjection-owned field or graph event itself
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [GR-Durability, GR-Commands, api-action-outbox-requeue]
+    counter_evidence: []
+    unknowns: [downstream external exactly-once semantics]
+    prohibited_interpretations: ["Requeue can permit duplicate work and is not an undo."]
+  - key: DS-ENT-clarification-request
+    title: Clarification request
+    definition: Run-owned request containing typed questions and task/attempt attribution values.
+    identity: clarification_requests.id
+    ownership: Run; task_id and attempt_num are not foreign keys
+    persistence: clarification_requests table and workflow events
+    lifecycle: pending until response or stale/terminal handling
+    aliases: []
+    mode_boundary: legacy clarification flow; not a generic graph authority request
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-clarification, api-action-clarification-create]
+    counter_evidence: []
+    unknowns: [universal decision-record identity]
+    prohibited_interpretations: ["Attribution strings do not establish task or actor referential integrity."]
+  - key: DS-ENT-clarification-response
+    title: Clarification response
+    definition: Optional single response owned by one clarification request, recording answers and respondent attribution.
+    identity: clarification_responses.id; request_id is unique
+    ownership: clarification request owns zero-or-one response
+    persistence: clarification_responses table and response event
+    lifecycle: created response can resume a qualifying paused workflow; no answer revision command
+    aliases: []
+    mode_boundary: response record is not an authenticated actor identity
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-clarification, api-action-clarification-respond]
+    counter_evidence: [api-identity-attribution]
+    unknowns: [exactly-once artifact append under response race]
+    prohibited_interpretations: ["Recorded respondent is not proven JWT-bound identity."]
+  - key: DS-ENT-cost-record
+    title: Legacy cost record
+    definition: Per legacy execution-tuple usage/cost row linked to run and task and optionally to attempt primary key.
+    identity: CostRecordModel.id plus unique execution tuple
+    ownership: execution telemetry persistence
+    persistence: cost_records table
+    lifecycle: mutable direct upsert after returned execution result
+    aliases: []
+    mode_boundary: legacy telemetry; excluded from graph cross-run rollup
+    implementation_status: partial
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ownership-cost, ET-13, ET-14]
+    counter_evidence: [ET-usage-coverage]
+    unknowns: [exception-terminated provider usage coverage]
+    prohibited_interpretations: ["Missing or unpriced usage is not zero cost."]
+  - key: DS-ENT-interaction-log-artifact
+    title: Legacy interaction-log artifact
+    definition: Legacy prompt/output/action-log row for an execution tuple, optionally related to cost and attempt primary keys.
+    identity: InteractionLogArtifactModel.id plus execution-tuple uniqueness
+    ownership: legacy execution telemetry
+    persistence: interaction_log_artifacts table
+    lifecycle: mutable best-effort upsert
+    aliases: []
+    mode_boundary: no graph-equivalent persisted structured action log
+    implementation_status: partial
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ownership-cost, ET-07, ET-11]
+    counter_evidence: [ET-07]
+    unknowns: [graph trace persistence and failed-write coverage]
+    prohibited_interpretations: ["Do not treat this row as CAS content or a generic artifact alias."]
+  - key: DS-ENT-artifact-reference
+    title: Artifact reference
+    definition: "Typed reference carrier whose semantics depend on its variant: verified CAS blob, declared graph path, expected path, or legacy interaction row."
+    identity: variant-specific; CAS uses SHA-256 content identity while generic graph declarations use record content
+    ownership: variant-specific producer/storage boundary
+    persistence: CAS, graph record, configuration, or interaction-log row
+    lifecycle: variant-specific publication, retention, and availability
+    aliases: []
+    mode_boundary: intentionally non-unified umbrella vocabulary
+    implementation_status: partial
+    test_status: exercised
+    documentation_status: conflicting
+    epistemic_status: observed
+    evidence: [DP-ENT-artifact, ET-09, ET-10]
+    counter_evidence: [ET-artifact-conflict]
+    unknowns: [whether a typed artifact supertype should be designed]
+    prohibited_interpretations: ["A declared path does not prove existence, CAS publication, or content integrity."]
+  - key: DS-ENT-model-profile
+    title: Model profile
+    definition: Enumerated cognitive-role configuration used to select a model default.
+    identity: ModelProfile enum value within runner default mapping
+    ownership: configuration/default mapping
+    persistence: task configuration and agent_runner_model_profile_defaults
+    lifecycle: mutable defaults; no attempt-level historical profile snapshot
+    aliases: []
+    mode_boundary: configuration selection, distinct from resolved model string
+    implementation_status: partial
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-model-profile, DP-Q-04]
+    counter_evidence: []
+    unknowns: [historical profile attribution for an execution]
+    prohibited_interpretations: ["Profile and resolved model are not aliases."]
+  - key: DS-ENT-resolved-model
+    title: Resolved model
+    definition: Provider/model string captured on attempt or usage facts after profile/default resolution.
+    identity: model string in execution context; not a profile identity
+    ownership: execution telemetry/config resolution boundary
+    persistence: attempt and usage carriers where available
+    lifecycle: captured per execution where producer returns it
+    aliases: []
+    mode_boundary: can be shared by different profiles and runners
+    implementation_status: present
+    test_status: exercised
+    documentation_status: documented
+    epistemic_status: observed
+    evidence: [DP-ENT-model-profile, ET-12, ET-13]
+    counter_evidence: []
+    unknowns: [complete model/profile cohort reconstruction]
+    prohibited_interpretations: ["A resolved model does not recover the historical profile."]
+  - key: DS-ENT-backup-metadata
+    title: Backup metadata sidecar
+    definition: Timestamp-derived sidecar describing a copied DB path and observed journal marker.
+    identity: backup_id filename stem; not content identity
+    ownership: filesystem recovery helper
+    persistence: .backup-meta.json sidecar
+    lifecycle: created beside copied DB and consumed by restore
+    aliases: []
+    mode_boundary: recovery artifact, not execution output or event bundle
+    implementation_status: partial
+    test_status: exercised
+    documentation_status: conflicting
+    epistemic_status: observed
+    evidence: [DP-ENT-backup, DP-ENT-backup-sidecar, DP-CON-06]
+    counter_evidence: [api-cli-db-create-backup]
+    unknowns: [live-WAL consistency, collision handling, replay consumer]
+    prohibited_interpretations: ["Metadata and its journal marker do not prove an atomic recovery cut or completed replay."]
+  - key: DS-ENT-journal-segment
+    title: JSONL journal segment
+    definition: Active or immutable range-named secondary event journal artifact deduplicated by contained position.
+    identity: segment path/range plus contained positions; not event timestamp
+    ownership: JSONL outbox rotation/recovery
+    persistence: active history.jsonl and archive files
+    lifecycle: append, hard-link rotation, recovery, and archive discovery
+    aliases: []
+    mode_boundary: secondary output under normal SQL authority; can bootstrap only an empty event table
+    implementation_status: present
+    test_status: exercised
+    documentation_status: conflicting
+    epistemic_status: observed
+    evidence: [DP-ENT-journal-segment, DP-CON-02, WF-JSONL-authority-conflict]
+    counter_evidence: [AGENTS-jsonl-first]
+    unknowns: [system-wide journal-first architecture intent]
+    prohibited_interpretations: ["Journal segment is not a backup-owned bundle or unconditional primary authority."]
