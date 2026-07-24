@@ -3,6 +3,8 @@
 # All targets use: uv run pytest
 
 .PHONY: test \
+        test-changed \
+        test-changed-reset \
         test-codex \
         test-codex-unit \
         test-codex-integration \
@@ -24,6 +26,34 @@
 
 test:
 	uv run pytest
+
+
+# ---------------------------------------------------------------------------
+# Impact-selected suite (local dev loop)
+# ---------------------------------------------------------------------------
+#
+# Runs only tests whose covered code changed since the last `make test-changed`,
+# using pytest-testmon's per-test coverage map (`.testmondata`, gitignored).
+#
+# Constraints, all deliberate:
+#   * `-o addopts=` — testmon cannot run under xdist, and it silently disables
+#     selection if `-m` is passed. The default addopts carry both, so they are
+#     cleared here. slow/e2e tests stay excluded via the marker skips in
+#     tests/conftest.py, which do not depend on `-m`.
+#   * `--timeout=180` — coverage tracing makes tests ~4x slower than the
+#     parallel run; the default 30s timeout would produce false failures.
+#
+# First run builds the map (full single-process pass, ~90s for tests/unit).
+# Subsequent no-change runs finish in <1s. This is a dev-loop accelerator, not
+# a merge gate — `make test` remains the gate.
+test-changed:
+	uv run pytest --testmon -o addopts="--timeout=180" $(ARGS)
+
+# Discard the impact map and rebuild it from scratch. Needed after dependency
+# upgrades or if selection ever looks wrong.
+test-changed-reset:
+	rm -f .testmondata .testmondata-journal
+	uv run pytest --testmon -o addopts="--timeout=180" $(ARGS)
 
 
 # ---------------------------------------------------------------------------
