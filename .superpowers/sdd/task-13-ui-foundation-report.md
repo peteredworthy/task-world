@@ -93,4 +93,4 @@ claims.  No product behavior was changed.
 
 ## Commit
 
-Commit SHA: pending at report creation; populated by the Task 13 commit command.
+Canonical artifact commit: `48a86f7f8` (`docs: normalize UI foundation Phase 1`).
