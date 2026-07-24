@@ -1099,18 +1099,29 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         status = item.get("capability_status")
         implementation = item.get("implementation_status")
         output_contract = item.get("output_contract")
-        output_semantic_type = (
-            output_contract.get("semantic_type") if isinstance(output_contract, dict) else None
-        )
+        output_variants = _output_variants(output_contract)
         if status in {"current", "derived"} and (
             not isinstance(output_contract, dict)
-            or not isinstance(output_semantic_type, str)
-            or not output_semantic_type.strip()
-            or not _nonempty_string_list(output_contract.get("fields"))
+            or not output_variants
+            or not all(_valid_output_variant(variant) for variant in output_variants)
         ):
             issues.append(
                 _issue(
                     "CAPABILITY_OUTPUT_CONTRACT_INVALID",
+                    package.root / "capabilities/registry.yaml",
+                    item.get("id"),
+                )
+            )
+        asserted_variant_types = set(_string_list(item.get("asserted_output_variant_types")))
+        contract_variant_types = {
+            variant["semantic_type"]
+            for variant in output_variants
+            if isinstance(variant.get("semantic_type"), str)
+        }
+        if asserted_variant_types and asserted_variant_types != contract_variant_types:
+            issues.append(
+                _issue(
+                    "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID",
                     package.root / "capabilities/registry.yaml",
                     item.get("id"),
                 )
@@ -1191,20 +1202,35 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 if isinstance(evidence_ids, list)
                 else []
             )
-            if isinstance(output_semantic_type, str) and not any(
-                _is_direct_evidence(record)
-                and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
-                and record.get("reachable") is True
-                and output_semantic_type in _string_list(record.get("supported_semantic_types"))
-                for record in raw_records
-            ):
-                issues.append(
-                    _issue(
-                        "CURRENT_OUTPUT_SEMANTIC_EVIDENCE_MISSING",
-                        package.root / "capabilities/registry.yaml",
-                        item.get("id"),
-                    )
+            for variant in output_variants:
+                variant_type = variant.get("semantic_type")
+                if not isinstance(variant_type, str):
+                    continue
+                has_implementation = any(
+                    _is_direct_evidence(record)
+                    and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
+                    and record.get("reachable") is True
+                    and _has_valid_direct_locator(record, snapshot_paths)
+                    and variant_type in _string_list(record.get("supported_semantic_types"))
+                    for record in raw_records
                 )
+                has_test = any(
+                    _is_direct_evidence(record)
+                    and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
+                    and record.get("reachable") is True
+                    and record.get("test_status") == "exercised"
+                    and _has_valid_direct_locator(record, snapshot_paths)
+                    and variant_type in _string_list(record.get("supported_semantic_types"))
+                    for record in raw_records
+                )
+                if not has_implementation or not has_test:
+                    issues.append(
+                        _issue(
+                            "CURRENT_OUTPUT_VARIANT_EVIDENCE_MISSING",
+                            package.root / "capabilities/registry.yaml",
+                            f"{item.get('id')}:{variant_type}",
+                        )
+                    )
             if not any(
                 _is_direct_evidence(record)
                 and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
@@ -1614,8 +1640,19 @@ def _role_accepts_semantic_type(role: str, semantic_type: str) -> bool:
         "authority-action": "ActionContract",
         "authority-policy": "PermissionContract",
         "usage-telemetry": "UsageTelemetry",
+        "graph-usage-rollup": "UsageTelemetry",
+        "structured-tool-trace": "EvidenceInventory",
     }.get(role)
     return required == semantic_type
+
+
+def _role_accepts_canonical_carrier(role: str, identifier: str) -> bool:
+    """Keep demand-specific roles attached to the carrier that establishes them."""
+    required = {
+        "EVI-5": "structured-tool-trace",
+        "EVI-9": "graph-usage-rollup",
+    }.get(identifier)
+    return required is None or role == required
 
 
 def _carrier_records(package: FoundationPackage) -> dict[str, dict[str, JsonValue]]:
@@ -1647,11 +1684,31 @@ def _nonempty_string_list(value: JsonValue) -> bool:
     )
 
 
+def _output_variants(output_contract: JsonValue) -> list[dict[str, JsonValue]]:
+    """Normalize a singleton output contract or its explicit discriminated variants."""
+    if not isinstance(output_contract, dict):
+        return []
+    variants = output_contract.get("variants")
+    if isinstance(variants, list):
+        return [variant for variant in variants if isinstance(variant, dict)]
+    return [output_contract]
+
+
+def _valid_output_variant(variant: dict[str, JsonValue]) -> bool:
+    return (
+        isinstance(variant.get("semantic_type"), str)
+        and bool(variant["semantic_type"].strip())
+        and _nonempty_string_list(variant.get("fields"))
+        and isinstance(variant.get("role"), str)
+        and bool(variant["role"].strip())
+    )
+
+
 def _carrier_is_executable(record: dict[str, JsonValue]) -> bool:
     identifier = record.get("id")
     if isinstance(identifier, str) and identifier.startswith("ACT-"):
         return record.get("implementation_status") == "present" and record.get("executable") is True
-    return record.get("implementation_status") != "absent" and record.get("executable") is not False
+    return record.get("implementation_status") in {"present", "partial"}
 
 
 def _validate_phase_two_capability_coverage(
@@ -1677,6 +1734,33 @@ def _validate_phase_two_capability_coverage(
                     )
                 scope_keys.add(key)
     registry_items = registry.items if registry else []
+    gap_definitions: dict[str, list[str]] = {}
+    for item in registry_items:
+        if item.get("capability_status") != "gap":
+            continue
+        identifier = item.get("id")
+        definition = item.get("definition")
+        if not isinstance(identifier, str) or not isinstance(definition, str):
+            continue
+        normalized_definition = " ".join(definition.split())
+        if "source demand with audited partial or absent Phase 1 evidence" in normalized_definition:
+            issues.append(
+                _issue(
+                    "CAPABILITY_GAP_FALLBACK_GENERIC",
+                    package.root / "capabilities/registry.yaml",
+                    identifier,
+                )
+            )
+        gap_definitions.setdefault(normalized_definition, []).append(identifier)
+    for definition, identifiers in gap_definitions.items():
+        if len(identifiers) > 1:
+            issues.append(
+                _issue(
+                    "CAPABILITY_GAP_DEFINITION_DUPLICATE",
+                    package.root / "capabilities/registry.yaml",
+                    f"{','.join(sorted(identifiers))}: {definition}",
+                )
+            )
     capability_catalog_ids = {
         identifier for item in registry_items if isinstance((identifier := item.get("id")), str)
     }
@@ -1773,6 +1857,7 @@ def _validate_phase_two_capability_coverage(
             binding.id not in carrier_catalog_ids
             or binding.semantic_type != _carrier_semantic_type(binding.id)
             or not _role_accepts_semantic_type(binding.role, binding.semantic_type)
+            or not _role_accepts_canonical_carrier(binding.role, binding.id)
             for binding in bindings
         )
         non_executable_binding = any(

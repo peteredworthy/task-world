@@ -1426,6 +1426,103 @@ def test_partial_unknown_rejects_absent_carrier(tmp_path: Path) -> None:
     assert "GAP_PARTIAL_CARRIER_NON_EXECUTABLE" in issue_codes(result)
 
 
+def test_partial_gap_rejects_unknown_non_action_carrier(tmp_path: Path) -> None:
+    del tmp_path
+    validator = load_validator()
+
+    assert (
+        validator._carrier_is_executable({"id": "ENT-1", "implementation_status": "unknown"})
+        is False
+    )
+
+
+def test_partial_gap_rejects_non_action_carrier_without_implementation_status(
+    tmp_path: Path,
+) -> None:
+    del tmp_path
+    validator = load_validator()
+
+    assert validator._carrier_is_executable({"id": "ENT-1"}) is False
+
+
+def test_partial_gap_rejects_legacy_cost_as_graph_usage_rollup(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item("ENT-21", implementation_status="partial", evidence_ids=["EVD-01"])
+            ],
+        },
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-47",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-01"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "ENT-21",
+                            "role": "graph-usage-rollup",
+                            "semantic_type": "UsageTelemetry",
+                            "evidence_ids": ["EVD-01"],
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert "GAP_PARTIAL_CARRIER_ROLE_TYPE_INVALID" in issue_codes(result)
+
+
+def test_partial_gap_rejects_attempt_entity_as_structured_tool_trace(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item("ENT-5", implementation_status="partial", evidence_ids=["EVD-01"])
+            ],
+        },
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-50",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-01"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "ENT-5",
+                            "role": "structured-tool-trace",
+                            "semantic_type": "EvidenceInventory",
+                            "evidence_ids": ["EVD-01"],
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert "GAP_PARTIAL_CARRIER_ROLE_TYPE_INVALID" in issue_codes(result)
+
+
 def test_partial_gap_rejects_capability_evidence_copied_into_binding(tmp_path: Path) -> None:
     root = write_valid_phase_zero(tmp_path)
     write_yaml(
@@ -2528,6 +2625,42 @@ def test_committed_phase_two_registry_preserves_adjudicated_capability_boundarie
     assert claims["derivation_count"] == 0
 
 
+def test_current_variant_contract_rejects_missing_evidence_for_one_asserted_branch(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    cap69["evidence_ids"].remove("EVD-106")
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CURRENT_OUTPUT_VARIANT_EVIDENCE_MISSING" in issue_codes(result)
+
+
+def test_current_variant_contract_rejects_broad_definition_with_narrow_output_contract(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap86 = next(item for item in registry["items"] if item["id"] == "CAP-86")
+    cap86["output_contract"] = {
+        "semantic_type": "RecordGraphDecisionResponse",
+        "fields": ["run_id", "events", "decision_view"],
+        "role": "graph-decision-result",
+    }
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID" in issue_codes(result)
+
+
 def test_phase_two_validates_superseded_derivation_ledger_bindings(tmp_path: Path) -> None:
     root = write_valid_phase_zero(tmp_path)
     append_yaml_item(
@@ -2679,6 +2812,54 @@ def test_phase_two_rejects_known_generic_unknown_fallback_template(tmp_path: Pat
     write_cap_allocation(root, "CAP-1", "claim.one")
     result = run_validator(root)
     assert "CAPABILITY_UNKNOWN_FALLBACK_GENERIC" in issue_codes(result)
+
+
+def test_phase_two_rejects_generic_gap_template_and_duplicate_gap_definitions(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {
+            "schema_version": "1",
+            "items": [phase_two_demand("claim.one"), phase_two_demand("claim.two")],
+        },
+    )
+    generic = "Demand is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection."
+    first = classified_capability("CAP-1", "claim.one", definition=generic)
+    second = classified_capability("CAP-2", "claim.two", definition=generic)
+    write_yaml(
+        root / "capabilities/registry.yaml", {"schema_version": "1", "items": [first, second]}
+    )
+    write_cap_allocation(root, "CAP-1", "claim.one")
+    write_cap_allocation(root, "CAP-2", "claim.two")
+
+    result = run_validator(root)
+
+    assert {
+        "CAPABILITY_GAP_FALLBACK_GENERIC",
+        "CAPABILITY_GAP_DEFINITION_DUPLICATE",
+    } <= set(issue_codes(result))
+
+
+def test_committed_phase_two_gap_definitions_are_individualized_and_unique() -> None:
+    registry = yaml.safe_load(
+        (REPO_ROOT / "research/ui-foundation/capabilities/registry.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    gap_definitions = [
+        " ".join(item["definition"].split())
+        for item in registry["items"]
+        if item["capability_status"] == "gap"
+    ]
+
+    assert len(gap_definitions) == 49
+    assert len(gap_definitions) == len(set(gap_definitions))
+    assert all(
+        "source demand with audited partial or absent" not in definition
+        for definition in gap_definitions
+    )
 
 
 def test_phase_two_current_requires_direct_reachable_implementation_and_direct_exercised_test(

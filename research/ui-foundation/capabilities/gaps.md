@@ -41,55 +41,55 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 
 ## Gap (49)
 
-- `CAP-1` **Health class** — Health class is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-5` **Last-event age** — Last-event age is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-6` **Budget pace** — Budget pace is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-7` **Blast radius** — Blast radius is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-10` **Planner horizon** — Planner horizon is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-12` **Attempts left** — Attempts left is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-13` **Final-invariant progress** — Final-invariant progress is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-17` **Affected scope** — Affected scope is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-20` **Downstream effect** — Downstream effect is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-21` **Reversibility** — Reversibility is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-24` **Requirement-grade changes** — Requirement-grade changes is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-30` **Prompt size** — Prompt size is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-38` **Retry information delta** — Retry information delta is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-42` **Authority** — Authority is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-43` **Intervention budget** — Intervention budget is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-44` **Intervention reversibility** — Intervention reversibility is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-47` **Unpriced share** — Unpriced share is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-48` **Prompt size** — Prompt size is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-49` **Retries without new information** — Retries without new information is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-50` **Repeated tools and work** — Repeated tools and work is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-51` **Verifier churn** — Verifier churn is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-52` **Comparable cohort** — Comparable cohort is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-57` **Price coverage** — Price coverage is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-58` **Patch count** — Patch count is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-59` **Retry count** — Retry count is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-60` **Grade churn** — Grade churn is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-63` **Prompt pressure** — Prompt pressure is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-64` **Final-gate effect** — Final-gate effect is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-66` **Explicit empty needs-you state** — Explicit empty needs-you state is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-67` **No runaway signal** — No runaway signal is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-68` **Decision wait age** — Decision wait age is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-71` **Cost of another attempt** — Cost of another attempt is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-72` **Candidate delta** — Candidate delta is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-73` **Causal gap** — Causal gap is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-74` **Directive binding** — Directive binding is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-77` **Missing node attribution** — Missing node attribution is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-78` **Detector drill-through evidence** — Detector drill-through evidence is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-81` **Restore prior ranking filter and scroll position** — Restore prior ranking filter and scroll position is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-85` **Ignore or keep watching** — Ignore or keep watching is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-92` **Steer with new context** — Steer with new context is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-93` **Apply a steering patch** — Apply a steering patch is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-106` **Next expected system activity** — Next expected system activity is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-108` **Evidence convergence** — Evidence convergence is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-110` **Degraded classification** — Degraded classification is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-111` **Stalled classification** — Stalled classification is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-112` **Runaway classification** — Runaway classification is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-113` **Steered classification** — Steered classification is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-116` **Active comparison target** — Active comparison target is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
-- `CAP-117` **Freshness and capability annotations persist with selection** — Freshness and capability annotations persist with selection is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-1` **Health class** — Health class has state inputs but no shared thresholds, producer, or explanation record.
+- `CAP-5` **Last-event age** — Last-event age lacks a common event clock across legacy and graph carriers.
+- `CAP-6` **Budget pace** — Budget pace has no budget window, denominator, or pace computation contract.
+- `CAP-7` **Blast radius** — Blast radius has topology fragments but no affected-work closure contract.
+- `CAP-10` **Planner horizon** — Planner horizon has task and graph records but no common planned-work horizon.
+- `CAP-12` **Attempts left** — Attempts left cannot join per-task limits with graph retry and recovery boundaries.
+- `CAP-13` **Final-invariant progress** — Final-invariant progress has checks and states but no monotonic completion projection.
+- `CAP-17` **Affected scope** — Affected scope has local records but no authoritative cross-run or graph scope closure.
+- `CAP-20` **Downstream effect** — Downstream effect has event adjacency but no causal consequence contract.
+- `CAP-21` **Reversibility** — Reversibility is action-specific; no shared undo, compensation, or residue result exists.
+- `CAP-24` **Requirement-grade changes** — Requirement-grade changes lack a normalized grade history and comparison rule.
+- `CAP-30` **Prompt size** — Prompt size is split between retained text and graph summaries without one size fact.
+- `CAP-38` **Retry information delta** — Retry information delta lacks a durable before-and-after comparison rule.
+- `CAP-42` **Authority** — Authority has route-local permissions and graph checks but no uniform actor binding.
+- `CAP-43` **Intervention budget** — Intervention budget has no durable limit, consumption, or exhaustion contract.
+- `CAP-44` **Intervention reversibility** — Intervention reversibility is action-specific with no shared undo or compensation result.
+- `CAP-47` **Unpriced share** — Graph rollups expose missing-rate counts but no complete unpriced-share denominator.
+- `CAP-48` **Prompt size** — Prompt size remains split between legacy retained text and graph summary metadata.
+- `CAP-49` **Retries without new information** — Retry actions exist, but no retry taxonomy or cross-carrier new-information test exists.
+- `CAP-50` **Repeated tools and work** — Structured traces expose repetitions, but no durable cross-run repeated-work finding exists.
+- `CAP-51` **Verifier churn** — Verifier results are retained per carrier without a churn aggregation contract.
+- `CAP-52` **Comparable cohort** — Comparable cohort has no implemented selection criteria, population, or exclusion rules.
+- `CAP-57` **Price coverage** — Price coverage lacks a persisted priced-versus-unpriced population denominator.
+- `CAP-58` **Patch count** — Patch attempts are graph-local and have no cross-mode count definition.
+- `CAP-59` **Retry count** — Retry count differs among revision, recovery, and graph retry carriers.
+- `CAP-60` **Grade churn** — Grade records do not define a comparable sequence or churn threshold.
+- `CAP-63` **Prompt pressure** — Prompt pressure lacks capacity, tokenization, and threshold semantics across runners.
+- `CAP-64` **Final-gate effect** — Final-gate records do not establish the downstream work caused or prevented.
+- `CAP-66` **Explicit empty needs-you state** — Explicit empty needs-you state has no positive, durable no-attention-needed contract.
+- `CAP-67` **No runaway signal** — No runaway signal has no timeout, rate, or observation-window contract.
+- `CAP-68` **Decision wait age** — Decision wait age lacks a shared pending-decision clock across graph and legacy flows.
+- `CAP-71` **Cost of another attempt** — Cost of another attempt has incomplete history but no cohort estimator or uncertainty rule.
+- `CAP-72` **Candidate delta** — Candidate delta lacks a stable before-and-after candidate comparison boundary.
+- `CAP-73` **Causal gap** — Causal gap cannot be resolved from observer events without producer causality.
+- `CAP-74` **Directive binding** — Directive binding has no durable link from instruction to resulting action or artifact.
+- `CAP-77` **Missing node attribution** — Missing node attribution lacks an expected-execution denominator for absent telemetry.
+- `CAP-78` **Detector drill-through evidence** — Detector drill-through evidence lacks a durable finding-to-source evidence bundle.
+- `CAP-81` **Restore prior ranking filter and scroll position** — Restore prior ranking filter and scroll position has no durable return-state contract.
+- `CAP-85` **Ignore or keep watching** — Ignore or keep watching has no command recording identity, scope, expiry, or later attention.
+- `CAP-92` **Steer with new context** — Steer with new context has no admitted command with durable context-to-work binding.
+- `CAP-93` **Apply a steering patch** — Apply a steering patch has no unified command joining context, topology, and outcome.
+- `CAP-106` **Next expected system activity** — Next expected system activity lacks a cross-carrier prediction and timing contract.
+- `CAP-108` **Evidence convergence** — Evidence convergence has no rule for reconciling divergent carrier observations.
+- `CAP-110` **Degraded classification** — Degraded classification has signals but no shared threshold or class producer.
+- `CAP-111` **Stalled classification** — Stalled classification lacks an inactivity threshold and cross-carrier clock.
+- `CAP-112` **Runaway classification** — Runaway classification lacks a rate threshold, window, and durable class result.
+- `CAP-113` **Steered classification** — Steered classification lacks a durable directive-to-outcome classification contract.
+- `CAP-116` **Active comparison target** — Active comparison target has no persisted second-run identity across projections.
+- `CAP-117` **Freshness and capability annotations persist with selection** — Freshness and capability annotations have no selection-bound persistence contract.
 
 ## Unknown (56)
 

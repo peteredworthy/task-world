@@ -212,7 +212,7 @@ items:
   - EVD-81
   - EVD-82
   id: EVI-5
-  implementation_status: unknown
+  implementation_status: partial
   test_status: unknown
   documentation_status: unknown
   capability_status: unknown
@@ -407,7 +407,7 @@ items:
   - EVD-94
   - EVD-95
   id: EVI-9
-  implementation_status: unknown
+  implementation_status: partial
   test_status: unknown
   documentation_status: unknown
   capability_status: unknown

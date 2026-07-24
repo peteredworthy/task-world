@@ -91,14 +91,23 @@ evidence on every partial gap or unknown binding, rejects absent/non-executable
 implementation carriers and absence-binding overlap, and rejects normalized
 duplicate prose and known generic unknown fallback text.
 
+The final Task 14 review correction tightens non-action carrier executability
+to present or partial status, binds unpriced share to the graph usage rollup
+and repeated work to the structured tool trace, and records both EVI carriers
+as partially implemented with bounded coverage. CAP-69 and CAP-86 now declare
+all supported graph decision, patch-validation, and patch-route response
+variants; each variant has direct implementation and exercised-test evidence.
+All 49 gap definitions state their concrete carrier boundary or absent contract
+and are projected verbatim from the registry.
+
 ## Commands and output
 
 - `uv run python research/ui-foundation/tools/validate.py --phase 2` — exited 0
   with no diagnostics.
 - `uv run pytest tests/integration/test_ui_foundation_tools.py -q` — focused
-  validation coverage passed (**88 passed**), including independent negative
-  carrier-role and derivation-binding cases.
+  validation coverage passed (**96 passed**), including independent negative
+  carrier-role, executable-status, output-variant, and derivation-binding cases.
 - `uv run ruff check .` — **All checks passed!**
 - `uv run pyright` — **0 errors, 0 warnings, 0 informations** (plus Pyright's
   non-failing update notice).
-- `uv run pytest` — **5017 passed, 3 skipped, 3 warnings** in 155.25 seconds.
+- `uv run pytest` — **5025 passed, 3 skipped, 3 warnings** in 156.09 seconds.

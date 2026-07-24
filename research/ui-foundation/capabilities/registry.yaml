@@ -6,8 +6,7 @@ classification_policy: Each closed scope demand receives one conservative, evide
 items:
 - id: CAP-1
   title: Health class
-  definition: Health class is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Health class has state inputs but no shared thresholds, producer, or explanation record.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -255,8 +254,7 @@ items:
     - EVD-24
 - id: CAP-5
   title: Last-event age
-  definition: Last-event age is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Last-event age lacks a common event clock across legacy and graph carriers.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -304,8 +302,7 @@ items:
     - EVD-56
 - id: CAP-6
   title: Budget pace
-  definition: Budget pace is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Budget pace has no budget window, denominator, or pace computation contract.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -330,17 +327,17 @@ items:
     pace.
   scope_demand_key: jobs.J1.budget-pace
   implementation_carrier_bindings:
-  - id: ENT-21
-    role: entity-input
-    semantic_type: EntityRecord
+  - id: EVI-9
+    role: graph-usage-rollup
+    semantic_type: UsageTelemetry
     evidence_ids:
-    - EVD-62
-    - EVD-56
-    - EVD-64
+    - EVD-92
+    - EVD-93
+    - EVD-94
+    - EVD-95
 - id: CAP-7
   title: Blast radius
-  definition: Blast radius is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Blast radius has topology fragments but no affected-work closure contract.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -516,8 +513,7 @@ items:
     - EVD-58
 - id: CAP-10
   title: Planner horizon
-  definition: Planner horizon is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Planner horizon has task and graph records but no common planned-work horizon.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -650,8 +646,7 @@ items:
     - EVD-24
 - id: CAP-12
   title: Attempts left
-  definition: Attempts left is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Attempts left cannot join per-task limits with graph retry and recovery boundaries.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -712,8 +707,7 @@ items:
     - EVD-16
 - id: CAP-13
   title: Final-invariant progress
-  definition: Final-invariant progress is a source demand with audited partial or
-    absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Final-invariant progress has checks and states but no monotonic completion projection.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -893,8 +887,7 @@ items:
     - EVD-63
 - id: CAP-17
   title: Affected scope
-  definition: Affected scope is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Affected scope has local records but no authoritative cross-run or graph scope closure.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -1024,8 +1017,7 @@ items:
     - EVD-27
 - id: CAP-20
   title: Downstream effect
-  definition: Downstream effect is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Downstream effect has event adjacency but no causal consequence contract.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -1081,8 +1073,7 @@ items:
     - EVD-37
 - id: CAP-21
   title: Reversibility
-  definition: Reversibility is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Reversibility is action-specific; no shared undo, compensation, or residue result exists.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -1284,8 +1275,7 @@ items:
     - EVD-54
 - id: CAP-24
   title: Requirement-grade changes
-  definition: Requirement-grade changes is a source demand with audited partial or
-    absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Requirement-grade changes lack a normalized grade history and comparison rule.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -1517,13 +1507,13 @@ items:
   - Do not count every rejection or generation as the same retry.
   scope_demand_key: jobs.J4.retries-rejections
   implementation_carrier_bindings:
-  - id: ENT-5
-    role: entity-input
-    semantic_type: EntityRecord
+  - id: EVI-5
+    role: structured-tool-trace
+    semantic_type: EvidenceInventory
     evidence_ids:
-    - EVD-49
-    - EVD-51
-    - EVD-54
+    - EVD-80
+    - EVD-81
+    - EVD-82
   - id: ACT-24
     role: action-contract
     semantic_type: ActionContract
@@ -1625,8 +1615,7 @@ items:
     - EVD-56
 - id: CAP-30
   title: Prompt size
-  definition: Prompt size is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Prompt size is split between retained text and graph summaries without one size fact.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -1949,8 +1938,7 @@ items:
     - EVD-37
 - id: CAP-38
   title: Retry information delta
-  definition: Retry information delta is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Retry information delta lacks a durable before-and-after comparison rule.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2252,8 +2240,7 @@ items:
     - EVD-23
 - id: CAP-42
   title: Authority
-  definition: Authority is a source demand with audited partial or absent Phase 1
-    evidence; it is not an implemented aggregate or projection.
+  definition: Authority has route-local permissions and graph checks but no uniform actor binding.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2324,8 +2311,7 @@ items:
   - PER-2
 - id: CAP-43
   title: Intervention budget
-  definition: Intervention budget is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Intervention budget has no durable limit, consumption, or exhaustion contract.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
@@ -2356,8 +2342,7 @@ items:
   disqualifying_evidence_ids: []
 - id: CAP-44
   title: Intervention reversibility
-  definition: Intervention reversibility is a source demand with audited partial or
-    absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Intervention reversibility is action-specific with no shared undo or compensation result.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2582,8 +2567,7 @@ items:
     - EVD-64
 - id: CAP-47
   title: Unpriced share
-  definition: Unpriced share is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Graph rollups expose missing-rate counts but no complete unpriced-share denominator.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2608,17 +2592,17 @@ items:
     or treat unpriced as zero cost.
   scope_demand_key: jobs.J7.unpriced-share
   implementation_carrier_bindings:
-  - id: ENT-21
-    role: entity-input
-    semantic_type: EntityRecord
+  - id: EVI-9
+    role: graph-usage-rollup
+    semantic_type: UsageTelemetry
     evidence_ids:
-    - EVD-62
-    - EVD-56
-    - EVD-64
+    - EVD-92
+    - EVD-93
+    - EVD-94
+    - EVD-95
 - id: CAP-48
   title: Prompt size
-  definition: Prompt size is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Prompt size remains split between legacy retained text and graph summary metadata.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2648,8 +2632,7 @@ items:
     - EVD-56
 - id: CAP-49
   title: Retries without new information
-  definition: Retries without new information is a source demand with audited partial
-    or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Retry actions exist, but no retry taxonomy or cross-carrier new-information test exists.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2714,8 +2697,7 @@ items:
     - EVD-45
 - id: CAP-50
   title: Repeated tools and work
-  definition: Repeated tools and work is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Structured traces expose repetitions, but no durable cross-run repeated-work finding exists.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2742,17 +2724,16 @@ items:
     detector result.
   scope_demand_key: jobs.J7.repeated-work
   implementation_carrier_bindings:
-  - id: ENT-5
-    role: entity-input
-    semantic_type: EntityRecord
+  - id: EVI-5
+    role: structured-tool-trace
+    semantic_type: EvidenceInventory
     evidence_ids:
-    - EVD-49
-    - EVD-51
-    - EVD-54
+    - EVD-80
+    - EVD-81
+    - EVD-82
 - id: CAP-51
   title: Verifier churn
-  definition: Verifier churn is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Verifier results are retained per carrier without a churn aggregation contract.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2808,8 +2789,7 @@ items:
     - EVD-56
 - id: CAP-52
   title: Comparable cohort
-  definition: Comparable cohort is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Comparable cohort has no implemented selection criteria, population, or exclusion rules.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3003,8 +2983,7 @@ items:
     - EVD-64
 - id: CAP-57
   title: Price coverage
-  definition: Price coverage is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Price coverage lacks a persisted priced-versus-unpriced population denominator.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3038,8 +3017,7 @@ items:
     - EVD-64
 - id: CAP-58
   title: Patch count
-  definition: Patch count is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Patch attempts are graph-local and have no cross-mode count definition.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3090,8 +3068,7 @@ items:
     - EVD-37
 - id: CAP-59
   title: Retry count
-  definition: Retry count is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Retry count differs among revision, recovery, and graph retry carriers.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3149,8 +3126,7 @@ items:
     - EVD-45
 - id: CAP-60
   title: Grade churn
-  definition: Grade churn is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Grade records do not define a comparable sequence or churn threshold.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3421,8 +3397,7 @@ items:
     - EVD-20
 - id: CAP-63
   title: Prompt pressure
-  definition: Prompt pressure is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Prompt pressure lacks capacity, tokenization, and threshold semantics across runners.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3462,8 +3437,7 @@ items:
     - EVD-56
 - id: CAP-64
   title: Final-gate effect
-  definition: Final-gate effect is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Final-gate records do not establish the downstream work caused or prevented.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3573,8 +3547,7 @@ items:
     - EVD-56
 - id: CAP-66
   title: Explicit empty needs-you state
-  definition: Explicit empty needs-you state is a source demand with audited partial
-    or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Explicit empty needs-you state has no positive, durable no-attention-needed contract.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3617,8 +3590,7 @@ items:
     - EVD-27
 - id: CAP-67
   title: No runaway signal
-  definition: No runaway signal is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: No runaway signal has no timeout, rate, or observation-window contract.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3664,8 +3636,7 @@ items:
     - EVD-57
 - id: CAP-68
   title: Decision wait age
-  definition: Decision wait age is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Decision wait age lacks a shared pending-decision clock across graph and legacy flows.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3749,14 +3720,32 @@ items:
   - Do not generalize this result to lifecycle, clarification, review, filesystem,
     or administrative commands.
   scope_demand_key: journeys.B.validator-result
+  asserted_output_variant_types:
+  - PatchValidationResult
+  - RecordGraphDecisionResponse
+  - GraphPatchAttemptsResponse
   output_contract:
-    semantic_type: PatchValidationResult
-    fields:
-    - accepted
-    - rejection_reason
-    - conflicting_events
-    - read_set_diff
-    role: graph-patch-validation
+    variants:
+    - semantic_type: PatchValidationResult
+      fields:
+      - accepted
+      - rejection_reason
+      - conflicting_events
+      - read_set_diff
+      role: graph-patch-validation
+    - semantic_type: RecordGraphDecisionResponse
+      fields:
+      - run_id
+      - graph_position
+      - events
+      - decision_view
+      role: graph-decision-response
+    - semantic_type: GraphPatchAttemptsResponse
+      fields:
+      - run_id
+      - graph_position
+      - attempts
+      role: graph-patch-route-diagnostics
 - id: CAP-70
   title: Recorded decision identity and timestamp
   definition: Recorded decision identity and timestamp is unresolved because clarification,
@@ -3816,8 +3805,7 @@ items:
     - EVD-36
 - id: CAP-71
   title: Cost of another attempt
-  definition: Cost of another attempt is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Cost of another attempt has incomplete history but no cohort estimator or uncertainty rule.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3870,8 +3858,7 @@ items:
     - EVD-56
 - id: CAP-72
   title: Candidate delta
-  definition: Candidate delta is a source demand with audited partial or absent Phase
-    1 evidence; it is not an implemented aggregate or projection.
+  definition: Candidate delta lacks a stable before-and-after candidate comparison boundary.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3923,8 +3910,7 @@ items:
     - EVD-65
 - id: CAP-73
   title: Causal gap
-  definition: Causal gap is a source demand with audited partial or absent Phase 1
-    evidence; it is not an implemented aggregate or projection.
+  definition: Causal gap cannot be resolved from observer events without producer causality.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -3977,8 +3963,7 @@ items:
     - EVD-53
 - id: CAP-74
   title: Directive binding
-  definition: Directive binding is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Directive binding has no durable link from instruction to resulting action or artifact.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
@@ -4097,8 +4082,7 @@ items:
     - EVD-65
 - id: CAP-77
   title: Missing node attribution
-  definition: Missing node attribution is a source demand with audited partial or
-    absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Missing node attribution lacks an expected-execution denominator for absent telemetry.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -4139,8 +4123,7 @@ items:
     - EVD-57
 - id: CAP-78
   title: Detector drill-through evidence
-  definition: Detector drill-through evidence is a source demand with audited partial
-    or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Detector drill-through evidence lacks a durable finding-to-source evidence bundle.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -4324,9 +4307,7 @@ items:
     - EVD-63
 - id: CAP-81
   title: Restore prior ranking filter and scroll position
-  definition: Restore prior ranking filter and scroll position is a source demand
-    with audited partial or absent Phase 1 evidence; it is not an implemented aggregate
-    or projection.
+  definition: Restore prior ranking filter and scroll position has no durable return-state contract.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
@@ -4421,8 +4402,7 @@ items:
   scope_demand_key: journeys.continuity.responsive-context
 - id: CAP-85
   title: Ignore or keep watching
-  definition: Ignore or keep watching is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Ignore or keep watching has no command recording identity, scope, expiry, or later attention.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
@@ -4479,14 +4459,32 @@ items:
   - Do not merge graph decision, legacy approval, validator rejection, and patch application
     into one command.
   scope_demand_key: decisions.approve-gate-patch
+  asserted_output_variant_types:
+  - PatchValidationResult
+  - RecordGraphDecisionResponse
+  - GraphPatchAttemptsResponse
   output_contract:
-    semantic_type: RecordGraphDecisionResponse
-    fields:
-    - run_id
-    - graph_position
-    - events
-    - decision_view
-    role: graph-decision-result
+    variants:
+    - semantic_type: RecordGraphDecisionResponse
+      fields:
+      - run_id
+      - graph_position
+      - events
+      - decision_view
+      role: graph-decision-response
+    - semantic_type: PatchValidationResult
+      fields:
+      - accepted
+      - rejection_reason
+      - conflicting_events
+      - read_set_diff
+      role: graph-patch-validation
+    - semantic_type: GraphPatchAttemptsResponse
+      fields:
+      - run_id
+      - graph_position
+      - attempts
+      role: graph-patch-response
 - id: CAP-87
   title: Answer a clarification
   definition: Answer a clarification is unresolved because requests, answers, and
@@ -4799,8 +4797,7 @@ items:
     - EVD-41
 - id: CAP-92
   title: Steer with new context
-  definition: Steer with new context is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Steer with new context has no admitted command with durable context-to-work binding.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
@@ -4828,8 +4825,7 @@ items:
   disqualifying_evidence_ids: []
 - id: CAP-93
   title: Apply a steering patch
-  definition: Apply a steering patch is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Apply a steering patch has no unified command joining context, topology, and outcome.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -5417,8 +5413,7 @@ items:
     - EVD-37
 - id: CAP-106
   title: Next expected system activity
-  definition: Next expected system activity is a source demand with audited partial
-    or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Next expected system activity lacks a cross-carrier prediction and timing contract.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -5548,8 +5543,7 @@ items:
     - EVD-45
 - id: CAP-108
   title: Evidence convergence
-  definition: Evidence convergence is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Evidence convergence has no rule for reconciling divergent carrier observations.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -5634,8 +5628,7 @@ items:
     - EVD-27
 - id: CAP-110
   title: Degraded classification
-  definition: Degraded classification is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Degraded classification has signals but no shared threshold or class producer.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -5700,8 +5693,7 @@ items:
     - EVD-37
 - id: CAP-111
   title: Stalled classification
-  definition: Stalled classification is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Stalled classification lacks an inactivity threshold and cross-carrier clock.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -5766,8 +5758,7 @@ items:
     - EVD-24
 - id: CAP-112
   title: Runaway classification
-  definition: Runaway classification is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Runaway classification lacks a rate threshold, window, and durable class result.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -5810,8 +5801,7 @@ items:
     - EVD-57
 - id: CAP-113
   title: Steered classification
-  definition: Steered classification is a source demand with audited partial or absent
-    Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Steered classification lacks a durable directive-to-outcome classification contract.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
@@ -5962,8 +5952,7 @@ items:
     - EVD-56
 - id: CAP-116
   title: Active comparison target
-  definition: Active comparison target is a source demand with audited partial or
-    absent Phase 1 evidence; it is not an implemented aggregate or projection.
+  definition: Active comparison target has no persisted second-run identity across projections.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
@@ -5989,9 +5978,7 @@ items:
   disqualifying_evidence_ids: []
 - id: CAP-117
   title: Freshness and capability annotations persist with selection
-  definition: Freshness and capability annotations persist with selection is a source
-    demand with audited partial or absent Phase 1 evidence; it is not an implemented
-    aggregate or projection.
+  definition: Freshness and capability annotations have no selection-bound persistence contract.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
