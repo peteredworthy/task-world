@@ -58,7 +58,7 @@ snapshot: &id001
     sha256: 1b71ba76d088fa2894572200f848613f0127483972b4250a75b2d79ba0d81675
     audited_at: '2026-07-24T03:00:00Z'
   - path: research/ui-foundation/tools/validate.py
-    sha256: b3f87eddb5875f89afe385e655c53aa263dda8f03cd864b0092487ef4ebdb82c
+    sha256: 5ca5652b766c0c204aa14cacc584e3fedabb80013d6ded39d95b46a1eb20da5d
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/__init__.py
     sha256: b1f14eb507ed5cae44a23dc96212731b2560b970310ef4037e303d90c5271bf4
@@ -1489,7 +1489,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: 720e973d964ee18e1986ccbe253b1f366b7b650fffa17c342f8d0e45a8ddb9cb
+    sha256: ae42510df596858b4fd5ed62743792f1f40e52919b5725e8ff7d6ccb4cd6127e
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236
@@ -2911,9 +2911,11 @@ items:
   label: Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand;
     synchronous graph append/projection
   snapshot_id: snapshot-2026-07-24-phase-1
-  path: src/orchestrator/api/routers/graph.py
-  symbol: execution-bound SubmitGraphPatchCommand
-  snapshot_path: src/orchestrator/api/routers/graph.py
+  path: src/orchestrator/graph_runtime/graph_mcp_tools.py
+  symbol: build_graph_mcp_server; submit_graph_patch routes only through the execution closure
+  snapshot_path: src/orchestrator/graph_runtime/graph_mcp_tools.py
+  question_ids:
+  - Q-6
   test_evidence_ids: []
   test_status: unexercised
 - id: CMD-14
@@ -2934,9 +2936,9 @@ items:
   reachable: true
   label: REST/CLI back-merge; back_merge; synchronous git mutation or conflict
   snapshot_id: snapshot-2026-07-24-phase-1
-  path: src/orchestrator/api/routers/review.py
-  symbol: back_merge
-  snapshot_path: src/orchestrator/api/routers/review.py
+  path: src/orchestrator/api/routers/runs.py
+  symbol: back_merge_endpoint
+  snapshot_path: src/orchestrator/api/routers/runs.py
   test_evidence_ids: []
   test_status: unexercised
 - id: CMD-16
@@ -2945,9 +2947,9 @@ items:
   reachable: true
   label: REST/CLI merge-back; merge_back; synchronous git mutation or conflict
   snapshot_id: snapshot-2026-07-24-phase-1
-  path: src/orchestrator/api/routers/review.py
-  symbol: merge_back
-  snapshot_path: src/orchestrator/api/routers/review.py
+  path: src/orchestrator/api/routers/runs.py
+  symbol: merge_back_endpoint
+  snapshot_path: src/orchestrator/api/routers/runs.py
   test_evidence_ids: []
   test_status: unexercised
 - id: CMD-17

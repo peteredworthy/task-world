@@ -49,7 +49,9 @@ and patch-defer commands have qualifying evidence.
 ## Result
 
 Classification counts are **1 current, 0 derived, 25 proposed, 49 gap, and 57
-unknown**. Task 15 is complete; SV-001 and SV-002 are adjudicated.
+unknown**. This earlier checkpoint adjudicated SV-001 and SV-002 only. Task 15
+remains **IN PROGRESS**; the follow-on adjudication handoff records SV-003
+through SV-006 without modifying the immutable verifier report.
 
 ## Post-adjudication source refresh
 

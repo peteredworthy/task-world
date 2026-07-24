@@ -92,8 +92,10 @@ items:
   confidence_basis: 02-graph-runtime.md command table and 04-api-actions-authority.md graph actions
   evidence_ids:
   - EVD-41
-  conflict_ids: []
-  question_ids: []
+  conflict_ids:
+  - CON-4
+  question_ids:
+  - Q-5
   limitations:
   - Caller-supplied decider and operator context are not authenticated-subject policy
   prohibited_interpretations:
@@ -114,8 +116,10 @@ items:
   confidence_basis: 04-api-actions-authority.md#mcp-tool-scope and graph-mcp-execution-scope tests
   evidence_ids:
   - EVD-42
-  conflict_ids: []
-  question_ids: []
+  conflict_ids:
+  - CON-4
+  question_ids:
+  - Q-5
   limitations:
   - Possession of a scope/token is not a product role grant
   prohibited_interpretations:
@@ -137,8 +141,10 @@ items:
   confidence_basis: routines.py::validate_routine route inspection
   evidence_ids:
   - EVD-46
-  conflict_ids: []
-  question_ids: []
+  conflict_ids:
+  - CON-4
+  question_ids:
+  - Q-5
   limitations:
   - Validation response is not a saved routine or metadata effect
   prohibited_interpretations:
@@ -166,8 +172,10 @@ items:
   - EVD-35
   - EVD-47
   - EVD-48
-  conflict_ids: []
-  question_ids: []
+  conflict_ids:
+  - CON-4
+  question_ids:
+  - Q-5
   limitations:
   - Route eligibility does not establish ownership, containment, or role authorization beyond what the specific route checks
   prohibited_interpretations:

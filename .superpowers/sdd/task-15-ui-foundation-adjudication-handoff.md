@@ -1,0 +1,38 @@
+# Task 15 UI foundation adjudication handoff
+
+## Status
+
+Task 15 remains **IN PROGRESS**. SV-001 through SV-006 are adjudicated; the
+immutable `research/ui-foundation/agent-reports/11-semantic-verification.md`
+was not modified.
+
+## Accepted corrections
+
+- **SV-003:** `CON-1` and `Q-1` now target the actual attempt-reference
+  relationships, `REL-26` (cost) and `REL-29` (interaction), with reciprocal
+  links. `REL-27` remains only run attribution. `CAP-71` now retains the same
+  identity uncertainty because its another-attempt cost input relies on that
+  attribution boundary.
+- **SV-004:** `Q-4` no longer targets resolved model `ENT-28`; it now covers
+  backup metadata, copied DB, journal segment, and the copy/marker/import
+  relationships `REL-33` through `REL-35`. The records continue to prohibit
+  claims of a live-WAL-consistent backup.
+- **SV-005:** `Q-6` is resolved against `CMD-13`, not `CMD-16`. The
+  execution-bound MCP server is per-runner execution tooling routed through a
+  dispatcher closure, so it is not a standalone UI/operator action. REST patch
+  `ACT-13`/`CMD-12` and merge-back `CMD-16` remain distinct. The command ledger
+  locates MCP registration in `graph_mcp_tools.py` and both merge commands in
+  `api/routers/runs.py`.
+- **SV-006:** open blocking question links now fail closed for current
+  capabilities even if the question omits the capability from `affected_ids`.
+  `Q-5` now covers every permission boundary `PER-1` through `PER-7`, its
+  linked authority-sensitive capabilities and actions, while preserving the
+  distinction between authentication, domain eligibility, tool exposure, and
+  enforced product authorization. `CAP-86` remains unknown after SV-002.
+
+## Verification handoff
+
+Run Phase 2 validation, the report validator for this handoff if its heading
+contract is later adopted, focused foundation tests, Ruff, Pyright, and hooks
+before closing the task. Remaining semantic-verification findings require their
+own adjudication rather than changing the verifier report.

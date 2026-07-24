@@ -738,8 +738,10 @@ items:
   evidence_ids:
   - EVD-62
   - EVD-51
-  conflict_ids: []
-  question_ids: []
+  conflict_ids:
+  - CON-1
+  question_ids:
+  - Q-1
   limitations:
   - attempt_id semantics
   prohibited_interpretations: []
@@ -767,10 +769,8 @@ items:
   evidence_ids:
   - EVD-62
   - EVD-56
-  conflict_ids:
-  - CON-1
-  question_ids:
-  - Q-1
+  conflict_ids: []
+  question_ids: []
   limitations:
   - write failure
   prohibited_interpretations: []
@@ -826,8 +826,10 @@ items:
   evidence_ids:
   - EVD-62
   - EVD-51
-  conflict_ids: []
-  question_ids: []
+  conflict_ids:
+  - CON-1
+  question_ids:
+  - Q-1
   limitations:
   - attempt identity
   prohibited_interpretations: []
@@ -942,7 +944,8 @@ items:
   - EVD-55
   - EVD-66
   conflict_ids: []
-  question_ids: []
+  question_ids:
+  - Q-4
   limitations:
   - WAL/SHM/live consistency
   prohibited_interpretations: []
@@ -972,7 +975,8 @@ items:
   - EVD-55
   - EVD-66
   conflict_ids: []
-  question_ids: []
+  question_ids:
+  - Q-4
   limitations:
   - path scope and replay consumer
   prohibited_interpretations: []
@@ -1005,6 +1009,7 @@ items:
   - CON-2
   question_ids:
   - Q-3
+  - Q-4
   limitations:
   - unconditional authority
   prohibited_interpretations: []

@@ -2063,6 +2063,39 @@ def test_unresolved_conflict_blocks_affected_current_action(tmp_path: Path) -> N
     assert "UNRESOLVED_ACTION_ADMISSION_BLOCKED" in issue_codes(result)
 
 
+def test_current_capability_linked_to_open_blocking_question_is_barred_without_affected_id(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/questions.yaml",
+        {
+            "schema_version": "1",
+            "items": [{"id": "Q-01", "status": "open", "blocking": True, "affected_ids": []}],
+        },
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-01",
+                    implementation_status="present",
+                    test_status="exercised",
+                    documentation_status="documented",
+                    capability_status="current",
+                    question_ids=["Q-01"],
+                )
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "CURRENT_QUESTION_UNRESOLVED" in issue_codes(result)
+
+
 def test_snapshot_coverage_rejects_hash_valid_but_incomplete_patterns(tmp_path: Path) -> None:
     root = write_valid_phase_zero(tmp_path)
     repository = root.parents[1]

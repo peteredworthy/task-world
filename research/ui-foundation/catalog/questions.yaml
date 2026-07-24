@@ -11,7 +11,8 @@ items:
   affected_ids:
   - ENT-5
   - REL-4
-  - REL-27
+  - REL-26
+  - REL-29
 - id: Q-2
   title: Define typed cross-mode conversion and selection contracts
   blocking: true
@@ -39,8 +40,12 @@ items:
   settlement_method: Implement SQLite-consistent backup including WAL/SHM handling, replay marker validation, and a live-write
     restore/replay integration test.
   affected_ids:
-  - ENT-28
   - ENT-29
+  - ENT-30
+  - ENT-31
+  - REL-33
+  - REL-34
+  - REL-35
 - id: Q-5
   title: Define product-role authorization before treating actor text as authority
   blocking: true
@@ -51,14 +56,31 @@ items:
   - PER-1
   - PER-2
   - PER-3
+  - PER-4
+  - PER-5
+  - PER-6
+  - PER-7
+  - CAP-16
+  - CAP-42
+  - CAP-70
+  - CAP-86
+  - ACT-7
+  - ACT-8
+  - ACT-20
+  - ACT-21
 - id: Q-6
   title: Decide whether execution-bound graph MCP patch macros need an action contract
   blocking: true
-  status: open
-  settlement_method: Either add a reachable execution-bound graph MCP action contract with route/tool tests or explicitly
-    retire CMD-16 from selectable current surfaces.
+  settlement_method: 'Resolved: CMD-13 is registered only in a per-execution MCP
+    server and routed through the dispatcher closure; it is runner-internal tooling,
+    not a standalone UI/operator action under the canonical action definition. CMD-12
+    remains the separate REST patch action and CMD-16 remains the tested merge-back
+    command.'
+  decisive_evidence_ids:
+  - EVD-42
   affected_ids:
-  - ACT-13
+  - CMD-13
+  status: resolved
 - id: Q-7
   title: Hash-guard decisive implementation and test evidence
   blocking: false

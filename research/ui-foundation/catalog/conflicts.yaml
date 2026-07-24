@@ -24,7 +24,8 @@ items:
   affected_ids:
   - ENT-5
   - REL-4
-  - REL-27
+  - REL-26
+  - REL-29
   decisive_source: Approved audit sources named by claim_evidence.
   settlement_method: Choose one persisted attempt identity and prove migration/round-trip behavior with repository tests.
 - id: CON-2

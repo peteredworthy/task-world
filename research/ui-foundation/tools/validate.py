@@ -719,6 +719,13 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         for item in (question_document.items if question_document else [])
         if isinstance((identifier := item.get("id")), str)
     }
+    open_blocking_question_ids = {
+        identifier
+        for item in (question_document.items if question_document else [])
+        if isinstance((identifier := item.get("id")), str)
+        and item.get("blocking") is True
+        and item.get("status") != "resolved"
+    }
     decisive_question_ids_by_capability: dict[str, set[str]] = {
         capability_id: set() for capability_id in semantic_items
     }
@@ -1344,8 +1351,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 )
             question_ids = item.get("question_ids")
             if isinstance(question_ids, list) and any(
-                question_id in decisive_question_ids_by_capability.get(str(item.get("id")), set())
-                for question_id in question_ids
+                question_id in open_blocking_question_ids for question_id in question_ids
             ):
                 issues.append(
                     _issue(
@@ -2438,7 +2444,7 @@ def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
         "",
         f"Phase 2 is complete with {len(items)} one-to-one scope-demand classifications and {sum(counts.values())} projected claims.",
         "",
-        "Task15 in progress: SV-001 and SV-002 adjudicated",
+        "Task15 in progress: SV-001 through SV-006 adjudicated",
         "",
     ]
     for status in CAPABILITY_STATUSES:

@@ -3829,8 +3829,10 @@ items:
   - EVD-93
   - EVD-94
   - EVD-95
-  conflict_ids: []
-  question_ids: []
+  conflict_ids:
+  - CON-1
+  question_ids:
+  - Q-1
   limitations:
   - Historical returned-execution cost is incomplete and no comparable cohort, phase
     estimator, uncertainty rule, or approximate next-attempt output exists.
