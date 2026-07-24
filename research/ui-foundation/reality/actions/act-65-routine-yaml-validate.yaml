@@ -1,0 +1,36 @@
+id: ACT-65
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-26
+actor: caller
+permission_requirements:
+- PER-1
+- PER-6
+preconditions:
+- yaml_content supplied
+expected_source_version: None; validation saves no routine
+required_input:
+  yaml_content: required
+validation:
+- YAML parse
+- optional routine unwrap
+- RoutineConfig schema
+durable_effect: Synchronously returns a valid or invalid response without writing routine source or metadata.
+resulting_state_id: STA-61
+failure_modes:
+- invalid YAML
+- schema validation response
+stale_state_behavior: No source version because the response is non-mutating.
+idempotency: Pure validation for identical content.
+retry_behavior: Correct content and resubmit.
+reversibility: Non-mutating; no undo.
+audit_evidence_ids:
+- EVD-46
+transition:
+  from_state_id: STA-61
+  to_state_id: STA-61
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-6 parse/schema eligibility
+proposed_role_policy: null

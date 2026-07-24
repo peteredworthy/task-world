@@ -1,0 +1,38 @@
+id: ACT-68
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-38
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- agent name absent
+expected_source_version: None
+required_input:
+  name: required
+  system_prompt: required
+  model_profile: required
+validation:
+- schema
+- unique name
+durable_effect: Synchronously creates configuration row.
+resulting_state_id: STA-66
+failure_modes:
+- '409'
+- '422'
+- database error
+stale_state_behavior: Name race; no version.
+idempotency: Duplicate rejected.
+retry_behavior: Refresh names.
+reversibility: Delete is separate destructive action.
+audit_evidence_ids:
+- EVD-33
+transition:
+  from_state_id: STA-65
+  to_state_id: STA-66
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 agent-create prerequisites
+proposed_role_policy: null

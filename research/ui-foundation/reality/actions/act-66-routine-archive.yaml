@@ -1,0 +1,34 @@
+id: ACT-66
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-36
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- routine discoverable
+expected_source_version: None
+required_input:
+  routine_id: required
+validation:
+- routine discovery
+durable_effect: Synchronously sets routine visibility metadata archived.
+resulting_state_id: STA-47
+failure_modes:
+- '404'
+- database error
+stale_state_behavior: No metadata version.
+idempotency: Repeated archive converges.
+retry_behavior: Refresh listing.
+reversibility: Unarchive compensates visibility only.
+audit_evidence_ids:
+- EVD-32
+transition:
+  from_state_id: STA-48
+  to_state_id: STA-47
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 routine metadata prerequisite
+proposed_role_policy: null

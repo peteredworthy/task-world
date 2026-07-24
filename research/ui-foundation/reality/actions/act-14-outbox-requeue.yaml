@@ -1,0 +1,44 @@
+id: ACT-14
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-14
+actor: Endpoint-fixed human-operator attribution; it is not authenticated-subject authorization.
+permission_requirements:
+- PER-1
+- PER-2
+- PER-4
+preconditions:
+- The exact graph outbox event ID belongs to the addressed graph run.
+- The addressed graph outbox row is failed.
+expected_source_version: No client outbox-row version; the helper appends its audit event at the current graph position inside
+  the row-update transaction.
+required_input:
+  run_id: required
+  event_id: required
+validation:
+- Constrained path identifiers
+- failed-row ownership/status checks
+- PER-4 graph outbox requeue domain checks
+durable_effect: In one transaction, resets the failed graph outbox row to pending, clears its retry/error/backoff fields as
+  implemented, and appends outbox_requeued audit evidence.
+resulting_state_id: STA-27
+failure_modes:
+- 404 for missing graph or outbox row
+- 409 for nonfailed row or stale audit append
+- 422 for invalid path input
+stale_state_behavior: A stale audit append is translated to 409; the enclosing transaction is expected to roll back the pending
+  reset. Full endpoint race rollback is inferred rather than directly injected by a test.
+idempotency: No idempotency key. Requeue is repeatable only after the row fails again; dispatch remains at-least-once and
+  downstream duplicate side effects remain possible.
+retry_behavior: After another failure, requeue the specific failed row; the dispatcher may execute the side effect again.
+reversibility: No undo restores the prior failed row or its retry metadata.
+audit_evidence_ids:
+- EVD-23
+transition:
+  from_state_id: STA-26
+  to_state_id: STA-27
+enforced_authentication: PER-1 optional global valid-bearer gate.
+enforced_authorization: absent
+domain_eligibility: PER-4 exact graph outbox ownership and failed-status validation.
+proposed_role_policy: null

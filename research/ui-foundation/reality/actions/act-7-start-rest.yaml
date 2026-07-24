@@ -1,0 +1,39 @@
+id: ACT-7
+title: Start run through REST
+definition: Accept a legacy start signal without claiming it has applied.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-2
+actor: caller
+permission_requirements:
+- PER-1
+- PER-2
+- PER-3
+preconditions:
+- legacy run is draft
+expected_source_version: None
+required_input:
+  run_id: required
+validation:
+- lifecycle validation
+durable_effect: Appends SignalEnqueued(RUN_START); consumer later applies start.
+resulting_state_id: STA-1
+failure_modes:
+- 409 illegal transition
+stale_state_behavior: 202 may leave run draft; stale redelivery is discarded or idempotently handled.
+idempotency: State-validated; no request key.
+retry_behavior: Poll signal/activity before retry.
+reversibility: Pause or cancel are separate actions.
+audit_evidence_ids:
+- EVD-7
+- EVD-38
+- EVD-39
+- EVD-40
+transition:
+  from_state_id: STA-1
+  to_state_id: STA-1
+enforced_authentication: Optional global valid-bearer gate; disabled by default.
+enforced_authorization: absent
+domain_eligibility: Legacy row must be draft.
+proposed_role_policy: null

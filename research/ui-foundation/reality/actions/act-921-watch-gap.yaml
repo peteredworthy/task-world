@@ -1,9 +1,0 @@
-id: ACT-921
-implementation_status: absent
-capability_status: gap
-executable: false
-required_outcome: "Record an operator watch/ignore decision without resolving the condition."
-source_demand_ids: [decisions.ignore-watch]
-implementation_constraints: "Current UI has no recorded watch command; no interaction is not durable equivalence."
-required_evidence: "Future item identity, actor, scope, expiry, and later attention evidence."
-unresolved_command_decisions: "All executable semantics require separately approved design."

@@ -1,0 +1,65 @@
+id: ACT-11
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-11
+actor: Caller-supplied decider; its persisted identity is attribution, not authenticated-subject authorization.
+permission_requirements:
+- PER-1
+- PER-2
+- PER-4
+preconditions:
+- A graph exists and its run is not cancelled or failed.
+- The target is an eligible nonterminal authority_request node.
+- The request value is denied.
+expected_source_version: The REST request has no client graph position; the controller reads the current position and guards
+  its transaction and append against races.
+required_input:
+  decision_type: authority
+  value: denied
+  target_node_id: required
+  decider: required
+  scope: optional
+  expiry: optional
+  reason: optional
+  record_id: optional
+command_variant:
+  discriminator: decision_type
+  decision_type: authority
+  value: denied
+validation:
+- RecordDecisionCommand strictly validates authority decision type/value and authority_request target kind.
+- PER-4 validates graph state, target terminality, and graph actor/context shape.
+durable_effect: Appends authority_decision_recorded and projects an AuthorityDecisionRecord; the accepted denial is bound
+  to the authority request, completes that graph node, and leaves a downstream node that requires the denied input graph-node
+  pending with a separately projected deferred reason. No row carrier or invented deferred state is used.
+resulting_state_id: STA-37
+failure_modes:
+- 404 when no graph exists
+- 409 for stale append or command rejection
+- 422 for malformed or ineligible authority decision input
+stale_state_behavior: No client position is accepted. Controller/append races return 409 and leave no invented rejected-decision
+  carrier.
+idempotency: No REST idempotency key is established; decision-record identity and duplicate handling remain command/state
+  dependent.
+retry_behavior: Read the authority decision and node projections before retrying; retry only if the authority request remains
+  eligible.
+reversibility: No authority-decision reversal command exists; a later permitted graph action is not an undo.
+audit_evidence_ids:
+- EVD-27
+transition:
+  from_state_id: STA-36
+  to_state_id: STA-37
+carrier_relationship:
+  kind: same-command decision carrier
+  paired_node_outcome_action_id: ACT-44
+  node_transition:
+    from_state_id: STA-28
+    to_state_id: STA-33
+  deferred_downstream_node_state_id: STA-28
+  ordering: One discriminated CMD-11 command records the authority decision and separately projects authority-request completion;
+    a dependent node can remain pending with a deferred reason.
+enforced_authentication: PER-1 optional global valid-bearer gate.
+enforced_authorization: absent
+domain_eligibility: PER-4 authority target, decision value, graph-state, and actor/context validation.
+proposed_role_policy: null

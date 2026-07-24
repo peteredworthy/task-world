@@ -1,0 +1,51 @@
+id: ACT-45
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-12
+actor: REST endpoint-stamped human-operator; this is attribution, not enforced product-role authorization.
+permission_requirements:
+- PER-1
+- PER-2
+- PER-4
+preconditions:
+- A graph patch request reaches SubmitGraphPatchCommand.
+- The patch violates a validator, stale-read-set, budget, or command constraint, or loses a controller race.
+expected_source_version: Optional base_graph_position is checked against the operation read set; controller expected-position
+  checking remains separate.
+required_input:
+  operations: required
+  patch_id: optional
+  base_graph_position: optional
+  rationale_record_id: optional
+validation:
+- Strict patch request and command schema validation
+- PER-4 patch-validator role, topology, resource, active-node, dependency, and stale-read-set validation
+durable_effect: Appends graph_patch_rejected with diagnostics and preserves the source graph projection. A budget rejection
+  may additionally create a gate, but it is not a universal rejection state.
+resulting_state_id: STA-55
+failure_modes:
+- 404 when no graph exists
+- 409 for stale/controller conflict or rejected patch
+- 422 for malformed patch input
+stale_state_behavior: Invalidating events touching a stale patch read set cause graph_patch_rejected with conflicting event
+  IDs/read-set diagnostics; neutral or disjoint changes do not.
+idempotency: Patch ID is not universal idempotency; rejected requests remain distinct patch-attempt evidence.
+retry_behavior: Read the rejection diagnostics and current projection, then submit a newly valid corrective patch if appropriate.
+reversibility: The rejected attempt preserves its source graph; no rollback is needed or implied.
+audit_evidence_ids:
+- EVD-37
+transition:
+  from_state_id: STA-64
+  to_state_id: STA-55
+carrier_relationship:
+  kind: separate graph-run preservation
+  graph_run_self_loop:
+    from_state_id: STA-18
+    to_state_id: STA-18
+  caveat: A rejected patch preserves the graph-run active projection when it was active; a budget rejection may additionally
+    create a ready gate on a separate graph-node carrier.
+enforced_authentication: PER-1 optional global valid-bearer gate.
+enforced_authorization: absent
+domain_eligibility: PER-4 SubmitGraphPatchCommand and patch-validator rejection conditions.
+proposed_role_policy: null

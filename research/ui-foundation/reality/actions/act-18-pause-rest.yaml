@@ -1,0 +1,53 @@
+id: ACT-18
+title: Pause run through REST
+definition: Accept a REST pause request by visibly moving the legacy row from active to stopping; consumer application to
+  paused is later and separate.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-4
+actor: caller
+permission_requirements:
+- PER-1
+- PER-2
+- PER-3
+preconditions:
+- legacy run is active
+expected_source_version: No client run version.
+required_input:
+  run_id: required
+validation:
+- legacy lifecycle state validation
+- active executor cancellation before pause enqueue
+durable_effect: Synchronously persists active to stopping, appends pause signal acceptance evidence, and queues PAUSE; the
+  consumer later applies stopping to paused.
+resulting_state_id: STA-3
+failure_modes:
+- 404 missing run
+- 409 stopping or illegal transition
+- executor cancellation failure
+stale_state_behavior: A concurrent lifecycle change can make the request reject; after acceptance, redelivery handles stale
+  or already-applied PAUSE without a typed result receipt.
+idempotency: State-validated; no idempotency key. A second pause from stopping is rejected.
+retry_behavior: Refresh row status and activity before retrying; do not infer paused until the consumer applies the queued
+  signal.
+reversibility: Resume is a separate action after paused; it does not restore work interrupted by executor cancellation.
+audit_evidence_ids:
+- EVD-7
+- EVD-8
+- EVD-38
+- EVD-39
+- EVD-40
+transition:
+  from_state_id: STA-2
+  to_state_id: STA-3
+eventual_applied_transition:
+  from_state_id: STA-3
+  to_state_id: STA-4
+  evidence_ids:
+  - EVD-7
+  - EVD-8
+enforced_authentication: Optional global valid-bearer gate; disabled by default.
+enforced_authorization: absent
+domain_eligibility: Legacy row must be active; stopping is rejected.
+proposed_role_policy: null

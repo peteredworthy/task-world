@@ -1,4 +1,130 @@
-schema_version: "1"
-phase_status: incomplete
+schema_version: '1'
+phase_status: complete
 completion_phase: 1
-items: []
+items:
+- title: Graph patch validation rejects invalid topology before visible acceptance
+  definition: Graph patch validation rejects invalid topology before visible acceptance
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-1
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-97
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Applies only to represented tested paths.
+  prohibited_interpretations:
+  - Do not generalize beyond represented paths.
+- title: Final graph completion requires a passing deterministic final check
+  definition: Final graph completion requires a passing deterministic final check
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-2
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-97
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Applies only to represented tested paths.
+  prohibited_interpretations:
+  - Do not generalize beyond represented paths.
+- title: Graph event append and read-model update share rollback behavior
+  definition: Graph event append and read-model update share rollback behavior
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-3
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-97
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Applies only to represented tested paths.
+  prohibited_interpretations:
+  - Do not generalize beyond represented paths.
+- title: Accepted callbacks and usage records are idempotent for their represented keys
+  definition: Accepted callbacks and usage records are idempotent for their represented keys
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-4
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-97
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Applies only to represented tested paths.
+  prohibited_interpretations:
+  - Do not generalize beyond represented paths.
+- title: Missing pricing is not converted into a priced cost fact
+  definition: Missing pricing is not converted into a priced cost fact
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-5
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-97
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Applies only to represented tested paths.
+  prohibited_interpretations:
+  - Do not generalize beyond represented paths.
+- title: Clarification blocks submission until answered
+  definition: Clarification blocks submission until answered
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-6
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-97
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Applies only to represented tested paths.
+  prohibited_interpretations:
+  - Do not generalize beyond represented paths.
+- title: Foundation facts do not equate proposed policy with authorization
+  definition: Foundation facts do not equate proposed policy with authorization
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-7
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-97
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Applies only to represented tested paths.
+  prohibited_interpretations:
+  - Do not generalize beyond represented paths.

@@ -1,0 +1,54 @@
+id: ACT-9
+title: Delete run
+definition: Synchronously delete an ordinary eligible legacy run, return the deleted-response carrier, and leave later row
+  absence separately observable.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-7
+actor: caller
+permission_requirements:
+- PER-1
+- PER-2
+- PER-3
+preconditions:
+- legacy run is draft, stopping, completed, failed, or cancelled
+expected_source_version: None
+required_input:
+  run_id: required
+validation:
+- status-limited deletion
+durable_effect: Deletes the eligible run row and owned records; the synchronous response confirms deletion, while later readback
+  observes absence.
+resulting_state_id: STA-58
+failure_modes:
+- 404 missing
+- 409 active or paused
+- 409 paused startup orphan requires ACT-22 qualification
+stale_state_behavior: Concurrent start/pause can make deletion conflict.
+idempotency: Repeat after deletion returns missing.
+retry_behavior: Refresh status; do not retry destructive request blindly.
+reversibility: Irreversible.
+audit_evidence_ids:
+- EVD-43
+- EVD-38
+- EVD-39
+- EVD-40
+transition:
+  from_state_ids:
+  - STA-1
+  - STA-3
+  - STA-5
+  - STA-6
+  - STA-7
+  to_state_id: STA-58
+later_absence_transition:
+  from_state_id: STA-58
+  to_state_id: STA-56
+  evidence_ids:
+  - EVD-43
+enforced_authentication: Optional global valid-bearer gate; disabled by default.
+enforced_authorization: absent
+domain_eligibility: Ordinary route eligibility is draft, stopping, completed, failed, or cancelled. This contract does not
+  delete an ordinary paused row; the qualified paused startup-orphan path is ACT-22.
+proposed_role_policy: null

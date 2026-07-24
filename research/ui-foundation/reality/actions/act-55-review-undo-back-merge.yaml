@@ -1,0 +1,36 @@
+id: ACT-55
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-17
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- git operation ready
+- HEAD qualifying merge
+expected_source_version: None
+required_input:
+  run_id: required
+validation:
+- worktree
+- HEAD merge
+durable_effect: Synchronously creates qualifying merge revert and emits BackMergeReverted.
+resulting_state_id: STA-42
+failure_modes:
+- '409'
+- git error
+stale_state_behavior: HEAD may change.
+idempotency: Not after HEAD change.
+retry_behavior: Inspect HEAD.
+reversibility: Compensates qualifying merge only.
+audit_evidence_ids:
+- EVD-29
+transition:
+  from_state_id: STA-59
+  to_state_id: STA-42
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 git prerequisite
+proposed_role_policy: null

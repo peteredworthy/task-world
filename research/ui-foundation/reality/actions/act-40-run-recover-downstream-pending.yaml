@@ -1,0 +1,65 @@
+id: ACT-40
+title: Reset run-recovery downstream task to pending
+definition: Run recovery resets each affected downstream legacy task, including a completed task, to pending as compensating
+  recovery rather than ordinary progression.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-35
+actor: caller
+permission_requirements:
+- PER-3
+preconditions:
+- legacy run is failed or paused
+- task is downstream of the selected recovery target
+- recovery command selects the downstream task for compensating reset
+expected_source_version: No client run or task version
+required_input:
+  run_id: required
+  target_task_id: required
+  additional_attempts: optional
+  guidance: optional
+  reset_branch: optional
+validation:
+- legacy execution mode
+- failed-or-paused run validation
+- target task validation
+- additional attempt and reset strategy validation
+durable_effect: Clears downstream attempts and pending markers, resets checklist fields according to preserve_checklist, and
+  sets the affected task to pending; a completed downstream task is intentionally reopened only by this compensating run-recovery
+  route.
+resulting_state_id: STA-8
+failure_modes:
+- 404 run or target task identity
+- 409 run is neither failed nor paused
+- 409 worktree reset failure
+stale_state_behavior: No expected version; concurrent run or task changes can alter the downstream set.
+idempotency: No idempotency key; recovery clears downstream attempts and state.
+retry_behavior: Refresh run, target task, downstream tasks, and worktree state before retrying.
+reversibility: Recovery rewind does not restore downstream attempts, checklist values, files, or external effects.
+limitations:
+- This qualified completed-to-pending reset is a run-recovery compensating effect, not ordinary task or step progression.
+- The contract does not imply that completed tasks generally transition back to pending.
+audit_evidence_ids:
+- EVD-45
+transition:
+  from_state_ids:
+  - STA-9
+  - STA-10
+  - STA-11
+  - STA-12
+  - STA-13
+  - STA-14
+  - STA-15
+  to_state_id: STA-8
+carrier_relationship:
+  command_group: run_recover
+  paired_effect_action_ids:
+  - ACT-38
+  - ACT-39
+  affected_carrier: downstream legacy task
+enforced_authentication: Optional global valid-bearer gate
+enforced_authorization: absent
+domain_eligibility: Downstream task explicitly selected by compensating run recovery in a failed or paused legacy run; includes
+  the qualified completed-task reset.
+proposed_role_policy: null

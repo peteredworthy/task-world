@@ -1,0 +1,39 @@
+id: ACT-56
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-16
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- completed run
+- worktree/source branch
+- readiness
+expected_source_version: None
+required_input:
+  run_id: required
+  strategy: optional
+  dirty_action: optional
+validation:
+- completed/readiness/request
+durable_effect: Synchronously review-merges run branch into source branch.
+resulting_state_id: STA-42
+failure_modes:
+- '409'
+- '400'
+- git error
+stale_state_behavior: Preflight is not version-fenced.
+idempotency: Git dependent.
+retry_behavior: Refresh readiness/branches.
+reversibility: No undo endpoint.
+audit_evidence_ids:
+- EVD-29
+transition:
+  from_state_id: STA-59
+  to_state_id: STA-42
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 git/readiness prerequisites
+proposed_role_policy: null

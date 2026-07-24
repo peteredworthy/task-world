@@ -1,17 +1,136 @@
-# Source Map
+# Source map
 
-Snapshot `snapshot-2026-07-23-phase-0` uses SHA-256 content hashes as drift
-authority. It covers 132 provisional demands: 131 from the five JTBD documents
-and one separately named initial claim from the approved design. Repository
-revision metadata is navigational only.
-
-| Evidence | Source | Role |
-|---|---|---|
-| `EVD-01` | `docs/jtbd/jobs.md` | Job information demands |
-| `EVD-02` | `docs/jtbd/journeys.md` | Journey and continuity demands |
-| `EVD-03` | `docs/jtbd/decision-information.md` | Decision, honesty, and action-feedback demands |
-| `EVD-04` | `docs/jtbd/information-architecture.md` | Semantic health and context constraints |
-| `EVD-05` | `docs/jtbd/evaluation-rubric.md` | Falsification and evaluation demands |
-| `EVD-06` | `docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md` | Approved boundaries, evidence policy, and named initial claims |
-
-Exact hashes and audit timestamps are canonical in `catalog/evidence.yaml`.
+| Demand | Owner | Evidence | Phase 2 classification |
+|---|---|---|---|
+| `jobs.J1.health-class` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J1.current-constraint` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J1.human-wait-state` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J1.frontier-activity` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J1.last-event-age` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J1.budget-pace` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J1.blast-radius` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J2.active-nodes-steps` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J2.dependency-path` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J2.planner-horizon` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J2.blocked-reason` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J2.attempts-left` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J2.final-invariant-progress` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J3.exact-question` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J3.why-now` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J3.proposer` | `domain-persistence` | `EVD-98` | unknown |
+| `jobs.J3.affected-scope` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J3.evidence` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J3.alternatives` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J3.downstream-effect` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J3.reversibility` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J4.ordered-events` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J4.attempt-lineage` | `domain-persistence` | `EVD-98` | unknown |
+| `jobs.J4.requirement-grade-changes` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J4.patch-provenance` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J4.state-transitions` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J4.retries-rejections` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J5.bound-input-records` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J5.omitted-referenced-context` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J5.prompt-size` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J5.transcript` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J5.tools` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J5.artifacts` | `domain-persistence` | `EVD-98` | unknown |
+| `jobs.J5.file-delta` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J5.output-records` | `domain-persistence` | `EVD-98` | unknown |
+| `jobs.J5.usage` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J6.current-failure` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J6.retry-information-delta` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J6.alternatives` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J6.expected-effect` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J6.scope` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J6.authority` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J6.budget` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J6.reversibility` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J6.validation-path` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J7.spend-tokens-by-node-kind` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J7.unpriced-share` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J7.prompt-size` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J7.retries-without-new-information` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J7.repeated-work` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J7.verifier-churn` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J8.comparable-cohort` | `tests-documentation` | `EVD-104` | unknown |
+| `jobs.J8.routine-sha` | `domain-persistence` | `EVD-98` | unknown |
+| `jobs.J8.model-profile` | `domain-persistence` | `EVD-98` | unknown |
+| `jobs.J8.duration` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J8.tokens` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J8.price-coverage` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J8.patch-count` | `graph-runtime` | `EVD-99` | unknown |
+| `jobs.J8.retries` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J8.grade-churn` | `evidence-telemetry` | `EVD-102` | unknown |
+| `jobs.J8.interventions` | `api-actions-authority` | `EVD-101` | unknown |
+| `jobs.J8.outcome` | `workflow-state` | `EVD-100` | unknown |
+| `jobs.J7.prompt-pressure` | `evidence-telemetry` | `EVD-102` | unknown |
+| `design.initial-claims.final-gate-effect` | `graph-runtime` | `EVD-99` | unknown |
+| `journeys.A.freshness-and-connection` | `ui-projections` | `EVD-103` | unknown |
+| `journeys.A.positive-empty-needs-you` | `ui-projections` | `EVD-103` | unknown |
+| `journeys.A.no-runaway-signal` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.B.wait-age` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.B.validator-result` | `graph-runtime` | `EVD-99` | unknown |
+| `journeys.B.recorded-identity-timestamp` | `domain-persistence` | `EVD-98` | unknown |
+| `journeys.C.cost-of-another-attempt` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.C.candidate-delta` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.C.causal-gap` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.C.directive-binding` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.D.execution-unit-identity` | `domain-persistence` | `EVD-98` | unknown |
+| `journeys.D.file-state-boundary` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.E.missing-node-attribution` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.E.detector-evidence` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.continuity.canonical-selection` | `domain-persistence` | `EVD-98` | unknown |
+| `journeys.continuity.preserve-context` | `ui-projections` | `EVD-103` | unknown |
+| `journeys.continuity.restore-return-state` | `ui-projections` | `EVD-103` | unknown |
+| `journeys.continuity.derived-evidence-freshness` | `evidence-telemetry` | `EVD-102` | unknown |
+| `journeys.continuity.action-safety-fields` | `api-actions-authority` | `EVD-101` | unknown |
+| `journeys.continuity.responsive-context` | `ui-projections` | `EVD-103` | unknown |
+| `decisions.ignore-watch` | `ui-projections` | `EVD-103` | unknown |
+| `decisions.approve-gate-patch` | `api-actions-authority` | `EVD-101` | unknown |
+| `decisions.answer-clarification` | `api-actions-authority` | `EVD-101` | unknown |
+| `decisions.retry` | `api-actions-authority` | `EVD-101` | unknown |
+| `decisions.lifecycle` | `api-actions-authority` | `EVD-101` | unknown |
+| `decisions.retire-supersede` | `api-actions-authority` | `EVD-101` | unknown |
+| `decisions.requeue` | `api-actions-authority` | `EVD-101` | unknown |
+| `decisions.steer-context` | `api-actions-authority` | `EVD-101` | unknown |
+| `decisions.apply-steering-patch` | `api-actions-authority` | `EVD-101` | unknown |
+| `decisions.change-source` | `api-actions-authority` | `EVD-101` | unknown |
+| `honesty.live-input-age` | `evidence-telemetry` | `EVD-102` | unknown |
+| `honesty.derived-label-evidence` | `tests-documentation` | `EVD-104` | unknown |
+| `honesty.unpriced-not-zero` | `evidence-telemetry` | `EVD-102` | unknown |
+| `honesty.no-growing-plan-percent` | `tests-documentation` | `EVD-104` | unknown |
+| `honesty.fact-versus-inference` | `tests-documentation` | `EVD-104` | unknown |
+| `honesty.approximate-values` | `tests-documentation` | `EVD-104` | unknown |
+| `honesty.directive-binding-proof` | `evidence-telemetry` | `EVD-102` | unknown |
+| `feedback.command-accepted-rejected` | `api-actions-authority` | `EVD-101` | unknown |
+| `feedback.validation-result-reason` | `graph-runtime` | `EVD-99` | unknown |
+| `feedback.durable-identity` | `domain-persistence` | `EVD-98` | unknown |
+| `feedback.resulting-state` | `workflow-state` | `EVD-100` | unknown |
+| `feedback.next-activity` | `workflow-state` | `EVD-100` | unknown |
+| `feedback.failure-race-recovery` | `api-actions-authority` | `EVD-101` | unknown |
+| `ia.health.evidence-convergence` | `evidence-telemetry` | `EVD-102` | unknown |
+| `ia.health.needs-decision` | `workflow-state` | `EVD-100` | unknown |
+| `ia.health.degraded` | `evidence-telemetry` | `EVD-102` | unknown |
+| `ia.health.stalled` | `evidence-telemetry` | `EVD-102` | unknown |
+| `ia.health.runaway` | `evidence-telemetry` | `EVD-102` | unknown |
+| `ia.health.steered` | `evidence-telemetry` | `EVD-102` | unknown |
+| `ia.health.settled` | `workflow-state` | `EVD-100` | unknown |
+| `ia.selection.identity-chain` | `domain-persistence` | `EVD-98` | unknown |
+| `ia.selection.comparison-target` | `ui-projections` | `EVD-103` | unknown |
+| `ia.selection.freshness-annotations` | `ui-projections` | `EVD-103` | unknown |
+| `ia.vocabulary.distinct-entities` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.attention-clarity` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.position-blast-radius` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.causal-comprehension` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.decision-readiness` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.evidence-access` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.context-continuity` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.complexity-control` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.action-safety-feedback` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.capability-honesty` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.responsive-integrity` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.no-selection-resets` | `ui-projections` | `EVD-103` | unknown |
+| `rubric.derived-evidence-access` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.result-state-confirmation` | `tests-documentation` | `EVD-104` | unknown |
+| `rubric.viability-floor` | `tests-documentation` | `EVD-104` | unknown |

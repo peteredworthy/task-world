@@ -1,0 +1,12 @@
+id: ACT-15
+implementation_status: absent
+capability_status: gap
+executable: false
+required_outcome: Durably scope human context and prove any future packet binding.
+source_demand_ids:
+- decisions.steer-context
+- journeys.C.directive-binding
+implementation_constraints: No typed directive command, directive record, or binding producer exists.
+required_evidence: Future directive identity, scope, actor, acceptance, and packet-binding evidence.
+unresolved_command_decisions: All command, authority, validation, concurrency, retry, reversal, and retention semantics require
+  approved future design.

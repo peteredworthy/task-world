@@ -1,43 +1,1005 @@
-schema_version: "1"
-phase_status: partial
+schema_version: '1'
+phase_status: complete
 completion_phase: 1
-key_namespace: domain-synthesis/provisional
-canonical_id_policy: Task 10 keys are provisional; Task 13 alone may allocate REL-* IDs.
-evidence_reference_policy: Every reference is agent-reports/<file>#<exact heading>.
-cardinality_convention: source_min/source_max is the number of source entities at one target endpoint; target_min/target_max is the number of target entities at one source endpoint. All relationship cardinalities use this endpoint convention.
+key_namespace: canonical
+cardinality_convention: source_min/source_max is the number of source entities at one target endpoint; target_min/target_max
+  is the number of target entities at one source endpoint. All relationship cardinalities use this endpoint convention.
 items:
-  - {key: DS-REL-config-declares-step, source: DS-ENT-routine-config, target: DS-ENT-step, relationship_type: template-lineage, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: config lineage not runtime ownership, temporal_semantics: read at construction, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory], counter_evidence_refs: [], unknowns: [], prohibited_causal_interpretations: ["Declaration does not prove execution."]}
-  - {key: DS-REL-run-owns-step, source: DS-ENT-run, target: DS-ENT-step, relationship_type: owns, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: non-null FK/cascade/delete-orphan, temporal_semantics: order_index, dependency_semantics: step progression advances run, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/03-workflow-state.md#State carriers and legal transitions], counter_evidence_refs: [], unknowns: [], prohibited_causal_interpretations: ["Order is not causality."]}
-  - {key: DS-REL-step-owns-task, source: DS-ENT-step, target: DS-ENT-task, relationship_type: owns, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: non-null FK/cascade/delete-orphan, temporal_semantics: ordered rows, dependency_semantics: terminal top-level tasks control step completion, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/03-workflow-state.md#State carriers and legal transitions], counter_evidence_refs: [], unknowns: [fan-out qualifier], prohibited_causal_interpretations: ["Task order is not graph edge direction."]}
-  - {key: DS-REL-task-owns-attempt, source: DS-ENT-task, target: DS-ENT-attempt, relationship_type: owns, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: non-null FK/cascade/delete-orphan, temporal_semantics: non-unique attempt_num order, dependency_semantics: revision may create later attempt, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Conflicts found], unknowns: [canonical identity], prohibited_causal_interpretations: ["Ordinal is not lineage."]}
-  - {key: DS-REL-requirement-seeds-checklist, source: DS-ENT-requirement-config, target: DS-ENT-checklist-item, relationship_type: transforms-to-projection, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: copied task-local req_id, temporal_semantics: construct then mutate, dependency_semantics: checklist gates legacy progression, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Temporal relationship behavior], counter_evidence_refs: [], unknowns: [cross-mode conversion], prohibited_causal_interpretations: ["ID match is not graph equivalence."]}
-  - {key: DS-REL-attempt-owns-grade-snapshot, source: DS-ENT-attempt, target: DS-ENT-attempt-grade-snapshot, relationship_type: owns-historical-snapshot, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: 1}, ownership_semantics: attempt grade_snapshot JSON, temporal_semantics: historical capture, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Temporal relationship behavior], counter_evidence_refs: [], unknowns: [snapshot completeness], prohibited_causal_interpretations: ["Not current checklist."]}
-  - {key: DS-REL-row-carries-workflow-payload, source: DS-ENT-persisted-event-row, target: DS-ENT-workflow-event-payload, relationship_type: stores-payload, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: 1}, ownership_semantics: workflow aggregate payload, temporal_semantics: global row order, dependency_semantics: projectors consume type, epistemic_status: observed, evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [], prohibited_causal_interpretations: ["Sequence is not causality."]}
-  - {key: DS-REL-row-carries-graph-envelope, source: DS-ENT-persisted-event-row, target: DS-ENT-graph-event-envelope, relationship_type: stores-payload, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: 1}, ownership_semantics: graph aggregate payload, temporal_semantics: global row position differs from graph-local position, dependency_semantics: reducers consume envelope, epistemic_status: observed, evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [complete join], prohibited_causal_interpretations: ["event_id is not row primary key."]}
-  - {key: DS-REL-run-has-workflow-event, source: DS-ENT-run, target: DS-ENT-workflow-event-payload, relationship_type: aggregate-stream-association, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: aggregate association not FK, temporal_semantics: aggregate and global order differ, dependency_semantics: updates workflow projections, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/03-workflow-state.md#Key findings], counter_evidence_refs: [], unknowns: [], prohibited_causal_interpretations: ["Not direct FK ownership."]}
-  - {key: DS-REL-run-has-graph-event, source: DS-ENT-run, target: DS-ENT-graph-event-envelope, relationship_type: graph-aggregate-stream-association, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: graph:<run_id> aggregate association, temporal_semantics: graph-local and global orders, dependency_semantics: reduces projection, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings, agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [complete public chronology], prohibited_causal_interpretations: ["Not workflow event alias."]}
-  - {key: DS-REL-graph-event-reduces-projection, source: DS-ENT-graph-event-envelope, target: DS-ENT-graph-projection, relationship_type: reduces-into, cardinality: {source_min: 0, source_max: many, target_min: 0, target_max: 1}, ownership_semantics: projection is disposable, temporal_semantics: checkpointed ordered rebuild, dependency_semantics: reducer mechanism, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings, agent-reports/07-tests-documentation.md#Evidence qualification], counter_evidence_refs: [], unknowns: [event coverage], prohibited_causal_interpretations: ["Projection change alone is not business causation."]}
-  - {key: DS-REL-run-has-graph-projection, source: DS-ENT-run, target: DS-ENT-graph-projection, relationship_type: projection-association, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: 1}, ownership_semantics: run_id without FK, temporal_semantics: delete/rebuild, dependency_semantics: graph driver consumes state, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/03-workflow-state.md#Legacy versus graph mode], counter_evidence_refs: [], unknowns: [graph-mode presence], prohibited_causal_interpretations: ["Projection is not Run."]}
-  - {key: DS-REL-projection-has-node, source: DS-ENT-graph-projection, target: DS-ENT-graph-node, relationship_type: materializes-member, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: graph topology, temporal_semantics: dynamic create/retire, dependency_semantics: readiness evaluates inputs/gates/resources, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [region cardinality], prohibited_causal_interpretations: ["task_region_id is not identity."]}
-  - {key: DS-REL-projection-has-edge, source: DS-ENT-graph-projection, target: DS-ENT-graph-edge, relationship_type: materializes-member, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: graph topology, temporal_semantics: accepted patches change topology, dependency_semantics: typed edge mechanism, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [], prohibited_causal_interpretations: ["Not generic causal edge."]}
-  - {key: DS-REL-edge-source-node, source: DS-ENT-graph-edge, target: DS-ENT-graph-node, relationship_type: has-source-port-on, cardinality: {source_min: 0, source_max: many, target_min: 1, target_max: 1}, ownership_semantics: one source node/port, temporal_semantics: fixed endpoint, dependency_semantics: source output selectable, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [], prohibited_causal_interpretations: ["Precedence is not causality."]}
-  - {key: DS-REL-edge-target-node, source: DS-ENT-graph-edge, target: DS-ENT-graph-node, relationship_type: has-target-port-on, cardinality: {source_min: 0, source_max: many, target_min: 1, target_max: 1}, ownership_semantics: one target node/port, temporal_semantics: readiness evaluates state, dependency_semantics: state_dependency differs from input_binding, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [], prohibited_causal_interpretations: ["Completion order is not causality."]}
-  - {key: DS-REL-node-produces-record, source: DS-ENT-graph-node, target: DS-ENT-graph-record, relationship_type: produces-at-port, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: one producer node/port, temporal_semantics: accept then bind candidates, dependency_semantics: may satisfy input contract, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings, agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [agent-reports/05-evidence-telemetry.md#Important uncertainties], unknowns: [worktree attribution], prohibited_causal_interpretations: ["Producer not exclusive authorship."]}
-  - {key: DS-REL-binding-selects-record, source: DS-ENT-input-binding, target: DS-ENT-graph-record, relationship_type: selects-input, cardinality: {source_min: 0, source_max: many, target_min: 0, target_max: many}, ownership_semantics: binding stores IDs by port policy, temporal_semantics: latest replacement or accumulation, dependency_semantics: missing required binding blocks readiness, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [], prohibited_causal_interpretations: ["Does not prove model ingestion."]}
-  - {key: DS-REL-edge-has-binding, source: DS-ENT-graph-edge, target: DS-ENT-input-binding, relationship_type: realizes-input-binding, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: 1}, ownership_semantics: target node/port/edge context, temporal_semantics: emitted on matching acceptance, dependency_semantics: only input_binding type, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [standalone binding ID], prohibited_causal_interpretations: ["State dependency need not bind record."]}
-  - {key: DS-REL-node-has-lease, source: DS-ENT-graph-node, target: DS-ENT-graph-lease, relationship_type: scheduled-by, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, active_cardinality: {target_min: 0, target_max: 1}, ownership_semantics: scheduler denies second active lease, temporal_semantics: historical transitions, dependency_semantics: execution/callback context, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [external recovery], prohibited_causal_interpretations: ["Lease not completion proof."]}
-  - {key: DS-REL-graph-event-creates-outbox, source: DS-ENT-graph-event-envelope, target: DS-ENT-graph-outbox-intent, relationship_type: creates-selected-side-effect-intent, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: 1}, ownership_semantics: outbox_id primary identity and event_id unique association, temporal_semantics: atomic event/outbox commit before dispatch, dependency_semantics: dispatch and cleanup events create intent, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Persistence table inventory, agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [exactly-once], prohibited_causal_interpretations: ["Intent does not prove external effect."]}
-  - {key: DS-REL-run-owns-clarification-request, source: DS-ENT-run, target: DS-ENT-clarification-request, relationship_type: owns, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: run FK/cascade, temporal_semantics: pending wait, dependency_semantics: unanswered blocks tested submission, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/07-tests-documentation.md#Evidence qualification], counter_evidence_refs: [], unknowns: [graph analogue], prohibited_causal_interpretations: ["Attribution is not FK integrity."]}
-  - {key: DS-REL-request-owns-response, source: DS-ENT-clarification-request, target: DS-ENT-clarification-response, relationship_type: owns, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: 1}, ownership_semantics: unique request_id/cascade, temporal_semantics: response follows request, dependency_semantics: eligible response resumes building, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/04-api-actions-authority.md#Transport and capability inventory], counter_evidence_refs: [], unknowns: [revision], prohibited_causal_interpretations: ["Existence not answer-validity proof."]}
-  - {key: DS-REL-run-has-cost-record, source: DS-ENT-run, target: DS-ENT-cost-record, relationship_type: required-foreign-key-attribution, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: required run FK, temporal_semantics: post-return upsert, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality], counter_evidence_refs: [agent-reports/05-evidence-telemetry.md#Important uncertainties], unknowns: [coverage], prohibited_causal_interpretations: ["Not complete spend."]}
-  - {key: DS-REL-task-has-cost-record, source: DS-ENT-task, target: DS-ENT-cost-record, relationship_type: required-foreign-key-attribution, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: required task FK, temporal_semantics: execution tuple, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality], counter_evidence_refs: [], unknowns: [attempt conflict], prohibited_causal_interpretations: ["Not attempt lineage."]}
-  - {key: DS-REL-cost-references-attempt, source: DS-ENT-cost-record, target: DS-ENT-attempt, relationship_type: optional-primary-key-reference, cardinality: {source_min: 0, source_max: many, target_min: 0, target_max: 1}, ownership_semantics: optional FK to attempts.id, temporal_semantics: post-return attribution, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Conflicts found], unknowns: [attempt_id semantics], prohibited_causal_interpretations: ["Not nullable attempt_id proof."]}
-  - {key: DS-REL-run-has-interaction-log, source: DS-ENT-run, target: DS-ENT-interaction-log-row, relationship_type: required-foreign-key-attribution, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: required run FK, temporal_semantics: best-effort upsert, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [write failure], prohibited_causal_interpretations: ["Not complete transcript."]}
-  - {key: DS-REL-task-has-interaction-log, source: DS-ENT-task, target: DS-ENT-interaction-log-row, relationship_type: required-foreign-key-attribution, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: required task FK, temporal_semantics: execution tuple, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality], counter_evidence_refs: [], unknowns: [graph equivalent], prohibited_causal_interpretations: ["Not generic artifact."]}
-  - {key: DS-REL-log-references-attempt, source: DS-ENT-interaction-log-row, target: DS-ENT-attempt, relationship_type: optional-primary-key-reference, cardinality: {source_min: 0, source_max: many, target_min: 0, target_max: 1}, ownership_semantics: optional FK to attempts.id, temporal_semantics: output path, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Conflicts found], unknowns: [attempt identity], prohibited_causal_interpretations: ["Not attempt_id proof."]}
-  - {key: DS-REL-graph-record-references-cas, source: DS-ENT-graph-record, target: DS-ENT-cas-artifact-blob, relationship_type: may-reference-verified-content, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: check record CAS reference, temporal_semantics: acceptance snapshot, dependency_semantics: hydration separately wired, epistemic_status: observed, evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [prompt hydration], prohibited_causal_interpretations: ["No proof model saw blob."]}
-  - {key: DS-REL-graph-record-declares-path, source: DS-ENT-graph-record, target: DS-ENT-graph-declared-artifact-reference, relationship_type: may-declare-path-reference, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: declaration in record payload, temporal_semantics: acceptance snapshot, dependency_semantics: none, epistemic_status: observed, evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [agent-reports/05-evidence-telemetry.md#Conflicts found], unknowns: [path existence], prohibited_causal_interpretations: ["Declaration is not verified availability."]}
-  - {key: DS-REL-profile-resolves-model, source: DS-ENT-model-profile, target: DS-ENT-resolved-model, relationship_type: selects-default-or-override, cardinality: {source_min: 1, source_max: 1, target_min: 0, target_max: many}, ownership_semantics: runner/profile mapping, temporal_semantics: mutable default and captured model, dependency_semantics: model resolution, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory], counter_evidence_refs: [], unknowns: [historical profile], prohibited_causal_interpretations: ["Same model does not prove same profile."]}
-  - {key: DS-REL-sidecar-references-copied-db, source: DS-ENT-backup-metadata-sidecar, target: DS-ENT-copied-backup-db, relationship_type: references, cardinality: {source_min: 1, source_max: 1, target_min: 1, target_max: 1}, ownership_semantics: sidecar db_path names copied DB, temporal_semantics: metadata around copy, dependency_semantics: restore consumes sidecar then copies DB, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/01-domain-persistence.md#Temporal relationship behavior], counter_evidence_refs: [agent-reports/04-api-actions-authority.md#CLI database maintenance capability], unknowns: [WAL/SHM/live consistency], prohibited_causal_interpretations: ["1:1 does not prove atomic backup."]}
-  - {key: DS-REL-sidecar-records-journal-observation, source: DS-ENT-backup-metadata-sidecar, target: DS-ENT-journal-segment, relationship_type: records-one-path-and-scalar-marker-observation, cardinality: {source_min: 0, source_max: many, target_min: 0, target_max: 1}, ownership_semantics: one path and scalar max marker; no segment ownership, temporal_semantics: scan after DB copy, dependency_semantics: marker replay hint only, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/01-domain-persistence.md#Temporal relationship behavior], counter_evidence_refs: [agent-reports/04-api-actions-authority.md#CLI database maintenance capability], unknowns: [path scope and replay consumer], prohibited_causal_interpretations: ["Not 0..N persisted segment membership or replay proof."]}
-  - {key: DS-REL-journal-imports-persisted-row, source: DS-ENT-journal-segment, target: DS-ENT-persisted-event-row, relationship_type: conditionally-imports-into, cardinality: {source_min: 0, source_max: many, target_min: 0, target_max: many}, ownership_semantics: secondary normal output, temporal_semantics: deduplicate positions only when events_v2 empty, dependency_semantics: known payloads rebuild projections, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Temporal relationship behavior, agent-reports/03-workflow-state.md#JSONL authority conflict], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Conflicts found], unknowns: [unconditional authority], prohibited_causal_interpretations: ["Bootstrap is not JSONL-first normal authority."]}
+- source: ENT-1
+  target: ENT-3
+  relationship_type: template-lineage
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: config lineage not runtime ownership
+  temporal_semantics: read at construction
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-1
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations: []
+  prohibited_interpretations: []
+  title: template lineage
+  definition: ENT-1 template-lineage ENT-3.
+- source: ENT-2
+  target: ENT-3
+  relationship_type: owns
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: non-null FK/cascade/delete-orphan
+  temporal_semantics: order_index
+  dependency_semantics: step progression advances run
+  epistemic_status: observed
+  id: REL-2
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-50
+  conflict_ids: []
+  question_ids: []
+  limitations: []
+  prohibited_interpretations: []
+  title: owns
+  definition: ENT-2 owns ENT-3.
+- source: ENT-3
+  target: ENT-4
+  relationship_type: owns
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: non-null FK/cascade/delete-orphan
+  temporal_semantics: ordered rows
+  dependency_semantics: terminal top-level tasks control step completion
+  epistemic_status: observed
+  id: REL-3
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-50
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - fan-out qualifier
+  prohibited_interpretations: []
+  title: owns
+  definition: ENT-3 owns ENT-4.
+- source: ENT-4
+  target: ENT-5
+  relationship_type: owns
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: non-null FK/cascade/delete-orphan
+  temporal_semantics: non-unique attempt_num order
+  dependency_semantics: revision may create later attempt
+  epistemic_status: observed
+  id: REL-4
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-51
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - canonical identity
+  prohibited_interpretations: []
+  title: owns
+  definition: ENT-4 owns ENT-5.
+- source: ENT-7
+  target: ENT-8
+  relationship_type: transforms-to-projection
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: copied task-local req_id
+  temporal_semantics: construct then mutate
+  dependency_semantics: checklist gates legacy progression
+  epistemic_status: observed
+  id: REL-5
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-55
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - cross-mode conversion
+  prohibited_interpretations: []
+  title: transforms to projection
+  definition: ENT-7 transforms-to-projection ENT-8.
+- source: ENT-5
+  target: ENT-6
+  relationship_type: owns-historical-snapshot
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: 1
+  ownership_semantics: attempt grade_snapshot JSON
+  temporal_semantics: historical capture
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-6
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-55
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - snapshot completeness
+  prohibited_interpretations: []
+  title: owns historical snapshot
+  definition: ENT-5 owns-historical-snapshot ENT-6.
+- source: ENT-9
+  target: ENT-10
+  relationship_type: stores-payload
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: 1
+  ownership_semantics: workflow aggregate payload
+  temporal_semantics: global row order
+  dependency_semantics: projectors consume type
+  epistemic_status: observed
+  id: REL-7
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations: []
+  prohibited_interpretations: []
+  title: stores payload
+  definition: ENT-9 stores-payload ENT-10.
+- source: ENT-9
+  target: ENT-11
+  relationship_type: stores-payload
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: 1
+  ownership_semantics: graph aggregate payload
+  temporal_semantics: global row position differs from graph-local position
+  dependency_semantics: reducers consume envelope
+  epistemic_status: observed
+  id: REL-8
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - complete join
+  prohibited_interpretations: []
+  title: stores payload
+  definition: ENT-9 stores-payload ENT-11.
+- source: ENT-2
+  target: ENT-10
+  relationship_type: aggregate-stream-association
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: aggregate association not FK
+  temporal_semantics: aggregate and global order differ
+  dependency_semantics: updates workflow projections
+  epistemic_status: observed
+  id: REL-9
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations: []
+  prohibited_interpretations: []
+  title: aggregate stream association
+  definition: ENT-2 aggregate-stream-association ENT-10.
+- source: ENT-2
+  target: ENT-11
+  relationship_type: graph-aggregate-stream-association
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: graph:<run_id> aggregate association
+  temporal_semantics: graph-local and global orders
+  dependency_semantics: reduces projection
+  epistemic_status: observed
+  id: REL-10
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - complete public chronology
+  prohibited_interpretations: []
+  title: graph aggregate stream association
+  definition: ENT-2 graph-aggregate-stream-association ENT-11.
+- source: ENT-11
+  target: ENT-12
+  relationship_type: reduces-into
+  cardinality:
+    source_min: 0
+    source_max: many
+    target_min: 0
+    target_max: 1
+  ownership_semantics: projection is disposable
+  temporal_semantics: checkpointed ordered rebuild
+  dependency_semantics: reducer mechanism
+  epistemic_status: observed
+  id: REL-11
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - event coverage
+  prohibited_interpretations: []
+  title: reduces into
+  definition: ENT-11 reduces-into ENT-12.
+- source: ENT-2
+  target: ENT-12
+  relationship_type: projection-association
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: 1
+  ownership_semantics: run_id without FK
+  temporal_semantics: delete/rebuild
+  dependency_semantics: graph driver consumes state
+  epistemic_status: observed
+  id: REL-12
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-59
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - graph-mode presence
+  prohibited_interpretations: []
+  title: projection association
+  definition: ENT-2 projection-association ENT-12.
+- source: ENT-12
+  target: ENT-13
+  relationship_type: materializes-member
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: graph topology
+  temporal_semantics: dynamic create/retire
+  dependency_semantics: readiness evaluates inputs/gates/resources
+  epistemic_status: observed
+  id: REL-13
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - region cardinality
+  prohibited_interpretations: []
+  title: materializes member
+  definition: ENT-12 materializes-member ENT-13.
+- source: ENT-12
+  target: ENT-14
+  relationship_type: materializes-member
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: graph topology
+  temporal_semantics: accepted patches change topology
+  dependency_semantics: typed edge mechanism
+  epistemic_status: observed
+  id: REL-14
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations: []
+  prohibited_interpretations: []
+  title: materializes member
+  definition: ENT-12 materializes-member ENT-14.
+- source: ENT-14
+  target: ENT-13
+  relationship_type: has-source-port-on
+  cardinality:
+    source_min: 0
+    source_max: many
+    target_min: 1
+    target_max: 1
+  ownership_semantics: one source node/port
+  temporal_semantics: fixed endpoint
+  dependency_semantics: source output selectable
+  epistemic_status: observed
+  id: REL-15
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations: []
+  prohibited_interpretations: []
+  title: has source port on
+  definition: ENT-14 has-source-port-on ENT-13.
+- source: ENT-14
+  target: ENT-13
+  relationship_type: has-target-port-on
+  cardinality:
+    source_min: 0
+    source_max: many
+    target_min: 1
+    target_max: 1
+  ownership_semantics: one target node/port
+  temporal_semantics: readiness evaluates state
+  dependency_semantics: state_dependency differs from input_binding
+  epistemic_status: observed
+  id: REL-16
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations: []
+  prohibited_interpretations: []
+  title: has target port on
+  definition: ENT-14 has-target-port-on ENT-13.
+- source: ENT-13
+  target: ENT-15
+  relationship_type: produces-at-port
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: one producer node/port
+  temporal_semantics: accept then bind candidates
+  dependency_semantics: may satisfy input contract
+  epistemic_status: observed
+  id: REL-17
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  - EVD-56
+  - EVD-64
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - worktree attribution
+  prohibited_interpretations: []
+  title: produces at port
+  definition: ENT-13 produces-at-port ENT-15.
+- source: ENT-16
+  target: ENT-15
+  relationship_type: selects-input
+  cardinality:
+    source_min: 0
+    source_max: many
+    target_min: 0
+    target_max: many
+  ownership_semantics: binding stores IDs by port policy
+  temporal_semantics: latest replacement or accumulation
+  dependency_semantics: missing required binding blocks readiness
+  epistemic_status: observed
+  id: REL-18
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations: []
+  prohibited_interpretations: []
+  title: selects input
+  definition: ENT-16 selects-input ENT-15.
+- source: ENT-14
+  target: ENT-16
+  relationship_type: realizes-input-binding
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: 1
+  ownership_semantics: target node/port/edge context
+  temporal_semantics: emitted on matching acceptance
+  dependency_semantics: only input_binding type
+  epistemic_status: observed
+  id: REL-19
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - standalone binding ID
+  prohibited_interpretations: []
+  title: realizes input binding
+  definition: ENT-14 realizes-input-binding ENT-16.
+- source: ENT-13
+  target: ENT-17
+  relationship_type: scheduled-by
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  active_cardinality:
+    target_min: 0
+    target_max: 1
+  ownership_semantics: scheduler denies second active lease
+  temporal_semantics: historical transitions
+  dependency_semantics: execution/callback context
+  epistemic_status: observed
+  id: REL-20
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - external recovery
+  prohibited_interpretations: []
+  title: scheduled by
+  definition: ENT-13 scheduled-by ENT-17.
+- source: ENT-11
+  target: ENT-18
+  relationship_type: creates-selected-side-effect-intent
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: 1
+  ownership_semantics: outbox_id primary identity and event_id unique association
+  temporal_semantics: atomic event/outbox commit before dispatch
+  dependency_semantics: dispatch and cleanup events create intent
+  epistemic_status: observed
+  id: REL-21
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-60
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - exactly-once
+  prohibited_interpretations: []
+  title: creates selected side effect intent
+  definition: ENT-11 creates-selected-side-effect-intent ENT-18.
+- source: ENT-2
+  target: ENT-19
+  relationship_type: owns
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: run FK/cascade
+  temporal_semantics: pending wait
+  dependency_semantics: unanswered blocks tested submission
+  epistemic_status: observed
+  id: REL-22
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - graph analogue
+  prohibited_interpretations: []
+  title: owns
+  definition: ENT-2 owns ENT-19.
+- source: ENT-19
+  target: ENT-20
+  relationship_type: owns
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: 1
+  ownership_semantics: unique request_id/cascade
+  temporal_semantics: response follows request
+  dependency_semantics: eligible response resumes building
+  epistemic_status: observed
+  id: REL-23
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - revision
+  prohibited_interpretations: []
+  title: owns
+  definition: ENT-19 owns ENT-20.
+- source: ENT-2
+  target: ENT-21
+  relationship_type: required-foreign-key-attribution
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: required run FK
+  temporal_semantics: post-return upsert
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-24
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-64
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - coverage
+  prohibited_interpretations: []
+  title: required foreign key attribution
+  definition: ENT-2 required-foreign-key-attribution ENT-21.
+- source: ENT-4
+  target: ENT-21
+  relationship_type: required-foreign-key-attribution
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: required task FK
+  temporal_semantics: execution tuple
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-25
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - attempt conflict
+  prohibited_interpretations: []
+  title: required foreign key attribution
+  definition: ENT-4 required-foreign-key-attribution ENT-21.
+- source: ENT-21
+  target: ENT-5
+  relationship_type: optional-primary-key-reference
+  cardinality:
+    source_min: 0
+    source_max: many
+    target_min: 0
+    target_max: 1
+  ownership_semantics: optional FK to attempts.id
+  temporal_semantics: post-return attribution
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-26
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-51
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - attempt_id semantics
+  prohibited_interpretations: []
+  title: optional primary key reference
+  definition: ENT-21 optional-primary-key-reference ENT-5.
+- source: ENT-2
+  target: ENT-22
+  relationship_type: required-foreign-key-attribution
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: required run FK
+  temporal_semantics: best-effort upsert
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-27
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - write failure
+  prohibited_interpretations: []
+  title: required foreign key attribution
+  definition: ENT-2 required-foreign-key-attribution ENT-22.
+- source: ENT-4
+  target: ENT-22
+  relationship_type: required-foreign-key-attribution
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: required task FK
+  temporal_semantics: execution tuple
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-28
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - graph equivalent
+  prohibited_interpretations: []
+  title: required foreign key attribution
+  definition: ENT-4 required-foreign-key-attribution ENT-22.
+- source: ENT-22
+  target: ENT-5
+  relationship_type: optional-primary-key-reference
+  cardinality:
+    source_min: 0
+    source_max: many
+    target_min: 0
+    target_max: 1
+  ownership_semantics: optional FK to attempts.id
+  temporal_semantics: output path
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-29
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-51
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - attempt identity
+  prohibited_interpretations: []
+  title: optional primary key reference
+  definition: ENT-22 optional-primary-key-reference ENT-5.
+- source: ENT-15
+  target: ENT-23
+  relationship_type: may-reference-verified-content
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: check record CAS reference
+  temporal_semantics: acceptance snapshot
+  dependency_semantics: hydration separately wired
+  epistemic_status: observed
+  id: REL-30
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - prompt hydration
+  prohibited_interpretations: []
+  title: may reference verified content
+  definition: ENT-15 may-reference-verified-content ENT-23.
+- source: ENT-15
+  target: ENT-24
+  relationship_type: may-declare-path-reference
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: declaration in record payload
+  temporal_semantics: acceptance snapshot
+  dependency_semantics: none
+  epistemic_status: observed
+  id: REL-31
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-56
+  - EVD-65
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - path existence
+  prohibited_interpretations: []
+  title: may declare path reference
+  definition: ENT-15 may-declare-path-reference ENT-24.
+- source: ENT-27
+  target: ENT-28
+  relationship_type: selects-default-or-override
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 0
+    target_max: many
+  ownership_semantics: runner/profile mapping
+  temporal_semantics: mutable default and captured model
+  dependency_semantics: model resolution
+  epistemic_status: observed
+  id: REL-32
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - historical profile
+  prohibited_interpretations: []
+  title: selects default or override
+  definition: ENT-27 selects-default-or-override ENT-28.
+- source: ENT-29
+  target: ENT-30
+  relationship_type: references
+  cardinality:
+    source_min: 1
+    source_max: 1
+    target_min: 1
+    target_max: 1
+  ownership_semantics: sidecar db_path names copied DB
+  temporal_semantics: metadata around copy
+  dependency_semantics: restore consumes sidecar then copies DB
+  epistemic_status: observed
+  id: REL-33
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-55
+  - EVD-66
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - WAL/SHM/live consistency
+  prohibited_interpretations: []
+  title: references
+  definition: ENT-29 references ENT-30.
+- source: ENT-29
+  target: ENT-31
+  relationship_type: records-one-path-and-scalar-marker-observation
+  cardinality:
+    source_min: 0
+    source_max: many
+    target_min: 0
+    target_max: 1
+  ownership_semantics: one path and scalar max marker; no segment ownership
+  temporal_semantics: scan after DB copy
+  dependency_semantics: marker replay hint only
+  epistemic_status: observed
+  id: REL-34
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-55
+  - EVD-66
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - path scope and replay consumer
+  prohibited_interpretations: []
+  title: records one path and scalar marker observation
+  definition: ENT-29 records-one-path-and-scalar-marker-observation ENT-31.
+- source: ENT-31
+  target: ENT-9
+  relationship_type: conditionally-imports-into
+  cardinality:
+    source_min: 0
+    source_max: many
+    target_min: 0
+    target_max: many
+  ownership_semantics: secondary normal output
+  temporal_semantics: deduplicate positions only when events_v2 empty
+  dependency_semantics: known payloads rebuild projections
+  epistemic_status: observed
+  id: REL-35
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: unknown
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-55
+  - EVD-67
+  - EVD-51
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - unconditional authority
+  prohibited_interpretations: []
+  title: conditionally imports into
+  definition: ENT-31 conditionally-imports-into ENT-9.

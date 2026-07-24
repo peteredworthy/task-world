@@ -1,0 +1,35 @@
+id: ACT-63
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-21
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- valid snapshot/path request
+expected_source_version: None
+required_input:
+  run_id: required
+  worktree_path: required
+  revert_to: required
+validation:
+- snapshot selector
+durable_effect: Synchronously restores managed environment files.
+resulting_state_id: STA-45
+failure_modes:
+- snapshot/path/filesystem error
+stale_state_behavior: No containment/ownership/version proof.
+idempotency: Filesystem dependent.
+retry_behavior: Inspect files/snapshot.
+reversibility: Later snapshot may compensate only file content.
+audit_evidence_ids:
+- EVD-31
+transition:
+  from_state_id: STA-60
+  to_state_id: STA-45
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 environment prerequisites
+proposed_role_policy: null

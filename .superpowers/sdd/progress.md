@@ -24,3 +24,5 @@ Task 0: design and implementation plan approved; task commits authorized on isol
 Task 1: complete (commits ecf3a7bfa..d34fb47e3, 37 focused tests passed, review clean).
 Task 2: complete (commits d9ad39638..a69ba8362, 132 source demands, Phase 0 validation passed, review clean).
 Tasks 3-9: complete (commits 3f8c454e3..09b175054; seven bounded reality reports validated and independently reviewed clean).
+Tasks 10-12: complete (commits 8c9205f41..833af5006; domain, action/state, and evidence syntheses validated and independently reviewed clean).
+Task 13: complete (canonical Phase 1 normalization; validation and targeted foundation tests passed; commit recorded in task-13-ui-foundation-report.md).

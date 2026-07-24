@@ -1,0 +1,58 @@
+id: ACT-12
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-11
+actor: Caller-supplied decider; the value is persisted as attribution and is not authenticated-subject authorization.
+permission_requirements:
+- PER-1
+- PER-2
+- PER-4
+preconditions:
+- A graph exists and its run is not cancelled or failed.
+- The target is an eligible nonterminal oversight decision target.
+expected_source_version: The REST request has no client graph position; the controller supplies the current position and rejects
+  a concurrent append conflict.
+required_input:
+  decision_type: oversight
+  value: required
+  target_node_id: required
+  decider: required
+  scope: optional
+  expiry: optional
+  reason: optional
+  record_id: optional
+command_variant:
+  discriminator: decision_type
+  decision_type: oversight
+  value: required
+validation:
+- RecordDecisionCommand strictly validates the oversight decision payload and target eligibility.
+- PER-4 validates graph state, target terminality, and actor/context shape.
+durable_effect: Appends oversight_decision_recorded and updates the oversight decision projection. Oversight creates no DecisionRecord
+  or AuthorityDecisionRecord output record.
+resulting_state_id: STA-37
+failure_modes:
+- 404 when no graph exists
+- 409 for stale append or command rejection
+- 422 for malformed or ineligible oversight input
+stale_state_behavior: A controller/append race returns 409. No source-version field exists on the request and no generic rejected
+  state is projected.
+idempotency: No REST idempotency key is established; callers must use the returned decision projection rather than infer exactly-once
+  behavior.
+retry_behavior: Refresh the oversight decision projection and retry only while the target remains eligible.
+reversibility: No oversight-decision reversal command exists.
+audit_evidence_ids:
+- EVD-27
+transition:
+  from_state_id: STA-36
+  to_state_id: STA-37
+carrier_relationship:
+  kind: decision-projection-only
+  output_record: none
+  ordering: CMD-11 records only the oversight decision projection; it has no paired node-outcome contract or invented output
+    record.
+enforced_authentication: PER-1 optional global valid-bearer gate.
+enforced_authorization: absent
+domain_eligibility: PER-4 oversight target, graph-state, and actor/context validation.
+proposed_role_policy: null

@@ -1,0 +1,37 @@
+id: ACT-2
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-24
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- URL or git path
+- repository absent
+expected_source_version: None
+required_input:
+  url_or_path: required
+validation:
+- one-of URL/path
+- scheme/path/destination
+durable_effect: Synchronously clones, symlinks, or registers repository.
+resulting_state_id: STA-50
+failure_modes:
+- '422'
+- '409'
+- filesystem/clone error
+stale_state_behavior: Destination can race.
+idempotency: Existing destination behavior is route-specific.
+retry_behavior: Inspect destination.
+reversibility: Separate remove is destructive.
+audit_evidence_ids:
+- EVD-35
+transition:
+  from_state_id: STA-62
+  to_state_id: STA-50
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 repository prerequisites
+proposed_role_policy: null

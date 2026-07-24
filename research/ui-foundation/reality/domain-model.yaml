@@ -1,38 +1,786 @@
-schema_version: "1"
-phase_status: partial
+schema_version: '1'
+phase_status: complete
 completion_phase: 1
-key_namespace: domain-synthesis/provisional
-canonical_id_policy: Task 10 keys are provisional; Task 13 alone may allocate ENT-* IDs.
-evidence_reference_policy: Every reference is agent-reports/<file>#<exact heading>.
+key_namespace: canonical
 items:
-  - {key: DS-ENT-routine-config, title: Routine configuration, definition: YAML template for nested step and task configuration, identity: RoutineConfig.id, ownership: source configuration, persistence: routine YAML with no ORM row, lifecycle: externally versioned source, aliases: [], mode_boundary: shared input not runtime topology, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory], counter_evidence_refs: [], unknowns: [routine SHA semantics], prohibited_interpretations: ["Not a Run."]}
-  - {key: DS-ENT-run, title: Run, definition: Independently identified mutable execution instance, identity: Run.id, ownership: root row aggregate, persistence: runs table plus projections, lifecycle: "draft/active/paused/stopping/completed/failed/cancelled; graph failed reopen is qualified", aliases: [], mode_boundary: shared row carrier not shared topology, implementation_status: present, test_status: exercised, documentation_status: conflicting, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/03-workflow-state.md#State carriers and legal transitions], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Conflicts found], unknowns: [cross-mode state contract], prohibited_interpretations: ["routine_id is not Run.id.", "Queued acceptance is not resulting state."]}
-  - {key: DS-ENT-step, title: Runtime step, definition: Ordered run-owned workflow step, identity: StepState.id with separate config_id, ownership: Run, persistence: steps table, lifecycle: completed/skipped/approval/condition fields without status enum, aliases: [], mode_boundary: legacy workflow not graph region, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/01-domain-persistence.md#Lifecycle boundaries], counter_evidence_refs: [], unknowns: [dual completed and skipped flags], prohibited_interpretations: ["Not a region; list position is not identity."]}
-  - {key: DS-ENT-task, title: Runtime task, definition: Step-owned mutable work unit with checklist and attempts, identity: TaskState.id with separate config_id, ownership: Step, persistence: tasks table, lifecycle: "pending/building/pending_user_action/verifying/recovering/fan_out_running/completed/failed", aliases: [], mode_boundary: legacy task not graph node, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/03-workflow-state.md#State carriers and legal transitions], counter_evidence_refs: [agent-reports/06-ui-projections.md#Rendered claim trace], unknowns: [fan-out child identity], prohibited_interpretations: ["Not a graph node or task_region_id."]}
-  - {key: DS-ENT-attempt, title: Attempt, definition: Task-owned execution occurrence, identity: attempts.id for repository round-trip while nullable attempt_id conflicts, ownership: Task, persistence: attempts table, lifecycle: timestamped nullable free-form outcome, aliases: [], mode_boundary: graph attempt_number has no typed core join, implementation_status: partial, test_status: exercised, documentation_status: conflicting, epistemic_status: conflicting, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/01-domain-persistence.md#Conflicts found], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Alias and non-alias map], unknowns: [canonical attempt identity, ordinal uniqueness], prohibited_interpretations: ["Do not alias id and attempt_id.", "Ordinal is not lineage."]}
-  - {key: DS-ENT-attempt-grade-snapshot, title: Attempt grade snapshot, definition: Historical JSON grade snapshot retained by an attempt, identity: attempt identity plus snapshot field context, ownership: Attempt, persistence: attempts.grade_snapshot JSON, lifecycle: historical evidence capture, aliases: [], mode_boundary: legacy verification history, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Temporal relationship behavior], counter_evidence_refs: [], unknowns: [snapshot completeness], prohibited_interpretations: ["Not the mutable ChecklistItem."]}
-  - {key: DS-ENT-requirement-config, title: Requirement configuration, definition: Template requirement that seeds task-local checklist data, identity: RequirementConfig.id, ownership: task configuration, persistence: YAML then checklist conversion, lifecycle: template definition, aliases: [], mode_boundary: not graph RequirementRecord, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory], counter_evidence_refs: [], unknowns: [cross-mode conversion], prohibited_interpretations: ["Not a checklist item or graph record."]}
-  - {key: DS-ENT-checklist-item, title: Checklist item, definition: Mutable task-local requirement projection with status and grade, identity: req_id in task context, ownership: Task, persistence: tasks.checklist JSON, lifecycle: ChecklistStatus plus grade, aliases: [], mode_boundary: legacy verification carrier, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/01-domain-persistence.md#Lifecycle boundaries], counter_evidence_refs: [], unknowns: [JSON shape enforcement], prohibited_interpretations: ["Not immutable attempt history."]}
-  - {key: DS-ENT-persisted-event-row, title: Persisted event row, definition: events_v2 append row shared by workflow and graph aggregate namespaces, identity: global position with aggregate_id/version uniqueness, ownership: SQL event store, persistence: events_v2, lifecycle: append-only and bootstrap import target, aliases: [], mode_boundary: storage row distinct from payload identities, implementation_status: present, test_status: exercised, documentation_status: conflicting, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Conflicts found], unknowns: [system-wide sole-truth claim], prohibited_interpretations: ["position, aggregate version, and payload event_id are not aliases."]}
-  - {key: DS-ENT-workflow-event-payload, title: Workflow event payload, definition: Workflow-domain event serialized into a persisted event row, identity: no independent event_id established, ownership: workflow producer, persistence: events_v2 payload and optional JSONL output, lifecycle: append then project, aliases: [], mode_boundary: distinct from graph envelope, implementation_status: present, test_status: exercised, documentation_status: conflicting, epistemic_status: observed, evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring, agent-reports/03-workflow-state.md#Key findings], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Conflicts found], unknowns: [payload-wide public identity], prohibited_interpretations: ["Not the persisted row identity."]}
-  - {key: DS-ENT-graph-event-envelope, title: Graph event envelope, definition: Graph-local event payload with event_id and graph-local position, identity: envelope event_id, ownership: graph event store, persistence: graph aggregate events_v2 payload plus summaries, lifecycle: append-only then projected, aliases: [], mode_boundary: distinct from row and workflow payload, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings, agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [complete joined ledger], prohibited_interpretations: ["Temporal adjacency is not causality."]}
-  - {key: DS-ENT-graph-projection, title: Graph projection, definition: Disposable current graph materialization, identity: run-scoped projection boundary, ownership: graph runtime read model, persistence: snapshot and detail projection tables, lifecycle: rebuildable when missing/stale/schema-mismatched, aliases: [], mode_boundary: not Run or backup, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings, agent-reports/01-domain-persistence.md#Temporal relationship behavior], counter_evidence_refs: [], unknowns: [full production reachability], prohibited_interpretations: ["Not immutable topology history."]}
-  - {key: DS-ENT-graph-node, title: Graph node, definition: Typed graph-local topology vertex, identity: node_id, ownership: graph topology, persistence: graph events and detail projection, lifecycle: graph node-state and retirement transitions, aliases: [], mode_boundary: not legacy task or step, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings, agent-reports/03-workflow-state.md#Legacy versus graph mode], counter_evidence_refs: [agent-reports/06-ui-projections.md#Rendered claim trace], unknowns: [task_region_id ownership], prohibited_interpretations: ["task_region_id does not prove task or Region identity."]}
-  - {key: DS-ENT-graph-edge, title: Graph edge, definition: Directed typed source-port to target-port connection, identity: graph topology edge identity, ownership: graph topology, persistence: graph events and projection, lifecycle: validated create/retire patch effect, aliases: [], mode_boundary: graph semantics, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [stable external edge ID], prohibited_interpretations: ["Not a record or generic task dependency."]}
-  - {key: DS-ENT-graph-record, title: Accepted graph record, definition: Typed accepted output/evidence record, identity: record_id, ownership: one producer node and port, persistence: accepted graph event and projections, lifecycle: historical acceptance snapshot, aliases: [], mode_boundary: not workflow event or requirement config, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings, agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [authoritative versus lossy variants], prohibited_interpretations: ["Does not prove prompt delivery or file causation."]}
-  - {key: DS-ENT-input-binding, title: Graph input binding, definition: Target port and edge selection of record IDs under PortContract, identity: target node/port/edge context, ownership: graph projection, persistence: input_bound events and projection, lifecycle: replacement or accumulation by policy, aliases: [], mode_boundary: graph dataflow, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [standalone binding ID], prohibited_interpretations: ["Does not prove model ingestion."]}
-  - {key: DS-ENT-graph-lease, title: Graph lease, definition: Scheduler lease for one node execution and generation, identity: node/execution/generation context, ownership: graph scheduler, persistence: graph lease events and projection, lifecycle: grant/renew/release/revoke/expire/suspend, aliases: [], mode_boundary: not workflow task lock, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/02-graph-runtime.md#Key findings, agent-reports/03-workflow-state.md#Key findings], counter_evidence_refs: [], unknowns: [cross-process recovery], prohibited_interpretations: ["Not proof agent started or completed."]}
-  - {key: DS-ENT-graph-outbox-intent, title: Graph outbox intent, definition: Durable at-least-once side-effect dispatch row, identity: graph_outbox.outbox_id with unique event_id association, ownership: graph runtime persistence, persistence: graph_outbox table, lifecycle: pending/dispatching/retry/backoff/failed/completed, aliases: [], mode_boundary: not projection field or event payload, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Persistence table inventory, agent-reports/02-graph-runtime.md#Key findings], counter_evidence_refs: [], unknowns: [downstream exactly-once], prohibited_interpretations: ["Requeue is not undo."]}
-  - {key: DS-ENT-clarification-request, title: Clarification request, definition: Run-owned typed question request, identity: clarification_requests.id, ownership: Run with untyped task/attempt attribution, persistence: clarification_requests and events, lifecycle: pending until response/stale handling, aliases: [], mode_boundary: not graph authority request, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/04-api-actions-authority.md#Transport and capability inventory], counter_evidence_refs: [], unknowns: [universal decision identity], prohibited_interpretations: ["task_id and attempt_num are not FKs."]}
-  - {key: DS-ENT-clarification-response, title: Clarification response, definition: Optional answer record for one request, identity: clarification_responses.id with unique request_id, ownership: Clarification request, persistence: clarification_responses and response event, lifecycle: may resume eligible legacy work, aliases: [], mode_boundary: respondent not authenticated identity, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: inferred, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/04-api-actions-authority.md#Transport and capability inventory], counter_evidence_refs: [agent-reports/04-api-actions-authority.md#Authority model], unknowns: [exactly-once artifact append], prohibited_interpretations: ["No answer revision is established."]}
-  - {key: DS-ENT-cost-record, title: Legacy cost record, definition: Per legacy execution-tuple usage/cost row, identity: CostRecordModel.id and execution tuple, ownership: telemetry persistence, persistence: cost_records table, lifecycle: mutable post-return upsert, aliases: [], mode_boundary: excluded graph rollup, implementation_status: partial, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [agent-reports/05-evidence-telemetry.md#Important uncertainties], unknowns: [exception usage coverage], prohibited_interpretations: ["Missing or unpriced usage is not zero."]}
-  - {key: DS-ENT-interaction-log-row, title: Interaction-log row, definition: Legacy prompt/output/action-log row, identity: InteractionLogArtifactModel.id and execution tuple, ownership: legacy telemetry, persistence: interaction_log_artifacts table, lifecycle: mutable best-effort upsert, aliases: [], mode_boundary: graph discards structured action log, implementation_status: partial, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Ownership and cardinality, agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], unknowns: [write failure], prohibited_interpretations: ["Not CAS blob or generic artifact alias."]}
-  - {key: DS-ENT-cas-artifact-blob, title: Verified CAS artifact blob, definition: Content-addressed check-output blob, identity: SHA-256 content hash, ownership: project artifact store, persistence: CAS filesystem, lifecycle: publish/read/GC, aliases: [], mode_boundary: distinct from declared path reference, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [GC retention], prohibited_interpretations: ["Not every artifact reference is CAS."]}
-  - {key: DS-ENT-graph-declared-artifact-reference, title: Generic graph declared artifact reference, definition: Graph record declaration of artifact type/path URI/summary, identity: record-scoped declaration context, ownership: graph record, persistence: graph record payload, lifecycle: accepted declaration snapshot, aliases: [], mode_boundary: no publication or existence proof, implementation_status: partial, test_status: exercised, documentation_status: conflicting, epistemic_status: observed, evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [agent-reports/05-evidence-telemetry.md#Conflicts found], unknowns: [path availability], prohibited_interpretations: ["Does not prove existence/download/integrity."]}
-  - {key: DS-ENT-configured-expected-path, title: Configured expected artifact path, definition: ArtifactSpec expected path, identity: configuration-local specification, ownership: task/routine config, persistence: YAML configuration, lifecycle: declarative expectation, aliases: [], mode_boundary: not output record or log row, implementation_status: present, test_status: unknown, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory], counter_evidence_refs: [], unknowns: [fulfillment], prohibited_interpretations: ["Expected does not prove produced."]}
-  - {key: DS-TAX-artifact-carriers, title: Artifact carrier taxonomy, definition: Non-identity classification for distinct artifact carriers, identity: none, ownership: none, persistence: none, lifecycle: none, aliases: [], mode_boundary: taxonomy only, implementation_status: unknown, test_status: unknown, documentation_status: conflicting, epistemic_status: unclear, evidence_refs: [agent-reports/01-domain-persistence.md#Alias and non-alias map, agent-reports/05-evidence-telemetry.md#Conflicts found], counter_evidence_refs: [], unknowns: [future supertype], prohibited_interpretations: ["Not an entity identity or alias."]}
-  - {key: DS-ENT-model-profile, title: Model profile, definition: Cognitive-role configuration, identity: ModelProfile enum in runner/profile mapping, ownership: config/default mapping, persistence: task config and defaults table, lifecycle: mutable default without attempt profile snapshot, aliases: [], mode_boundary: not model string, implementation_status: partial, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory], counter_evidence_refs: [], unknowns: [historic profile], prohibited_interpretations: ["Profile and model are not aliases."]}
-  - {key: DS-ENT-resolved-model, title: Resolved model, definition: Provider model string in returned execution telemetry, identity: execution model context, ownership: telemetry, persistence: attempt/usage carriers, lifecycle: captured after returned execution, aliases: [], mode_boundary: one model can result from profiles, implementation_status: present, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring], counter_evidence_refs: [], unknowns: [complete cohorts], prohibited_interpretations: ["Does not reconstruct profile."]}
-  - {key: DS-ENT-backup-metadata-sidecar, title: Backup metadata sidecar, definition: Sidecar describing one copied DB path and scalar journal marker/path, identity: timestamp-derived backup_id, ownership: recovery helper, persistence: backup-meta JSON, lifecycle: create then restore input, aliases: [], mode_boundary: recovery metadata, implementation_status: partial, test_status: exercised, documentation_status: conflicting, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/01-domain-persistence.md#Conflicts found], counter_evidence_refs: [agent-reports/04-api-actions-authority.md#CLI database maintenance capability], unknowns: [collision/replay/live-WAL consistency], prohibited_interpretations: ["Not atomic recovery cut."]}
-  - {key: DS-ENT-copied-backup-db, title: Copied backup database, definition: Main SQLite DB file copied by backup helper, identity: backup_id-derived DB path, ownership: recovery helper, persistence: copied .db file, lifecycle: copy then optional restore, aliases: [], mode_boundary: excludes WAL/SHM and source DB, implementation_status: partial, test_status: exercised, documentation_status: documented, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/01-domain-persistence.md#Temporal relationship behavior], counter_evidence_refs: [agent-reports/04-api-actions-authority.md#CLI database maintenance capability], unknowns: [live WAL consistency], prohibited_interpretations: ["Not proven consistent with marker."]}
-  - {key: DS-ENT-journal-segment, title: JSONL journal segment, definition: Active or archived secondary journal file, identity: path/range and contained positions, ownership: JSONL rotation/recovery, persistence: active/archive JSONL, lifecycle: append/rotate/recover/discover, aliases: [], mode_boundary: secondary normal output and conditional bootstrap input, implementation_status: present, test_status: exercised, documentation_status: conflicting, epistemic_status: observed, evidence_refs: [agent-reports/01-domain-persistence.md#Entity and identity inventory, agent-reports/03-workflow-state.md#JSONL authority conflict], counter_evidence_refs: [agent-reports/01-domain-persistence.md#Conflicts found], unknowns: [unconditional authority], prohibited_interpretations: ["Not backup-owned bundle or primary authority."]}
+- title: Routine configuration
+  definition: YAML template for nested step and task configuration
+  identity: RoutineConfig.id
+  ownership: source configuration
+  persistence: routine YAML with no ORM row
+  lifecycle: externally versioned source
+  aliases: []
+  mode_boundary: shared input not runtime topology
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-1
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - routine SHA semantics
+  prohibited_interpretations:
+  - Not a Run.
+- title: Run
+  definition: Independently identified mutable execution instance
+  identity: Run.id
+  ownership: root row aggregate
+  persistence: runs table plus projections
+  lifecycle: draft/active/paused/stopping/completed/failed/cancelled; graph failed reopen is qualified
+  aliases: []
+  mode_boundary: shared row carrier not shared topology
+  implementation_status: present
+  test_status: exercised
+  documentation_status: conflicting
+  epistemic_status: observed
+  id: ENT-2
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-50
+  - EVD-51
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - cross-mode state contract
+  prohibited_interpretations:
+  - routine_id is not Run.id.
+  - Queued acceptance is not resulting state.
+- title: Runtime step
+  definition: Ordered run-owned workflow step
+  identity: StepState.id with separate config_id
+  ownership: Run
+  persistence: steps table
+  lifecycle: completed/skipped/approval/condition fields without status enum
+  aliases: []
+  mode_boundary: legacy workflow not graph region
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-3
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-52
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - dual completed and skipped flags
+  prohibited_interpretations:
+  - Not a region; list position is not identity.
+- title: Runtime task
+  definition: Step-owned mutable work unit with checklist and attempts
+  identity: TaskState.id with separate config_id
+  ownership: Step
+  persistence: tasks table
+  lifecycle: pending/building/pending_user_action/verifying/recovering/fan_out_running/completed/failed
+  aliases: []
+  mode_boundary: legacy task not graph node
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-4
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-50
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - fan-out child identity
+  prohibited_interpretations:
+  - Not a graph node or task_region_id.
+- title: Attempt
+  definition: Task-owned execution occurrence
+  identity: attempts.id for repository round-trip while nullable attempt_id conflicts
+  ownership: Task
+  persistence: attempts table
+  lifecycle: timestamped nullable free-form outcome
+  aliases: []
+  mode_boundary: graph attempt_number has no typed core join
+  implementation_status: partial
+  test_status: exercised
+  documentation_status: conflicting
+  epistemic_status: unknown
+  id: ENT-5
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-51
+  - EVD-54
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - canonical attempt identity
+  - ordinal uniqueness
+  prohibited_interpretations:
+  - Do not alias id and attempt_id.
+  - Ordinal is not lineage.
+- title: Attempt grade snapshot
+  definition: Historical JSON grade snapshot retained by an attempt
+  identity: attempt identity plus snapshot field context
+  ownership: Attempt
+  persistence: attempts.grade_snapshot JSON
+  lifecycle: historical evidence capture
+  aliases: []
+  mode_boundary: legacy verification history
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-6
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-55
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - snapshot completeness
+  prohibited_interpretations:
+  - Not the mutable ChecklistItem.
+- title: Requirement configuration
+  definition: Template requirement that seeds task-local checklist data
+  identity: RequirementConfig.id
+  ownership: task configuration
+  persistence: YAML then checklist conversion
+  lifecycle: template definition
+  aliases: []
+  mode_boundary: not graph RequirementRecord
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-7
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - cross-mode conversion
+  prohibited_interpretations:
+  - Not a checklist item or graph record.
+- title: Checklist item
+  definition: Mutable task-local requirement projection with status and grade
+  identity: req_id in task context
+  ownership: Task
+  persistence: tasks.checklist JSON
+  lifecycle: ChecklistStatus plus grade
+  aliases: []
+  mode_boundary: legacy verification carrier
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-8
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-52
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - JSON shape enforcement
+  prohibited_interpretations:
+  - Not immutable attempt history.
+- title: Persisted event row
+  definition: events_v2 append row shared by workflow and graph aggregate namespaces
+  identity: global position with aggregate_id/version uniqueness
+  ownership: SQL event store
+  persistence: events_v2
+  lifecycle: append-only and bootstrap import target
+  aliases: []
+  mode_boundary: storage row distinct from payload identities
+  implementation_status: present
+  test_status: exercised
+  documentation_status: conflicting
+  epistemic_status: observed
+  id: ENT-9
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-56
+  - EVD-51
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - system-wide sole-truth claim
+  prohibited_interpretations:
+  - position, aggregate version, and payload event_id are not aliases.
+- title: Workflow event payload
+  definition: Workflow-domain event serialized into a persisted event row
+  identity: no independent event_id established
+  ownership: workflow producer
+  persistence: events_v2 payload and optional JSONL output
+  lifecycle: append then project
+  aliases: []
+  mode_boundary: distinct from graph envelope
+  implementation_status: present
+  test_status: exercised
+  documentation_status: conflicting
+  epistemic_status: observed
+  id: ENT-10
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-56
+  - EVD-57
+  - EVD-51
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - payload-wide public identity
+  prohibited_interpretations:
+  - Not the persisted row identity.
+- title: Graph event envelope
+  definition: Graph-local event payload with event_id and graph-local position
+  identity: envelope event_id
+  ownership: graph event store
+  persistence: graph aggregate events_v2 payload plus summaries
+  lifecycle: append-only then projected
+  aliases: []
+  mode_boundary: distinct from row and workflow payload
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-11
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - complete joined ledger
+  prohibited_interpretations:
+  - Temporal adjacency is not causality.
+- title: Graph projection
+  definition: Disposable current graph materialization
+  identity: run-scoped projection boundary
+  ownership: graph runtime read model
+  persistence: snapshot and detail projection tables
+  lifecycle: rebuildable when missing/stale/schema-mismatched
+  aliases: []
+  mode_boundary: not Run or backup
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-12
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  - EVD-55
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - full production reachability
+  prohibited_interpretations:
+  - Not immutable topology history.
+- title: Graph node
+  definition: Typed graph-local topology vertex
+  identity: node_id
+  ownership: graph topology
+  persistence: graph events and detail projection
+  lifecycle: graph node-state and retirement transitions
+  aliases: []
+  mode_boundary: not legacy task or step
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-13
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  - EVD-59
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - task_region_id ownership
+  prohibited_interpretations:
+  - task_region_id does not prove task or Region identity.
+- title: Graph edge
+  definition: Directed typed source-port to target-port connection
+  identity: graph topology edge identity
+  ownership: graph topology
+  persistence: graph events and projection
+  lifecycle: validated create/retire patch effect
+  aliases: []
+  mode_boundary: graph semantics
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-14
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - stable external edge ID
+  prohibited_interpretations:
+  - Not a record or generic task dependency.
+- title: Accepted graph record
+  definition: Typed accepted output/evidence record
+  identity: record_id
+  ownership: one producer node and port
+  persistence: accepted graph event and projections
+  lifecycle: historical acceptance snapshot
+  aliases: []
+  mode_boundary: not workflow event or requirement config
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-15
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - authoritative versus lossy variants
+  prohibited_interpretations:
+  - Does not prove prompt delivery or file causation.
+- title: Graph input binding
+  definition: Target port and edge selection of record IDs under PortContract
+  identity: target node/port/edge context
+  ownership: graph projection
+  persistence: input_bound events and projection
+  lifecycle: replacement or accumulation by policy
+  aliases: []
+  mode_boundary: graph dataflow
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-16
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - standalone binding ID
+  prohibited_interpretations:
+  - Does not prove model ingestion.
+- title: Graph lease
+  definition: Scheduler lease for one node execution and generation
+  identity: node/execution/generation context
+  ownership: graph scheduler
+  persistence: graph lease events and projection
+  lifecycle: grant/renew/release/revoke/expire/suspend
+  aliases: []
+  mode_boundary: not workflow task lock
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-17
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-58
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - cross-process recovery
+  prohibited_interpretations:
+  - Not proof agent started or completed.
+- title: Graph outbox intent
+  definition: Durable at-least-once side-effect dispatch row
+  identity: graph_outbox.outbox_id with unique event_id association
+  ownership: graph runtime persistence
+  persistence: graph_outbox table
+  lifecycle: pending/dispatching/retry/backoff/failed/completed
+  aliases: []
+  mode_boundary: not projection field or event payload
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-18
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-60
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - downstream exactly-once
+  prohibited_interpretations:
+  - Requeue is not undo.
+- title: Clarification request
+  definition: Run-owned typed question request
+  identity: clarification_requests.id
+  ownership: Run with untyped task/attempt attribution
+  persistence: clarification_requests and events
+  lifecycle: pending until response/stale handling
+  aliases: []
+  mode_boundary: not graph authority request
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-19
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - universal decision identity
+  prohibited_interpretations:
+  - task_id and attempt_num are not FKs.
+- title: Clarification response
+  definition: Optional answer record for one request
+  identity: clarification_responses.id with unique request_id
+  ownership: Clarification request
+  persistence: clarification_responses and response event
+  lifecycle: may resume eligible legacy work
+  aliases: []
+  mode_boundary: respondent not authenticated identity
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: inferred
+  id: ENT-20
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-61
+  - EVD-63
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - exactly-once artifact append
+  prohibited_interpretations:
+  - No answer revision is established.
+- title: Legacy cost record
+  definition: Per legacy execution-tuple usage/cost row
+  identity: CostRecordModel.id and execution tuple
+  ownership: telemetry persistence
+  persistence: cost_records table
+  lifecycle: mutable post-return upsert
+  aliases: []
+  mode_boundary: excluded graph rollup
+  implementation_status: partial
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-21
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-56
+  - EVD-64
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - exception usage coverage
+  prohibited_interpretations:
+  - Missing or unpriced usage is not zero.
+- title: Interaction-log row
+  definition: Legacy prompt/output/action-log row
+  identity: InteractionLogArtifactModel.id and execution tuple
+  ownership: legacy telemetry
+  persistence: interaction_log_artifacts table
+  lifecycle: mutable best-effort upsert
+  aliases: []
+  mode_boundary: graph discards structured action log
+  implementation_status: partial
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-22
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-62
+  - EVD-56
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - write failure
+  prohibited_interpretations:
+  - Not CAS blob or generic artifact alias.
+- title: Verified CAS artifact blob
+  definition: Content-addressed check-output blob
+  identity: SHA-256 content hash
+  ownership: project artifact store
+  persistence: CAS filesystem
+  lifecycle: publish/read/GC
+  aliases: []
+  mode_boundary: distinct from declared path reference
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-23
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - GC retention
+  prohibited_interpretations:
+  - Not every artifact reference is CAS.
+- title: Generic graph declared artifact reference
+  definition: Graph record declaration of artifact type/path URI/summary
+  identity: record-scoped declaration context
+  ownership: graph record
+  persistence: graph record payload
+  lifecycle: accepted declaration snapshot
+  aliases: []
+  mode_boundary: no publication or existence proof
+  implementation_status: partial
+  test_status: exercised
+  documentation_status: conflicting
+  epistemic_status: observed
+  id: ENT-24
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-56
+  - EVD-65
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - path availability
+  prohibited_interpretations:
+  - Does not prove existence/download/integrity.
+- title: Configured expected artifact path
+  definition: ArtifactSpec expected path
+  identity: configuration-local specification
+  ownership: task/routine config
+  persistence: YAML configuration
+  lifecycle: declarative expectation
+  aliases: []
+  mode_boundary: not output record or log row
+  implementation_status: present
+  test_status: unknown
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-25
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - fulfillment
+  prohibited_interpretations:
+  - Expected does not prove produced.
+- title: Artifact carrier taxonomy
+  definition: Non-identity classification for distinct artifact carriers
+  identity: none
+  ownership: none
+  persistence: none
+  lifecycle: none
+  aliases: []
+  mode_boundary: taxonomy only
+  implementation_status: unknown
+  test_status: unknown
+  documentation_status: conflicting
+  epistemic_status: unknown
+  id: ENT-26
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-54
+  - EVD-65
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - future supertype
+  prohibited_interpretations:
+  - Not an entity identity or alias.
+- title: Model profile
+  definition: Cognitive-role configuration
+  identity: ModelProfile enum in runner/profile mapping
+  ownership: config/default mapping
+  persistence: task config and defaults table
+  lifecycle: mutable default without attempt profile snapshot
+  aliases: []
+  mode_boundary: not model string
+  implementation_status: partial
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-27
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - historic profile
+  prohibited_interpretations:
+  - Profile and model are not aliases.
+- title: Resolved model
+  definition: Provider model string in returned execution telemetry
+  identity: execution model context
+  ownership: telemetry
+  persistence: attempt/usage carriers
+  lifecycle: captured after returned execution
+  aliases: []
+  mode_boundary: one model can result from profiles
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-28
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - complete cohorts
+  prohibited_interpretations:
+  - Does not reconstruct profile.
+- title: Backup metadata sidecar
+  definition: Sidecar describing one copied DB path and scalar journal marker/path
+  identity: timestamp-derived backup_id
+  ownership: recovery helper
+  persistence: backup-meta JSON
+  lifecycle: create then restore input
+  aliases: []
+  mode_boundary: recovery metadata
+  implementation_status: partial
+  test_status: exercised
+  documentation_status: conflicting
+  epistemic_status: observed
+  id: ENT-29
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-51
+  - EVD-66
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - collision/replay/live-WAL consistency
+  prohibited_interpretations:
+  - Not atomic recovery cut.
+- title: Copied backup database
+  definition: Main SQLite DB file copied by backup helper
+  identity: backup_id-derived DB path
+  ownership: recovery helper
+  persistence: copied .db file
+  lifecycle: copy then optional restore
+  aliases: []
+  mode_boundary: excludes WAL/SHM and source DB
+  implementation_status: partial
+  test_status: exercised
+  documentation_status: documented
+  epistemic_status: observed
+  id: ENT-30
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-55
+  - EVD-66
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - live WAL consistency
+  prohibited_interpretations:
+  - Not proven consistent with marker.
+- title: JSONL journal segment
+  definition: Active or archived secondary journal file
+  identity: path/range and contained positions
+  ownership: JSONL rotation/recovery
+  persistence: active/archive JSONL
+  lifecycle: append/rotate/recover/discover
+  aliases: []
+  mode_boundary: secondary normal output and conditional bootstrap input
+  implementation_status: present
+  test_status: exercised
+  documentation_status: conflicting
+  epistemic_status: observed
+  id: ENT-31
+  capability_status: unknown
+  confidence: medium
+  confidence_basis: Approved bounded-audit synthesis
+  evidence_ids:
+  - EVD-49
+  - EVD-67
+  - EVD-51
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - unconditional authority
+  prohibited_interpretations:
+  - Not backup-owned bundle or primary authority.

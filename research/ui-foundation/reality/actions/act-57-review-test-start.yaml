@@ -1,0 +1,38 @@
+id: ACT-57
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-27
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- worktree exists
+- auto_verify configured
+- no test already running
+expected_source_version: None
+required_input:
+  run_id: required
+validation:
+- configured commands
+- single running test
+durable_effect: Accepts asynchronous test start, returns running test_run_id, and emits start/completion evidence.
+resulting_state_id: STA-39
+failure_modes:
+- 422 no commands
+- 409 concurrent test
+- execution error
+stale_state_behavior: Acceptance is not result; poll test_run_id.
+idempotency: Duplicate while running rejected.
+retry_behavior: Wait for terminal result.
+reversibility: No cancel/undo.
+audit_evidence_ids:
+- EVD-47
+transition:
+  from_state_id: STA-38
+  to_state_id: STA-39
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 review prerequisites
+proposed_role_policy: null

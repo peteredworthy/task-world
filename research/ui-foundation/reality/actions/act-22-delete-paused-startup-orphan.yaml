@@ -1,0 +1,56 @@
+id: ACT-22
+title: Qualify paused startup orphan for deletion
+definition: Identify the route's narrow paused startup-orphan eligibility before the delete route returns its separate deleted-response
+  carrier.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-7
+actor: caller
+permission_requirements:
+- PER-1
+- PER-2
+- PER-3
+preconditions:
+- legacy run is paused
+- run satisfies the startup-orphan predicate
+expected_source_version: No client run version.
+required_input:
+  run_id: required
+validation:
+- status-limited deletion
+- startup-orphan predicate
+durable_effect: Qualifies a paused startup orphan as deletable; the synchronous delete route then returns deleted response,
+  and later readback observes absence.
+resulting_state_id: STA-70
+failure_modes:
+- 404 missing
+- 409 paused run is not a startup orphan
+- 409 active or ordinary paused run is not deletable
+stale_state_behavior: A concurrent lifecycle change or startup completion can invalidate the orphan predicate and reject deletion
+  before a deleted response is produced.
+idempotency: No idempotency key. After deletion, retry returns missing rather than repeating the response.
+retry_behavior: Refresh row status and startup-orphan conditions before retrying; do not retry a destructive request blindly.
+reversibility: Irreversible after the separate deleted response; no restore route is established.
+audit_evidence_ids:
+- EVD-43
+- EVD-38
+- EVD-39
+- EVD-40
+transition:
+  from_state_id: STA-4
+  to_state_id: STA-70
+eventual_deleted_response_transition:
+  from_state_id: STA-70
+  to_state_id: STA-58
+  evidence_ids:
+  - EVD-43
+eventual_absence_transition:
+  from_state_id: STA-58
+  to_state_id: STA-56
+  evidence_ids:
+  - EVD-43
+enforced_authentication: Optional global valid-bearer gate; disabled by default.
+enforced_authorization: absent
+domain_eligibility: Only a paused row satisfying the narrow startup-orphan predicate; ordinary paused rows are excluded.
+proposed_role_policy: null

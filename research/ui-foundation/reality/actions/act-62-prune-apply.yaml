@@ -1,0 +1,37 @@
+id: ACT-62
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-20
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- preview/current git operation ready
+- nonempty valid selection
+expected_source_version: None
+required_input:
+  run_id: required
+  files: required
+validation:
+- selection
+- base SHA
+durable_effect: Synchronously creates prune commit effects and emits PruneApplied; returned UUID is not durable event identity.
+resulting_state_id: STA-42
+failure_modes:
+- 400 empty selection
+- git error
+stale_state_behavior: No version; preview can be stale.
+idempotency: Retry can add commits.
+retry_behavior: Inspect commits/worktree.
+reversibility: No prune undo endpoint.
+audit_evidence_ids:
+- EVD-28
+transition:
+  from_state_id: STA-63
+  to_state_id: STA-42
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 review prerequisites
+proposed_role_policy: null

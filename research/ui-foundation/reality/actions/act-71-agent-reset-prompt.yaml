@@ -1,0 +1,40 @@
+id: ACT-71
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-41
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- agent configuration exists
+- default prompt exists
+expected_source_version: None
+required_input:
+  agent_id: required
+validation:
+- identity
+- default prompt
+durable_effect: Synchronously restores system prompt from default.
+resulting_state_id: STA-69
+failure_modes:
+- '404'
+- '400'
+- database error
+stale_state_behavior: No version fence.
+idempotency: Repeated reset converges.
+retry_behavior: Refresh row.
+reversibility: Prior custom prompt not retained.
+audit_evidence_ids:
+- EVD-33
+transition:
+  from_state_ids:
+  - STA-66
+  - STA-67
+  - STA-69
+  to_state_id: STA-69
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 agent-reset prerequisites
+proposed_role_policy: null

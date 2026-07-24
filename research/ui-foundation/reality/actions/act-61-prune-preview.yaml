@@ -1,0 +1,36 @@
+id: ACT-61
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-19
+actor: caller
+permission_requirements:
+- PER-1
+- PER-7
+preconditions:
+- worktree exists
+- selection supplied
+expected_source_version: None
+required_input:
+  run_id: required
+  files: required
+validation:
+- selection
+- base SHA
+durable_effect: Synchronously returns non-mutating computed diff/count preview.
+resulting_state_id: STA-63
+failure_modes:
+- git/base-SHA error
+stale_state_behavior: Preview can be stale before apply.
+idempotency: Pure for unchanged worktree.
+retry_behavior: Recompute after changes.
+reversibility: Non-mutating.
+audit_evidence_ids:
+- EVD-28
+transition:
+  from_state_id: STA-59
+  to_state_id: STA-63
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-7 review prerequisites
+proposed_role_policy: null

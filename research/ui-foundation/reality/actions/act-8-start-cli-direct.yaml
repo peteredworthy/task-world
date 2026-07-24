@@ -1,0 +1,36 @@
+id: ACT-8
+title: Start run through CLI direct path
+definition: Apply legacy start synchronously through the divergent CLI path.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-3
+actor: local CLI operator
+permission_requirements:
+- PER-3
+preconditions:
+- legacy run is draft
+expected_source_version: None
+required_input:
+  run_id: required
+validation:
+- workflow transition validation
+durable_effect: Directly invokes apply_start_run and persists lifecycle state.
+resulting_state_id: STA-2
+failure_modes:
+- illegal transition
+- local database failure
+stale_state_behavior: Not REST signal acceptance; timing is intentionally distinct.
+idempotency: State-validated; no request key.
+retry_behavior: Read resulting row before retry.
+reversibility: Pause or cancel are separate actions.
+audit_evidence_ids:
+- EVD-7
+- EVD-40
+transition:
+  from_state_id: STA-1
+  to_state_id: STA-2
+enforced_authentication: No REST bearer gate; local CLI process directly applies the workflow transition.
+enforced_authorization: absent
+domain_eligibility: Legacy row must be draft.
+proposed_role_policy: null

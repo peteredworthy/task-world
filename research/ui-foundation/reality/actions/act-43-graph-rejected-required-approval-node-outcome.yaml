@@ -1,0 +1,52 @@
+id: ACT-43
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-11
+actor: Caller-supplied decider recorded by ACT-42; no authenticated-subject authorization is enforced.
+permission_requirements:
+- PER-1
+- PER-2
+- PER-4
+preconditions:
+- ACT-42's rejected required approval has been recorded.
+- The required approval target remains eligible for the command's failure effect.
+expected_source_version: This is the node-projection consequence of the same current-position decision command; no client
+  graph position exists.
+required_input:
+  decision_type: approval
+  value: rejected
+  target_node_id: required
+validation:
+- The preceding RecordDecisionCommand approval validation succeeds.
+- PER-4 applies the required-input target and state eligibility checks.
+durable_effect: A rejected required approval dead-ends required input, releases its scoped lease where present, and projects
+  the target graph node failed.
+resulting_state_id: STA-34
+failure_modes:
+- 409 when the decision command is rejected or loses its append race
+- 422 when the underlying approval input is invalid
+stale_state_behavior: A decision-command race prevents the node failure consequence; no legacy task or row state is changed.
+idempotency: No separate idempotency key exists for this data-dependent command consequence.
+retry_behavior: Read decision/node projections and follow the graph's separately validated recovery or topology path; do not
+  replay a presumed failed decision.
+reversibility: No approval reversal exists; recovery or repair is a separate graph command.
+audit_evidence_ids:
+- EVD-26
+- EVD-27
+transition:
+  from_state_id: STA-28
+  to_state_id: STA-34
+carrier_relationship:
+  kind: same-command node consequence
+  paired_decision_action_id: ACT-42
+  decision_transition:
+    from_state_id: STA-36
+    to_state_id: STA-37
+  command_id: CMD-11
+  ordering: The node was pending before the command; rejected decision recording and node failure are parallel carrier-local
+    effects of one discriminated command.
+enforced_authentication: PER-1 optional global valid-bearer gate.
+enforced_authorization: absent
+domain_eligibility: PER-4 rejected required-approval target and graph-state eligibility.
+proposed_role_policy: null

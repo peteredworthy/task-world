@@ -1,0 +1,55 @@
+id: ACT-13
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-12
+actor: REST endpoint-stamped human-operator; this is endpoint attribution, not enforced product-role authorization.
+permission_requirements:
+- PER-1
+- PER-2
+- PER-4
+preconditions:
+- A graph exists and its run passes the SubmitGraphPatchCommand run guard.
+- The submitted operations are authorized for the graph actor role and preserve typed topology, resource, and dependency invariants.
+expected_source_version: Optional base_graph_position is the patch stale-read-set base; the controller current position is
+  a separate optimistic-concurrency guard.
+required_input:
+  operations: required
+  patch_id: optional
+  base_graph_position: optional
+  rationale_record_id: optional
+validation:
+- Strict patch request and SubmitGraphPatchCommand schema validation.
+- PER-4 role, topology, port/selector, cycle, resource, active-node, dynamic-region, and stale read-set validation.
+durable_effect: Appends graph_patch_accepted and its operation-specific graph topology, binding, or repair events. The patch-attempt
+  carrier records acceptance; no universal node or run result is implied.
+resulting_state_id: STA-54
+failure_modes:
+- 404 when no graph exists
+- 409 for controller race or rejected patch
+- 422 for malformed patch input
+stale_state_behavior: A stale base is rejected only when invalidating events touch the operation read set; controller races
+  also return 409. A future base is not described as rejected because the audited validator accepts it unless another check
+  rejects it.
+idempotency: Patch ID is not established as universal idempotency. Retry behavior depends on the current projection, read
+  set, and operation identities.
+retry_behavior: Read diagnostics, current graph position, and topology, then submit a new valid corrective patch rather than
+  replaying an assumed-safe request.
+reversibility: No patch rollback command exists; a later validated corrective patch is a new graph effect, not undo.
+audit_evidence_ids:
+- EVD-37
+transition:
+  from_state_id: STA-64
+  to_state_id: STA-54
+carrier_relationship:
+  kind: separate graph-run preservation
+  graph_run_self_loop:
+    from_state_id: STA-18
+    to_state_id: STA-18
+  caveat: An accepted patch need not change the graph-run active projection; this separate carrier self-loop is not the patch
+    result transition.
+enforced_authentication: PER-1 optional global valid-bearer gate.
+enforced_authorization: absent
+domain_eligibility: PER-4 SubmitGraphPatchCommand and patch-validator role, run, topology, resource, and stale-read-set
+  rules.
+proposed_role_policy: null

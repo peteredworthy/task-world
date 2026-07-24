@@ -1,0 +1,42 @@
+id: ACT-29
+title: Answer legacy clarification
+definition: Records non-skipped answers for a pending legacy clarification and returns the eligible task to building.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-8
+actor: legacy responder
+permission_requirements:
+- PER-3
+preconditions:
+- identified clarification request belongs to the legacy task
+- task is pending user action for clarification
+expected_source_version: No client request version
+required_input:
+  run_id: required
+  task_id: required
+  request_id: required
+  answers: required
+validation:
+- clarification response schema
+- clarification task transition validation
+durable_effect: Persists the response and config delta, appends the Q&A artifact, clears the clarification wait, and changes
+  the task to building.
+resulting_state_id: STA-9
+failure_modes:
+- 404 request or task identity
+- 409 stale task/request relationship
+- 422 malformed answer payload
+stale_state_behavior: A stale response can clear its stale pending marker without reopening an already advanced task.
+idempotency: No idempotency key; artifact content can duplicate before a database conflict settles.
+retry_behavior: Refresh request and task state before retrying an uncertain response.
+reversibility: No answer-revision or undo command.
+audit_evidence_ids:
+- EVD-13
+transition:
+  from_state_id: STA-11
+  to_state_id: STA-9
+enforced_authentication: Optional global valid-bearer gate
+enforced_authorization: absent
+domain_eligibility: Legacy clarification request and task wait state.
+proposed_role_policy: null

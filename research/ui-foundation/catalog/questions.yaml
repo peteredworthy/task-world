@@ -1,4 +1,39 @@
-schema_version: "1"
-phase_status: incomplete
+schema_version: '1'
+phase_status: complete
 completion_phase: 1
-items: []
+items:
+- id: Q-1
+  title: Choose and migrate canonical attempt identity
+  blocking: true
+  status: open
+  settlement_method: Implement or verify the named contract with fresh source and test evidence.
+- id: Q-2
+  title: Define typed cross-mode conversion and selection contracts
+  blocking: true
+  status: open
+  settlement_method: Implement or verify the named contract with fresh source and test evidence.
+- id: Q-3
+  title: Reconcile JSONL authority documentation with executable SQL authority
+  blocking: true
+  status: open
+  settlement_method: Implement or verify the named contract with fresh source and test evidence.
+- id: Q-4
+  title: Define a live-WAL-safe backup and replay contract
+  blocking: true
+  status: open
+  settlement_method: Implement or verify the named contract with fresh source and test evidence.
+- id: Q-5
+  title: Define product-role authorization before treating actor text as authority
+  blocking: true
+  status: open
+  settlement_method: Implement or verify the named contract with fresh source and test evidence.
+- id: Q-6
+  title: Decide whether execution-bound graph MCP patch macros need an action contract
+  blocking: true
+  status: open
+  settlement_method: Implement or verify the named contract with fresh source and test evidence.
+- id: Q-7
+  title: Hash-guard decisive implementation and test evidence
+  blocking: true
+  status: open
+  settlement_method: Implement or verify the named contract with fresh source and test evidence.

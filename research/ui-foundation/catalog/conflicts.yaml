@@ -1,4 +1,67 @@
-schema_version: "1"
-phase_status: incomplete
+schema_version: '1'
+phase_status: complete
 completion_phase: 1
-items: []
+items:
+- id: CON-1
+  title: Attempt identity contracts conflict
+  status: unresolved
+  claims:
+  - Attempt identity contracts conflict
+  decisive_evidence_ids:
+  - EVD-96
+- id: CON-2
+  title: SQL and JSONL normal-authority descriptions conflict
+  status: unresolved
+  claims:
+  - SQL and JSONL normal-authority descriptions conflict
+  decisive_evidence_ids:
+  - EVD-96
+- id: CON-3
+  title: Failed terminality is mode-qualified
+  status: unresolved
+  claims:
+  - Failed terminality is mode-qualified
+  decisive_evidence_ids:
+  - EVD-96
+- id: CON-4
+  title: Recorded action attribution is not an authenticated identity
+  status: unresolved
+  claims:
+  - Recorded action attribution is not an authenticated identity
+  decisive_evidence_ids:
+  - EVD-96
+- id: CON-5
+  title: Artifact and telemetry coverage differs between graph and legacy
+  status: unresolved
+  claims:
+  - Artifact and telemetry coverage differs between graph and legacy
+  decisive_evidence_ids:
+  - EVD-96
+- id: CON-6
+  title: Lifecycle REST acceptance differs from direct CLI application
+  status: unresolved
+  claims:
+  - Lifecycle REST acceptance differs from direct CLI application
+  decisive_evidence_ids:
+  - EVD-96
+- id: CON-7
+  title: Stopping-row cancellation acceptance is inconsistent
+  status: unresolved
+  claims:
+  - Stopping-row cancellation acceptance is inconsistent
+  decisive_evidence_ids:
+  - EVD-96
+- id: CON-8
+  title: Activity is not a complete combined graph ledger
+  status: unresolved
+  claims:
+  - Activity is not a complete combined graph ledger
+  decisive_evidence_ids:
+  - EVD-96
+- id: CON-9
+  title: Price subtotals can be presented as totals
+  status: unresolved
+  claims:
+  - Price subtotals can be presented as totals
+  decisive_evidence_ids:
+  - EVD-96

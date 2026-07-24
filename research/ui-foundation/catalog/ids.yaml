@@ -1,19 +1,1943 @@
-schema_version: "1"
+schema_version: '1'
 phase_status: complete
-allocation_policy: Canonical IDs are allocated during normalization and are never minted by audit agents.
+allocation_policy: Task 13 canonical allocation; values are monotonic and retained after rejection or supersession.
 next_suffixes:
-  ENT: 1
-  REL: 1
-  CAP: 1
-  DRV: 1
-  ACT: 1
-  INV: 1
-  Q: 1
-  DEC: 1
-  CON: 1
-  STA: 1
-  PER: 1
-  EVI: 1
-  EVD: 7
-  CMD: 1
-items: []
+  ENT: 32
+  REL: 36
+  STA: 71
+  PER: 8
+  ACT: 72
+  EVI: 10
+  CMD: 42
+  INV: 8
+  Q: 8
+  CON: 10
+  EVD: 105
+items:
+- namespace: ENT
+  provisional_key: DS-ENT-routine-config
+  title: Routine configuration
+  status: active
+  canonical_id: ENT-1
+- namespace: ENT
+  provisional_key: DS-ENT-run
+  title: Run
+  status: active
+  canonical_id: ENT-2
+- namespace: ENT
+  provisional_key: DS-ENT-step
+  title: Runtime step
+  status: active
+  canonical_id: ENT-3
+- namespace: ENT
+  provisional_key: DS-ENT-task
+  title: Runtime task
+  status: active
+  canonical_id: ENT-4
+- namespace: ENT
+  provisional_key: DS-ENT-attempt
+  title: Attempt
+  status: active
+  canonical_id: ENT-5
+- namespace: ENT
+  provisional_key: DS-ENT-attempt-grade-snapshot
+  title: Attempt grade snapshot
+  status: active
+  canonical_id: ENT-6
+- namespace: ENT
+  provisional_key: DS-ENT-requirement-config
+  title: Requirement configuration
+  status: active
+  canonical_id: ENT-7
+- namespace: ENT
+  provisional_key: DS-ENT-checklist-item
+  title: Checklist item
+  status: active
+  canonical_id: ENT-8
+- namespace: ENT
+  provisional_key: DS-ENT-persisted-event-row
+  title: Persisted event row
+  status: active
+  canonical_id: ENT-9
+- namespace: ENT
+  provisional_key: DS-ENT-workflow-event-payload
+  title: Workflow event payload
+  status: active
+  canonical_id: ENT-10
+- namespace: ENT
+  provisional_key: DS-ENT-graph-event-envelope
+  title: Graph event envelope
+  status: active
+  canonical_id: ENT-11
+- namespace: ENT
+  provisional_key: DS-ENT-graph-projection
+  title: Graph projection
+  status: active
+  canonical_id: ENT-12
+- namespace: ENT
+  provisional_key: DS-ENT-graph-node
+  title: Graph node
+  status: active
+  canonical_id: ENT-13
+- namespace: ENT
+  provisional_key: DS-ENT-graph-edge
+  title: Graph edge
+  status: active
+  canonical_id: ENT-14
+- namespace: ENT
+  provisional_key: DS-ENT-graph-record
+  title: Accepted graph record
+  status: active
+  canonical_id: ENT-15
+- namespace: ENT
+  provisional_key: DS-ENT-input-binding
+  title: Graph input binding
+  status: active
+  canonical_id: ENT-16
+- namespace: ENT
+  provisional_key: DS-ENT-graph-lease
+  title: Graph lease
+  status: active
+  canonical_id: ENT-17
+- namespace: ENT
+  provisional_key: DS-ENT-graph-outbox-intent
+  title: Graph outbox intent
+  status: active
+  canonical_id: ENT-18
+- namespace: ENT
+  provisional_key: DS-ENT-clarification-request
+  title: Clarification request
+  status: active
+  canonical_id: ENT-19
+- namespace: ENT
+  provisional_key: DS-ENT-clarification-response
+  title: Clarification response
+  status: active
+  canonical_id: ENT-20
+- namespace: ENT
+  provisional_key: DS-ENT-cost-record
+  title: Legacy cost record
+  status: active
+  canonical_id: ENT-21
+- namespace: ENT
+  provisional_key: DS-ENT-interaction-log-row
+  title: Interaction-log row
+  status: active
+  canonical_id: ENT-22
+- namespace: ENT
+  provisional_key: DS-ENT-cas-artifact-blob
+  title: Verified CAS artifact blob
+  status: active
+  canonical_id: ENT-23
+- namespace: ENT
+  provisional_key: DS-ENT-graph-declared-artifact-reference
+  title: Generic graph declared artifact reference
+  status: active
+  canonical_id: ENT-24
+- namespace: ENT
+  provisional_key: DS-ENT-configured-expected-path
+  title: Configured expected artifact path
+  status: active
+  canonical_id: ENT-25
+- namespace: ENT
+  provisional_key: DS-TAX-artifact-carriers
+  title: Artifact carrier taxonomy
+  status: active
+  canonical_id: ENT-26
+- namespace: ENT
+  provisional_key: DS-ENT-model-profile
+  title: Model profile
+  status: active
+  canonical_id: ENT-27
+- namespace: ENT
+  provisional_key: DS-ENT-resolved-model
+  title: Resolved model
+  status: active
+  canonical_id: ENT-28
+- namespace: ENT
+  provisional_key: DS-ENT-backup-metadata-sidecar
+  title: Backup metadata sidecar
+  status: active
+  canonical_id: ENT-29
+- namespace: ENT
+  provisional_key: DS-ENT-copied-backup-db
+  title: Copied backup database
+  status: active
+  canonical_id: ENT-30
+- namespace: ENT
+  provisional_key: DS-ENT-journal-segment
+  title: JSONL journal segment
+  status: active
+  canonical_id: ENT-31
+- namespace: REL
+  provisional_key: DS-REL-config-declares-step
+  title: template-lineage
+  status: active
+  canonical_id: REL-1
+- namespace: REL
+  provisional_key: DS-REL-run-owns-step
+  title: owns
+  status: active
+  canonical_id: REL-2
+- namespace: REL
+  provisional_key: DS-REL-step-owns-task
+  title: owns
+  status: active
+  canonical_id: REL-3
+- namespace: REL
+  provisional_key: DS-REL-task-owns-attempt
+  title: owns
+  status: active
+  canonical_id: REL-4
+- namespace: REL
+  provisional_key: DS-REL-requirement-seeds-checklist
+  title: transforms-to-projection
+  status: active
+  canonical_id: REL-5
+- namespace: REL
+  provisional_key: DS-REL-attempt-owns-grade-snapshot
+  title: owns-historical-snapshot
+  status: active
+  canonical_id: REL-6
+- namespace: REL
+  provisional_key: DS-REL-row-carries-workflow-payload
+  title: stores-payload
+  status: active
+  canonical_id: REL-7
+- namespace: REL
+  provisional_key: DS-REL-row-carries-graph-envelope
+  title: stores-payload
+  status: active
+  canonical_id: REL-8
+- namespace: REL
+  provisional_key: DS-REL-run-has-workflow-event
+  title: aggregate-stream-association
+  status: active
+  canonical_id: REL-9
+- namespace: REL
+  provisional_key: DS-REL-run-has-graph-event
+  title: graph-aggregate-stream-association
+  status: active
+  canonical_id: REL-10
+- namespace: REL
+  provisional_key: DS-REL-graph-event-reduces-projection
+  title: reduces-into
+  status: active
+  canonical_id: REL-11
+- namespace: REL
+  provisional_key: DS-REL-run-has-graph-projection
+  title: projection-association
+  status: active
+  canonical_id: REL-12
+- namespace: REL
+  provisional_key: DS-REL-projection-has-node
+  title: materializes-member
+  status: active
+  canonical_id: REL-13
+- namespace: REL
+  provisional_key: DS-REL-projection-has-edge
+  title: materializes-member
+  status: active
+  canonical_id: REL-14
+- namespace: REL
+  provisional_key: DS-REL-edge-source-node
+  title: has-source-port-on
+  status: active
+  canonical_id: REL-15
+- namespace: REL
+  provisional_key: DS-REL-edge-target-node
+  title: has-target-port-on
+  status: active
+  canonical_id: REL-16
+- namespace: REL
+  provisional_key: DS-REL-node-produces-record
+  title: produces-at-port
+  status: active
+  canonical_id: REL-17
+- namespace: REL
+  provisional_key: DS-REL-binding-selects-record
+  title: selects-input
+  status: active
+  canonical_id: REL-18
+- namespace: REL
+  provisional_key: DS-REL-edge-has-binding
+  title: realizes-input-binding
+  status: active
+  canonical_id: REL-19
+- namespace: REL
+  provisional_key: DS-REL-node-has-lease
+  title: scheduled-by
+  status: active
+  canonical_id: REL-20
+- namespace: REL
+  provisional_key: DS-REL-graph-event-creates-outbox
+  title: creates-selected-side-effect-intent
+  status: active
+  canonical_id: REL-21
+- namespace: REL
+  provisional_key: DS-REL-run-owns-clarification-request
+  title: owns
+  status: active
+  canonical_id: REL-22
+- namespace: REL
+  provisional_key: DS-REL-request-owns-response
+  title: owns
+  status: active
+  canonical_id: REL-23
+- namespace: REL
+  provisional_key: DS-REL-run-has-cost-record
+  title: required-foreign-key-attribution
+  status: active
+  canonical_id: REL-24
+- namespace: REL
+  provisional_key: DS-REL-task-has-cost-record
+  title: required-foreign-key-attribution
+  status: active
+  canonical_id: REL-25
+- namespace: REL
+  provisional_key: DS-REL-cost-references-attempt
+  title: optional-primary-key-reference
+  status: active
+  canonical_id: REL-26
+- namespace: REL
+  provisional_key: DS-REL-run-has-interaction-log
+  title: required-foreign-key-attribution
+  status: active
+  canonical_id: REL-27
+- namespace: REL
+  provisional_key: DS-REL-task-has-interaction-log
+  title: required-foreign-key-attribution
+  status: active
+  canonical_id: REL-28
+- namespace: REL
+  provisional_key: DS-REL-log-references-attempt
+  title: optional-primary-key-reference
+  status: active
+  canonical_id: REL-29
+- namespace: REL
+  provisional_key: DS-REL-graph-record-references-cas
+  title: may-reference-verified-content
+  status: active
+  canonical_id: REL-30
+- namespace: REL
+  provisional_key: DS-REL-graph-record-declares-path
+  title: may-declare-path-reference
+  status: active
+  canonical_id: REL-31
+- namespace: REL
+  provisional_key: DS-REL-profile-resolves-model
+  title: selects-default-or-override
+  status: active
+  canonical_id: REL-32
+- namespace: REL
+  provisional_key: DS-REL-sidecar-references-copied-db
+  title: references
+  status: active
+  canonical_id: REL-33
+- namespace: REL
+  provisional_key: DS-REL-sidecar-records-journal-observation
+  title: records-one-path-and-scalar-marker-observation
+  status: active
+  canonical_id: REL-34
+- namespace: REL
+  provisional_key: DS-REL-journal-imports-persisted-row
+  title: conditionally-imports-into
+  status: active
+  canonical_id: REL-35
+- namespace: STA
+  provisional_key: STA-900
+  title: Legacy run draft
+  status: active
+  canonical_id: STA-1
+- namespace: STA
+  provisional_key: STA-901
+  title: Legacy run active
+  status: active
+  canonical_id: STA-2
+- namespace: STA
+  provisional_key: STA-902
+  title: Legacy run stopping
+  status: active
+  canonical_id: STA-3
+- namespace: STA
+  provisional_key: STA-903
+  title: Legacy run paused
+  status: active
+  canonical_id: STA-4
+- namespace: STA
+  provisional_key: STA-904
+  title: Legacy run completed
+  status: active
+  canonical_id: STA-5
+- namespace: STA
+  provisional_key: STA-905
+  title: Legacy run failed
+  status: active
+  canonical_id: STA-6
+- namespace: STA
+  provisional_key: STA-906
+  title: Legacy run cancelled
+  status: active
+  canonical_id: STA-7
+- namespace: STA
+  provisional_key: STA-907
+  title: Legacy task pending
+  status: active
+  canonical_id: STA-8
+- namespace: STA
+  provisional_key: STA-908
+  title: Legacy task building
+  status: active
+  canonical_id: STA-9
+- namespace: STA
+  provisional_key: STA-909
+  title: Legacy task verifying
+  status: active
+  canonical_id: STA-10
+- namespace: STA
+  provisional_key: STA-910
+  title: Legacy task pending user action
+  status: active
+  canonical_id: STA-11
+- namespace: STA
+  provisional_key: STA-911
+  title: Legacy task recovering
+  status: active
+  canonical_id: STA-12
+- namespace: STA
+  provisional_key: STA-912
+  title: Legacy task fan-out running
+  status: active
+  canonical_id: STA-13
+- namespace: STA
+  provisional_key: STA-913
+  title: Legacy task completed
+  status: active
+  canonical_id: STA-14
+- namespace: STA
+  provisional_key: STA-914
+  title: Legacy task failed
+  status: active
+  canonical_id: STA-15
+- namespace: STA
+  provisional_key: STA-915
+  title: Graph run draft
+  status: active
+  canonical_id: STA-16
+- namespace: STA
+  provisional_key: STA-916
+  title: Graph run queued
+  status: active
+  canonical_id: STA-17
+- namespace: STA
+  provisional_key: STA-917
+  title: Graph run active
+  status: active
+  canonical_id: STA-18
+- namespace: STA
+  provisional_key: STA-918
+  title: Graph run pausing
+  status: active
+  canonical_id: STA-19
+- namespace: STA
+  provisional_key: STA-919
+  title: Graph run paused
+  status: active
+  canonical_id: STA-20
+- namespace: STA
+  provisional_key: STA-920
+  title: Graph run resuming
+  status: active
+  canonical_id: STA-21
+- namespace: STA
+  provisional_key: STA-921
+  title: Graph run cancelling
+  status: active
+  canonical_id: STA-22
+- namespace: STA
+  provisional_key: STA-922
+  title: Graph run completed
+  status: active
+  canonical_id: STA-23
+- namespace: STA
+  provisional_key: STA-923
+  title: Graph run failed
+  status: active
+  canonical_id: STA-24
+- namespace: STA
+  provisional_key: STA-953
+  title: Graph run cancelled
+  status: active
+  canonical_id: STA-25
+- namespace: STA
+  provisional_key: STA-924
+  title: Graph outbox failed
+  status: active
+  canonical_id: STA-26
+- namespace: STA
+  provisional_key: STA-925
+  title: Graph outbox pending
+  status: active
+  canonical_id: STA-27
+- namespace: STA
+  provisional_key: STA-926
+  title: Graph node pending
+  status: active
+  canonical_id: STA-28
+- namespace: STA
+  provisional_key: STA-969
+  title: Graph node ready
+  status: active
+  canonical_id: STA-29
+- namespace: STA
+  provisional_key: STA-970
+  title: Graph node leased
+  status: active
+  canonical_id: STA-30
+- namespace: STA
+  provisional_key: STA-971
+  title: Graph node running
+  status: active
+  canonical_id: STA-31
+- namespace: STA
+  provisional_key: STA-972
+  title: Graph node suspended
+  status: active
+  canonical_id: STA-32
+- namespace: STA
+  provisional_key: STA-929
+  title: Graph node completed
+  status: active
+  canonical_id: STA-33
+- namespace: STA
+  provisional_key: STA-930
+  title: Graph node failed
+  status: active
+  canonical_id: STA-34
+- namespace: STA
+  provisional_key: STA-931
+  title: Graph node cancelled
+  status: active
+  canonical_id: STA-35
+- namespace: STA
+  provisional_key: STA-932
+  title: Graph decision pending
+  status: active
+  canonical_id: STA-36
+- namespace: STA
+  provisional_key: STA-933
+  title: Graph decision recorded
+  status: active
+  canonical_id: STA-37
+- namespace: STA
+  provisional_key: STA-934
+  title: Review job queued
+  status: active
+  canonical_id: STA-38
+- namespace: STA
+  provisional_key: STA-935
+  title: Review job running
+  status: active
+  canonical_id: STA-39
+- namespace: STA
+  provisional_key: STA-936
+  title: Review job completed
+  status: active
+  canonical_id: STA-40
+- namespace: STA
+  provisional_key: STA-937
+  title: Review job failed
+  status: active
+  canonical_id: STA-41
+- namespace: STA
+  provisional_key: STA-938
+  title: Git merge applied
+  status: active
+  canonical_id: STA-42
+- namespace: STA
+  provisional_key: STA-939
+  title: Git conflict unresolved
+  status: active
+  canonical_id: STA-43
+- namespace: STA
+  provisional_key: STA-940
+  title: Git conflict resolved
+  status: active
+  canonical_id: STA-44
+- namespace: STA
+  provisional_key: STA-941
+  title: Managed environment restored
+  status: active
+  canonical_id: STA-45
+- namespace: STA
+  provisional_key: STA-942
+  title: Environment snapshot copied
+  status: active
+  canonical_id: STA-46
+- namespace: STA
+  provisional_key: STA-943
+  title: Routine archived
+  status: active
+  canonical_id: STA-47
+- namespace: STA
+  provisional_key: STA-944
+  title: Routine unarchived
+  status: active
+  canonical_id: STA-48
+- namespace: STA
+  provisional_key: STA-946
+  title: Runner default persisted
+  status: active
+  canonical_id: STA-49
+- namespace: STA
+  provisional_key: STA-947
+  title: Repository registered
+  status: active
+  canonical_id: STA-50
+- namespace: STA
+  provisional_key: STA-948
+  title: Repository removed
+  status: active
+  canonical_id: STA-51
+- namespace: STA
+  provisional_key: STA-949
+  title: Clarification response recorded
+  status: active
+  canonical_id: STA-52
+- namespace: STA
+  provisional_key: STA-950
+  title: Step approval recorded
+  status: active
+  canonical_id: STA-53
+- namespace: STA
+  provisional_key: STA-951
+  title: Graph patch accepted
+  status: active
+  canonical_id: STA-54
+- namespace: STA
+  provisional_key: STA-952
+  title: Graph patch rejected
+  status: active
+  canonical_id: STA-55
+- namespace: STA
+  provisional_key: STA-954
+  title: Legacy run absent
+  status: active
+  canonical_id: STA-56
+- namespace: STA
+  provisional_key: STA-955
+  title: Legacy run created response
+  status: active
+  canonical_id: STA-57
+- namespace: STA
+  provisional_key: STA-956
+  title: Legacy run deleted response
+  status: active
+  canonical_id: STA-58
+- namespace: STA
+  provisional_key: STA-957
+  title: Git operation ready
+  status: active
+  canonical_id: STA-59
+- namespace: STA
+  provisional_key: STA-958
+  title: Environment file operation ready
+  status: active
+  canonical_id: STA-60
+- namespace: STA
+  provisional_key: STA-959
+  title: Routine YAML validation result
+  status: active
+  canonical_id: STA-61
+- namespace: STA
+  provisional_key: STA-960
+  title: Repository absent
+  status: active
+  canonical_id: STA-62
+- namespace: STA
+  provisional_key: STA-961
+  title: Prune preview returned
+  status: active
+  canonical_id: STA-63
+- namespace: STA
+  provisional_key: STA-962
+  title: Graph patch submitted
+  status: active
+  canonical_id: STA-64
+- namespace: STA
+  provisional_key: STA-963
+  title: Agent configuration absent
+  status: active
+  canonical_id: STA-65
+- namespace: STA
+  provisional_key: STA-964
+  title: Agent configuration created
+  status: active
+  canonical_id: STA-66
+- namespace: STA
+  provisional_key: STA-965
+  title: Agent configuration updated
+  status: active
+  canonical_id: STA-67
+- namespace: STA
+  provisional_key: STA-966
+  title: Agent configuration deleted
+  status: active
+  canonical_id: STA-68
+- namespace: STA
+  provisional_key: STA-967
+  title: Agent prompt reset
+  status: active
+  canonical_id: STA-69
+- namespace: STA
+  provisional_key: STA-968
+  title: Legacy run paused startup orphan
+  status: active
+  canonical_id: STA-70
+- namespace: PER
+  provisional_key: PER-900
+  title: Optional global bearer authentication
+  status: active
+  canonical_id: PER-1
+- namespace: PER
+  provisional_key: PER-901
+  title: Routed endpoint authorization boundary
+  status: active
+  canonical_id: PER-2
+- namespace: PER
+  provisional_key: PER-902
+  title: Legacy workflow domain eligibility
+  status: active
+  canonical_id: PER-3
+- namespace: PER
+  provisional_key: PER-903
+  title: Graph command domain eligibility
+  status: active
+  canonical_id: PER-4
+- namespace: PER
+  provisional_key: PER-904
+  title: Scoped MCP tool exposure
+  status: active
+  canonical_id: PER-5
+- namespace: PER
+  provisional_key: PER-905
+  title: Routine YAML validation domain eligibility
+  status: active
+  canonical_id: PER-6
+- namespace: PER
+  provisional_key: PER-906
+  title: Review and administration domain eligibility
+  status: active
+  canonical_id: PER-7
+- namespace: ACT
+  provisional_key: ACT-1000
+  title: action
+  status: active
+  canonical_id: ACT-1
+- namespace: ACT
+  provisional_key: ACT-1001
+  title: action
+  status: active
+  canonical_id: ACT-2
+- namespace: ACT
+  provisional_key: ACT-1002
+  title: action
+  status: active
+  canonical_id: ACT-3
+- namespace: ACT
+  provisional_key: ACT-1003
+  title: action
+  status: active
+  canonical_id: ACT-4
+- namespace: ACT
+  provisional_key: ACT-1004
+  title: action
+  status: active
+  canonical_id: ACT-5
+- namespace: ACT
+  provisional_key: ACT-900
+  title: Create run
+  status: active
+  canonical_id: ACT-6
+- namespace: ACT
+  provisional_key: ACT-901
+  title: Start run through REST
+  status: active
+  canonical_id: ACT-7
+- namespace: ACT
+  provisional_key: ACT-902
+  title: Start run through CLI direct path
+  status: active
+  canonical_id: ACT-8
+- namespace: ACT
+  provisional_key: ACT-904
+  title: Delete run
+  status: active
+  canonical_id: ACT-9
+- namespace: ACT
+  provisional_key: ACT-910
+  title: action
+  status: active
+  canonical_id: ACT-10
+- namespace: ACT
+  provisional_key: ACT-911
+  title: action
+  status: active
+  canonical_id: ACT-11
+- namespace: ACT
+  provisional_key: ACT-912
+  title: action
+  status: active
+  canonical_id: ACT-12
+- namespace: ACT
+  provisional_key: ACT-913
+  title: action
+  status: active
+  canonical_id: ACT-13
+- namespace: ACT
+  provisional_key: ACT-914
+  title: action
+  status: active
+  canonical_id: ACT-14
+- namespace: ACT
+  provisional_key: ACT-919
+  title: action
+  status: rejected
+  canonical_id: ACT-15
+- namespace: ACT
+  provisional_key: ACT-920
+  title: action
+  status: rejected
+  canonical_id: ACT-16
+- namespace: ACT
+  provisional_key: ACT-921
+  title: action
+  status: rejected
+  canonical_id: ACT-17
+- namespace: ACT
+  provisional_key: ACT-930
+  title: Pause run through REST
+  status: active
+  canonical_id: ACT-18
+- namespace: ACT
+  provisional_key: ACT-931
+  title: Resume run through REST
+  status: active
+  canonical_id: ACT-19
+- namespace: ACT
+  provisional_key: ACT-932
+  title: Cancel active run through REST
+  status: active
+  canonical_id: ACT-20
+- namespace: ACT
+  provisional_key: ACT-933
+  title: Cancel paused run through REST
+  status: active
+  canonical_id: ACT-21
+- namespace: ACT
+  provisional_key: ACT-934
+  title: Qualify paused startup orphan for deletion
+  status: active
+  canonical_id: ACT-22
+- namespace: ACT
+  provisional_key: ACT-940
+  title: Approve legacy task awaiting approval
+  status: active
+  canonical_id: ACT-23
+- namespace: ACT
+  provisional_key: ACT-941
+  title: Reject legacy task with revision attempts remaining
+  status: active
+  canonical_id: ACT-24
+- namespace: ACT
+  provisional_key: ACT-942
+  title: Reject legacy task at attempt limit
+  status: active
+  canonical_id: ACT-25
+- namespace: ACT
+  provisional_key: ACT-943
+  title: Force accept legacy task
+  status: active
+  canonical_id: ACT-26
+- namespace: ACT
+  provisional_key: ACT-944
+  title: Record legacy step approval
+  status: active
+  canonical_id: ACT-27
+- namespace: ACT
+  provisional_key: ACT-945
+  title: Skip manual-gate step and resume legacy run
+  status: active
+  canonical_id: ACT-28
+- namespace: ACT
+  provisional_key: ACT-946
+  title: Answer legacy clarification
+  status: active
+  canonical_id: ACT-29
+- namespace: ACT
+  provisional_key: ACT-947
+  title: Skip legacy clarification question
+  status: active
+  canonical_id: ACT-30
+- namespace: ACT
+  provisional_key: ACT-948
+  title: Retry legacy recovering task
+  status: active
+  canonical_id: ACT-31
+- namespace: ACT
+  provisional_key: ACT-949
+  title: Skip legacy recovering task
+  status: active
+  canonical_id: ACT-32
+- namespace: ACT
+  provisional_key: ACT-950
+  title: Abandon legacy recovering task
+  status: active
+  canonical_id: ACT-33
+- namespace: ACT
+  provisional_key: ACT-951
+  title: Reset failed fan-out child to pending
+  status: active
+  canonical_id: ACT-34
+- namespace: ACT
+  provisional_key: ACT-952
+  title: Preserve fan-out parent running state on child retry
+  status: active
+  canonical_id: ACT-35
+- namespace: ACT
+  provisional_key: ACT-953
+  title: Preserve legacy run carrier during transition-back
+  status: active
+  canonical_id: ACT-36
+- namespace: ACT
+  provisional_key: ACT-954
+  title: Reset affected transition-back task to pending
+  status: active
+  canonical_id: ACT-37
+- namespace: ACT
+  provisional_key: ACT-955
+  title: Park recovered legacy run row as paused
+  status: active
+  canonical_id: ACT-38
+- namespace: ACT
+  provisional_key: ACT-957
+  title: Reset run-recovery target task to building
+  status: active
+  canonical_id: ACT-39
+- namespace: ACT
+  provisional_key: ACT-958
+  title: Reset run-recovery downstream task to pending
+  status: active
+  canonical_id: ACT-40
+- namespace: ACT
+  provisional_key: ACT-960
+  title: action
+  status: active
+  canonical_id: ACT-41
+- namespace: ACT
+  provisional_key: ACT-961
+  title: action
+  status: active
+  canonical_id: ACT-42
+- namespace: ACT
+  provisional_key: ACT-962
+  title: action
+  status: active
+  canonical_id: ACT-43
+- namespace: ACT
+  provisional_key: ACT-963
+  title: action
+  status: active
+  canonical_id: ACT-44
+- namespace: ACT
+  provisional_key: ACT-965
+  title: action
+  status: active
+  canonical_id: ACT-45
+- namespace: ACT
+  provisional_key: ACT-966
+  title: action
+  status: active
+  canonical_id: ACT-46
+- namespace: ACT
+  provisional_key: ACT-967
+  title: action
+  status: active
+  canonical_id: ACT-47
+- namespace: ACT
+  provisional_key: ACT-968
+  title: action
+  status: active
+  canonical_id: ACT-48
+- namespace: ACT
+  provisional_key: ACT-969
+  title: action
+  status: active
+  canonical_id: ACT-49
+- namespace: ACT
+  provisional_key: ACT-970
+  title: action
+  status: active
+  canonical_id: ACT-50
+- namespace: ACT
+  provisional_key: ACT-971
+  title: action
+  status: active
+  canonical_id: ACT-51
+- namespace: ACT
+  provisional_key: ACT-980
+  title: action
+  status: active
+  canonical_id: ACT-52
+- namespace: ACT
+  provisional_key: ACT-981
+  title: action
+  status: active
+  canonical_id: ACT-53
+- namespace: ACT
+  provisional_key: ACT-982
+  title: action
+  status: active
+  canonical_id: ACT-54
+- namespace: ACT
+  provisional_key: ACT-983
+  title: action
+  status: active
+  canonical_id: ACT-55
+- namespace: ACT
+  provisional_key: ACT-984
+  title: action
+  status: active
+  canonical_id: ACT-56
+- namespace: ACT
+  provisional_key: ACT-985
+  title: action
+  status: active
+  canonical_id: ACT-57
+- namespace: ACT
+  provisional_key: ACT-986
+  title: action
+  status: rejected
+  canonical_id: ACT-58
+- namespace: ACT
+  provisional_key: ACT-987
+  title: action
+  status: active
+  canonical_id: ACT-59
+- namespace: ACT
+  provisional_key: ACT-988
+  title: action
+  status: active
+  canonical_id: ACT-60
+- namespace: ACT
+  provisional_key: ACT-989
+  title: action
+  status: active
+  canonical_id: ACT-61
+- namespace: ACT
+  provisional_key: ACT-990
+  title: action
+  status: active
+  canonical_id: ACT-62
+- namespace: ACT
+  provisional_key: ACT-991
+  title: action
+  status: active
+  canonical_id: ACT-63
+- namespace: ACT
+  provisional_key: ACT-992
+  title: action
+  status: active
+  canonical_id: ACT-64
+- namespace: ACT
+  provisional_key: ACT-993
+  title: action
+  status: active
+  canonical_id: ACT-65
+- namespace: ACT
+  provisional_key: ACT-994
+  title: action
+  status: active
+  canonical_id: ACT-66
+- namespace: ACT
+  provisional_key: ACT-995
+  title: action
+  status: active
+  canonical_id: ACT-67
+- namespace: ACT
+  provisional_key: ACT-996
+  title: action
+  status: active
+  canonical_id: ACT-68
+- namespace: ACT
+  provisional_key: ACT-997
+  title: action
+  status: active
+  canonical_id: ACT-69
+- namespace: ACT
+  provisional_key: ACT-998
+  title: action
+  status: active
+  canonical_id: ACT-70
+- namespace: ACT
+  provisional_key: ACT-999
+  title: action
+  status: active
+  canonical_id: ACT-71
+- namespace: EVI
+  provisional_key: EVI-P-01
+  title: workflow-event
+  status: active
+  canonical_id: EVI-1
+- namespace: EVI
+  provisional_key: EVI-P-02
+  title: graph-event
+  status: active
+  canonical_id: EVI-2
+- namespace: EVI
+  provisional_key: EVI-P-03
+  title: accepted-graph-record
+  status: active
+  canonical_id: EVI-3
+- namespace: EVI
+  provisional_key: EVI-P-04
+  title: prompt-packet
+  status: active
+  canonical_id: EVI-4
+- namespace: EVI
+  provisional_key: EVI-P-05
+  title: transcript-and-tool-trace
+  status: active
+  canonical_id: EVI-5
+- namespace: EVI
+  provisional_key: EVI-P-06
+  title: artifact-reference
+  status: active
+  canonical_id: EVI-6
+- namespace: EVI
+  provisional_key: EVI-P-07
+  title: file-state-boundary
+  status: active
+  canonical_id: EVI-7
+- namespace: EVI
+  provisional_key: EVI-P-08
+  title: decision-evidence
+  status: active
+  canonical_id: EVI-8
+- namespace: EVI
+  provisional_key: EVI-P-09
+  title: cost-and-usage-fact
+  status: active
+  canonical_id: EVI-9
+- namespace: CMD
+  provisional_key: CMD-900
+  title: REST POST /api/runs; create_run; synchronous row/event creation
+  status: active
+  canonical_id: CMD-1
+- namespace: CMD
+  provisional_key: CMD-901
+  title: REST POST /api/runs/{id}/start; start_run; 202 signal accepted before consumer application
+  status: active
+  canonical_id: CMD-2
+- namespace: CMD
+  provisional_key: CMD-902
+  title: CLI runs start; apply_start_run; synchronous direct legacy application
+  status: active
+  canonical_id: CMD-3
+- namespace: CMD
+  provisional_key: CMD-903
+  title: REST POST /api/runs/{id}/pause; pause_run; stopping write then queued application
+  status: active
+  canonical_id: CMD-4
+- namespace: CMD
+  provisional_key: CMD-904
+  title: REST POST /api/runs/{id}/resume; resume_run; 202 signal accepted before consumer application
+  status: active
+  canonical_id: CMD-5
+- namespace: CMD
+  provisional_key: CMD-905
+  title: REST POST /api/runs/{id}/cancel; cancel_run; 202 signal accepted before row application
+  status: active
+  canonical_id: CMD-6
+- namespace: CMD
+  provisional_key: CMD-906
+  title: REST DELETE /api/runs/{id}; delete_run; synchronous row deletion
+  status: active
+  canonical_id: CMD-7
+- namespace: CMD
+  provisional_key: CMD-908
+  title: REST clarification response; respond_to_clarification; synchronous response plus eligible resumption
+  status: active
+  canonical_id: CMD-8
+- namespace: CMD
+  provisional_key: CMD-909
+  title: REST/MCP complete-recovery; complete_recovery; synchronous task outcome application
+  status: active
+  canonical_id: CMD-9
+- namespace: CMD
+  provisional_key: CMD-910
+  title: REST retry fan-out child; retry_fanout_child; synchronous targeted task reset
+  status: active
+  canonical_id: CMD-10
+- namespace: CMD
+  provisional_key: CMD-912
+  title: REST POST /graph/decisions; RecordDecisionCommand with discriminated approval, authority, or oversight type/value;
+    synchronous graph append/projection
+  status: active
+  canonical_id: CMD-11
+- namespace: CMD
+  provisional_key: CMD-915
+  title: REST POST /graph/patch; SubmitGraphPatchCommand; synchronous accepted/rejected patch attempt
+  status: active
+  canonical_id: CMD-12
+- namespace: CMD
+  provisional_key: CMD-916
+  title: Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand; synchronous graph append/projection
+  status: active
+  canonical_id: CMD-13
+- namespace: CMD
+  provisional_key: CMD-917
+  title: REST POST /graph/outbox/requeue/{event_id}; requeue_outbox; transactional pending reset plus event
+  status: active
+  canonical_id: CMD-14
+- namespace: CMD
+  provisional_key: CMD-918
+  title: REST/CLI back-merge; back_merge; synchronous git mutation or conflict
+  status: active
+  canonical_id: CMD-15
+- namespace: CMD
+  provisional_key: CMD-919
+  title: REST/CLI merge-back; merge_back; synchronous git mutation or conflict
+  status: active
+  canonical_id: CMD-16
+- namespace: CMD
+  provisional_key: CMD-920
+  title: REST review revert-back-merge; revert_back_merge; synchronous git mutation or conflict
+  status: active
+  canonical_id: CMD-17
+- namespace: CMD
+  provisional_key: CMD-922
+  title: REST review conflict resolution; resolve_conflict; synchronous staged conflict effect
+  status: active
+  canonical_id: CMD-18
+- namespace: CMD
+  provisional_key: CMD-923
+  title: REST review prune preview; preview_prune; synchronous non-mutating preview
+  status: active
+  canonical_id: CMD-19
+- namespace: CMD
+  provisional_key: CMD-924
+  title: REST review prune apply; apply_prune; synchronous filesystem/git mutation
+  status: active
+  canonical_id: CMD-20
+- namespace: CMD
+  provisional_key: CMD-925
+  title: REST managed env revert; revert_env_files; synchronous filesystem write
+  status: active
+  canonical_id: CMD-21
+- namespace: CMD
+  provisional_key: CMD-926
+  title: REST environment snapshot copy; copy_env_snapshot; synchronous filesystem write
+  status: active
+  canonical_id: CMD-22
+- namespace: CMD
+  provisional_key: CMD-929
+  title: REST runner model-profile defaults PUT; runner defaults service; synchronous configuration-row replacement
+  status: active
+  canonical_id: CMD-23
+- namespace: CMD
+  provisional_key: CMD-930
+  title: REST repository add; repository service; synchronous clone/symlink/metadata mutation
+  status: active
+  canonical_id: CMD-24
+- namespace: CMD
+  provisional_key: CMD-931
+  title: REST repository remove; repository service; synchronous destructive filesystem/metadata mutation
+  status: active
+  canonical_id: CMD-25
+- namespace: CMD
+  provisional_key: CMD-932
+  title: REST POST /api/routines/validate; validate_routine; synchronous non-mutating YAML/schema response
+  status: active
+  canonical_id: CMD-26
+- namespace: CMD
+  provisional_key: CMD-933
+  title: REST POST /api/runs/{run_id}/review/test; start_test_run; 202 asynchronous test-job start before result
+  status: active
+  canonical_id: CMD-27
+- namespace: CMD
+  provisional_key: CMD-934
+  title: REST POST /api/runs/{run_id}/review/conflicts/agent-resolve; agent_resolve_conflicts; synchronous dispatch acceptance
+    before agent result
+  status: active
+  canonical_id: CMD-28
+- namespace: CMD
+  provisional_key: CMD-935
+  title: REST task approve endpoint; approve_task; synchronous legacy task decision
+  status: active
+  canonical_id: CMD-29
+- namespace: CMD
+  provisional_key: CMD-936
+  title: REST task reject endpoint; reject_task; synchronous building-or-failed legacy task outcome
+  status: active
+  canonical_id: CMD-30
+- namespace: CMD
+  provisional_key: CMD-937
+  title: REST task force-accept endpoint; force_accept_task; synchronous qualified task completion
+  status: active
+  canonical_id: CMD-31
+- namespace: CMD
+  provisional_key: CMD-938
+  title: REST step approve endpoint; approve_step; synchronous approval record/progression
+  status: active
+  canonical_id: CMD-32
+- namespace: CMD
+  provisional_key: CMD-939
+  title: REST step skip endpoint; skip_step; synchronous step skip/progression
+  status: active
+  canonical_id: CMD-33
+- namespace: CMD
+  provisional_key: CMD-940
+  title: REST backward-transition endpoint; backward_transition; synchronous legacy step/task rewind
+  status: active
+  canonical_id: CMD-34
+- namespace: CMD
+  provisional_key: CMD-941
+  title: REST POST /api/runs/{run_id}/recover; recover_run; synchronous compensating recovery to paused
+  status: active
+  canonical_id: CMD-35
+- namespace: CMD
+  provisional_key: CMD-942
+  title: REST POST /api/routines/{routine_id}/archive; archive_routine; synchronous routine metadata update
+  status: active
+  canonical_id: CMD-36
+- namespace: CMD
+  provisional_key: CMD-943
+  title: REST POST /api/routines/{routine_id}/unarchive; unarchive_routine; synchronous routine metadata update
+  status: active
+  canonical_id: CMD-37
+- namespace: CMD
+  provisional_key: CMD-944
+  title: REST POST /api/agents; create_agent; synchronous configuration-row creation
+  status: active
+  canonical_id: CMD-38
+- namespace: CMD
+  provisional_key: CMD-945
+  title: REST PUT /api/agents/{agent_id}; update_agent; synchronous configuration-row update
+  status: active
+  canonical_id: CMD-39
+- namespace: CMD
+  provisional_key: CMD-946
+  title: REST DELETE /api/agents/{agent_id}; delete_agent; synchronous configuration-row deletion
+  status: active
+  canonical_id: CMD-40
+- namespace: CMD
+  provisional_key: CMD-947
+  title: REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous default-prompt restoration
+  status: active
+  canonical_id: CMD-41
+- namespace: EVD
+  provisional_key: EVI-900
+  title: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions
+  status: active
+  canonical_id: EVD-7
+- namespace: EVD
+  provisional_key: EVI-901
+  title: tests/unit/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused
+  status: active
+  canonical_id: EVD-8
+- namespace: EVD
+  provisional_key: EVI-902
+  title: tests/unit/test_workflow_engine.py completion and failure progression anchors
+  status: active
+  canonical_id: EVD-9
+- namespace: EVD
+  provisional_key: EVI-903
+  title: 03-workflow-state.md#CON-WF-05 mode-qualified terminality
+  status: active
+  canonical_id: EVD-10
+- namespace: EVD
+  provisional_key: EVI-904
+  title: 03-workflow-state.md#Cancel graph cancellation before row cancellation
+  status: active
+  canonical_id: EVD-11
+- namespace: EVD
+  provisional_key: EVI-905
+  title: 03-workflow-state.md#WF-task-edges legacy TaskStatus transitions
+  status: active
+  canonical_id: EVD-12
+- namespace: EVD
+  provisional_key: EVI-906
+  title: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume boundary
+  status: active
+  canonical_id: EVD-13
+- namespace: EVD
+  provisional_key: EVI-907
+  title: 04-api-actions-authority.md#action-recovery-outcome retry skip abandon outcomes
+  status: active
+  canonical_id: EVD-14
+- namespace: EVD
+  provisional_key: EVI-908
+  title: 03-workflow-state.md#WF-task-edges fan-out parent behavior
+  status: active
+  canonical_id: EVD-15
+- namespace: EVD
+  provisional_key: EVI-909
+  title: tests/unit/test_transitions_recovering_force_accept.py::TestTransitionForceAccept
+  status: active
+  canonical_id: EVD-16
+- namespace: EVD
+  provisional_key: EVI-910
+  title: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph lifecycle commands
+  status: active
+  canonical_id: EVD-17
+- namespace: EVD
+  provisional_key: EVI-911
+  title: 02-graph-runtime.md#scheduler-and-lease behavior
+  status: active
+  canonical_id: EVD-18
+- namespace: EVD
+  provisional_key: EVI-912
+  title: 03-workflow-state.md#states-only-in-mode graph resuming qualification
+  status: active
+  canonical_id: EVD-19
+- namespace: EVD
+  provisional_key: EVI-913
+  title: 02-graph-runtime.md#cancel lifecycle and node cancellation effects
+  status: active
+  canonical_id: EVD-20
+- namespace: EVD
+  provisional_key: EVI-914
+  title: 02-graph-runtime.md#evaluate_final_gate completion test anchors
+  status: active
+  canonical_id: EVD-21
+- namespace: EVD
+  provisional_key: EVI-915
+  title: 02-graph-runtime.md#reconcile terminal-failure behavior
+  status: active
+  canonical_id: EVD-22
+- namespace: EVD
+  provisional_key: EVI-916
+  title: tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event
+  status: active
+  canonical_id: EVD-23
+- namespace: EVD
+  provisional_key: EVI-917
+  title: 02-graph-runtime.md#node-state projection and readiness fields
+  status: active
+  canonical_id: EVD-24
+- namespace: EVD
+  provisional_key: EVI-918
+  title: 02-graph-runtime.md#submit_callback accepted completion effects
+  status: active
+  canonical_id: EVD-25
+- namespace: EVD
+  provisional_key: EVI-919
+  title: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry failure
+  status: active
+  canonical_id: EVD-26
+- namespace: EVD
+  provisional_key: EVI-920
+  title: 04-api-actions-authority.md#action-graph-decision decision record effects
+  status: active
+  canonical_id: EVD-27
+- namespace: EVD
+  provisional_key: EVI-921
+  title: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async review timing
+  status: active
+  canonical_id: EVD-28
+- namespace: EVD
+  provisional_key: EVI-922
+  title: 04-api-actions-authority.md#action-branch-sync merge effects and conflicts
+  status: active
+  canonical_id: EVD-29
+- namespace: EVD
+  provisional_key: EVI-923
+  title: 04-api-actions-authority.md#action-conflict-resolution staged conflict effects
+  status: active
+  canonical_id: EVD-30
+- namespace: EVD
+  provisional_key: EVI-924
+  title: 04-api-actions-authority.md#action-env-files filesystem route boundary
+  status: active
+  canonical_id: EVD-31
+- namespace: EVD
+  provisional_key: EVI-925
+  title: 04-api-actions-authority.md#action-routine-archive routine visibility only
+  status: active
+  canonical_id: EVD-32
+- namespace: EVD
+  provisional_key: EVI-926
+  title: 04-api-actions-authority.md#action-agent-policy configuration-row effects
+  status: active
+  canonical_id: EVD-33
+- namespace: EVD
+  provisional_key: EVI-927
+  title: 04-api-actions-authority.md#action-agent-policy runner default replacement
+  status: active
+  canonical_id: EVD-34
+- namespace: EVD
+  provisional_key: EVI-928
+  title: 04-api-actions-authority.md#action-repository-admin add/remove boundary
+  status: active
+  canonical_id: EVD-35
+- namespace: EVD
+  provisional_key: EVI-929
+  title: tests/integration/test_api_human_approval.py::test_approve_step_multiple_times
+  status: active
+  canonical_id: EVD-36
+- namespace: EVD
+  provisional_key: EVI-930
+  title: tests/unit/test_patch_validator.py and 04-api-actions-authority.md#action-graph-patch
+  status: active
+  canonical_id: EVD-37
+- namespace: EVD
+  provisional_key: EVI-931
+  title: tests/integration/test_api_auth.py global optional bearer-authentication anchors
+  status: active
+  canonical_id: EVD-38
+- namespace: EVD
+  provisional_key: EVI-932
+  title: 04-api-actions-authority.md#api-authz-roles absent subject/role/scope enforcement
+  status: active
+  canonical_id: EVD-39
+- namespace: EVD
+  provisional_key: EVI-933
+  title: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input eligibility
+  status: active
+  canonical_id: EVD-40
+- namespace: EVD
+  provisional_key: EVI-934
+  title: '02-graph-runtime.md#record_decision and #submit_patch domain validation'
+  status: active
+  canonical_id: EVD-41
+- namespace: EVD
+  provisional_key: EVI-935
+  title: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py closure scope
+  status: active
+  canonical_id: EVD-42
+- namespace: EVD
+  provisional_key: EVI-936
+  title: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous row creation/deletion routes
+  status: active
+  canonical_id: EVD-43
+- namespace: EVD
+  provisional_key: EVI-937
+  title: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges fan-out carrier behavior
+  status: active
+  canonical_id: EVD-44
+- namespace: EVD
+  provisional_key: EVI-938
+  title: '04-api-actions-authority.md#action-transition-back and #action-run-recover; tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
+  status: active
+  canonical_id: EVD-45
+- namespace: EVD
+  provisional_key: EVI-939
+  title: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and RoutineConfig validation response
+  status: active
+  canonical_id: EVD-46
+- namespace: EVD
+  provisional_key: EVI-940
+  title: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start and completion callback
+  status: active
+  canonical_id: EVD-47
+- namespace: EVD
+  provisional_key: EVI-941
+  title: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch and AgentFixStarted
+  status: active
+  canonical_id: EVD-48
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#Entity and identity inventory
+  title: agent-reports/01-domain-persistence.md#Entity and identity inventory
+  status: active
+  canonical_id: EVD-49
+- namespace: EVD
+  provisional_key: agent-reports/03-workflow-state.md#State carriers and legal transitions
+  title: agent-reports/03-workflow-state.md#State carriers and legal transitions
+  status: active
+  canonical_id: EVD-50
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#Conflicts found
+  title: agent-reports/01-domain-persistence.md#Conflicts found
+  status: active
+  canonical_id: EVD-51
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#Lifecycle boundaries
+  title: agent-reports/01-domain-persistence.md#Lifecycle boundaries
+  status: active
+  canonical_id: EVD-52
+- namespace: EVD
+  provisional_key: agent-reports/06-ui-projections.md#Rendered claim trace
+  title: agent-reports/06-ui-projections.md#Rendered claim trace
+  status: active
+  canonical_id: EVD-53
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#Alias and non-alias map
+  title: agent-reports/01-domain-persistence.md#Alias and non-alias map
+  status: active
+  canonical_id: EVD-54
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#Temporal relationship behavior
+  title: agent-reports/01-domain-persistence.md#Temporal relationship behavior
+  status: active
+  canonical_id: EVD-55
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring
+  title: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring
+  status: active
+  canonical_id: EVD-56
+- namespace: EVD
+  provisional_key: agent-reports/03-workflow-state.md#Key findings
+  title: agent-reports/03-workflow-state.md#Key findings
+  status: active
+  canonical_id: EVD-57
+- namespace: EVD
+  provisional_key: agent-reports/02-graph-runtime.md#Key findings
+  title: agent-reports/02-graph-runtime.md#Key findings
+  status: active
+  canonical_id: EVD-58
+- namespace: EVD
+  provisional_key: agent-reports/03-workflow-state.md#Legacy versus graph mode
+  title: agent-reports/03-workflow-state.md#Legacy versus graph mode
+  status: active
+  canonical_id: EVD-59
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#Persistence table inventory
+  title: agent-reports/01-domain-persistence.md#Persistence table inventory
+  status: active
+  canonical_id: EVD-60
+- namespace: EVD
+  provisional_key: agent-reports/04-api-actions-authority.md#Transport and capability inventory
+  title: agent-reports/04-api-actions-authority.md#Transport and capability inventory
+  status: active
+  canonical_id: EVD-61
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#Ownership and cardinality
+  title: agent-reports/01-domain-persistence.md#Ownership and cardinality
+  status: active
+  canonical_id: EVD-62
+- namespace: EVD
+  provisional_key: agent-reports/04-api-actions-authority.md#Authority model
+  title: agent-reports/04-api-actions-authority.md#Authority model
+  status: active
+  canonical_id: EVD-63
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#Important uncertainties
+  title: agent-reports/05-evidence-telemetry.md#Important uncertainties
+  status: active
+  canonical_id: EVD-64
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#Conflicts found
+  title: agent-reports/05-evidence-telemetry.md#Conflicts found
+  status: active
+  canonical_id: EVD-65
+- namespace: EVD
+  provisional_key: agent-reports/04-api-actions-authority.md#CLI database maintenance capability
+  title: agent-reports/04-api-actions-authority.md#CLI database maintenance capability
+  status: active
+  canonical_id: EVD-66
+- namespace: EVD
+  provisional_key: agent-reports/03-workflow-state.md#JSONL authority conflict
+  title: agent-reports/03-workflow-state.md#JSONL authority conflict
+  status: active
+  canonical_id: EVD-67
+- namespace: EVD
+  provisional_key: agent-reports/07-tests-documentation.md#Evidence qualification
+  title: agent-reports/07-tests-documentation.md#Evidence qualification
+  status: active
+  canonical_id: EVD-68
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#DP-ENT-event
+  title: agent-reports/01-domain-persistence.md#DP-ENT-event
+  status: active
+  canonical_id: EVD-69
+- namespace: EVD
+  provisional_key: agent-reports/03-workflow-state.md#Durable authority projection and recovery
+  title: agent-reports/03-workflow-state.md#Durable authority projection and recovery
+  status: active
+  canonical_id: EVD-70
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-01
+  title: agent-reports/05-evidence-telemetry.md#ET-01
+  status: active
+  canonical_id: EVD-71
+- namespace: EVD
+  provisional_key: agent-reports/02-graph-runtime.md#Events and projections
+  title: agent-reports/02-graph-runtime.md#Events and projections
+  status: active
+  canonical_id: EVD-72
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-02
+  title: agent-reports/05-evidence-telemetry.md#ET-02
+  status: active
+  canonical_id: EVD-73
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#DP-ENT-record
+  title: agent-reports/01-domain-persistence.md#DP-ENT-record
+  status: active
+  canonical_id: EVD-74
+- namespace: EVD
+  provisional_key: agent-reports/02-graph-runtime.md#Typed graph-record inventory
+  title: agent-reports/02-graph-runtime.md#Typed graph-record inventory
+  status: active
+  canonical_id: EVD-75
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-03
+  title: agent-reports/05-evidence-telemetry.md#ET-03
+  status: active
+  canonical_id: EVD-76
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-04
+  title: agent-reports/05-evidence-telemetry.md#ET-04
+  status: active
+  canonical_id: EVD-77
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-05
+  title: agent-reports/05-evidence-telemetry.md#ET-05
+  status: active
+  canonical_id: EVD-78
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries
+  title: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries
+  status: active
+  canonical_id: EVD-79
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-06
+  title: agent-reports/05-evidence-telemetry.md#ET-06
+  status: active
+  canonical_id: EVD-80
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-07
+  title: agent-reports/05-evidence-telemetry.md#ET-07
+  status: active
+  canonical_id: EVD-81
+- namespace: EVD
+  provisional_key: agent-reports/06-ui-projections.md#UIP-16
+  title: agent-reports/06-ui-projections.md#UIP-16
+  status: active
+  canonical_id: EVD-82
+- namespace: EVD
+  provisional_key: agent-reports/01-domain-persistence.md#DP-ENT-artifact
+  title: agent-reports/01-domain-persistence.md#DP-ENT-artifact
+  status: active
+  canonical_id: EVD-83
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-09
+  title: agent-reports/05-evidence-telemetry.md#ET-09
+  status: active
+  canonical_id: EVD-84
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-10
+  title: agent-reports/05-evidence-telemetry.md#ET-10
+  status: active
+  canonical_id: EVD-85
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-11
+  title: agent-reports/05-evidence-telemetry.md#ET-11
+  status: active
+  canonical_id: EVD-86
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-08
+  title: agent-reports/05-evidence-telemetry.md#ET-08
+  status: active
+  canonical_id: EVD-87
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#File-state producer attribution
+  title: agent-reports/05-evidence-telemetry.md#File-state producer attribution
+  status: active
+  canonical_id: EVD-88
+- namespace: EVD
+  provisional_key: agent-reports/06-ui-projections.md#UIP-15
+  title: agent-reports/06-ui-projections.md#UIP-15
+  status: active
+  canonical_id: EVD-89
+- namespace: EVD
+  provisional_key: agent-reports/04-api-actions-authority.md#Race idempotency and action feedback
+  title: agent-reports/04-api-actions-authority.md#Race idempotency and action feedback
+  status: active
+  canonical_id: EVD-90
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#jobs.J3.evidence
+  title: agent-reports/05-evidence-telemetry.md#jobs.J3.evidence
+  status: active
+  canonical_id: EVD-91
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-12
+  title: agent-reports/05-evidence-telemetry.md#ET-12
+  status: active
+  canonical_id: EVD-92
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-13
+  title: agent-reports/05-evidence-telemetry.md#ET-13
+  status: active
+  canonical_id: EVD-93
+- namespace: EVD
+  provisional_key: agent-reports/05-evidence-telemetry.md#ET-14
+  title: agent-reports/05-evidence-telemetry.md#ET-14
+  status: active
+  canonical_id: EVD-94
+- namespace: EVD
+  provisional_key: agent-reports/06-ui-projections.md#UIP-18
+  title: agent-reports/06-ui-projections.md#UIP-18
+  status: active
+  canonical_id: EVD-95
+- namespace: CON
+  provisional_key: report-conflict:Attempt identity contracts conflict
+  title: Attempt identity contracts conflict
+  status: active
+  canonical_id: CON-1
+- namespace: EVD
+  provisional_key: agent-reports/08-domain-synthesis.md#Conflicts found
+  title: agent-reports/08-domain-synthesis.md#Conflicts found
+  status: active
+  canonical_id: EVD-96
+- namespace: CON
+  provisional_key: report-conflict:SQL and JSONL normal-authority descriptions conflict
+  title: SQL and JSONL normal-authority descriptions conflict
+  status: active
+  canonical_id: CON-2
+- namespace: CON
+  provisional_key: report-conflict:Failed terminality is mode-qualified
+  title: Failed terminality is mode-qualified
+  status: active
+  canonical_id: CON-3
+- namespace: CON
+  provisional_key: report-conflict:Recorded action attribution is not an authenticated identity
+  title: Recorded action attribution is not an authenticated identity
+  status: active
+  canonical_id: CON-4
+- namespace: CON
+  provisional_key: report-conflict:Artifact and telemetry coverage differs between graph and legacy
+  title: Artifact and telemetry coverage differs between graph and legacy
+  status: active
+  canonical_id: CON-5
+- namespace: CON
+  provisional_key: report-conflict:Lifecycle REST acceptance differs from direct CLI application
+  title: Lifecycle REST acceptance differs from direct CLI application
+  status: active
+  canonical_id: CON-6
+- namespace: CON
+  provisional_key: report-conflict:Stopping-row cancellation acceptance is inconsistent
+  title: Stopping-row cancellation acceptance is inconsistent
+  status: active
+  canonical_id: CON-7
+- namespace: CON
+  provisional_key: report-conflict:Activity is not a complete combined graph ledger
+  title: Activity is not a complete combined graph ledger
+  status: active
+  canonical_id: CON-8
+- namespace: CON
+  provisional_key: report-conflict:Price subtotals can be presented as totals
+  title: Price subtotals can be presented as totals
+  status: active
+  canonical_id: CON-9
+- namespace: Q
+  provisional_key: report-question:Choose and migrate canonical attempt identity
+  title: Choose and migrate canonical attempt identity
+  status: active
+  canonical_id: Q-1
+- namespace: Q
+  provisional_key: report-question:Define typed cross-mode conversion and selection contracts
+  title: Define typed cross-mode conversion and selection contracts
+  status: active
+  canonical_id: Q-2
+- namespace: Q
+  provisional_key: report-question:Reconcile JSONL authority documentation with executable SQL authority
+  title: Reconcile JSONL authority documentation with executable SQL authority
+  status: active
+  canonical_id: Q-3
+- namespace: Q
+  provisional_key: report-question:Define a live-WAL-safe backup and replay contract
+  title: Define a live-WAL-safe backup and replay contract
+  status: active
+  canonical_id: Q-4
+- namespace: Q
+  provisional_key: report-question:Define product-role authorization before treating actor text as authority
+  title: Define product-role authorization before treating actor text as authority
+  status: active
+  canonical_id: Q-5
+- namespace: Q
+  provisional_key: report-question:Decide whether execution-bound graph MCP patch macros need an action contract
+  title: Decide whether execution-bound graph MCP patch macros need an action contract
+  status: active
+  canonical_id: Q-6
+- namespace: Q
+  provisional_key: report-question:Hash-guard decisive implementation and test evidence
+  title: Hash-guard decisive implementation and test evidence
+  status: active
+  canonical_id: Q-7
+- namespace: EVD
+  provisional_key: agent-reports/07-tests-documentation.md#Executable invariant index
+  title: agent-reports/07-tests-documentation.md#Executable invariant index
+  status: active
+  canonical_id: EVD-97
+- namespace: INV
+  provisional_key: invariant:Graph patch validation rejects invalid topology before visible acceptance
+  title: Graph patch validation rejects invalid topology before visible acceptance
+  status: active
+  canonical_id: INV-1
+- namespace: INV
+  provisional_key: invariant:Final graph completion requires a passing deterministic final check
+  title: Final graph completion requires a passing deterministic final check
+  status: active
+  canonical_id: INV-2
+- namespace: INV
+  provisional_key: invariant:Graph event append and read-model update share rollback behavior
+  title: Graph event append and read-model update share rollback behavior
+  status: active
+  canonical_id: INV-3
+- namespace: INV
+  provisional_key: invariant:Accepted callbacks and usage records are idempotent for their represented keys
+  title: Accepted callbacks and usage records are idempotent for their represented keys
+  status: active
+  canonical_id: INV-4
+- namespace: INV
+  provisional_key: invariant:Missing pricing is not converted into a priced cost fact
+  title: Missing pricing is not converted into a priced cost fact
+  status: active
+  canonical_id: INV-5
+- namespace: INV
+  provisional_key: invariant:Clarification blocks submission until answered
+  title: Clarification blocks submission until answered
+  status: active
+  canonical_id: INV-6
+- namespace: INV
+  provisional_key: invariant:Foundation facts do not equate proposed policy with authorization
+  title: Foundation facts do not equate proposed policy with authorization
+  status: active
+  canonical_id: INV-7
+- namespace: EVD
+  provisional_key: agent-reports/00-delegation-plan.md#domain-persistence
+  title: agent-reports/00-delegation-plan.md#domain-persistence
+  status: active
+  canonical_id: EVD-98
+- namespace: EVD
+  provisional_key: agent-reports/00-delegation-plan.md#graph-runtime
+  title: agent-reports/00-delegation-plan.md#graph-runtime
+  status: active
+  canonical_id: EVD-99
+- namespace: EVD
+  provisional_key: agent-reports/00-delegation-plan.md#workflow-state
+  title: agent-reports/00-delegation-plan.md#workflow-state
+  status: active
+  canonical_id: EVD-100
+- namespace: EVD
+  provisional_key: agent-reports/00-delegation-plan.md#api-actions-authority
+  title: agent-reports/00-delegation-plan.md#api-actions-authority
+  status: active
+  canonical_id: EVD-101
+- namespace: EVD
+  provisional_key: agent-reports/00-delegation-plan.md#evidence-telemetry
+  title: agent-reports/00-delegation-plan.md#evidence-telemetry
+  status: active
+  canonical_id: EVD-102
+- namespace: EVD
+  provisional_key: agent-reports/00-delegation-plan.md#ui-projections
+  title: agent-reports/00-delegation-plan.md#ui-projections
+  status: active
+  canonical_id: EVD-103
+- namespace: EVD
+  provisional_key: agent-reports/00-delegation-plan.md#tests-documentation
+  title: agent-reports/00-delegation-plan.md#tests-documentation
+  status: active
+  canonical_id: EVD-104
