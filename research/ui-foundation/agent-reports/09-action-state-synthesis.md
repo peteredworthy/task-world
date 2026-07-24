@@ -10,7 +10,7 @@ not canonical catalog allocation or a claim of product-role authorization.
 ## Scope inspected
 
 - Task 11 state, permission, action, and shared-report artifacts.
-- All 69 current `reality/actions/*.yaml` roots.
+- All 71 current `reality/actions/*.yaml` roots.
 - The lifecycle, legacy, graph, and review/admin action-group reports.
 - Approved workflow, graph-runtime, API/action-authority, UI, and test audits;
   `tools/validate.py` models; and current routed source anchors already recorded
@@ -18,7 +18,7 @@ not canonical catalog allocation or a claim of product-role authorization.
 
 ## Key findings
 
-- The current corpus contains 65 present action contracts and 4 intentional gap
+- The current corpus contains 67 present action contracts and 4 intentional gap
   contracts. Every root parses through `ActionContract`; every present local
   command, evidence, permission, and state reference resolves.
 - `STA-927` and `STA-928` remain absent. Results are carried by their actual
@@ -29,10 +29,11 @@ not canonical catalog allocation or a claim of product-role authorization.
   writes stopping; consumer application is a separately declared later edge.
   Ordinary deletion and paused-startup-orphan deletion stay distinct.
 - Graph decisions use discriminated `CMD-912` and only
-  `decision pending -> decision recorded`. Node outcomes remain
-  `node pending -> completed|failed|cancelled`; graph cancellation remains
-  `graph run cancelling -> graph run cancelled`. No cross-carrier transition
-  connects these pairs.
+  `decision pending -> decision recorded`. Nodes progress
+  `pending -> ready -> leased -> running|suspended`; leased, running, or
+  suspended nodes cancel directly to node cancelled. Graph cancellation remains
+  `graph run active|paused -> cancelling -> graph run cancelled`. No
+  cross-carrier transition connects these pairs.
 - Graph patches use `STA-962` submitted before `STA-951` accepted or `STA-952`
   rejected. Graph active preservation and a budget-created ready gate are
   separately documented carrier effects, not patch-result transitions.
@@ -40,6 +41,11 @@ not canonical catalog allocation or a claim of product-role authorization.
   Agent create, update, delete, and prompt reset now use their carrier-local
   `STA-963` through `STA-967` lifecycle states and concrete `CMD-944` through
   `CMD-947` commands.
+- The qualified run-recovery path now explicitly resets a completed downstream
+  legacy task from `STA-913` to `STA-907`; ordinary completed-task terminality
+  remains intact outside that command.
+- The four action-group reports are current against the declared vocabulary: none
+  contains a retired command declaration or obsolete `STA-945` carrier reference.
 - `ACT-986` remains an intentional non-executable gap: no inspected backend
   route implements the UI's agent-test-fix request, so its authority, command,
   evidence, eligibility, and job-result contract remain unresolved.

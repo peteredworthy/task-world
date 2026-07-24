@@ -18,7 +18,7 @@ retry_behavior: "Read graph run and legacy activity projections; do not infer gr
 reversibility: "No direct uncancel; recovery is separate and does not undo graph cancellation."
 audit_evidence_ids: [EVI-904, EVI-913, EVI-931, EVI-932, EVI-933]
 transition: {from_state_id: STA-921, to_state_id: STA-953}
-carrier_relationship: {kind: same-command graph-run consequence, rest_acceptance_action_id: ACT-933, rest_acceptance_transition: {from_state_id: STA-903, to_state_id: STA-903}, rest_eventual_application_transition: {from_state_id: STA-903, to_state_id: STA-906}, ordering: "CMD-905 REST acceptance preserves the paused row; graph-run cancellation is a separate carrier-local consequence before later row application."}
+carrier_relationship: {kind: paired graph-run terminal consequence, paired_graph_run_entry_action_id: ACT-971, paired_node_consequence_action_id: ACT-969, rest_acceptance_action_id: ACT-933, rest_acceptance_transition: {from_state_id: STA-903, to_state_id: STA-903}, rest_eventual_application_transition: {from_state_id: STA-903, to_state_id: STA-906}, ordering: "ACT-971 first transitions the graph run paused-to-cancelling; this CMD-905 consequence then transitions cancelling-to-cancelled, while ACT-969 separately cancels leased/running/suspended nodes before later row application."}
 enforced_authentication: "PER-900 optional global valid-bearer gate."
 enforced_authorization: absent
 domain_eligibility: "PER-902 validates paused legacy-row cancellation; PER-903 validates the graph cancellation consequence."
