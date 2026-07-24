@@ -1,0 +1,33 @@
+id: DRV-11
+title: Pending decision wait age
+status: admitted
+capability_ids:
+- CAP-68
+inputs:
+- CAP-69
+typed_inputs:
+  carrier: typed current persisted carrier
+  as_of: aware timestamp where applicable
+  completeness: explicit complete stream or inventory marker
+algorithm: For a still-pending item with identity and timestamp, subtract created_at
+  from as_of and clamp at zero. Deterministic ordering uses the stated durable position;
+  ties use canonical identity ascending; numeric results retain exact values without
+  display rounding.
+output_type: WaitAge
+unknown_behavior: Return Unknown with a typed reason for absent, incomplete, malformed,
+  ambiguous, unavailable, or stale required input; never silently narrow scope.
+failure_behavior: Reject invalid typed input and return no partial known result.
+freshness: Carry source position and as_of where relevant; results are stale when
+  a source advances or the display clock changes.
+recomputation_behavior: Recompute on relevant source append, correction, filter change,
+  or display-clock interval; preserve immutable completed cuts.
+implementation_evidence_ids:
+- EVD-105
+evidence_ids:
+- EVD-105
+- EVD-56
+limitations:
+- Uses only admitted carrier-qualified inputs and does not establish cross-mode completeness.
+prohibited_interpretations:
+- Do not treat this projection as causal, fleet-wide, or a substitute for unavailable
+  source data.

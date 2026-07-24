@@ -1,153 +1,2829 @@
 schema_version: '1'
 phase_status: complete
 completion_phase: 2
-classification_policy: Each closed scope demand receives one conservative product-capability classification. Raw implementation facts do not by themselves establish a current user-facing capability.
+classification_policy: Each closed scope demand receives one conservative, evidence-qualified
+  product-capability classification.
 items:
-- &gap
-  id: CAP-1
-  title: Unintegrated source-demand capability
-  definition: The source demand is not admitted as a current or deterministic derived product capability by the Phase 1 evidence package.
+- id: CAP-1
+  title: Health class
+  definition: Health class is a source demand from jobs.J1.health-class; the audited
+    implementation does not provide the demanded capability contract.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
   epistemic_status: observed
   confidence: medium
-  confidence_basis: Phase 1 audit reports establish relevant carriers but do not establish a complete user-facing capability contract.
-  evidence_ids: [EVD-56]
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.health-class.
+  evidence_ids:
+  - EVD-56
   conflict_ids: []
   question_ids: []
-  limitations: [Classification does not deny that individual implementation carriers may exist.]
-  prohibited_interpretations: [Do not treat a source label, response field, or isolated command as a completed product capability.]
+  limitations:
+  - No complete implementation contract establishes Health class.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Health class.
   scope_demand_key: jobs.J1.health-class
-- {<<: *gap, id: CAP-2, scope_demand_key: jobs.J1.current-constraint}
-- {<<: *gap, id: CAP-3, scope_demand_key: jobs.J1.human-wait-state}
-- {<<: *gap, id: CAP-4, scope_demand_key: jobs.J1.frontier-activity}
-- {<<: *gap, id: CAP-5, scope_demand_key: jobs.J1.last-event-age}
-- {<<: *gap, id: CAP-6, scope_demand_key: jobs.J1.budget-pace}
-- {<<: *gap, id: CAP-7, scope_demand_key: jobs.J1.blast-radius}
-- {<<: *gap, id: CAP-8, scope_demand_key: jobs.J2.active-nodes-steps}
-- {<<: *gap, id: CAP-9, scope_demand_key: jobs.J2.dependency-path}
-- {<<: *gap, id: CAP-10, scope_demand_key: jobs.J2.planner-horizon}
-- {<<: *gap, id: CAP-11, scope_demand_key: jobs.J2.blocked-reason}
-- {<<: *gap, id: CAP-12, scope_demand_key: jobs.J2.attempts-left}
-- {<<: *gap, id: CAP-13, scope_demand_key: jobs.J2.final-invariant-progress}
-- {<<: *gap, id: CAP-14, scope_demand_key: jobs.J3.exact-question}
-- {<<: *gap, id: CAP-15, scope_demand_key: jobs.J3.why-now}
-- {<<: *gap, id: CAP-16, scope_demand_key: jobs.J3.proposer}
-- {<<: *gap, id: CAP-17, scope_demand_key: jobs.J3.affected-scope}
-- {<<: *gap, id: CAP-18, scope_demand_key: jobs.J3.evidence}
-- {<<: *gap, id: CAP-19, scope_demand_key: jobs.J3.alternatives}
-- {<<: *gap, id: CAP-20, scope_demand_key: jobs.J3.downstream-effect}
-- {<<: *gap, id: CAP-21, scope_demand_key: jobs.J3.reversibility}
-- {<<: *gap, id: CAP-22, scope_demand_key: jobs.J4.ordered-events}
-- {<<: *gap, id: CAP-23, scope_demand_key: jobs.J4.attempt-lineage}
-- {<<: *gap, id: CAP-24, scope_demand_key: jobs.J4.requirement-grade-changes}
-- {<<: *gap, id: CAP-25, scope_demand_key: jobs.J4.patch-provenance}
-- {<<: *gap, id: CAP-26, scope_demand_key: jobs.J4.state-transitions}
-- {<<: *gap, id: CAP-27, scope_demand_key: jobs.J4.retries-rejections}
-- {<<: *gap, id: CAP-28, scope_demand_key: jobs.J5.bound-input-records}
-- {<<: *gap, id: CAP-29, scope_demand_key: jobs.J5.omitted-referenced-context}
-- {<<: *gap, id: CAP-30, scope_demand_key: jobs.J5.prompt-size}
-- {<<: *gap, id: CAP-31, scope_demand_key: jobs.J5.transcript}
-- {<<: *gap, id: CAP-32, scope_demand_key: jobs.J5.tools}
-- {<<: *gap, id: CAP-33, scope_demand_key: jobs.J5.artifacts}
-- {<<: *gap, id: CAP-34, scope_demand_key: jobs.J5.file-delta}
-- {<<: *gap, id: CAP-35, scope_demand_key: jobs.J5.output-records}
-- {<<: *gap, id: CAP-36, scope_demand_key: jobs.J5.usage}
-- {<<: *gap, id: CAP-37, scope_demand_key: jobs.J6.current-failure}
-- {<<: *gap, id: CAP-38, scope_demand_key: jobs.J6.retry-information-delta}
-- {<<: *gap, id: CAP-39, scope_demand_key: jobs.J6.alternatives}
-- {<<: *gap, id: CAP-40, scope_demand_key: jobs.J6.expected-effect}
-- {<<: *gap, id: CAP-41, scope_demand_key: jobs.J6.scope}
-- {<<: *gap, id: CAP-42, scope_demand_key: jobs.J6.authority}
-- {<<: *gap, id: CAP-43, scope_demand_key: jobs.J6.budget}
-- {<<: *gap, id: CAP-44, scope_demand_key: jobs.J6.reversibility}
-- {<<: *gap, id: CAP-45, scope_demand_key: jobs.J6.validation-path}
-- {<<: *gap, id: CAP-46, scope_demand_key: jobs.J7.spend-tokens-by-node-kind}
-- {<<: *gap, id: CAP-47, scope_demand_key: jobs.J7.unpriced-share}
-- {<<: *gap, id: CAP-48, scope_demand_key: jobs.J7.prompt-size}
-- {<<: *gap, id: CAP-49, scope_demand_key: jobs.J7.retries-without-new-information}
-- {<<: *gap, id: CAP-50, scope_demand_key: jobs.J7.repeated-work}
-- {<<: *gap, id: CAP-51, scope_demand_key: jobs.J7.verifier-churn}
-- {<<: *gap, id: CAP-52, scope_demand_key: jobs.J8.comparable-cohort}
-- {<<: *gap, id: CAP-53, scope_demand_key: jobs.J8.routine-sha}
-- {<<: *gap, id: CAP-54, scope_demand_key: jobs.J8.model-profile}
-- {<<: *gap, id: CAP-55, scope_demand_key: jobs.J8.duration}
-- {<<: *gap, id: CAP-56, scope_demand_key: jobs.J8.tokens}
-- {<<: *gap, id: CAP-57, scope_demand_key: jobs.J8.price-coverage}
-- {<<: *gap, id: CAP-58, scope_demand_key: jobs.J8.patch-count}
-- {<<: *gap, id: CAP-59, scope_demand_key: jobs.J8.retries}
-- {<<: *gap, id: CAP-60, scope_demand_key: jobs.J8.grade-churn}
-- {<<: *gap, id: CAP-61, scope_demand_key: jobs.J8.interventions}
-- {<<: *gap, id: CAP-62, scope_demand_key: jobs.J8.outcome}
-- {<<: *gap, id: CAP-63, scope_demand_key: jobs.J7.prompt-pressure}
-- {<<: *gap, id: CAP-64, scope_demand_key: design.initial-claims.final-gate-effect}
-- {<<: *gap, id: CAP-65, scope_demand_key: journeys.A.freshness-and-connection}
-- {<<: *gap, id: CAP-66, scope_demand_key: journeys.A.positive-empty-needs-you}
-- {<<: *gap, id: CAP-67, scope_demand_key: journeys.A.no-runaway-signal}
-- {<<: *gap, id: CAP-68, scope_demand_key: journeys.B.wait-age}
-- {<<: *gap, id: CAP-69, scope_demand_key: journeys.B.validator-result}
-- {<<: *gap, id: CAP-70, scope_demand_key: journeys.B.recorded-identity-timestamp}
-- {<<: *gap, id: CAP-71, scope_demand_key: journeys.C.cost-of-another-attempt}
-- {<<: *gap, id: CAP-72, scope_demand_key: journeys.C.candidate-delta}
-- {<<: *gap, id: CAP-73, scope_demand_key: journeys.C.causal-gap}
-- {<<: *gap, id: CAP-74, scope_demand_key: journeys.C.directive-binding}
-- {<<: *gap, id: CAP-75, scope_demand_key: journeys.D.execution-unit-identity}
-- {<<: *gap, id: CAP-76, scope_demand_key: journeys.D.file-state-boundary}
-- {<<: *gap, id: CAP-77, scope_demand_key: journeys.E.missing-node-attribution}
-- {<<: *gap, id: CAP-78, scope_demand_key: journeys.E.detector-evidence}
-- {<<: *gap, id: CAP-79, scope_demand_key: journeys.continuity.canonical-selection}
-- {<<: *gap, id: CAP-80, scope_demand_key: journeys.continuity.preserve-context}
-- {<<: *gap, id: CAP-81, scope_demand_key: journeys.continuity.restore-return-state}
-- {<<: *gap, id: CAP-82, scope_demand_key: journeys.continuity.derived-evidence-freshness}
-- {<<: *gap, id: CAP-83, scope_demand_key: journeys.continuity.action-safety-fields}
-- {<<: *gap, id: CAP-84, scope_demand_key: journeys.continuity.responsive-context}
-- {<<: *gap, id: CAP-85, scope_demand_key: decisions.ignore-watch}
-- {<<: *gap, id: CAP-86, scope_demand_key: decisions.approve-gate-patch}
-- {<<: *gap, id: CAP-87, scope_demand_key: decisions.answer-clarification}
-- {<<: *gap, id: CAP-88, scope_demand_key: decisions.retry}
-- {<<: *gap, id: CAP-89, scope_demand_key: decisions.lifecycle}
-- {<<: *gap, id: CAP-90, scope_demand_key: decisions.retire-supersede}
-- {<<: *gap, id: CAP-91, scope_demand_key: decisions.requeue}
-- {<<: *gap, id: CAP-92, scope_demand_key: decisions.steer-context}
-- {<<: *gap, id: CAP-93, scope_demand_key: decisions.apply-steering-patch}
-- {<<: *gap, id: CAP-94, scope_demand_key: decisions.change-source}
-- {<<: *gap, id: CAP-95, scope_demand_key: honesty.live-input-age}
-- {<<: *gap, id: CAP-96, scope_demand_key: honesty.derived-label-evidence}
-- {<<: *gap, id: CAP-97, scope_demand_key: honesty.unpriced-not-zero}
-- {<<: *gap, id: CAP-98, scope_demand_key: honesty.no-growing-plan-percent}
-- {<<: *gap, id: CAP-99, scope_demand_key: honesty.fact-versus-inference}
-- {<<: *gap, id: CAP-100, scope_demand_key: honesty.approximate-values}
-- {<<: *gap, id: CAP-101, scope_demand_key: honesty.directive-binding-proof}
-- {<<: *gap, id: CAP-102, scope_demand_key: feedback.command-accepted-rejected}
-- {<<: *gap, id: CAP-103, scope_demand_key: feedback.validation-result-reason}
-- {<<: *gap, id: CAP-104, scope_demand_key: feedback.durable-identity}
-- {<<: *gap, id: CAP-105, scope_demand_key: feedback.resulting-state}
-- {<<: *gap, id: CAP-106, scope_demand_key: feedback.next-activity}
-- {<<: *gap, id: CAP-107, scope_demand_key: feedback.failure-race-recovery}
-- {<<: *gap, id: CAP-108, scope_demand_key: ia.health.evidence-convergence}
-- {<<: *gap, id: CAP-109, scope_demand_key: ia.health.needs-decision}
-- {<<: *gap, id: CAP-110, scope_demand_key: ia.health.degraded}
-- {<<: *gap, id: CAP-111, scope_demand_key: ia.health.stalled}
-- {<<: *gap, id: CAP-112, scope_demand_key: ia.health.runaway}
-- {<<: *gap, id: CAP-113, scope_demand_key: ia.health.steered}
-- {<<: *gap, id: CAP-114, scope_demand_key: ia.health.settled}
-- {<<: *gap, id: CAP-115, scope_demand_key: ia.selection.identity-chain}
-- {<<: *gap, id: CAP-116, scope_demand_key: ia.selection.comparison-target}
-- {<<: *gap, id: CAP-117, scope_demand_key: ia.selection.freshness-annotations}
-- {<<: *gap, id: CAP-118, scope_demand_key: ia.vocabulary.distinct-entities}
-- {<<: *gap, id: CAP-119, scope_demand_key: rubric.attention-clarity}
-- {<<: *gap, id: CAP-120, scope_demand_key: rubric.position-blast-radius}
-- {<<: *gap, id: CAP-121, scope_demand_key: rubric.causal-comprehension}
-- {<<: *gap, id: CAP-122, scope_demand_key: rubric.decision-readiness}
-- {<<: *gap, id: CAP-123, scope_demand_key: rubric.evidence-access}
-- {<<: *gap, id: CAP-124, scope_demand_key: rubric.context-continuity}
-- {<<: *gap, id: CAP-125, scope_demand_key: rubric.complexity-control}
-- {<<: *gap, id: CAP-126, scope_demand_key: rubric.action-safety-feedback}
-- {<<: *gap, id: CAP-127, scope_demand_key: rubric.capability-honesty}
-- {<<: *gap, id: CAP-128, scope_demand_key: rubric.responsive-integrity}
-- {<<: *gap, id: CAP-129, scope_demand_key: rubric.no-selection-resets}
-- {<<: *gap, id: CAP-130, scope_demand_key: rubric.derived-evidence-access}
-- {<<: *gap, id: CAP-131, scope_demand_key: rubric.result-state-confirmation}
-- {<<: *gap, id: CAP-132, scope_demand_key: rubric.viability-floor}
+- id: CAP-2
+  title: Current constraint
+  definition: Current constraint is demanded by jobs.J1.current-constraint, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.current-constraint.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Current constraint remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Current constraint capability.
+  scope_demand_key: jobs.J1.current-constraint
+- id: CAP-3
+  title: Human wait state
+  definition: Human wait state is demanded by jobs.J1.human-wait-state, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.human-wait-state.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Human wait state remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Human wait state capability.
+  scope_demand_key: jobs.J1.human-wait-state
+- id: CAP-4
+  title: Frontier activity
+  definition: Frontier activity is demanded by jobs.J1.frontier-activity, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.frontier-activity.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Frontier activity remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Frontier activity capability.
+  scope_demand_key: jobs.J1.frontier-activity
+- id: CAP-5
+  title: Last-event age
+  definition: Last-event age is a deterministic, carrier-qualified projection for
+    the source demand jobs.J1.last-event-age; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.last-event-age.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Last-event age participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Last-event age derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J1.last-event-age
+  derivation_id: DRV-1
+- id: CAP-6
+  title: Budget pace
+  definition: Budget pace is a source demand from jobs.J1.budget-pace; the audited
+    implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.budget-pace.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Budget pace.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Budget pace.
+  scope_demand_key: jobs.J1.budget-pace
+- id: CAP-7
+  title: Blast radius
+  definition: Blast radius is a source demand from jobs.J1.blast-radius; the audited
+    implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.blast-radius.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Blast radius.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Blast radius.
+  scope_demand_key: jobs.J1.blast-radius
+- id: CAP-8
+  title: Active nodes and steps
+  definition: Active nodes and steps is demanded by jobs.J2.active-nodes-steps, but
+    available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.active-nodes-steps.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Active nodes and steps remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Active nodes and steps capability.
+  scope_demand_key: jobs.J2.active-nodes-steps
+- id: CAP-9
+  title: Dependency path
+  definition: Dependency path is demanded by jobs.J2.dependency-path, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.dependency-path.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Dependency path remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Dependency path capability.
+  scope_demand_key: jobs.J2.dependency-path
+- id: CAP-10
+  title: Planner horizon
+  definition: Planner horizon is a source demand from jobs.J2.planner-horizon; the
+    audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.planner-horizon.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Planner horizon.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Planner horizon.
+  scope_demand_key: jobs.J2.planner-horizon
+- id: CAP-11
+  title: Blocked reason
+  definition: Blocked reason is demanded by jobs.J2.blocked-reason, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.blocked-reason.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Blocked reason remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Blocked reason capability.
+  scope_demand_key: jobs.J2.blocked-reason
+- id: CAP-12
+  title: Attempts left
+  definition: Attempts left is a deterministic, carrier-qualified projection for the
+    source demand jobs.J2.attempts-left; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.attempts-left.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Attempts left participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Attempts left derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J2.attempts-left
+  derivation_id: DRV-2
+- id: CAP-13
+  title: Final-invariant progress
+  definition: Final-invariant progress is a source demand from jobs.J2.final-invariant-progress;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.final-invariant-progress.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Final-invariant progress.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Final-invariant progress.
+  scope_demand_key: jobs.J2.final-invariant-progress
+- id: CAP-14
+  title: Exact question
+  definition: Exact question is demanded by jobs.J3.exact-question, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.exact-question.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Exact question remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Exact question capability.
+  scope_demand_key: jobs.J3.exact-question
+- id: CAP-15
+  title: Why now
+  definition: Why now is demanded by jobs.J3.why-now, but available carriers are partial,
+    carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.why-now.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Why now remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Why now capability.
+  scope_demand_key: jobs.J3.why-now
+- id: CAP-16
+  title: Proposer
+  definition: Proposer is demanded by jobs.J3.proposer, but available carriers are
+    partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.proposer.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Proposer remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Proposer capability.
+  scope_demand_key: jobs.J3.proposer
+- id: CAP-17
+  title: Affected scope
+  definition: Affected scope is a source demand from jobs.J3.affected-scope; the audited
+    implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.affected-scope.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Affected scope.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Affected scope.
+  scope_demand_key: jobs.J3.affected-scope
+- id: CAP-18
+  title: Decision evidence
+  definition: Decision evidence is demanded by jobs.J3.evidence, but available carriers
+    are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.evidence.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Decision evidence remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Decision evidence capability.
+  scope_demand_key: jobs.J3.evidence
+- id: CAP-19
+  title: Alternatives
+  definition: Alternatives is demanded by jobs.J3.alternatives, but available carriers
+    are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.alternatives.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Alternatives remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Alternatives capability.
+  scope_demand_key: jobs.J3.alternatives
+- id: CAP-20
+  title: Downstream effect
+  definition: Downstream effect is a source demand from jobs.J3.downstream-effect;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.downstream-effect.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Downstream effect.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Downstream effect.
+  scope_demand_key: jobs.J3.downstream-effect
+- id: CAP-21
+  title: Reversibility
+  definition: Reversibility is a source demand from jobs.J3.reversibility; the audited
+    implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.reversibility.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Reversibility.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Reversibility.
+  scope_demand_key: jobs.J3.reversibility
+- id: CAP-22
+  title: Ordered events
+  definition: Ordered events is a deterministic, carrier-qualified projection for
+    the source demand jobs.J4.ordered-events; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.ordered-events.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Ordered events participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Ordered events derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J4.ordered-events
+  derivation_id: DRV-3
+- id: CAP-23
+  title: Attempt lineage
+  definition: Attempt lineage is demanded by jobs.J4.attempt-lineage, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.attempt-lineage.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Attempt lineage remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Attempt lineage capability.
+  scope_demand_key: jobs.J4.attempt-lineage
+- id: CAP-24
+  title: Requirement-grade changes
+  definition: Requirement-grade changes is a deterministic, carrier-qualified projection
+    for the source demand jobs.J4.requirement-grade-changes; it is not a direct product
+    fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.requirement-grade-changes.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Requirement-grade changes participate in
+    this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Requirement-grade changes derivation as complete cross-mode
+    coverage.
+  scope_demand_key: jobs.J4.requirement-grade-changes
+  derivation_id: DRV-4
+- id: CAP-25
+  title: Patch provenance
+  definition: Patch provenance is demanded by jobs.J4.patch-provenance, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.patch-provenance.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Patch provenance remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Patch provenance capability.
+  scope_demand_key: jobs.J4.patch-provenance
+- id: CAP-26
+  title: State transitions
+  definition: State transitions is demanded by jobs.J4.state-transitions, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.state-transitions.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - State transitions remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete State transitions capability.
+  scope_demand_key: jobs.J4.state-transitions
+- id: CAP-27
+  title: Retries and rejections
+  definition: Retries and rejections is demanded by jobs.J4.retries-rejections, but
+    available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.retries-rejections.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Retries and rejections remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Retries and rejections capability.
+  scope_demand_key: jobs.J4.retries-rejections
+- id: CAP-28
+  title: Bound input records
+  definition: Bound input records is demanded by jobs.J5.bound-input-records, but
+    available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.bound-input-records.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Bound input records remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Bound input records capability.
+  scope_demand_key: jobs.J5.bound-input-records
+- id: CAP-29
+  title: Omitted and referenced context
+  definition: Omitted and referenced context is demanded by jobs.J5.omitted-referenced-context,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.omitted-referenced-context.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Omitted and referenced context remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Omitted and referenced context
+    capability.
+  scope_demand_key: jobs.J5.omitted-referenced-context
+- id: CAP-30
+  title: Prompt size
+  definition: Prompt size is a deterministic, carrier-qualified projection for the
+    source demand jobs.J5.prompt-size; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.prompt-size.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Prompt size participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Prompt size derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J5.prompt-size
+  derivation_id: DRV-5
+- id: CAP-31
+  title: Transcript
+  definition: Transcript is demanded by jobs.J5.transcript, but available carriers
+    are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.transcript.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Transcript remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Transcript capability.
+  scope_demand_key: jobs.J5.transcript
+- id: CAP-32
+  title: Tool activity
+  definition: Tool activity is demanded by jobs.J5.tools, but available carriers are
+    partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.tools.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Tool activity remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Tool activity capability.
+  scope_demand_key: jobs.J5.tools
+- id: CAP-33
+  title: Artifacts
+  definition: Artifacts is demanded by jobs.J5.artifacts, but available carriers are
+    partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.artifacts.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Artifacts remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Artifacts capability.
+  scope_demand_key: jobs.J5.artifacts
+- id: CAP-34
+  title: File delta
+  definition: File delta is demanded by jobs.J5.file-delta, but available carriers
+    are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.file-delta.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - File delta remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete File delta capability.
+  scope_demand_key: jobs.J5.file-delta
+- id: CAP-35
+  title: Output records
+  definition: Output records is demanded by jobs.J5.output-records, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.output-records.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Output records remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Output records capability.
+  scope_demand_key: jobs.J5.output-records
+- id: CAP-36
+  title: Usage
+  definition: Usage is demanded by jobs.J5.usage, but available carriers are partial,
+    carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.usage.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Usage remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Usage capability.
+  scope_demand_key: jobs.J5.usage
+- id: CAP-37
+  title: Current failure
+  definition: Current failure is demanded by jobs.J6.current-failure, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.current-failure.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Current failure remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Current failure capability.
+  scope_demand_key: jobs.J6.current-failure
+- id: CAP-38
+  title: Retry information delta
+  definition: Retry information delta is a source demand from jobs.J6.retry-information-delta;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.retry-information-delta.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Retry information delta.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Retry information delta.
+  scope_demand_key: jobs.J6.retry-information-delta
+- id: CAP-39
+  title: Intervention alternatives
+  definition: Intervention alternatives is demanded by jobs.J6.alternatives, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.alternatives.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Intervention alternatives remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Intervention alternatives capability.
+  scope_demand_key: jobs.J6.alternatives
+- id: CAP-40
+  title: Expected effect
+  definition: Expected effect is demanded by jobs.J6.expected-effect, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.expected-effect.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Expected effect remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Expected effect capability.
+  scope_demand_key: jobs.J6.expected-effect
+- id: CAP-41
+  title: Intervention scope
+  definition: Intervention scope is demanded by jobs.J6.scope, but available carriers
+    are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.scope.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Intervention scope remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Intervention scope capability.
+  scope_demand_key: jobs.J6.scope
+- id: CAP-42
+  title: Authority
+  definition: Authority is a source demand from jobs.J6.authority; the audited implementation
+    does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.authority.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Authority.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Authority.
+  scope_demand_key: jobs.J6.authority
+- id: CAP-43
+  title: Intervention budget
+  definition: Intervention budget is a source demand from jobs.J6.budget; the audited
+    implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.budget.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Intervention budget.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Intervention budget.
+  scope_demand_key: jobs.J6.budget
+- id: CAP-44
+  title: Intervention reversibility
+  definition: Intervention reversibility is a source demand from jobs.J6.reversibility;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.reversibility.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Intervention reversibility.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Intervention reversibility.
+  scope_demand_key: jobs.J6.reversibility
+- id: CAP-45
+  title: Validation path
+  definition: Validation path is demanded by jobs.J6.validation-path, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.validation-path.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Validation path remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Validation path capability.
+  scope_demand_key: jobs.J6.validation-path
+- id: CAP-46
+  title: Spend and tokens by node kind
+  definition: Spend and tokens by node kind is a deterministic, carrier-qualified
+    projection for the source demand jobs.J7.spend-tokens-by-node-kind; it is not
+    a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.spend-tokens-by-node-kind.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Spend and tokens by node kind participate
+    in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Spend and tokens by node kind derivation as complete cross-mode
+    coverage.
+  scope_demand_key: jobs.J7.spend-tokens-by-node-kind
+  derivation_id: DRV-6
+- id: CAP-47
+  title: Unpriced share
+  definition: Unpriced share is a deterministic, carrier-qualified projection for
+    the source demand jobs.J7.unpriced-share; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.unpriced-share.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Unpriced share participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Unpriced share derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J7.unpriced-share
+  derivation_id: DRV-7
+- id: CAP-48
+  title: Prompt size
+  definition: Prompt size is a deterministic, carrier-qualified projection for the
+    source demand jobs.J7.prompt-size; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.prompt-size.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Prompt size participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Prompt size derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J7.prompt-size
+  derivation_id: DRV-5
+- id: CAP-49
+  title: Retries without new information
+  definition: Retries without new information is a source demand from jobs.J7.retries-without-new-information;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.retries-without-new-information.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Retries without new information.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Retries without new information.
+  scope_demand_key: jobs.J7.retries-without-new-information
+- id: CAP-50
+  title: Repeated tools and work
+  definition: Repeated tools and work is a source demand from jobs.J7.repeated-work;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.repeated-work.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Repeated tools and work.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Repeated tools and work.
+  scope_demand_key: jobs.J7.repeated-work
+- id: CAP-51
+  title: Verifier churn
+  definition: Verifier churn is a source demand from jobs.J7.verifier-churn; the audited
+    implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.verifier-churn.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Verifier churn.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Verifier churn.
+  scope_demand_key: jobs.J7.verifier-churn
+- id: CAP-52
+  title: Comparable cohort
+  definition: Comparable cohort is a source demand from jobs.J8.comparable-cohort;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.comparable-cohort.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Comparable cohort.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Comparable cohort.
+  scope_demand_key: jobs.J8.comparable-cohort
+- id: CAP-53
+  title: Routine SHA
+  definition: Routine SHA is demanded by jobs.J8.routine-sha, but available carriers
+    are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.routine-sha.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Routine SHA remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Routine SHA capability.
+  scope_demand_key: jobs.J8.routine-sha
+- id: CAP-54
+  title: Model and profile
+  definition: Model and profile is demanded by jobs.J8.model-profile, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.model-profile.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Model and profile remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Model and profile capability.
+  scope_demand_key: jobs.J8.model-profile
+- id: CAP-55
+  title: Duration
+  definition: Duration is demanded by jobs.J8.duration, but available carriers are
+    partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.duration.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Duration remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Duration capability.
+  scope_demand_key: jobs.J8.duration
+- id: CAP-56
+  title: Tokens
+  definition: Tokens is demanded by jobs.J8.tokens, but available carriers are partial,
+    carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.tokens.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Tokens remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Tokens capability.
+  scope_demand_key: jobs.J8.tokens
+- id: CAP-57
+  title: Price coverage
+  definition: Price coverage is a deterministic, carrier-qualified projection for
+    the source demand jobs.J8.price-coverage; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.price-coverage.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Price coverage participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Price coverage derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J8.price-coverage
+  derivation_id: DRV-8
+- id: CAP-58
+  title: Patch count
+  definition: Patch count is a deterministic, carrier-qualified projection for the
+    source demand jobs.J8.patch-count; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.patch-count.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Patch count participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Patch count derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J8.patch-count
+  derivation_id: DRV-9
+- id: CAP-59
+  title: Retry count
+  definition: Retry count is a deterministic, carrier-qualified projection for the
+    source demand jobs.J8.retries; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.retries.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Retry count participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Retry count derivation as complete cross-mode coverage.
+  scope_demand_key: jobs.J8.retries
+  derivation_id: DRV-10
+- id: CAP-60
+  title: Grade churn
+  definition: Grade churn is a source demand from jobs.J8.grade-churn; the audited
+    implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.grade-churn.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Grade churn.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Grade churn.
+  scope_demand_key: jobs.J8.grade-churn
+- id: CAP-61
+  title: Interventions
+  definition: Interventions is demanded by jobs.J8.interventions, but available carriers
+    are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.interventions.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Interventions remains qualified by its source carrier and unresolved contract
+    boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Interventions capability.
+  scope_demand_key: jobs.J8.interventions
+- id: CAP-62
+  title: Outcome
+  definition: Outcome is demanded by jobs.J8.outcome, but available carriers are partial,
+    carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.outcome.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Outcome remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Outcome capability.
+  scope_demand_key: jobs.J8.outcome
+- id: CAP-63
+  title: Prompt pressure
+  definition: Prompt pressure is a source demand from jobs.J7.prompt-pressure; the
+    audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.prompt-pressure.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Prompt pressure.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Prompt pressure.
+  scope_demand_key: jobs.J7.prompt-pressure
+- id: CAP-64
+  title: Final-gate effect
+  definition: Final-gate effect is a source demand from design.initial-claims.final-gate-effect;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand design.initial-claims.final-gate-effect.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Final-gate effect.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Final-gate effect.
+  scope_demand_key: design.initial-claims.final-gate-effect
+- id: CAP-65
+  title: Data freshness and connection state
+  definition: Data freshness and connection state is demanded by journeys.A.freshness-and-connection,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.A.freshness-and-connection.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Data freshness and connection state remains qualified by its source carrier and
+    unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Data freshness and connection
+    state capability.
+  scope_demand_key: journeys.A.freshness-and-connection
+- id: CAP-66
+  title: Explicit empty needs-you state
+  definition: Explicit empty needs-you state is a source demand from journeys.A.positive-empty-needs-you;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.A.positive-empty-needs-you.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Explicit empty needs-you state.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Explicit empty needs-you state.
+  scope_demand_key: journeys.A.positive-empty-needs-you
+- id: CAP-67
+  title: No runaway signal
+  definition: No runaway signal is a source demand from journeys.A.no-runaway-signal;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.A.no-runaway-signal.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes No runaway signal.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as No runaway signal.
+  scope_demand_key: journeys.A.no-runaway-signal
+- id: CAP-68
+  title: Decision wait age
+  definition: Decision wait age is a deterministic, carrier-qualified projection for
+    the source demand journeys.B.wait-age; it is not a direct product fact.
+  implementation_status: partial
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: derived
+  epistemic_status: deterministically-derived
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.B.wait-age.
+  evidence_ids:
+  - EVD-105
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Only the typed carriers admitted for Decision wait age participate in this derivation.
+  prohibited_interpretations:
+  - Do not interpret the Decision wait age derivation as complete cross-mode coverage.
+  scope_demand_key: journeys.B.wait-age
+  derivation_id: DRV-11
+- id: CAP-69
+  title: Command validator result
+  definition: The command validator result demand is current only for reachable graph
+    patch and decision validation paths that return accepted or rejected diagnostics.
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  capability_status: current
+  epistemic_status: observed
+  confidence: high
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.B.validator-result.
+  evidence_ids:
+  - EVD-105
+  - EVD-106
+  - EVD-111
+  - EVD-112
+  - EVD-58
+  - EVD-61
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Current only for represented graph patch and decision validation.
+  prohibited_interpretations:
+  - Do not generalize this result to lifecycle, clarification, review, filesystem,
+    or administrative commands.
+  scope_demand_key: journeys.B.validator-result
+- id: CAP-70
+  title: Recorded decision identity and timestamp
+  definition: Recorded decision identity and timestamp is demanded by journeys.B.recorded-identity-timestamp,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.B.recorded-identity-timestamp.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Recorded decision identity and timestamp remains qualified by its source carrier
+    and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Recorded decision identity and
+    timestamp capability.
+  scope_demand_key: journeys.B.recorded-identity-timestamp
+- id: CAP-71
+  title: Cost of another attempt
+  definition: Cost of another attempt is a source demand from journeys.C.cost-of-another-attempt;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.C.cost-of-another-attempt.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Cost of another attempt.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Cost of another attempt.
+  scope_demand_key: journeys.C.cost-of-another-attempt
+- id: CAP-72
+  title: Candidate delta
+  definition: Candidate delta is a source demand from journeys.C.candidate-delta;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.C.candidate-delta.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Candidate delta.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Candidate delta.
+  scope_demand_key: journeys.C.candidate-delta
+- id: CAP-73
+  title: Causal gap
+  definition: Causal gap is a source demand from journeys.C.causal-gap; the audited
+    implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.C.causal-gap.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Causal gap.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Causal gap.
+  scope_demand_key: journeys.C.causal-gap
+- id: CAP-74
+  title: Directive binding
+  definition: Directive binding is a source demand from journeys.C.directive-binding;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.C.directive-binding.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Directive binding.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Directive binding.
+  scope_demand_key: journeys.C.directive-binding
+- id: CAP-75
+  title: Exact execution-unit identity
+  definition: Exact execution-unit identity is demanded by journeys.D.execution-unit-identity,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.D.execution-unit-identity.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Exact execution-unit identity remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Exact execution-unit identity
+    capability.
+  scope_demand_key: journeys.D.execution-unit-identity
+- id: CAP-76
+  title: Repository file-state boundary
+  definition: Repository file-state boundary is demanded by journeys.D.file-state-boundary,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.D.file-state-boundary.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Repository file-state boundary remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Repository file-state boundary
+    capability.
+  scope_demand_key: journeys.D.file-state-boundary
+- id: CAP-77
+  title: Missing node attribution
+  definition: Missing node attribution is a source demand from journeys.E.missing-node-attribution;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.E.missing-node-attribution.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Missing node attribution.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Missing node attribution.
+  scope_demand_key: journeys.E.missing-node-attribution
+- id: CAP-78
+  title: Detector drill-through evidence
+  definition: Detector drill-through evidence is a source demand from journeys.E.detector-evidence;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.E.detector-evidence.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Detector drill-through evidence.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Detector drill-through evidence.
+  scope_demand_key: journeys.E.detector-evidence
+- id: CAP-79
+  title: Canonical selection identity across projections
+  definition: Canonical selection identity across projections is demanded by journeys.continuity.canonical-selection,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.continuity.canonical-selection.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Canonical selection identity across projections remains qualified by its source
+    carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Canonical selection identity
+    across projections capability.
+  scope_demand_key: journeys.continuity.canonical-selection
+- id: CAP-80
+  title: Preserve run selection time attempt and decision context
+  definition: Preserve run selection time attempt and decision context is demanded
+    by journeys.continuity.preserve-context, but available carriers are partial, carrier-specific,
+    or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.continuity.preserve-context.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Preserve run selection time attempt and decision context remains qualified by
+    its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Preserve run selection time attempt
+    and decision context capability.
+  scope_demand_key: journeys.continuity.preserve-context
+- id: CAP-81
+  title: Restore prior ranking filter and scroll position
+  definition: Restore prior ranking filter and scroll position is a source demand
+    from journeys.continuity.restore-return-state; the audited implementation does
+    not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.continuity.restore-return-state.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Restore prior ranking filter and
+    scroll position.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Restore prior ranking filter
+    and scroll position.
+  scope_demand_key: journeys.continuity.restore-return-state
+- id: CAP-82
+  title: Derived claims expose evidence and freshness
+  definition: Derived claims expose evidence and freshness is a future product or
+    evaluation-policy demand from journeys.continuity.derived-evidence-freshness,
+    not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.continuity.derived-evidence-freshness.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Derived claims expose evidence and freshness requires future policy or scenario
+    evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Derived claims
+    expose evidence and freshness.
+  scope_demand_key: journeys.continuity.derived-evidence-freshness
+- id: CAP-83
+  title: Actions expose scope consequence reversibility authority and confirmation
+  definition: Actions expose scope consequence reversibility authority and confirmation
+    is a future product or evaluation-policy demand from journeys.continuity.action-safety-fields,
+    not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.continuity.action-safety-fields.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Actions expose scope consequence reversibility authority and confirmation requires
+    future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Actions expose
+    scope consequence reversibility authority and confirmation.
+  scope_demand_key: journeys.continuity.action-safety-fields
+- id: CAP-84
+  title: Responsive layout preserves decision context
+  definition: Responsive layout preserves decision context is a future product or
+    evaluation-policy demand from journeys.continuity.responsive-context, not an observed
+    current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand journeys.continuity.responsive-context.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Responsive layout preserves decision context requires future policy or scenario
+    evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Responsive layout
+    preserves decision context.
+  scope_demand_key: journeys.continuity.responsive-context
+- id: CAP-85
+  title: Ignore or keep watching
+  definition: Ignore or keep watching is a source demand from decisions.ignore-watch;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.ignore-watch.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Ignore or keep watching.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Ignore or keep watching.
+  scope_demand_key: decisions.ignore-watch
+- id: CAP-86
+  title: Approve deny or defer a gate or patch
+  definition: The approve, deny, or defer a gate or patch demand is current only as
+    split graph approval or denial and patch-validation paths; no unified defer command
+    exists.
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  capability_status: current
+  epistemic_status: observed
+  confidence: high
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.approve-gate-patch.
+  evidence_ids:
+  - EVD-105
+  - EVD-106
+  - EVD-111
+  - EVD-112
+  - EVD-58
+  - EVD-61
+  - EVD-68
+  conflict_ids: []
+  question_ids:
+  - Q-5
+  limitations:
+  - Approval or denial and patch validation are separate graph paths; legacy defer
+    or denial is absent.
+  prohibited_interpretations:
+  - Do not merge graph decision, legacy approval, validator rejection, and patch application
+    into one command.
+  scope_demand_key: decisions.approve-gate-patch
+- id: CAP-87
+  title: Answer a clarification
+  definition: Answer a clarification is demanded by decisions.answer-clarification,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.answer-clarification.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Answer a clarification remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Answer a clarification capability.
+  scope_demand_key: decisions.answer-clarification
+- id: CAP-88
+  title: Retry
+  definition: Retry is demanded by decisions.retry, but available carriers are partial,
+    carrier-specific, or disputed and do not establish the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.retry.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Retry remains qualified by its source carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Retry capability.
+  scope_demand_key: decisions.retry
+- id: CAP-89
+  title: Pause resume or cancel
+  definition: Pause resume or cancel is demanded by decisions.lifecycle, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.lifecycle.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Pause resume or cancel remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Pause resume or cancel capability.
+  scope_demand_key: decisions.lifecycle
+- id: CAP-90
+  title: Retire or supersede a strand
+  definition: Retire or supersede a strand is demanded by decisions.retire-supersede,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.retire-supersede.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Retire or supersede a strand remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Retire or supersede a strand
+    capability.
+  scope_demand_key: decisions.retire-supersede
+- id: CAP-91
+  title: Requeue failed outbox or work
+  definition: Requeue failed outbox or work is demanded by decisions.requeue, but
+    available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.requeue.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Requeue failed outbox or work remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Requeue failed outbox or work
+    capability.
+  scope_demand_key: decisions.requeue
+- id: CAP-92
+  title: Steer with new context
+  definition: Steer with new context is a source demand from decisions.steer-context;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.steer-context.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Steer with new context.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Steer with new context.
+  scope_demand_key: decisions.steer-context
+- id: CAP-93
+  title: Apply a steering patch
+  definition: Apply a steering patch is a source demand from decisions.apply-steering-patch;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.apply-steering-patch.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Apply a steering patch.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Apply a steering patch.
+  scope_demand_key: decisions.apply-steering-patch
+- id: CAP-94
+  title: Change a routine prompt or policy
+  definition: Change a routine prompt or policy is demanded by decisions.change-source,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand decisions.change-source.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Change a routine prompt or policy remains qualified by its source carrier and
+    unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Change a routine prompt or policy
+    capability.
+  scope_demand_key: decisions.change-source
+- id: CAP-95
+  title: Show timestamp or age for live health inputs
+  definition: Show timestamp or age for live health inputs is a future product or
+    evaluation-policy demand from honesty.live-input-age, not an observed current
+    capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand honesty.live-input-age.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Show timestamp or age for live health inputs requires future policy or scenario
+    evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Show timestamp
+    or age for live health inputs.
+  scope_demand_key: honesty.live-input-age
+- id: CAP-96
+  title: Label detectors and derived claims and expose evidence
+  definition: Label detectors and derived claims and expose evidence is a future product
+    or evaluation-policy demand from honesty.derived-label-evidence, not an observed
+    current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand honesty.derived-label-evidence.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Label detectors and derived claims and expose evidence requires future policy
+    or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Label detectors
+    and derived claims and expose evidence.
+  scope_demand_key: honesty.derived-label-evidence
+- id: CAP-97
+  title: Unpriced usage remains explicit and is not zero
+  definition: Unpriced usage remains explicit and is not zero is a future product
+    or evaluation-policy demand from honesty.unpriced-not-zero, not an observed current
+    capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand honesty.unpriced-not-zero.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Unpriced usage remains explicit and is not zero requires future policy or scenario
+    evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Unpriced usage
+    remains explicit and is not zero.
+  scope_demand_key: honesty.unpriced-not-zero
+- id: CAP-98
+  title: Do not imply fixed completion percentage for a growing plan
+  definition: Do not imply fixed completion percentage for a growing plan is a future
+    product or evaluation-policy demand from honesty.no-growing-plan-percent, not
+    an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand honesty.no-growing-plan-percent.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Do not imply fixed completion percentage for a growing plan requires future policy
+    or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Do not imply
+    fixed completion percentage for a growing plan.
+  scope_demand_key: honesty.no-growing-plan-percent
+- id: CAP-99
+  title: Distinguish observed fact from inference
+  definition: Distinguish observed fact from inference is a future product or evaluation-policy
+    demand from honesty.fact-versus-inference, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand honesty.fact-versus-inference.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Distinguish observed fact from inference requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Distinguish observed
+    fact from inference.
+  scope_demand_key: honesty.fact-versus-inference
+- id: CAP-100
+  title: Mark approximate values
+  definition: Mark approximate values is a future product or evaluation-policy demand
+    from honesty.approximate-values, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand honesty.approximate-values.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Mark approximate values requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Mark approximate
+    values.
+  scope_demand_key: honesty.approximate-values
+- id: CAP-101
+  title: Do not imply directive delivery without packet binding evidence
+  definition: Do not imply directive delivery without packet binding evidence is a
+    future product or evaluation-policy demand from honesty.directive-binding-proof,
+    not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand honesty.directive-binding-proof.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Do not imply directive delivery without packet binding evidence requires future
+    policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Do not imply
+    directive delivery without packet binding evidence.
+  scope_demand_key: honesty.directive-binding-proof
+- id: CAP-102
+  title: Command accepted or rejected
+  definition: Command accepted or rejected is demanded by feedback.command-accepted-rejected,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand feedback.command-accepted-rejected.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Command accepted or rejected remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Command accepted or rejected
+    capability.
+  scope_demand_key: feedback.command-accepted-rejected
+- id: CAP-103
+  title: Validation result and reason
+  definition: Validation result and reason is demanded by feedback.validation-result-reason,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand feedback.validation-result-reason.
+  evidence_ids:
+  - EVD-58
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Validation result and reason remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Validation result and reason
+    capability.
+  scope_demand_key: feedback.validation-result-reason
+- id: CAP-104
+  title: Durable event or record identity
+  definition: Durable event or record identity is demanded by feedback.durable-identity,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand feedback.durable-identity.
+  evidence_ids:
+  - EVD-49
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Durable event or record identity remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Durable event or record identity
+    capability.
+  scope_demand_key: feedback.durable-identity
+- id: CAP-105
+  title: Resulting lifecycle topology or decision state
+  definition: Resulting lifecycle topology or decision state is demanded by feedback.resulting-state,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand feedback.resulting-state.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Resulting lifecycle topology or decision state remains qualified by its source
+    carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Resulting lifecycle topology
+    or decision state capability.
+  scope_demand_key: feedback.resulting-state
+- id: CAP-106
+  title: Next expected system activity
+  definition: Next expected system activity is a source demand from feedback.next-activity;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand feedback.next-activity.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Next expected system activity.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Next expected system activity.
+  scope_demand_key: feedback.next-activity
+- id: CAP-107
+  title: Recovery path for failure or stale-state race
+  definition: Recovery path for failure or stale-state race is demanded by feedback.failure-race-recovery,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand feedback.failure-race-recovery.
+  evidence_ids:
+  - EVD-61
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Recovery path for failure or stale-state race remains qualified by its source
+    carrier and unresolved contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Recovery path for failure or
+    stale-state race capability.
+  scope_demand_key: feedback.failure-race-recovery
+- id: CAP-108
+  title: Evidence convergence
+  definition: Evidence convergence is a source demand from ia.health.evidence-convergence;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.health.evidence-convergence.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Evidence convergence.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Evidence convergence.
+  scope_demand_key: ia.health.evidence-convergence
+- id: CAP-109
+  title: Needs-decision classification
+  definition: Needs-decision classification is demanded by ia.health.needs-decision,
+    but available carriers are partial, carrier-specific, or disputed and do not establish
+    the demanded semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.health.needs-decision.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Needs-decision classification remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Needs-decision classification
+    capability.
+  scope_demand_key: ia.health.needs-decision
+- id: CAP-110
+  title: Degraded classification
+  definition: Degraded classification is a source demand from ia.health.degraded;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.health.degraded.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Degraded classification.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Degraded classification.
+  scope_demand_key: ia.health.degraded
+- id: CAP-111
+  title: Stalled classification
+  definition: Stalled classification is a source demand from ia.health.stalled; the
+    audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.health.stalled.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Stalled classification.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Stalled classification.
+  scope_demand_key: ia.health.stalled
+- id: CAP-112
+  title: Runaway classification
+  definition: Runaway classification is a source demand from ia.health.runaway; the
+    audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.health.runaway.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Runaway classification.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Runaway classification.
+  scope_demand_key: ia.health.runaway
+- id: CAP-113
+  title: Steered classification
+  definition: Steered classification is a source demand from ia.health.steered; the
+    audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.health.steered.
+  evidence_ids:
+  - EVD-56
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Steered classification.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Steered classification.
+  scope_demand_key: ia.health.steered
+- id: CAP-114
+  title: Settled classification
+  definition: Settled classification is demanded by ia.health.settled, but available
+    carriers are partial, carrier-specific, or disputed and do not establish the demanded
+    semantics.
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.health.settled.
+  evidence_ids:
+  - EVD-57
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Settled classification remains qualified by its source carrier and unresolved
+    contract boundaries.
+  prohibited_interpretations:
+  - Do not collapse partial carriers into a complete Settled classification capability.
+  scope_demand_key: ia.health.settled
+- id: CAP-115
+  title: Run region step node task attempt record event requirement identity chain
+  definition: 'The demanded complete selection identity chain is unknown: only run
+    to step to task to attempt is enforced, while region and graph or core joins remain
+    untyped.'
+  implementation_status: partial
+  test_status: unknown
+  documentation_status: conflicting
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: low
+  confidence_basis: Adjudication of evidence for the specific source demand ia.selection.identity-chain.
+  evidence_ids:
+  - EVD-49
+  - EVD-51
+  - EVD-58
+  - EVD-96
+  conflict_ids:
+  - CON-1
+  question_ids:
+  - Q-1
+  - Q-2
+  limitations:
+  - The integrated chain is absent although component identities exist.
+  prohibited_interpretations:
+  - Do not infer joins from equal strings or claim an implemented full identity chain.
+  scope_demand_key: ia.selection.identity-chain
+- id: CAP-116
+  title: Active comparison target
+  definition: Active comparison target is a source demand from ia.selection.comparison-target;
+    the audited implementation does not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.selection.comparison-target.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Active comparison target.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Active comparison target.
+  scope_demand_key: ia.selection.comparison-target
+- id: CAP-117
+  title: Freshness and capability annotations persist with selection
+  definition: Freshness and capability annotations persist with selection is a source
+    demand from ia.selection.freshness-annotations; the audited implementation does
+    not provide the demanded capability contract.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.selection.freshness-annotations.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No complete implementation contract establishes Freshness and capability annotations
+    persist with selection.
+  prohibited_interpretations:
+  - Do not treat isolated fields, events, or UI text as Freshness and capability annotations
+    persist with selection.
+  scope_demand_key: ia.selection.freshness-annotations
+- id: CAP-118
+  title: Distinct semantic vocabulary remains stable across projections
+  definition: Distinct semantic vocabulary remains stable across projections is a
+    future product or evaluation-policy demand from ia.vocabulary.distinct-entities,
+    not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand ia.vocabulary.distinct-entities.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Distinct semantic vocabulary remains stable across projections requires future
+    policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Distinct semantic
+    vocabulary remains stable across projections.
+  scope_demand_key: ia.vocabulary.distinct-entities
+- id: CAP-119
+  title: Attention clarity
+  definition: Attention clarity is a future product or evaluation-policy demand from
+    rubric.attention-clarity, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.attention-clarity.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Attention clarity requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Attention clarity.
+  scope_demand_key: rubric.attention-clarity
+- id: CAP-120
+  title: Position and blast radius
+  definition: Position and blast radius is a future product or evaluation-policy demand
+    from rubric.position-blast-radius, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.position-blast-radius.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Position and blast radius requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Position and
+    blast radius.
+  scope_demand_key: rubric.position-blast-radius
+- id: CAP-121
+  title: Causal comprehension
+  definition: Causal comprehension is a future product or evaluation-policy demand
+    from rubric.causal-comprehension, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.causal-comprehension.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Causal comprehension requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Causal comprehension.
+  scope_demand_key: rubric.causal-comprehension
+- id: CAP-122
+  title: Decision readiness
+  definition: Decision readiness is a future product or evaluation-policy demand from
+    rubric.decision-readiness, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.decision-readiness.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Decision readiness requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Decision readiness.
+  scope_demand_key: rubric.decision-readiness
+- id: CAP-123
+  title: Evidence access
+  definition: Evidence access is a future product or evaluation-policy demand from
+    rubric.evidence-access, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.evidence-access.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Evidence access requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Evidence access.
+  scope_demand_key: rubric.evidence-access
+- id: CAP-124
+  title: Context continuity
+  definition: Context continuity is a future product or evaluation-policy demand from
+    rubric.context-continuity, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.context-continuity.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Context continuity requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Context continuity.
+  scope_demand_key: rubric.context-continuity
+- id: CAP-125
+  title: Complexity control
+  definition: Complexity control is a future product or evaluation-policy demand from
+    rubric.complexity-control, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.complexity-control.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Complexity control requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Complexity control.
+  scope_demand_key: rubric.complexity-control
+- id: CAP-126
+  title: Action safety and feedback
+  definition: Action safety and feedback is a future product or evaluation-policy
+    demand from rubric.action-safety-feedback, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.action-safety-feedback.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Action safety and feedback requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Action safety
+    and feedback.
+  scope_demand_key: rubric.action-safety-feedback
+- id: CAP-127
+  title: Capability honesty
+  definition: Capability honesty is a future product or evaluation-policy demand from
+    rubric.capability-honesty, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.capability-honesty.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Capability honesty requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Capability honesty.
+  scope_demand_key: rubric.capability-honesty
+- id: CAP-128
+  title: Responsive integrity
+  definition: Responsive integrity is a future product or evaluation-policy demand
+    from rubric.responsive-integrity, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.responsive-integrity.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Responsive integrity requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Responsive integrity.
+  scope_demand_key: rubric.responsive-integrity
+- id: CAP-129
+  title: No selection resets or manual reselection
+  definition: No selection resets or manual reselection is a future product or evaluation-policy
+    demand from rubric.no-selection-resets, not an observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.no-selection-resets.
+  evidence_ids:
+  - EVD-53
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - No selection resets or manual reselection requires future policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of No selection
+    resets or manual reselection.
+  scope_demand_key: rubric.no-selection-resets
+- id: CAP-130
+  title: Every derived claim has one-step evidence access
+  definition: Every derived claim has one-step evidence access is a future product
+    or evaluation-policy demand from rubric.derived-evidence-access, not an observed
+    current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.derived-evidence-access.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Every derived claim has one-step evidence access requires future policy or scenario
+    evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Every derived
+    claim has one-step evidence access.
+  scope_demand_key: rubric.derived-evidence-access
+- id: CAP-131
+  title: Every action visibly confirms resulting state
+  definition: Every action visibly confirms resulting state is a future product or
+    evaluation-policy demand from rubric.result-state-confirmation, not an observed
+    current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.result-state-confirmation.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Every action visibly confirms resulting state requires future policy or scenario
+    evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Every action
+    visibly confirms resulting state.
+  scope_demand_key: rubric.result-state-confirmation
+- id: CAP-132
+  title: Viability floor for decision evidence action safety and honesty
+  definition: Viability floor for decision evidence action safety and honesty is a
+    future product or evaluation-policy demand from rubric.viability-floor, not an
+    observed current capability.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: proposed
+  epistemic_status: proposed
+  confidence: medium
+  confidence_basis: Adjudication of evidence for the specific source demand rubric.viability-floor.
+  evidence_ids:
+  - EVD-68
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Viability floor for decision evidence action safety and honesty requires future
+    policy or scenario evidence.
+  prohibited_interpretations:
+  - Do not treat current implementation fragments as satisfaction of Viability floor
+    for decision evidence action safety and honesty.
+  scope_demand_key: rubric.viability-floor

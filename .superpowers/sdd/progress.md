@@ -26,4 +26,4 @@ Task 2: complete (commits d9ad39638..a69ba8362, 132 source demands, Phase 0 vali
 Tasks 3-9: complete (commits 3f8c454e3..09b175054; seven bounded reality reports validated and independently reviewed clean).
 Tasks 10-12: complete (commits 8c9205f41..833af5006; domain, action/state, and evidence syntheses validated and independently reviewed clean).
 Task 13: complete (canonical Phase 1 normalization; validation and targeted foundation tests passed; commit recorded in task-13-ui-foundation-report.md).
-Task 14: complete (132 stable CAP allocations and one-to-one gap classifications; Phase 2 validation and focused foundation tests passed; commit recorded in task-14-ui-foundation-report.md).
+Task 14: complete (commits a4694b4c9^..HEAD; 132 bound CAP classifications: 2 current, 12 derived, 25 proposed, 39 gap, 54 unknown; 11 derivations; independent-review correction, Phase 2 validation, and 68 focused tests passed).

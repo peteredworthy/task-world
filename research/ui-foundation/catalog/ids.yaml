@@ -1,6 +1,7 @@
 schema_version: '1'
 phase_status: complete
-allocation_policy: Task 13 canonical allocation; values are monotonic and retained after rejection or supersession.
+allocation_policy: Task 13 canonical allocation; values are monotonic and retained
+  after rejection or supersession.
 next_suffixes:
   ENT: 32
   REL: 36
@@ -14,139 +15,668 @@ next_suffixes:
   CON: 10
   EVD: 114
   CAP: 133
+  DRV: 12
 items:
-- {namespace: CAP, provisional_key: scope-demand-001, title: Capability demand 001, status: active, canonical_id: CAP-1}
-- {namespace: CAP, provisional_key: scope-demand-002, title: Capability demand 002, status: active, canonical_id: CAP-2}
-- {namespace: CAP, provisional_key: scope-demand-003, title: Capability demand 003, status: active, canonical_id: CAP-3}
-- {namespace: CAP, provisional_key: scope-demand-004, title: Capability demand 004, status: active, canonical_id: CAP-4}
-- {namespace: CAP, provisional_key: scope-demand-005, title: Capability demand 005, status: active, canonical_id: CAP-5}
-- {namespace: CAP, provisional_key: scope-demand-006, title: Capability demand 006, status: active, canonical_id: CAP-6}
-- {namespace: CAP, provisional_key: scope-demand-007, title: Capability demand 007, status: active, canonical_id: CAP-7}
-- {namespace: CAP, provisional_key: scope-demand-008, title: Capability demand 008, status: active, canonical_id: CAP-8}
-- {namespace: CAP, provisional_key: scope-demand-009, title: Capability demand 009, status: active, canonical_id: CAP-9}
-- {namespace: CAP, provisional_key: scope-demand-010, title: Capability demand 010, status: active, canonical_id: CAP-10}
-- {namespace: CAP, provisional_key: scope-demand-011, title: Capability demand 011, status: active, canonical_id: CAP-11}
-- {namespace: CAP, provisional_key: scope-demand-012, title: Capability demand 012, status: active, canonical_id: CAP-12}
-- {namespace: CAP, provisional_key: scope-demand-013, title: Capability demand 013, status: active, canonical_id: CAP-13}
-- {namespace: CAP, provisional_key: scope-demand-014, title: Capability demand 014, status: active, canonical_id: CAP-14}
-- {namespace: CAP, provisional_key: scope-demand-015, title: Capability demand 015, status: active, canonical_id: CAP-15}
-- {namespace: CAP, provisional_key: scope-demand-016, title: Capability demand 016, status: active, canonical_id: CAP-16}
-- {namespace: CAP, provisional_key: scope-demand-017, title: Capability demand 017, status: active, canonical_id: CAP-17}
-- {namespace: CAP, provisional_key: scope-demand-018, title: Capability demand 018, status: active, canonical_id: CAP-18}
-- {namespace: CAP, provisional_key: scope-demand-019, title: Capability demand 019, status: active, canonical_id: CAP-19}
-- {namespace: CAP, provisional_key: scope-demand-020, title: Capability demand 020, status: active, canonical_id: CAP-20}
-- {namespace: CAP, provisional_key: scope-demand-021, title: Capability demand 021, status: active, canonical_id: CAP-21}
-- {namespace: CAP, provisional_key: scope-demand-022, title: Capability demand 022, status: active, canonical_id: CAP-22}
-- {namespace: CAP, provisional_key: scope-demand-023, title: Capability demand 023, status: active, canonical_id: CAP-23}
-- {namespace: CAP, provisional_key: scope-demand-024, title: Capability demand 024, status: active, canonical_id: CAP-24}
-- {namespace: CAP, provisional_key: scope-demand-025, title: Capability demand 025, status: active, canonical_id: CAP-25}
-- {namespace: CAP, provisional_key: scope-demand-026, title: Capability demand 026, status: active, canonical_id: CAP-26}
-- {namespace: CAP, provisional_key: scope-demand-027, title: Capability demand 027, status: active, canonical_id: CAP-27}
-- {namespace: CAP, provisional_key: scope-demand-028, title: Capability demand 028, status: active, canonical_id: CAP-28}
-- {namespace: CAP, provisional_key: scope-demand-029, title: Capability demand 029, status: active, canonical_id: CAP-29}
-- {namespace: CAP, provisional_key: scope-demand-030, title: Capability demand 030, status: active, canonical_id: CAP-30}
-- {namespace: CAP, provisional_key: scope-demand-031, title: Capability demand 031, status: active, canonical_id: CAP-31}
-- {namespace: CAP, provisional_key: scope-demand-032, title: Capability demand 032, status: active, canonical_id: CAP-32}
-- {namespace: CAP, provisional_key: scope-demand-033, title: Capability demand 033, status: active, canonical_id: CAP-33}
-- {namespace: CAP, provisional_key: scope-demand-034, title: Capability demand 034, status: active, canonical_id: CAP-34}
-- {namespace: CAP, provisional_key: scope-demand-035, title: Capability demand 035, status: active, canonical_id: CAP-35}
-- {namespace: CAP, provisional_key: scope-demand-036, title: Capability demand 036, status: active, canonical_id: CAP-36}
-- {namespace: CAP, provisional_key: scope-demand-037, title: Capability demand 037, status: active, canonical_id: CAP-37}
-- {namespace: CAP, provisional_key: scope-demand-038, title: Capability demand 038, status: active, canonical_id: CAP-38}
-- {namespace: CAP, provisional_key: scope-demand-039, title: Capability demand 039, status: active, canonical_id: CAP-39}
-- {namespace: CAP, provisional_key: scope-demand-040, title: Capability demand 040, status: active, canonical_id: CAP-40}
-- {namespace: CAP, provisional_key: scope-demand-041, title: Capability demand 041, status: active, canonical_id: CAP-41}
-- {namespace: CAP, provisional_key: scope-demand-042, title: Capability demand 042, status: active, canonical_id: CAP-42}
-- {namespace: CAP, provisional_key: scope-demand-043, title: Capability demand 043, status: active, canonical_id: CAP-43}
-- {namespace: CAP, provisional_key: scope-demand-044, title: Capability demand 044, status: active, canonical_id: CAP-44}
-- {namespace: CAP, provisional_key: scope-demand-045, title: Capability demand 045, status: active, canonical_id: CAP-45}
-- {namespace: CAP, provisional_key: scope-demand-046, title: Capability demand 046, status: active, canonical_id: CAP-46}
-- {namespace: CAP, provisional_key: scope-demand-047, title: Capability demand 047, status: active, canonical_id: CAP-47}
-- {namespace: CAP, provisional_key: scope-demand-048, title: Capability demand 048, status: active, canonical_id: CAP-48}
-- {namespace: CAP, provisional_key: scope-demand-049, title: Capability demand 049, status: active, canonical_id: CAP-49}
-- {namespace: CAP, provisional_key: scope-demand-050, title: Capability demand 050, status: active, canonical_id: CAP-50}
-- {namespace: CAP, provisional_key: scope-demand-051, title: Capability demand 051, status: active, canonical_id: CAP-51}
-- {namespace: CAP, provisional_key: scope-demand-052, title: Capability demand 052, status: active, canonical_id: CAP-52}
-- {namespace: CAP, provisional_key: scope-demand-053, title: Capability demand 053, status: active, canonical_id: CAP-53}
-- {namespace: CAP, provisional_key: scope-demand-054, title: Capability demand 054, status: active, canonical_id: CAP-54}
-- {namespace: CAP, provisional_key: scope-demand-055, title: Capability demand 055, status: active, canonical_id: CAP-55}
-- {namespace: CAP, provisional_key: scope-demand-056, title: Capability demand 056, status: active, canonical_id: CAP-56}
-- {namespace: CAP, provisional_key: scope-demand-057, title: Capability demand 057, status: active, canonical_id: CAP-57}
-- {namespace: CAP, provisional_key: scope-demand-058, title: Capability demand 058, status: active, canonical_id: CAP-58}
-- {namespace: CAP, provisional_key: scope-demand-059, title: Capability demand 059, status: active, canonical_id: CAP-59}
-- {namespace: CAP, provisional_key: scope-demand-060, title: Capability demand 060, status: active, canonical_id: CAP-60}
-- {namespace: CAP, provisional_key: scope-demand-061, title: Capability demand 061, status: active, canonical_id: CAP-61}
-- {namespace: CAP, provisional_key: scope-demand-062, title: Capability demand 062, status: active, canonical_id: CAP-62}
-- {namespace: CAP, provisional_key: scope-demand-063, title: Capability demand 063, status: active, canonical_id: CAP-63}
-- {namespace: CAP, provisional_key: scope-demand-064, title: Capability demand 064, status: active, canonical_id: CAP-64}
-- {namespace: CAP, provisional_key: scope-demand-065, title: Capability demand 065, status: active, canonical_id: CAP-65}
-- {namespace: CAP, provisional_key: scope-demand-066, title: Capability demand 066, status: active, canonical_id: CAP-66}
-- {namespace: CAP, provisional_key: scope-demand-067, title: Capability demand 067, status: active, canonical_id: CAP-67}
-- {namespace: CAP, provisional_key: scope-demand-068, title: Capability demand 068, status: active, canonical_id: CAP-68}
-- {namespace: CAP, provisional_key: scope-demand-069, title: Capability demand 069, status: active, canonical_id: CAP-69}
-- {namespace: CAP, provisional_key: scope-demand-070, title: Capability demand 070, status: active, canonical_id: CAP-70}
-- {namespace: CAP, provisional_key: scope-demand-071, title: Capability demand 071, status: active, canonical_id: CAP-71}
-- {namespace: CAP, provisional_key: scope-demand-072, title: Capability demand 072, status: active, canonical_id: CAP-72}
-- {namespace: CAP, provisional_key: scope-demand-073, title: Capability demand 073, status: active, canonical_id: CAP-73}
-- {namespace: CAP, provisional_key: scope-demand-074, title: Capability demand 074, status: active, canonical_id: CAP-74}
-- {namespace: CAP, provisional_key: scope-demand-075, title: Capability demand 075, status: active, canonical_id: CAP-75}
-- {namespace: CAP, provisional_key: scope-demand-076, title: Capability demand 076, status: active, canonical_id: CAP-76}
-- {namespace: CAP, provisional_key: scope-demand-077, title: Capability demand 077, status: active, canonical_id: CAP-77}
-- {namespace: CAP, provisional_key: scope-demand-078, title: Capability demand 078, status: active, canonical_id: CAP-78}
-- {namespace: CAP, provisional_key: scope-demand-079, title: Capability demand 079, status: active, canonical_id: CAP-79}
-- {namespace: CAP, provisional_key: scope-demand-080, title: Capability demand 080, status: active, canonical_id: CAP-80}
-- {namespace: CAP, provisional_key: scope-demand-081, title: Capability demand 081, status: active, canonical_id: CAP-81}
-- {namespace: CAP, provisional_key: scope-demand-082, title: Capability demand 082, status: active, canonical_id: CAP-82}
-- {namespace: CAP, provisional_key: scope-demand-083, title: Capability demand 083, status: active, canonical_id: CAP-83}
-- {namespace: CAP, provisional_key: scope-demand-084, title: Capability demand 084, status: active, canonical_id: CAP-84}
-- {namespace: CAP, provisional_key: scope-demand-085, title: Capability demand 085, status: active, canonical_id: CAP-85}
-- {namespace: CAP, provisional_key: scope-demand-086, title: Capability demand 086, status: active, canonical_id: CAP-86}
-- {namespace: CAP, provisional_key: scope-demand-087, title: Capability demand 087, status: active, canonical_id: CAP-87}
-- {namespace: CAP, provisional_key: scope-demand-088, title: Capability demand 088, status: active, canonical_id: CAP-88}
-- {namespace: CAP, provisional_key: scope-demand-089, title: Capability demand 089, status: active, canonical_id: CAP-89}
-- {namespace: CAP, provisional_key: scope-demand-090, title: Capability demand 090, status: active, canonical_id: CAP-90}
-- {namespace: CAP, provisional_key: scope-demand-091, title: Capability demand 091, status: active, canonical_id: CAP-91}
-- {namespace: CAP, provisional_key: scope-demand-092, title: Capability demand 092, status: active, canonical_id: CAP-92}
-- {namespace: CAP, provisional_key: scope-demand-093, title: Capability demand 093, status: active, canonical_id: CAP-93}
-- {namespace: CAP, provisional_key: scope-demand-094, title: Capability demand 094, status: active, canonical_id: CAP-94}
-- {namespace: CAP, provisional_key: scope-demand-095, title: Capability demand 095, status: active, canonical_id: CAP-95}
-- {namespace: CAP, provisional_key: scope-demand-096, title: Capability demand 096, status: active, canonical_id: CAP-96}
-- {namespace: CAP, provisional_key: scope-demand-097, title: Capability demand 097, status: active, canonical_id: CAP-97}
-- {namespace: CAP, provisional_key: scope-demand-098, title: Capability demand 098, status: active, canonical_id: CAP-98}
-- {namespace: CAP, provisional_key: scope-demand-099, title: Capability demand 099, status: active, canonical_id: CAP-99}
-- {namespace: CAP, provisional_key: scope-demand-100, title: Capability demand 100, status: active, canonical_id: CAP-100}
-- {namespace: CAP, provisional_key: scope-demand-101, title: Capability demand 101, status: active, canonical_id: CAP-101}
-- {namespace: CAP, provisional_key: scope-demand-102, title: Capability demand 102, status: active, canonical_id: CAP-102}
-- {namespace: CAP, provisional_key: scope-demand-103, title: Capability demand 103, status: active, canonical_id: CAP-103}
-- {namespace: CAP, provisional_key: scope-demand-104, title: Capability demand 104, status: active, canonical_id: CAP-104}
-- {namespace: CAP, provisional_key: scope-demand-105, title: Capability demand 105, status: active, canonical_id: CAP-105}
-- {namespace: CAP, provisional_key: scope-demand-106, title: Capability demand 106, status: active, canonical_id: CAP-106}
-- {namespace: CAP, provisional_key: scope-demand-107, title: Capability demand 107, status: active, canonical_id: CAP-107}
-- {namespace: CAP, provisional_key: scope-demand-108, title: Capability demand 108, status: active, canonical_id: CAP-108}
-- {namespace: CAP, provisional_key: scope-demand-109, title: Capability demand 109, status: active, canonical_id: CAP-109}
-- {namespace: CAP, provisional_key: scope-demand-110, title: Capability demand 110, status: active, canonical_id: CAP-110}
-- {namespace: CAP, provisional_key: scope-demand-111, title: Capability demand 111, status: active, canonical_id: CAP-111}
-- {namespace: CAP, provisional_key: scope-demand-112, title: Capability demand 112, status: active, canonical_id: CAP-112}
-- {namespace: CAP, provisional_key: scope-demand-113, title: Capability demand 113, status: active, canonical_id: CAP-113}
-- {namespace: CAP, provisional_key: scope-demand-114, title: Capability demand 114, status: active, canonical_id: CAP-114}
-- {namespace: CAP, provisional_key: scope-demand-115, title: Capability demand 115, status: active, canonical_id: CAP-115}
-- {namespace: CAP, provisional_key: scope-demand-116, title: Capability demand 116, status: active, canonical_id: CAP-116}
-- {namespace: CAP, provisional_key: scope-demand-117, title: Capability demand 117, status: active, canonical_id: CAP-117}
-- {namespace: CAP, provisional_key: scope-demand-118, title: Capability demand 118, status: active, canonical_id: CAP-118}
-- {namespace: CAP, provisional_key: scope-demand-119, title: Capability demand 119, status: active, canonical_id: CAP-119}
-- {namespace: CAP, provisional_key: scope-demand-120, title: Capability demand 120, status: active, canonical_id: CAP-120}
-- {namespace: CAP, provisional_key: scope-demand-121, title: Capability demand 121, status: active, canonical_id: CAP-121}
-- {namespace: CAP, provisional_key: scope-demand-122, title: Capability demand 122, status: active, canonical_id: CAP-122}
-- {namespace: CAP, provisional_key: scope-demand-123, title: Capability demand 123, status: active, canonical_id: CAP-123}
-- {namespace: CAP, provisional_key: scope-demand-124, title: Capability demand 124, status: active, canonical_id: CAP-124}
-- {namespace: CAP, provisional_key: scope-demand-125, title: Capability demand 125, status: active, canonical_id: CAP-125}
-- {namespace: CAP, provisional_key: scope-demand-126, title: Capability demand 126, status: active, canonical_id: CAP-126}
-- {namespace: CAP, provisional_key: scope-demand-127, title: Capability demand 127, status: active, canonical_id: CAP-127}
-- {namespace: CAP, provisional_key: scope-demand-128, title: Capability demand 128, status: active, canonical_id: CAP-128}
-- {namespace: CAP, provisional_key: scope-demand-129, title: Capability demand 129, status: active, canonical_id: CAP-129}
-- {namespace: CAP, provisional_key: scope-demand-130, title: Capability demand 130, status: active, canonical_id: CAP-130}
-- {namespace: CAP, provisional_key: scope-demand-131, title: Capability demand 131, status: active, canonical_id: CAP-131}
-- {namespace: CAP, provisional_key: scope-demand-132, title: Capability demand 132, status: active, canonical_id: CAP-132}
+- namespace: CAP
+  provisional_key: jobs.J1.health-class
+  title: Health class
+  status: active
+  canonical_id: CAP-1
+- namespace: CAP
+  provisional_key: jobs.J1.current-constraint
+  title: Current constraint
+  status: active
+  canonical_id: CAP-2
+- namespace: CAP
+  provisional_key: jobs.J1.human-wait-state
+  title: Human wait state
+  status: active
+  canonical_id: CAP-3
+- namespace: CAP
+  provisional_key: jobs.J1.frontier-activity
+  title: Frontier activity
+  status: active
+  canonical_id: CAP-4
+- namespace: CAP
+  provisional_key: jobs.J1.last-event-age
+  title: Last-event age
+  status: active
+  canonical_id: CAP-5
+- namespace: CAP
+  provisional_key: jobs.J1.budget-pace
+  title: Budget pace
+  status: active
+  canonical_id: CAP-6
+- namespace: CAP
+  provisional_key: jobs.J1.blast-radius
+  title: Blast radius
+  status: active
+  canonical_id: CAP-7
+- namespace: CAP
+  provisional_key: jobs.J2.active-nodes-steps
+  title: Active nodes and steps
+  status: active
+  canonical_id: CAP-8
+- namespace: CAP
+  provisional_key: jobs.J2.dependency-path
+  title: Dependency path
+  status: active
+  canonical_id: CAP-9
+- namespace: CAP
+  provisional_key: jobs.J2.planner-horizon
+  title: Planner horizon
+  status: active
+  canonical_id: CAP-10
+- namespace: CAP
+  provisional_key: jobs.J2.blocked-reason
+  title: Blocked reason
+  status: active
+  canonical_id: CAP-11
+- namespace: CAP
+  provisional_key: jobs.J2.attempts-left
+  title: Attempts left
+  status: active
+  canonical_id: CAP-12
+- namespace: CAP
+  provisional_key: jobs.J2.final-invariant-progress
+  title: Final-invariant progress
+  status: active
+  canonical_id: CAP-13
+- namespace: CAP
+  provisional_key: jobs.J3.exact-question
+  title: Exact question
+  status: active
+  canonical_id: CAP-14
+- namespace: CAP
+  provisional_key: jobs.J3.why-now
+  title: Why now
+  status: active
+  canonical_id: CAP-15
+- namespace: CAP
+  provisional_key: jobs.J3.proposer
+  title: Proposer
+  status: active
+  canonical_id: CAP-16
+- namespace: CAP
+  provisional_key: jobs.J3.affected-scope
+  title: Affected scope
+  status: active
+  canonical_id: CAP-17
+- namespace: CAP
+  provisional_key: jobs.J3.evidence
+  title: Decision evidence
+  status: active
+  canonical_id: CAP-18
+- namespace: CAP
+  provisional_key: jobs.J3.alternatives
+  title: Alternatives
+  status: active
+  canonical_id: CAP-19
+- namespace: CAP
+  provisional_key: jobs.J3.downstream-effect
+  title: Downstream effect
+  status: active
+  canonical_id: CAP-20
+- namespace: CAP
+  provisional_key: jobs.J3.reversibility
+  title: Reversibility
+  status: active
+  canonical_id: CAP-21
+- namespace: CAP
+  provisional_key: jobs.J4.ordered-events
+  title: Ordered events
+  status: active
+  canonical_id: CAP-22
+- namespace: CAP
+  provisional_key: jobs.J4.attempt-lineage
+  title: Attempt lineage
+  status: active
+  canonical_id: CAP-23
+- namespace: CAP
+  provisional_key: jobs.J4.requirement-grade-changes
+  title: Requirement-grade changes
+  status: active
+  canonical_id: CAP-24
+- namespace: CAP
+  provisional_key: jobs.J4.patch-provenance
+  title: Patch provenance
+  status: active
+  canonical_id: CAP-25
+- namespace: CAP
+  provisional_key: jobs.J4.state-transitions
+  title: State transitions
+  status: active
+  canonical_id: CAP-26
+- namespace: CAP
+  provisional_key: jobs.J4.retries-rejections
+  title: Retries and rejections
+  status: active
+  canonical_id: CAP-27
+- namespace: CAP
+  provisional_key: jobs.J5.bound-input-records
+  title: Bound input records
+  status: active
+  canonical_id: CAP-28
+- namespace: CAP
+  provisional_key: jobs.J5.omitted-referenced-context
+  title: Omitted and referenced context
+  status: active
+  canonical_id: CAP-29
+- namespace: CAP
+  provisional_key: jobs.J5.prompt-size
+  title: Prompt size
+  status: active
+  canonical_id: CAP-30
+- namespace: CAP
+  provisional_key: jobs.J5.transcript
+  title: Transcript
+  status: active
+  canonical_id: CAP-31
+- namespace: CAP
+  provisional_key: jobs.J5.tools
+  title: Tool activity
+  status: active
+  canonical_id: CAP-32
+- namespace: CAP
+  provisional_key: jobs.J5.artifacts
+  title: Artifacts
+  status: active
+  canonical_id: CAP-33
+- namespace: CAP
+  provisional_key: jobs.J5.file-delta
+  title: File delta
+  status: active
+  canonical_id: CAP-34
+- namespace: CAP
+  provisional_key: jobs.J5.output-records
+  title: Output records
+  status: active
+  canonical_id: CAP-35
+- namespace: CAP
+  provisional_key: jobs.J5.usage
+  title: Usage
+  status: active
+  canonical_id: CAP-36
+- namespace: CAP
+  provisional_key: jobs.J6.current-failure
+  title: Current failure
+  status: active
+  canonical_id: CAP-37
+- namespace: CAP
+  provisional_key: jobs.J6.retry-information-delta
+  title: Retry information delta
+  status: active
+  canonical_id: CAP-38
+- namespace: CAP
+  provisional_key: jobs.J6.alternatives
+  title: Intervention alternatives
+  status: active
+  canonical_id: CAP-39
+- namespace: CAP
+  provisional_key: jobs.J6.expected-effect
+  title: Expected effect
+  status: active
+  canonical_id: CAP-40
+- namespace: CAP
+  provisional_key: jobs.J6.scope
+  title: Intervention scope
+  status: active
+  canonical_id: CAP-41
+- namespace: CAP
+  provisional_key: jobs.J6.authority
+  title: Authority
+  status: active
+  canonical_id: CAP-42
+- namespace: CAP
+  provisional_key: jobs.J6.budget
+  title: Intervention budget
+  status: active
+  canonical_id: CAP-43
+- namespace: CAP
+  provisional_key: jobs.J6.reversibility
+  title: Intervention reversibility
+  status: active
+  canonical_id: CAP-44
+- namespace: CAP
+  provisional_key: jobs.J6.validation-path
+  title: Validation path
+  status: active
+  canonical_id: CAP-45
+- namespace: CAP
+  provisional_key: jobs.J7.spend-tokens-by-node-kind
+  title: Spend and tokens by node kind
+  status: active
+  canonical_id: CAP-46
+- namespace: CAP
+  provisional_key: jobs.J7.unpriced-share
+  title: Unpriced share
+  status: active
+  canonical_id: CAP-47
+- namespace: CAP
+  provisional_key: jobs.J7.prompt-size
+  title: Prompt size
+  status: active
+  canonical_id: CAP-48
+- namespace: CAP
+  provisional_key: jobs.J7.retries-without-new-information
+  title: Retries without new information
+  status: active
+  canonical_id: CAP-49
+- namespace: CAP
+  provisional_key: jobs.J7.repeated-work
+  title: Repeated tools and work
+  status: active
+  canonical_id: CAP-50
+- namespace: CAP
+  provisional_key: jobs.J7.verifier-churn
+  title: Verifier churn
+  status: active
+  canonical_id: CAP-51
+- namespace: CAP
+  provisional_key: jobs.J8.comparable-cohort
+  title: Comparable cohort
+  status: active
+  canonical_id: CAP-52
+- namespace: CAP
+  provisional_key: jobs.J8.routine-sha
+  title: Routine SHA
+  status: active
+  canonical_id: CAP-53
+- namespace: CAP
+  provisional_key: jobs.J8.model-profile
+  title: Model and profile
+  status: active
+  canonical_id: CAP-54
+- namespace: CAP
+  provisional_key: jobs.J8.duration
+  title: Duration
+  status: active
+  canonical_id: CAP-55
+- namespace: CAP
+  provisional_key: jobs.J8.tokens
+  title: Tokens
+  status: active
+  canonical_id: CAP-56
+- namespace: CAP
+  provisional_key: jobs.J8.price-coverage
+  title: Price coverage
+  status: active
+  canonical_id: CAP-57
+- namespace: CAP
+  provisional_key: jobs.J8.patch-count
+  title: Patch count
+  status: active
+  canonical_id: CAP-58
+- namespace: CAP
+  provisional_key: jobs.J8.retries
+  title: Retry count
+  status: active
+  canonical_id: CAP-59
+- namespace: CAP
+  provisional_key: jobs.J8.grade-churn
+  title: Grade churn
+  status: active
+  canonical_id: CAP-60
+- namespace: CAP
+  provisional_key: jobs.J8.interventions
+  title: Interventions
+  status: active
+  canonical_id: CAP-61
+- namespace: CAP
+  provisional_key: jobs.J8.outcome
+  title: Outcome
+  status: active
+  canonical_id: CAP-62
+- namespace: CAP
+  provisional_key: jobs.J7.prompt-pressure
+  title: Prompt pressure
+  status: active
+  canonical_id: CAP-63
+- namespace: CAP
+  provisional_key: design.initial-claims.final-gate-effect
+  title: Final-gate effect
+  status: active
+  canonical_id: CAP-64
+- namespace: CAP
+  provisional_key: journeys.A.freshness-and-connection
+  title: Data freshness and connection state
+  status: active
+  canonical_id: CAP-65
+- namespace: CAP
+  provisional_key: journeys.A.positive-empty-needs-you
+  title: Explicit empty needs-you state
+  status: active
+  canonical_id: CAP-66
+- namespace: CAP
+  provisional_key: journeys.A.no-runaway-signal
+  title: No runaway signal
+  status: active
+  canonical_id: CAP-67
+- namespace: CAP
+  provisional_key: journeys.B.wait-age
+  title: Decision wait age
+  status: active
+  canonical_id: CAP-68
+- namespace: CAP
+  provisional_key: journeys.B.validator-result
+  title: Command validator result
+  status: active
+  canonical_id: CAP-69
+- namespace: CAP
+  provisional_key: journeys.B.recorded-identity-timestamp
+  title: Recorded decision identity and timestamp
+  status: active
+  canonical_id: CAP-70
+- namespace: CAP
+  provisional_key: journeys.C.cost-of-another-attempt
+  title: Cost of another attempt
+  status: active
+  canonical_id: CAP-71
+- namespace: CAP
+  provisional_key: journeys.C.candidate-delta
+  title: Candidate delta
+  status: active
+  canonical_id: CAP-72
+- namespace: CAP
+  provisional_key: journeys.C.causal-gap
+  title: Causal gap
+  status: active
+  canonical_id: CAP-73
+- namespace: CAP
+  provisional_key: journeys.C.directive-binding
+  title: Directive binding
+  status: active
+  canonical_id: CAP-74
+- namespace: CAP
+  provisional_key: journeys.D.execution-unit-identity
+  title: Exact execution-unit identity
+  status: active
+  canonical_id: CAP-75
+- namespace: CAP
+  provisional_key: journeys.D.file-state-boundary
+  title: Repository file-state boundary
+  status: active
+  canonical_id: CAP-76
+- namespace: CAP
+  provisional_key: journeys.E.missing-node-attribution
+  title: Missing node attribution
+  status: active
+  canonical_id: CAP-77
+- namespace: CAP
+  provisional_key: journeys.E.detector-evidence
+  title: Detector drill-through evidence
+  status: active
+  canonical_id: CAP-78
+- namespace: CAP
+  provisional_key: journeys.continuity.canonical-selection
+  title: Canonical selection identity across projections
+  status: active
+  canonical_id: CAP-79
+- namespace: CAP
+  provisional_key: journeys.continuity.preserve-context
+  title: Preserve run selection time attempt and decision context
+  status: active
+  canonical_id: CAP-80
+- namespace: CAP
+  provisional_key: journeys.continuity.restore-return-state
+  title: Restore prior ranking filter and scroll position
+  status: active
+  canonical_id: CAP-81
+- namespace: CAP
+  provisional_key: journeys.continuity.derived-evidence-freshness
+  title: Derived claims expose evidence and freshness
+  status: active
+  canonical_id: CAP-82
+- namespace: CAP
+  provisional_key: journeys.continuity.action-safety-fields
+  title: Actions expose scope consequence reversibility authority and confirmation
+  status: active
+  canonical_id: CAP-83
+- namespace: CAP
+  provisional_key: journeys.continuity.responsive-context
+  title: Responsive layout preserves decision context
+  status: active
+  canonical_id: CAP-84
+- namespace: CAP
+  provisional_key: decisions.ignore-watch
+  title: Ignore or keep watching
+  status: active
+  canonical_id: CAP-85
+- namespace: CAP
+  provisional_key: decisions.approve-gate-patch
+  title: Approve deny or defer a gate or patch
+  status: active
+  canonical_id: CAP-86
+- namespace: CAP
+  provisional_key: decisions.answer-clarification
+  title: Answer a clarification
+  status: active
+  canonical_id: CAP-87
+- namespace: CAP
+  provisional_key: decisions.retry
+  title: Retry
+  status: active
+  canonical_id: CAP-88
+- namespace: CAP
+  provisional_key: decisions.lifecycle
+  title: Pause resume or cancel
+  status: active
+  canonical_id: CAP-89
+- namespace: CAP
+  provisional_key: decisions.retire-supersede
+  title: Retire or supersede a strand
+  status: active
+  canonical_id: CAP-90
+- namespace: CAP
+  provisional_key: decisions.requeue
+  title: Requeue failed outbox or work
+  status: active
+  canonical_id: CAP-91
+- namespace: CAP
+  provisional_key: decisions.steer-context
+  title: Steer with new context
+  status: active
+  canonical_id: CAP-92
+- namespace: CAP
+  provisional_key: decisions.apply-steering-patch
+  title: Apply a steering patch
+  status: active
+  canonical_id: CAP-93
+- namespace: CAP
+  provisional_key: decisions.change-source
+  title: Change a routine prompt or policy
+  status: active
+  canonical_id: CAP-94
+- namespace: CAP
+  provisional_key: honesty.live-input-age
+  title: Show timestamp or age for live health inputs
+  status: active
+  canonical_id: CAP-95
+- namespace: CAP
+  provisional_key: honesty.derived-label-evidence
+  title: Label detectors and derived claims and expose evidence
+  status: active
+  canonical_id: CAP-96
+- namespace: CAP
+  provisional_key: honesty.unpriced-not-zero
+  title: Unpriced usage remains explicit and is not zero
+  status: active
+  canonical_id: CAP-97
+- namespace: CAP
+  provisional_key: honesty.no-growing-plan-percent
+  title: Do not imply fixed completion percentage for a growing plan
+  status: active
+  canonical_id: CAP-98
+- namespace: CAP
+  provisional_key: honesty.fact-versus-inference
+  title: Distinguish observed fact from inference
+  status: active
+  canonical_id: CAP-99
+- namespace: CAP
+  provisional_key: honesty.approximate-values
+  title: Mark approximate values
+  status: active
+  canonical_id: CAP-100
+- namespace: CAP
+  provisional_key: honesty.directive-binding-proof
+  title: Do not imply directive delivery without packet binding evidence
+  status: active
+  canonical_id: CAP-101
+- namespace: CAP
+  provisional_key: feedback.command-accepted-rejected
+  title: Command accepted or rejected
+  status: active
+  canonical_id: CAP-102
+- namespace: CAP
+  provisional_key: feedback.validation-result-reason
+  title: Validation result and reason
+  status: active
+  canonical_id: CAP-103
+- namespace: CAP
+  provisional_key: feedback.durable-identity
+  title: Durable event or record identity
+  status: active
+  canonical_id: CAP-104
+- namespace: CAP
+  provisional_key: feedback.resulting-state
+  title: Resulting lifecycle topology or decision state
+  status: active
+  canonical_id: CAP-105
+- namespace: CAP
+  provisional_key: feedback.next-activity
+  title: Next expected system activity
+  status: active
+  canonical_id: CAP-106
+- namespace: CAP
+  provisional_key: feedback.failure-race-recovery
+  title: Recovery path for failure or stale-state race
+  status: active
+  canonical_id: CAP-107
+- namespace: CAP
+  provisional_key: ia.health.evidence-convergence
+  title: Evidence convergence
+  status: active
+  canonical_id: CAP-108
+- namespace: CAP
+  provisional_key: ia.health.needs-decision
+  title: Needs-decision classification
+  status: active
+  canonical_id: CAP-109
+- namespace: CAP
+  provisional_key: ia.health.degraded
+  title: Degraded classification
+  status: active
+  canonical_id: CAP-110
+- namespace: CAP
+  provisional_key: ia.health.stalled
+  title: Stalled classification
+  status: active
+  canonical_id: CAP-111
+- namespace: CAP
+  provisional_key: ia.health.runaway
+  title: Runaway classification
+  status: active
+  canonical_id: CAP-112
+- namespace: CAP
+  provisional_key: ia.health.steered
+  title: Steered classification
+  status: active
+  canonical_id: CAP-113
+- namespace: CAP
+  provisional_key: ia.health.settled
+  title: Settled classification
+  status: active
+  canonical_id: CAP-114
+- namespace: CAP
+  provisional_key: ia.selection.identity-chain
+  title: Run region step node task attempt record event requirement identity chain
+  status: active
+  canonical_id: CAP-115
+- namespace: CAP
+  provisional_key: ia.selection.comparison-target
+  title: Active comparison target
+  status: active
+  canonical_id: CAP-116
+- namespace: CAP
+  provisional_key: ia.selection.freshness-annotations
+  title: Freshness and capability annotations persist with selection
+  status: active
+  canonical_id: CAP-117
+- namespace: CAP
+  provisional_key: ia.vocabulary.distinct-entities
+  title: Distinct semantic vocabulary remains stable across projections
+  status: active
+  canonical_id: CAP-118
+- namespace: CAP
+  provisional_key: rubric.attention-clarity
+  title: Attention clarity
+  status: active
+  canonical_id: CAP-119
+- namespace: CAP
+  provisional_key: rubric.position-blast-radius
+  title: Position and blast radius
+  status: active
+  canonical_id: CAP-120
+- namespace: CAP
+  provisional_key: rubric.causal-comprehension
+  title: Causal comprehension
+  status: active
+  canonical_id: CAP-121
+- namespace: CAP
+  provisional_key: rubric.decision-readiness
+  title: Decision readiness
+  status: active
+  canonical_id: CAP-122
+- namespace: CAP
+  provisional_key: rubric.evidence-access
+  title: Evidence access
+  status: active
+  canonical_id: CAP-123
+- namespace: CAP
+  provisional_key: rubric.context-continuity
+  title: Context continuity
+  status: active
+  canonical_id: CAP-124
+- namespace: CAP
+  provisional_key: rubric.complexity-control
+  title: Complexity control
+  status: active
+  canonical_id: CAP-125
+- namespace: CAP
+  provisional_key: rubric.action-safety-feedback
+  title: Action safety and feedback
+  status: active
+  canonical_id: CAP-126
+- namespace: CAP
+  provisional_key: rubric.capability-honesty
+  title: Capability honesty
+  status: active
+  canonical_id: CAP-127
+- namespace: CAP
+  provisional_key: rubric.responsive-integrity
+  title: Responsive integrity
+  status: active
+  canonical_id: CAP-128
+- namespace: CAP
+  provisional_key: rubric.no-selection-resets
+  title: No selection resets or manual reselection
+  status: active
+  canonical_id: CAP-129
+- namespace: CAP
+  provisional_key: rubric.derived-evidence-access
+  title: Every derived claim has one-step evidence access
+  status: active
+  canonical_id: CAP-130
+- namespace: CAP
+  provisional_key: rubric.result-state-confirmation
+  title: Every action visibly confirms resulting state
+  status: active
+  canonical_id: CAP-131
+- namespace: CAP
+  provisional_key: rubric.viability-floor
+  title: Viability floor for decision evidence action safety and honesty
+  status: active
+  canonical_id: CAP-132
 - namespace: ENT
   provisional_key: DS-ENT-routine-config
   title: Routine configuration
@@ -1269,7 +1799,8 @@ items:
   canonical_id: CMD-1
 - namespace: CMD
   provisional_key: CMD-901
-  title: REST POST /api/runs/{id}/start; start_run; 202 signal accepted before consumer application
+  title: REST POST /api/runs/{id}/start; start_run; 202 signal accepted before consumer
+    application
   status: active
   canonical_id: CMD-2
 - namespace: CMD
@@ -1284,12 +1815,14 @@ items:
   canonical_id: CMD-4
 - namespace: CMD
   provisional_key: CMD-904
-  title: REST POST /api/runs/{id}/resume; resume_run; 202 signal accepted before consumer application
+  title: REST POST /api/runs/{id}/resume; resume_run; 202 signal accepted before consumer
+    application
   status: active
   canonical_id: CMD-5
 - namespace: CMD
   provisional_key: CMD-905
-  title: REST POST /api/runs/{id}/cancel; cancel_run; 202 signal accepted before row application
+  title: REST POST /api/runs/{id}/cancel; cancel_run; 202 signal accepted before row
+    application
   status: active
   canonical_id: CMD-6
 - namespace: CMD
@@ -1299,7 +1832,8 @@ items:
   canonical_id: CMD-7
 - namespace: CMD
   provisional_key: CMD-908
-  title: REST clarification response; respond_to_clarification; synchronous response plus eligible resumption
+  title: REST clarification response; respond_to_clarification; synchronous response
+    plus eligible resumption
   status: active
   canonical_id: CMD-8
 - namespace: CMD
@@ -1314,23 +1848,26 @@ items:
   canonical_id: CMD-10
 - namespace: CMD
   provisional_key: CMD-912
-  title: REST POST /graph/decisions; RecordDecisionCommand with discriminated approval, authority, or oversight type/value;
-    synchronous graph append/projection
+  title: REST POST /graph/decisions; RecordDecisionCommand with discriminated approval,
+    authority, or oversight type/value; synchronous graph append/projection
   status: active
   canonical_id: CMD-11
 - namespace: CMD
   provisional_key: CMD-915
-  title: REST POST /graph/patch; SubmitGraphPatchCommand; synchronous accepted/rejected patch attempt
+  title: REST POST /graph/patch; SubmitGraphPatchCommand; synchronous accepted/rejected
+    patch attempt
   status: active
   canonical_id: CMD-12
 - namespace: CMD
   provisional_key: CMD-916
-  title: Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand; synchronous graph append/projection
+  title: Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand;
+    synchronous graph append/projection
   status: active
   canonical_id: CMD-13
 - namespace: CMD
   provisional_key: CMD-917
-  title: REST POST /graph/outbox/requeue/{event_id}; requeue_outbox; transactional pending reset plus event
+  title: REST POST /graph/outbox/requeue/{event_id}; requeue_outbox; transactional
+    pending reset plus event
   status: active
   canonical_id: CMD-14
 - namespace: CMD
@@ -1345,12 +1882,14 @@ items:
   canonical_id: CMD-16
 - namespace: CMD
   provisional_key: CMD-920
-  title: REST review revert-back-merge; revert_back_merge; synchronous git mutation or conflict
+  title: REST review revert-back-merge; revert_back_merge; synchronous git mutation
+    or conflict
   status: active
   canonical_id: CMD-17
 - namespace: CMD
   provisional_key: CMD-922
-  title: REST review conflict resolution; resolve_conflict; synchronous staged conflict effect
+  title: REST review conflict resolution; resolve_conflict; synchronous staged conflict
+    effect
   status: active
   canonical_id: CMD-18
 - namespace: CMD
@@ -1370,38 +1909,44 @@ items:
   canonical_id: CMD-21
 - namespace: CMD
   provisional_key: CMD-926
-  title: REST environment snapshot copy; copy_env_snapshot; synchronous filesystem write
+  title: REST environment snapshot copy; copy_env_snapshot; synchronous filesystem
+    write
   status: active
   canonical_id: CMD-22
 - namespace: CMD
   provisional_key: CMD-929
-  title: REST runner model-profile defaults PUT; runner defaults service; synchronous configuration-row replacement
+  title: REST runner model-profile defaults PUT; runner defaults service; synchronous
+    configuration-row replacement
   status: active
   canonical_id: CMD-23
 - namespace: CMD
   provisional_key: CMD-930
-  title: REST repository add; repository service; synchronous clone/symlink/metadata mutation
+  title: REST repository add; repository service; synchronous clone/symlink/metadata
+    mutation
   status: active
   canonical_id: CMD-24
 - namespace: CMD
   provisional_key: CMD-931
-  title: REST repository remove; repository service; synchronous destructive filesystem/metadata mutation
+  title: REST repository remove; repository service; synchronous destructive filesystem/metadata
+    mutation
   status: active
   canonical_id: CMD-25
 - namespace: CMD
   provisional_key: CMD-932
-  title: REST POST /api/routines/validate; validate_routine; synchronous non-mutating YAML/schema response
+  title: REST POST /api/routines/validate; validate_routine; synchronous non-mutating
+    YAML/schema response
   status: active
   canonical_id: CMD-26
 - namespace: CMD
   provisional_key: CMD-933
-  title: REST POST /api/runs/{run_id}/review/test; start_test_run; 202 asynchronous test-job start before result
+  title: REST POST /api/runs/{run_id}/review/test; start_test_run; 202 asynchronous
+    test-job start before result
   status: active
   canonical_id: CMD-27
 - namespace: CMD
   provisional_key: CMD-934
-  title: REST POST /api/runs/{run_id}/review/conflicts/agent-resolve; agent_resolve_conflicts; synchronous dispatch acceptance
-    before agent result
+  title: REST POST /api/runs/{run_id}/review/conflicts/agent-resolve; agent_resolve_conflicts;
+    synchronous dispatch acceptance before agent result
   status: active
   canonical_id: CMD-28
 - namespace: CMD
@@ -1411,12 +1956,14 @@ items:
   canonical_id: CMD-29
 - namespace: CMD
   provisional_key: CMD-936
-  title: REST task reject endpoint; reject_task; synchronous building-or-failed legacy task outcome
+  title: REST task reject endpoint; reject_task; synchronous building-or-failed legacy
+    task outcome
   status: active
   canonical_id: CMD-30
 - namespace: CMD
   provisional_key: CMD-937
-  title: REST task force-accept endpoint; force_accept_task; synchronous qualified task completion
+  title: REST task force-accept endpoint; force_accept_task; synchronous qualified
+    task completion
   status: active
   canonical_id: CMD-31
 - namespace: CMD
@@ -1431,22 +1978,26 @@ items:
   canonical_id: CMD-33
 - namespace: CMD
   provisional_key: CMD-940
-  title: REST backward-transition endpoint; backward_transition; synchronous legacy step/task rewind
+  title: REST backward-transition endpoint; backward_transition; synchronous legacy
+    step/task rewind
   status: active
   canonical_id: CMD-34
 - namespace: CMD
   provisional_key: CMD-941
-  title: REST POST /api/runs/{run_id}/recover; recover_run; synchronous compensating recovery to paused
+  title: REST POST /api/runs/{run_id}/recover; recover_run; synchronous compensating
+    recovery to paused
   status: active
   canonical_id: CMD-35
 - namespace: CMD
   provisional_key: CMD-942
-  title: REST POST /api/routines/{routine_id}/archive; archive_routine; synchronous routine metadata update
+  title: REST POST /api/routines/{routine_id}/archive; archive_routine; synchronous
+    routine metadata update
   status: active
   canonical_id: CMD-36
 - namespace: CMD
   provisional_key: CMD-943
-  title: REST POST /api/routines/{routine_id}/unarchive; unarchive_routine; synchronous routine metadata update
+  title: REST POST /api/routines/{routine_id}/unarchive; unarchive_routine; synchronous
+    routine metadata update
   status: active
   canonical_id: CMD-37
 - namespace: CMD
@@ -1456,22 +2007,26 @@ items:
   canonical_id: CMD-38
 - namespace: CMD
   provisional_key: CMD-945
-  title: REST PUT /api/agents/{agent_id}; update_agent; synchronous configuration-row update
+  title: REST PUT /api/agents/{agent_id}; update_agent; synchronous configuration-row
+    update
   status: active
   canonical_id: CMD-39
 - namespace: CMD
   provisional_key: CMD-946
-  title: REST DELETE /api/agents/{agent_id}; delete_agent; synchronous configuration-row deletion
+  title: REST DELETE /api/agents/{agent_id}; delete_agent; synchronous configuration-row
+    deletion
   status: active
   canonical_id: CMD-40
 - namespace: CMD
   provisional_key: CMD-947
-  title: REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous default-prompt restoration
+  title: REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous
+    default-prompt restoration
   status: active
   canonical_id: CMD-41
 - namespace: EVD
   provisional_key: EVI-900
-  title: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions
+  title: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row
+    transitions
   status: active
   canonical_id: EVD-7
 - namespace: EVD
@@ -1501,7 +2056,8 @@ items:
   canonical_id: EVD-12
 - namespace: EVD
   provisional_key: EVI-906
-  title: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume boundary
+  title: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume
+    boundary
   status: active
   canonical_id: EVD-13
 - namespace: EVD
@@ -1521,7 +2077,8 @@ items:
   canonical_id: EVD-16
 - namespace: EVD
   provisional_key: EVI-910
-  title: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph lifecycle commands
+  title: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph
+    lifecycle commands
   status: active
   canonical_id: EVD-17
 - namespace: EVD
@@ -1566,7 +2123,8 @@ items:
   canonical_id: EVD-25
 - namespace: EVD
   provisional_key: EVI-919
-  title: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry failure
+  title: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry
+    failure
   status: active
   canonical_id: EVD-26
 - namespace: EVD
@@ -1576,7 +2134,8 @@ items:
   canonical_id: EVD-27
 - namespace: EVD
   provisional_key: EVI-921
-  title: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async review timing
+  title: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async
+    review timing
   status: active
   canonical_id: EVD-28
 - namespace: EVD
@@ -1626,7 +2185,8 @@ items:
   canonical_id: EVD-37
 - namespace: EVD
   provisional_key: EVI-931
-  title: tests/integration/test_api_auth.py global optional bearer-authentication anchors
+  title: tests/integration/test_api_auth.py global optional bearer-authentication
+    anchors
   status: active
   canonical_id: EVD-38
 - namespace: EVD
@@ -1636,7 +2196,8 @@ items:
   canonical_id: EVD-39
 - namespace: EVD
   provisional_key: EVI-933
-  title: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input eligibility
+  title: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input
+    eligibility
   status: active
   canonical_id: EVD-40
 - namespace: EVD
@@ -1646,37 +2207,44 @@ items:
   canonical_id: EVD-41
 - namespace: EVD
   provisional_key: EVI-935
-  title: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py closure scope
+  title: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py
+    closure scope
   status: active
   canonical_id: EVD-42
 - namespace: EVD
   provisional_key: EVI-936
-  title: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous row creation/deletion routes
+  title: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous
+    row creation/deletion routes
   status: active
   canonical_id: EVD-43
 - namespace: EVD
   provisional_key: EVI-937
-  title: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges fan-out carrier behavior
+  title: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges
+    fan-out carrier behavior
   status: active
   canonical_id: EVD-44
 - namespace: EVD
   provisional_key: EVI-938
-  title: '04-api-actions-authority.md#action-transition-back and #action-run-recover; tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
+  title: '04-api-actions-authority.md#action-transition-back and #action-run-recover;
+    tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
   status: active
   canonical_id: EVD-45
 - namespace: EVD
   provisional_key: EVI-939
-  title: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and RoutineConfig validation response
+  title: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and
+    RoutineConfig validation response
   status: active
   canonical_id: EVD-46
 - namespace: EVD
   provisional_key: EVI-940
-  title: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start and completion callback
+  title: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start
+    and completion callback
   status: active
   canonical_id: EVD-47
 - namespace: EVD
   provisional_key: EVI-941
-  title: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch and AgentFixStarted
+  title: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch
+    and AgentFixStarted
   status: active
   canonical_id: EVD-48
 - namespace: EVD
@@ -1715,7 +2283,8 @@ items:
   status: active
   canonical_id: EVD-55
 - namespace: EVD
-  provisional_key: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring
+  provisional_key: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer
+    wiring
   title: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring
   status: active
   canonical_id: EVD-56
@@ -1740,7 +2309,8 @@ items:
   status: active
   canonical_id: EVD-60
 - namespace: EVD
-  provisional_key: agent-reports/04-api-actions-authority.md#Transport and capability inventory
+  provisional_key: agent-reports/04-api-actions-authority.md#Transport and capability
+    inventory
   title: agent-reports/04-api-actions-authority.md#Transport and capability inventory
   status: active
   canonical_id: EVD-61
@@ -1765,7 +2335,8 @@ items:
   status: active
   canonical_id: EVD-65
 - namespace: EVD
-  provisional_key: agent-reports/04-api-actions-authority.md#CLI database maintenance capability
+  provisional_key: agent-reports/04-api-actions-authority.md#CLI database maintenance
+    capability
   title: agent-reports/04-api-actions-authority.md#CLI database maintenance capability
   status: active
   canonical_id: EVD-66
@@ -1785,7 +2356,8 @@ items:
   status: active
   canonical_id: EVD-69
 - namespace: EVD
-  provisional_key: agent-reports/03-workflow-state.md#Durable authority projection and recovery
+  provisional_key: agent-reports/03-workflow-state.md#Durable authority projection
+    and recovery
   title: agent-reports/03-workflow-state.md#Durable authority projection and recovery
   status: active
   canonical_id: EVD-70
@@ -1830,7 +2402,8 @@ items:
   status: active
   canonical_id: EVD-78
 - namespace: EVD
-  provisional_key: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries
+  provisional_key: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and
+    file boundaries
   title: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries
   status: active
   canonical_id: EVD-79
@@ -1885,7 +2458,8 @@ items:
   status: active
   canonical_id: EVD-89
 - namespace: EVD
-  provisional_key: agent-reports/04-api-actions-authority.md#Race idempotency and action feedback
+  provisional_key: agent-reports/04-api-actions-authority.md#Race idempotency and
+    action feedback
   title: agent-reports/04-api-actions-authority.md#Race idempotency and action feedback
   status: active
   canonical_id: EVD-90
@@ -1935,17 +2509,20 @@ items:
   status: active
   canonical_id: CON-3
 - namespace: CON
-  provisional_key: report-conflict:Recorded action attribution is not an authenticated identity
+  provisional_key: report-conflict:Recorded action attribution is not an authenticated
+    identity
   title: Recorded action attribution is not an authenticated identity
   status: active
   canonical_id: CON-4
 - namespace: CON
-  provisional_key: report-conflict:Artifact and telemetry coverage differs between graph and legacy
+  provisional_key: report-conflict:Artifact and telemetry coverage differs between
+    graph and legacy
   title: Artifact and telemetry coverage differs between graph and legacy
   status: active
   canonical_id: CON-5
 - namespace: CON
-  provisional_key: report-conflict:Lifecycle REST acceptance differs from direct CLI application
+  provisional_key: report-conflict:Lifecycle REST acceptance differs from direct CLI
+    application
   title: Lifecycle REST acceptance differs from direct CLI application
   status: active
   canonical_id: CON-6
@@ -1970,12 +2547,14 @@ items:
   status: active
   canonical_id: Q-1
 - namespace: Q
-  provisional_key: report-question:Define typed cross-mode conversion and selection contracts
+  provisional_key: report-question:Define typed cross-mode conversion and selection
+    contracts
   title: Define typed cross-mode conversion and selection contracts
   status: active
   canonical_id: Q-2
 - namespace: Q
-  provisional_key: report-question:Reconcile JSONL authority documentation with executable SQL authority
+  provisional_key: report-question:Reconcile JSONL authority documentation with executable
+    SQL authority
   title: Reconcile JSONL authority documentation with executable SQL authority
   status: active
   canonical_id: Q-3
@@ -1985,12 +2564,14 @@ items:
   status: active
   canonical_id: Q-4
 - namespace: Q
-  provisional_key: report-question:Define product-role authorization before treating actor text as authority
+  provisional_key: report-question:Define product-role authorization before treating
+    actor text as authority
   title: Define product-role authorization before treating actor text as authority
   status: active
   canonical_id: Q-5
 - namespace: Q
-  provisional_key: report-question:Decide whether execution-bound graph MCP patch macros need an action contract
+  provisional_key: report-question:Decide whether execution-bound graph MCP patch
+    macros need an action contract
   title: Decide whether execution-bound graph MCP patch macros need an action contract
   status: active
   canonical_id: Q-6
@@ -2005,23 +2586,28 @@ items:
   status: active
   canonical_id: EVD-97
 - namespace: INV
-  provisional_key: invariant:Graph patch validation rejects invalid topology before visible acceptance
+  provisional_key: invariant:Graph patch validation rejects invalid topology before
+    visible acceptance
   title: Graph patch validation rejects invalid topology before visible acceptance
   status: active
   canonical_id: INV-1
 - namespace: INV
-  provisional_key: invariant:Final graph completion requires a passing deterministic final check
+  provisional_key: invariant:Final graph completion requires a passing deterministic
+    final check
   title: Final graph completion requires a passing deterministic final check
   status: active
   canonical_id: INV-2
 - namespace: INV
-  provisional_key: invariant:Graph event append and read-model update share rollback behavior
+  provisional_key: invariant:Graph event append and read-model update share rollback
+    behavior
   title: Graph event append and read-model update share rollback behavior
   status: active
   canonical_id: INV-3
 - namespace: INV
-  provisional_key: invariant:Accepted callbacks and usage records are idempotent for their represented keys
-  title: Accepted callbacks and usage records are idempotent for their represented keys
+  provisional_key: invariant:Accepted callbacks and usage records are idempotent for
+    their represented keys
+  title: Accepted callbacks and usage records are idempotent for their represented
+    keys
   status: active
   canonical_id: INV-4
 - namespace: INV
@@ -2155,3 +2741,58 @@ items:
   provisional_key: EVD-113
   title: Phase 1 snapshot coverage attestation
   status: active
+- namespace: DRV
+  provisional_key: derivation-01
+  title: Admitted derivation 1
+  status: active
+  canonical_id: DRV-1
+- namespace: DRV
+  provisional_key: derivation-02
+  title: Admitted derivation 2
+  status: active
+  canonical_id: DRV-2
+- namespace: DRV
+  provisional_key: derivation-03
+  title: Admitted derivation 3
+  status: active
+  canonical_id: DRV-3
+- namespace: DRV
+  provisional_key: derivation-04
+  title: Admitted derivation 4
+  status: active
+  canonical_id: DRV-4
+- namespace: DRV
+  provisional_key: derivation-05
+  title: Admitted derivation 5
+  status: active
+  canonical_id: DRV-5
+- namespace: DRV
+  provisional_key: derivation-06
+  title: Admitted derivation 6
+  status: active
+  canonical_id: DRV-6
+- namespace: DRV
+  provisional_key: derivation-07
+  title: Admitted derivation 7
+  status: active
+  canonical_id: DRV-7
+- namespace: DRV
+  provisional_key: derivation-08
+  title: Admitted derivation 8
+  status: active
+  canonical_id: DRV-8
+- namespace: DRV
+  provisional_key: derivation-09
+  title: Admitted derivation 9
+  status: active
+  canonical_id: DRV-9
+- namespace: DRV
+  provisional_key: derivation-10
+  title: Admitted derivation 10
+  status: active
+  canonical_id: DRV-10
+- namespace: DRV
+  provisional_key: derivation-11
+  title: Admitted derivation 11
+  status: active
+  canonical_id: DRV-11

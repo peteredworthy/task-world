@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Canonical UI foundation demand and derivation identifiers"
+regexTarget = "line"
+regexes = [
+  '''^\s*(?:provisional_key|scope_demand_key): (?:jobs\.J\d+|design\.|journeys\.|decisions\.|honesty\.|feedback\.|ia\.|rubric\.|derivation-)\S+$''',
+]

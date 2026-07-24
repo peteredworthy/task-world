@@ -1867,3 +1867,305 @@ def test_phase_two_rejects_duplicate_scope_status_and_forbidden_current_manifest
 
     assert "CAPABILITY_DEMAND_STATUS_DUPLICATE" in issue_codes(result)
     assert "FORBIDDEN_CURRENT_MANIFEST" in issue_codes(result)
+
+
+def test_committed_phase_two_registry_preserves_adjudicated_capability_boundaries() -> None:
+    result = run_validator(REPO_ROOT / "research/ui-foundation", phase=2)
+
+    assert result.returncode == 0, result.stderr
+    claims = yaml.safe_load(
+        (REPO_ROOT / "research/ui-foundation/catalog/claims.yaml").read_text(encoding="utf-8")
+    )
+    assert claims["classification_counts"] == {
+        "current": 2,
+        "derived": 12,
+        "proposed": 25,
+        "gap": 39,
+        "unknown": 54,
+    }
+    assert claims["derivation_count"] == 11
+
+
+def phase_two_demand(key: str, label: str = "Demand-specific label") -> dict[str, object]:
+    return {
+        "key": key,
+        "source": "docs/jtbd/jobs.md",
+        "source_anchor": "J1",
+        "demand_type": "claim",
+        "label": label,
+        "audit_owner": "workflow-state",
+        "downstream_jobs": ["J1"],
+        "blocking": True,
+    }
+
+
+def classified_capability(identifier: str, key: str, **overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "title": "Demand-specific capability",
+        "definition": f"Demand-specific definition for {key}.",
+        "implementation_status": "absent",
+        "test_status": "unexercised",
+        "documentation_status": "documented",
+        "capability_status": "gap",
+        "confidence_basis": f"Direct adjudication for {key}.",
+        "limitations": [f"{key} remains unavailable."],
+        "prohibited_interpretations": [f"Do not present {key} as available."],
+        "scope_demand_key": key,
+        "classification_basis": "No reachable implementation evidence establishes this demand.",
+    }
+    return semantic_item(identifier, **(values | overrides))
+
+
+def write_cap_allocation(root: Path, identifier: str, key: str) -> None:
+    append_yaml_item(
+        root / "catalog/ids.yaml",
+        {
+            "namespace": "CAP",
+            "provisional_key": key,
+            "title": "Demand-specific capability",
+            "status": "active",
+            "canonical_id": identifier,
+        },
+    )
+
+
+def test_phase_two_rejects_duplicate_scope_keys_before_coverage_set_conversion(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {"schema_version": "1", "items": [phase_two_demand("claim.one")] * 2},
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {"schema_version": "1", "items": [classified_capability("CAP-1", "claim.one")]},
+    )
+    write_cap_allocation(root, "CAP-1", "claim.one")
+
+    result = run_validator(root)
+
+    assert "SCOPE_DEMAND_KEY_DUPLICATE" in issue_codes(result)
+
+
+def test_phase_two_rejects_extra_registry_records_and_unbound_or_placeholder_allocations(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {"schema_version": "1", "items": [phase_two_demand("claim.one")]},
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                classified_capability("CAP-1", "claim.one"),
+                classified_capability("CAP-2", "claim.extra"),
+            ],
+        },
+    )
+    write_cap_allocation(root, "CAP-1", "scope-demand-001")
+    write_cap_allocation(root, "CAP-2", "claim.extra")
+
+    result = run_validator(root)
+
+    assert {
+        "CAPABILITY_DEMAND_EXTRA",
+        "CAPABILITY_ALLOCATION_BINDING_INVALID",
+        "CAPABILITY_ALLOCATION_PLACEHOLDER",
+    } <= set(issue_codes(result))
+
+
+def test_phase_two_rejects_generic_or_incomplete_capability_adjudication(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {"schema_version": "1", "items": [phase_two_demand("claim.one")]},
+    )
+    item = classified_capability("CAP-1", "claim.one")
+    item.update(
+        {
+            "title": "CAP-1",
+            "definition": "Definition",
+            "limitations": [],
+            "prohibited_interpretations": [],
+        }
+    )
+    write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": [item]})
+    write_cap_allocation(root, "CAP-1", "claim.one")
+
+    result = run_validator(root)
+
+    assert "CAPABILITY_ADJUDICATION_GENERIC" in issue_codes(result)
+    assert "CAPABILITY_ORTHOGONAL_STATUS_MISSING" in issue_codes(result)
+
+
+def test_phase_two_current_requires_direct_reachable_implementation_and_direct_exercised_test(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {"schema_version": "1", "items": [phase_two_demand("claim.one")]},
+    )
+    item = classified_capability(
+        "CAP-1",
+        "claim.one",
+        implementation_status="partial",
+        test_status="unknown",
+        capability_status="current",
+        evidence_ids=["EVD-1", "EVD-2"],
+        question_ids=["Q-1"],
+    )
+    write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": [item]})
+    write_cap_allocation(root, "CAP-1", "claim.one")
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {"id": "EVD-1", "source_kind": "persisted-record", "reachable": True},
+                {
+                    "id": "EVD-2",
+                    "source_kind": "audit-report",
+                    "reachable": True,
+                    "test_status": "exercised",
+                },
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/questions.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "id": "Q-1",
+                    "blocking": True,
+                    "status": "open",
+                    "affected_ids": ["CAP-1"],
+                }
+            ],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert {
+        "CURRENT_DIRECT_IMPLEMENTATION_EVIDENCE_MISSING",
+        "CURRENT_DIRECT_TEST_EVIDENCE_MISSING",
+        "CURRENT_STATUS_INCONSISTENT",
+        "CURRENT_QUESTION_UNRESOLVED",
+    } <= set(issue_codes(result))
+
+
+def test_phase_two_rejects_incomplete_or_non_bidirectional_derivation_contract(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {"schema_version": "1", "items": [phase_two_demand("claim.one")]},
+    )
+    item = classified_capability(
+        "CAP-1", "claim.one", capability_status="derived", derivation_id="DRV-1"
+    )
+    write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": [item]})
+    write_cap_allocation(root, "CAP-1", "claim.one")
+    write_yaml(
+        root / "capabilities/derivations/DRV-1.yaml",
+        {
+            "id": "DRV-1",
+            "status": "admitted",
+            "capability_ids": ["CAP-2"],
+            "inputs": ["CAP-9"],
+            "algorithm": "Combine values.",
+            "output_type": "Result",
+            "unknown_behavior": "Unknown on missing input.",
+            "failure_behavior": "Reject malformed input.",
+            "freshness": "At source position.",
+            "recomputation_behavior": "On source change.",
+            "implementation_evidence_ids": ["EVD-1"],
+            "limitations": ["Limited."],
+            "prohibited_interpretations": ["Not causal."],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert {
+        "DERIVATION_TYPED_INPUTS_MISSING",
+        "DERIVATION_CAPABILITY_BACKLINK_MISSING",
+        "DERIVATION_CAPABILITY_LINK_UNRESOLVED",
+        "DERIVATION_ALGORITHM_INCOMPLETE",
+    } <= set(issue_codes(result))
+
+
+def test_phase_two_rejects_false_absence_and_unlinked_claimed_uncertainty(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {"schema_version": "1", "items": [phase_two_demand("claim.one")]},
+    )
+    item = classified_capability(
+        "CAP-1",
+        "claim.one",
+        classification_basis="Partial reachable implementation exists, but a blocking conflict remains.",
+        evidence_ids=["EVD-1"],
+    )
+    write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": [item]})
+    write_cap_allocation(root, "CAP-1", "claim.one")
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-1", "source_kind": "implementation", "reachable": True}],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert "CAPABILITY_FALSE_ABSENCE" in issue_codes(result)
+    assert "CAPABILITY_BASIS_LINK_MISSING" in issue_codes(result)
+
+
+def test_phase_two_rejects_stale_completion_metadata_and_generated_projections(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {"schema_version": "1", "items": [phase_two_demand("claim.one")]},
+    )
+    item = classified_capability("CAP-1", "claim.one")
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {"schema_version": "1", "phase_status": "complete", "completion_phase": 2, "items": [item]},
+    )
+    write_cap_allocation(root, "CAP-1", "claim.one")
+    write_yaml(
+        root / "catalog/claims.yaml",
+        {
+            "schema_version": "1",
+            "phase_status": "complete",
+            "completion_phase": 2,
+            "scope_demand_count": 99,
+            "classification_counts": {"gap": 99},
+            "items": [],
+        },
+    )
+    (root / "capabilities/gaps.md").write_text("stale\n", encoding="utf-8")
+    (root / "status.md").write_text("stale\n", encoding="utf-8")
+
+    result = run_validator(root)
+
+    assert {
+        "PHASE_TWO_METADATA_MISMATCH",
+        "PHASE_TWO_CLAIMS_PROJECTION_STALE",
+        "PHASE_TWO_GAPS_PROJECTION_STALE",
+        "PHASE_TWO_STATUS_PROJECTION_STALE",
+    } <= set(issue_codes(result))

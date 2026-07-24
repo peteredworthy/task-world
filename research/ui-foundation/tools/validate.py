@@ -366,7 +366,9 @@ class DerivationContract(BaseModel):
 
     id: str = Field(pattern=r"^DRV-[0-9]+$")
     status: Literal["admitted", "rejected"]
+    capability_ids: list[str] = []
     inputs: list[str] = Field(min_length=1)
+    typed_inputs: dict[str, str] = {}
     algorithm: str = Field(min_length=1)
     output_type: str = Field(min_length=1)
     unknown_behavior: str = Field(min_length=1)
@@ -625,6 +627,15 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
 
     declarations: dict[str, str] = {}
     for relative, document in canonical.items():
+        raw_document = package.documents.get(relative)
+        is_phase_two_claim_projection = (
+            phase >= 2
+            and relative == "catalog/claims.yaml"
+            and isinstance(raw_document, dict)
+            and raw_document.get("registry") == "capabilities/registry.yaml"
+        )
+        if is_phase_two_claim_projection:
+            continue
         for item in document.items:
             identifier = item.get("id")
             if isinstance(identifier, str):
@@ -670,6 +681,22 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         for item in (question_document.items if question_document else [])
         if isinstance((identifier := item.get("id")), str)
     }
+    decisive_question_ids_by_capability: dict[str, set[str]] = {
+        capability_id: set() for capability_id in semantic_items
+    }
+    for item in question_document.items if question_document else []:
+        question_id = item.get("id")
+        affected_ids = item.get("affected_ids")
+        if (
+            not isinstance(question_id, str)
+            or not isinstance(affected_ids, list)
+            or item.get("blocking") is not True
+            or item.get("status") == "resolved"
+        ):
+            continue
+        for capability_id in semantic_items:
+            if capability_id in affected_ids:
+                decisive_question_ids_by_capability[capability_id].add(question_id)
     for identifier, semantic in semantic_items.items():
         relative = declarations.get(identifier, "unknown")
         for reference in semantic.evidence_ids:
@@ -1027,7 +1054,9 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     if phase >= 2:
         issues.extend(
             _validate_phase_two_capability_coverage(
-                package, registry if isinstance(registry, CapabilityCatalog) else None
+                package,
+                registry if isinstance(registry, CapabilityCatalog) else None,
+                evidence,
             )
         )
     for item in registry.items if registry else []:
@@ -1100,6 +1129,60 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 issues.append(
                     _issue(
                         "CURRENT_FUTURE_LEAKAGE",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            raw_records = (
+                [raw_evidence_by_id[value] for value in evidence_ids if value in raw_evidence_by_id]
+                if isinstance(evidence_ids, list)
+                else []
+            )
+            if not any(
+                _is_direct_evidence(record)
+                and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
+                and record.get("reachable") is True
+                and _has_valid_direct_locator(record, snapshot_paths)
+                for record in raw_records
+            ):
+                issues.append(
+                    _issue(
+                        "CURRENT_DIRECT_IMPLEMENTATION_EVIDENCE_MISSING",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            if not any(
+                _is_direct_evidence(record)
+                and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
+                and record.get("reachable") is True
+                and record.get("test_status") == "exercised"
+                and _has_valid_direct_locator(record, snapshot_paths)
+                for record in raw_records
+            ):
+                issues.append(
+                    _issue(
+                        "CURRENT_DIRECT_TEST_EVIDENCE_MISSING",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            if implementation != "present" or item.get("test_status") != "exercised":
+                issues.append(
+                    _issue(
+                        "CURRENT_STATUS_INCONSISTENT",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            question_ids = item.get("question_ids")
+            if isinstance(question_ids, list) and any(
+                question_id in decisive_question_ids_by_capability.get(str(item.get("id")), set())
+                for question_id in question_ids
+            ):
+                issues.append(
+                    _issue(
+                        "CURRENT_QUESTION_UNRESOLVED",
                         package.root / "capabilities/registry.yaml",
                         item.get("id"),
                     )
@@ -1187,16 +1270,64 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         "limitations": "DERIVATION_LIMITATIONS_MISSING",
         "prohibited_interpretations": "DERIVATION_PROHIBITED_INTERPRETATIONS_MISSING",
     }
+    if phase >= 2:
+        required_derivation |= {
+            "capability_ids": "DERIVATION_CAPABILITY_IDS_MISSING",
+            "typed_inputs": "DERIVATION_TYPED_INPUTS_MISSING",
+        }
     for relative, value in package.documents.items():
         if not relative.startswith("capabilities/derivations/") or not isinstance(value, dict):
             continue
         for field, code in required_derivation.items():
             if value.get(field) in (None, "", []):
                 issues.append(_issue(code, package.root / relative, field))
+        algorithm = value.get("algorithm")
+        if (
+            phase >= 2
+            and isinstance(algorithm, str)
+            and not all(term in algorithm.lower() for term in ("determin", "tie", "round"))
+        ):
+            issues.append(
+                _issue("DERIVATION_ALGORITHM_INCOMPLETE", package.root / relative, "algorithm")
+            )
+        capability_ids = value.get("capability_ids")
+        if isinstance(capability_ids, list):
+            for capability_id in capability_ids:
+                capability = (
+                    semantic_items.get(capability_id) if isinstance(capability_id, str) else None
+                )
+                if capability is None or capability.capability_status != "derived":
+                    issues.append(
+                        _issue(
+                            "DERIVATION_CAPABILITY_LINK_UNRESOLVED",
+                            package.root / relative,
+                            capability_id,
+                        )
+                    )
+    raw_derivation_capability_ids = {
+        identifier: value.get("capability_ids")
+        for relative, value in package.documents.items()
+        if relative.startswith("capabilities/derivations/")
+        and isinstance(value, dict)
+        and isinstance((identifier := value.get("id")), str)
+    }
     for item in registry.items if registry else []:
         if item.get("capability_status") != "derived":
             continue
         derivation_id = item.get("derivation_id")
+        raw_backlinks = (
+            raw_derivation_capability_ids.get(derivation_id)
+            if isinstance(derivation_id, str)
+            else None
+        )
+        if not isinstance(raw_backlinks, list) or item.get("id") not in raw_backlinks:
+            issues.append(
+                _issue(
+                    "DERIVATION_CAPABILITY_BACKLINK_MISSING",
+                    package.root / "capabilities/registry.yaml",
+                    item.get("id"),
+                )
+            )
         if not isinstance(derivation_id, str) or derivation_id not in derivations:
             issues.append(
                 _issue(
@@ -1234,7 +1365,9 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
 
 
 def _validate_phase_two_capability_coverage(
-    package: FoundationPackage, registry: CapabilityCatalog | None
+    package: FoundationPackage,
+    registry: CapabilityCatalog | None,
+    evidence: dict[str, EvidenceRecord],
 ) -> list[ValidationIssue]:
     """Require one honest capability classification for every closed scope demand."""
     issues: list[ValidationIssue] = []
@@ -1244,6 +1377,14 @@ def _validate_phase_two_capability_coverage(
     if isinstance(scope_items, list):
         for item in scope_items:
             if isinstance(item, dict) and isinstance((key := item.get("key")), str):
+                if key in scope_keys:
+                    issues.append(
+                        _issue(
+                            "SCOPE_DEMAND_KEY_DUPLICATE",
+                            package.root / "catalog/scope.yaml",
+                            key,
+                        )
+                    )
                 scope_keys.add(key)
     registry_items = registry.items if registry else []
     by_demand: dict[str, list[dict[str, JsonValue]]] = {}
@@ -1263,6 +1404,13 @@ def _validate_phase_two_capability_coverage(
             issues.append(
                 _issue(
                     "CAPABILITY_DEMAND_UNRESOLVED",
+                    package.root / "capabilities/registry.yaml",
+                    key,
+                )
+            )
+            issues.append(
+                _issue(
+                    "CAPABILITY_DEMAND_EXTRA",
                     package.root / "capabilities/registry.yaml",
                     key,
                 )
@@ -1293,6 +1441,88 @@ def _validate_phase_two_capability_coverage(
                         item.get("id"),
                     )
                 )
+            identifier = item.get("id")
+            title = item.get("title")
+            definition = item.get("definition")
+            generic = (
+                not isinstance(title, str)
+                or title == identifier
+                or bool(re.fullmatch(r"(?:Capability demand|Admitted derivation) \d+", title))
+                or not isinstance(definition, str)
+                or definition == "Definition"
+            )
+            if generic:
+                issues.append(
+                    _issue(
+                        "CAPABILITY_ADJUDICATION_GENERIC",
+                        package.root / "capabilities/registry.yaml",
+                        identifier,
+                    )
+                )
+            if any(
+                item.get(field) in (None, "", [])
+                for field in (
+                    "implementation_status",
+                    "test_status",
+                    "documentation_status",
+                    "evidence_ids",
+                    "confidence_basis",
+                    "limitations",
+                    "prohibited_interpretations",
+                )
+            ):
+                issues.append(
+                    _issue(
+                        "CAPABILITY_ORTHOGONAL_STATUS_MISSING",
+                        package.root / "capabilities/registry.yaml",
+                        identifier,
+                    )
+                )
+            status = item.get("capability_status")
+            implementation_status = item.get("implementation_status")
+            evidence_ids = item.get("evidence_ids")
+            records = (
+                [evidence[value] for value in evidence_ids if value in evidence]
+                if isinstance(evidence_ids, list)
+                else []
+            )
+            basis = item.get("classification_basis")
+            basis_text = " ".join(
+                str(value).lower()
+                for value in (basis, item.get("confidence_basis"), item.get("definition"))
+                if isinstance(value, str)
+            )
+            if status in {"gap", "unknown"}:
+                if implementation_status == "absent" and (
+                    "partial" in basis_text
+                    or any(
+                        record.reachable and record.source_kind in IMPLEMENTATION_SOURCE_KINDS
+                        for record in records
+                    )
+                ):
+                    issues.append(
+                        _issue(
+                            "CAPABILITY_FALSE_ABSENCE",
+                            package.root / "capabilities/registry.yaml",
+                            identifier,
+                        )
+                    )
+                claims_conflict = "conflict" in basis_text
+                claims_question = bool(
+                    re.search(
+                        r"(?:blocking|unresolved) question|question (?:blocks|remains)", basis_text
+                    )
+                )
+                if (claims_conflict and not item.get("conflict_ids")) or (
+                    claims_question and not item.get("question_ids")
+                ):
+                    issues.append(
+                        _issue(
+                            "CAPABILITY_BASIS_LINK_MISSING",
+                            package.root / "capabilities/registry.yaml",
+                            identifier,
+                        )
+                    )
             if item.get("capability_status") == "current" and key in {
                 "decisions.steer-context",
                 "decisions.apply-steering-patch",
@@ -1304,7 +1534,210 @@ def _validate_phase_two_capability_coverage(
                         key,
                     )
                 )
+    allocation_value = package.documents.get("catalog/ids.yaml")
+    allocation_items = allocation_value.get("items") if isinstance(allocation_value, dict) else None
+    cap_allocations: dict[str, list[dict[str, JsonValue]]] = {}
+    for allocation in allocation_items if isinstance(allocation_items, list) else []:
+        if not isinstance(allocation, dict) or allocation.get("namespace") != "CAP":
+            continue
+        identifier = allocation.get("canonical_id")
+        if isinstance(identifier, str):
+            cap_allocations.setdefault(identifier, []).append(allocation)
+        provisional_key = allocation.get("provisional_key")
+        title = allocation.get("title")
+        if (
+            isinstance(provisional_key, str) and re.fullmatch(r"scope-demand-\d+", provisional_key)
+        ) or (isinstance(title, str) and re.fullmatch(r"Capability demand \d+", title)):
+            issues.append(
+                _issue(
+                    "CAPABILITY_ALLOCATION_PLACEHOLDER",
+                    package.root / "catalog/ids.yaml",
+                    identifier,
+                )
+            )
+    for item in registry_items:
+        identifier = item.get("id")
+        key = item.get("scope_demand_key")
+        allocations = cap_allocations.get(identifier, []) if isinstance(identifier, str) else []
+        if len(allocations) != 1 or allocations[0].get("provisional_key") != key:
+            issues.append(
+                _issue(
+                    "CAPABILITY_ALLOCATION_BINDING_INVALID",
+                    package.root / "catalog/ids.yaml",
+                    identifier,
+                )
+            )
+    issues.extend(_validate_phase_two_projections(package, registry_items))
     return issues
+
+
+def _capability_sort_key(item: dict[str, JsonValue]) -> tuple[int, str]:
+    identifier = item.get("id")
+    match = re.fullmatch(r"CAP-(\d+)", identifier) if isinstance(identifier, str) else None
+    return (int(match.group(1)) if match else sys.maxsize, str(identifier))
+
+
+def _phase_two_counts(items: list[dict[str, JsonValue]]) -> dict[str, int]:
+    return {
+        status: sum(item.get("capability_status") == status for item in items)
+        for status in CAPABILITY_STATUSES
+    }
+
+
+def _phase_two_claims_projection(
+    package: FoundationPackage, items: list[dict[str, JsonValue]]
+) -> dict[str, JsonValue]:
+    derivation_count = sum(
+        relative.startswith("capabilities/derivations/")
+        and isinstance(value, dict)
+        and value.get("status") == "admitted"
+        for relative, value in package.documents.items()
+    )
+    counts: dict[str, JsonValue] = {
+        status: count for status, count in _phase_two_counts(items).items()
+    }
+    projected_items = cast(list[JsonValue], sorted(items, key=_capability_sort_key))
+    projection: dict[str, JsonValue] = {
+        "schema_version": "1",
+        "phase_status": "complete",
+        "completion_phase": 2,
+        "registry": "capabilities/registry.yaml",
+        "registry_status": "complete",
+        "scope_demand_count": len(items),
+        "classification_counts": counts,
+        "derivation_count": derivation_count,
+        "items": projected_items,
+    }
+    return projection
+
+
+def _phase_two_gaps_projection(items: list[dict[str, JsonValue]]) -> str:
+    counts = _phase_two_counts(items)
+    lines = [
+        "# Capability classifications",
+        "",
+        "Generated from `capabilities/registry.yaml`; do not edit by hand.",
+        "",
+    ]
+    for status in CAPABILITY_STATUSES:
+        lines.extend((f"## {status.title()} ({counts[status]})", ""))
+        status_items = [item for item in items if item.get("capability_status") == status]
+        if not status_items:
+            lines.append("- None")
+        for item in sorted(status_items, key=_capability_sort_key):
+            lines.append(f"- `{item.get('id')}` **{item.get('title')}** — {item.get('definition')}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
+    counts = _phase_two_counts(items)
+    identifiers = {
+        status: [
+            str(item.get("id"))
+            for item in sorted(items, key=_capability_sort_key)
+            if item.get("capability_status") == status
+        ]
+        for status in CAPABILITY_STATUSES
+    }
+    lines = [
+        "# UI foundation status",
+        "",
+        f"Phase 2 is complete with {len(items)} one-to-one scope-demand classifications and {sum(counts.values())} projected claims.",
+        "",
+    ]
+    for status in CAPABILITY_STATUSES:
+        rendered_ids = ", ".join(f"`{identifier}`" for identifier in identifiers[status]) or "none"
+        lines.append(f"- **{status} ({counts[status]})**: {rendered_ids}")
+    lines.extend(
+        (
+            "",
+            "Typed steering and planner-assisted replanning are forbidden from the current manifest.",
+            "",
+        )
+    )
+    return "\n".join(lines)
+
+
+def _validate_phase_two_projections(
+    package: FoundationPackage, items: list[dict[str, JsonValue]]
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    registry_value = package.documents.get("capabilities/registry.yaml")
+    expected_claims = _phase_two_claims_projection(package, items)
+    actual_claims = package.documents.get("catalog/claims.yaml")
+    if (
+        not isinstance(registry_value, dict)
+        or registry_value.get("phase_status") != "complete"
+        or registry_value.get("completion_phase") != 2
+    ):
+        issues.append(
+            _issue(
+                "PHASE_TWO_METADATA_MISMATCH",
+                package.root / "capabilities/registry.yaml",
+                "completion metadata",
+            )
+        )
+    if actual_claims != expected_claims:
+        issues.append(
+            _issue(
+                "PHASE_TWO_CLAIMS_PROJECTION_STALE",
+                package.root / "catalog/claims.yaml",
+                "regenerate from capability registry",
+            )
+        )
+        if not isinstance(actual_claims, dict) or any(
+            actual_claims.get(field) != expected_claims[field]
+            for field in (
+                "phase_status",
+                "completion_phase",
+                "registry_status",
+                "scope_demand_count",
+                "classification_counts",
+                "derivation_count",
+            )
+        ):
+            issues.append(
+                _issue(
+                    "PHASE_TWO_METADATA_MISMATCH",
+                    package.root / "catalog/claims.yaml",
+                    "completion metadata",
+                )
+            )
+    expected_text = {
+        "capabilities/gaps.md": _phase_two_gaps_projection(items),
+        "status.md": _phase_two_status_projection(items),
+    }
+    codes = {
+        "capabilities/gaps.md": "PHASE_TWO_GAPS_PROJECTION_STALE",
+        "status.md": "PHASE_TWO_STATUS_PROJECTION_STALE",
+    }
+    for relative, expected in expected_text.items():
+        path = package.root / relative
+        try:
+            actual = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            actual = ""
+        if actual != expected:
+            issues.append(_issue(codes[relative], path, "regenerate from capability registry"))
+    return issues
+
+
+def write_phase_two_projections(root: Path) -> None:
+    package = load_foundation(root)
+    registry_value = package.documents.get("capabilities/registry.yaml")
+    raw_items = registry_value.get("items") if isinstance(registry_value, dict) else None
+    items = (
+        [cast(dict[str, JsonValue], item) for item in raw_items if isinstance(item, dict)]
+        if isinstance(raw_items, list)
+        else []
+    )
+    (root / "catalog/claims.yaml").write_text(
+        yaml.safe_dump(_phase_two_claims_projection(package, items), sort_keys=False),
+        encoding="utf-8",
+    )
+    (root / "capabilities/gaps.md").write_text(_phase_two_gaps_projection(items), encoding="utf-8")
+    (root / "status.md").write_text(_phase_two_status_projection(items), encoding="utf-8")
 
 
 def _markdown_heading_slugs(markdown: str) -> set[str]:
@@ -2061,11 +2494,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--phase", type=int, choices=(0, 1, 2, 3), default=0)
     parser.add_argument("--report", type=Path)
+    parser.add_argument("--write-phase-two-projections", action="store_true")
     return parser
 
 
 def main() -> int:
     arguments = _parser().parse_args()
+    if arguments.write_phase_two_projections:
+        write_phase_two_projections(arguments.root)
     issues = (
         validate_report(arguments.report)
         if arguments.report
