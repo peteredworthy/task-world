@@ -135,7 +135,6 @@ transitions:
   - {from_state_id: STA-917, to_state_id: STA-923}
   - {from_state_id: STA-926, to_state_id: STA-929}
   - {from_state_id: STA-926, to_state_id: STA-930}
-  - {from_state_id: STA-926, to_state_id: STA-931}
   - {from_state_id: STA-926, to_state_id: STA-969}
   - {from_state_id: STA-969, to_state_id: STA-970}
   - {from_state_id: STA-970, to_state_id: STA-971}
