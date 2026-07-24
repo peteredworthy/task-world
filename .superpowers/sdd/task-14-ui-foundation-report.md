@@ -100,13 +100,20 @@ variants; each variant has direct implementation and exercised-test evidence.
 All 49 gap definitions state their concrete carrier boundary or absent contract
 and are projected verbatim from the registry.
 
+The remaining review correction requires every current or derived capability to
+declare a nonempty, duplicate-free asserted variant list whose values exactly
+match the duplicate-free contract variant semantic types. Contract variants
+also reject duplicate fields. CAP-69 and CAP-86 retain their existing variant
+sets unchanged.
+
 ## Commands and output
 
 - `uv run python research/ui-foundation/tools/validate.py --phase 2` — exited 0
   with no diagnostics.
 - `uv run pytest tests/integration/test_ui_foundation_tools.py -q` — focused
-  validation coverage passed (**96 passed**), including independent negative
-  carrier-role, executable-status, output-variant, and derivation-binding cases.
+  validation coverage passed (**101 passed**), including independent negative
+  carrier-role, executable-status, output-variant, asserted/contract variant,
+  duplicate-field, and derivation-binding cases.
 - `uv run ruff check .` — **All checks passed!**
 - `uv run pyright` — **0 errors, 0 warnings, 0 informations** (plus Pyright's
   non-failing update notice).

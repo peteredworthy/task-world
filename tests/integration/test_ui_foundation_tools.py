@@ -2661,6 +2661,91 @@ def test_current_variant_contract_rejects_broad_definition_with_narrow_output_co
     assert "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID" in issue_codes(result)
 
 
+def test_current_variant_contract_requires_asserted_variants_for_narrow_cap69(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    cap69.pop("asserted_output_variant_types")
+    cap69["output_contract"]["variants"] = cap69["output_contract"]["variants"][:1]
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_current_variant_contract_requires_asserted_variants_for_narrow_cap86(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap86 = next(item for item in registry["items"] if item["id"] == "CAP-86")
+    cap86.pop("asserted_output_variant_types")
+    cap86["output_contract"]["variants"] = cap86["output_contract"]["variants"][:1]
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_current_variant_contract_rejects_duplicate_contract_variant_type(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    variants = cap69["output_contract"]["variants"]
+    variants.append(dict(variants[0]))
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_current_variant_contract_rejects_duplicate_asserted_variant_type(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    asserted = cap69["asserted_output_variant_types"]
+    asserted.append(asserted[0])
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_current_variant_contract_rejects_duplicate_variant_field(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    fields = cap69["output_contract"]["variants"][0]["fields"]
+    fields.append(fields[0])
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CAPABILITY_OUTPUT_CONTRACT_INVALID" in issue_codes(result)
+
+
 def test_phase_two_validates_superseded_derivation_ledger_bindings(tmp_path: Path) -> None:
     root = write_valid_phase_zero(tmp_path)
     append_yaml_item(

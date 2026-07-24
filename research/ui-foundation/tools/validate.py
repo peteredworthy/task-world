@@ -1112,13 +1112,20 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     item.get("id"),
                 )
             )
-        asserted_variant_types = set(_string_list(item.get("asserted_output_variant_types")))
-        contract_variant_types = {
+        asserted_variant_type_list = _string_list(item.get("asserted_output_variant_types"))
+        asserted_variant_types = set(asserted_variant_type_list)
+        contract_variant_type_list = [
             variant["semantic_type"]
             for variant in output_variants
             if isinstance(variant.get("semantic_type"), str)
-        }
-        if asserted_variant_types and asserted_variant_types != contract_variant_types:
+        ]
+        contract_variant_types = set(contract_variant_type_list)
+        if status in {"current", "derived"} and (
+            not _nonempty_string_list(item.get("asserted_output_variant_types"))
+            or len(asserted_variant_type_list) != len(asserted_variant_types)
+            or len(contract_variant_type_list) != len(contract_variant_types)
+            or asserted_variant_types != contract_variant_types
+        ):
             issues.append(
                 _issue(
                     "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID",
@@ -1695,10 +1702,13 @@ def _output_variants(output_contract: JsonValue) -> list[dict[str, JsonValue]]:
 
 
 def _valid_output_variant(variant: dict[str, JsonValue]) -> bool:
+    fields = variant.get("fields")
     return (
         isinstance(variant.get("semantic_type"), str)
         and bool(variant["semantic_type"].strip())
-        and _nonempty_string_list(variant.get("fields"))
+        and _nonempty_string_list(fields)
+        and isinstance(fields, list)
+        and len(fields) == len(set(fields))
         and isinstance(variant.get("role"), str)
         and bool(variant["role"].strip())
     )
