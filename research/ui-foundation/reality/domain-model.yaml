@@ -12,7 +12,7 @@ items:
   aliases: []
   mode_boundary: shared input not runtime topology
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-1
@@ -36,7 +36,7 @@ items:
   aliases: []
   mode_boundary: shared row carrier not shared topology
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   epistemic_status: observed
   id: ENT-2
@@ -64,7 +64,7 @@ items:
   aliases: []
   mode_boundary: legacy workflow not graph region
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-3
@@ -89,7 +89,7 @@ items:
   aliases: []
   mode_boundary: legacy task not graph node
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-4
@@ -116,7 +116,7 @@ items:
   aliases: []
   mode_boundary: graph attempt_number has no typed core join
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   epistemic_status: unknown
   id: ENT-5
@@ -146,7 +146,7 @@ items:
   aliases: []
   mode_boundary: legacy verification history
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-6
@@ -170,7 +170,7 @@ items:
   aliases: []
   mode_boundary: not graph RequirementRecord
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-7
@@ -194,7 +194,7 @@ items:
   aliases: []
   mode_boundary: legacy verification carrier
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-8
@@ -219,7 +219,7 @@ items:
   aliases: []
   mode_boundary: storage row distinct from payload identities
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   epistemic_status: observed
   id: ENT-9
@@ -247,7 +247,7 @@ items:
   aliases: []
   mode_boundary: distinct from graph envelope
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   epistemic_status: observed
   id: ENT-10
@@ -275,7 +275,7 @@ items:
   aliases: []
   mode_boundary: distinct from row and workflow payload
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-11
@@ -300,7 +300,7 @@ items:
   aliases: []
   mode_boundary: not Run or backup
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-12
@@ -325,7 +325,7 @@ items:
   aliases: []
   mode_boundary: not legacy task or step
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-13
@@ -352,7 +352,7 @@ items:
   aliases: []
   mode_boundary: graph semantics
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-14
@@ -376,7 +376,7 @@ items:
   aliases: []
   mode_boundary: not workflow event or requirement config
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-15
@@ -401,7 +401,7 @@ items:
   aliases: []
   mode_boundary: graph dataflow
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-16
@@ -425,7 +425,7 @@ items:
   aliases: []
   mode_boundary: not workflow task lock
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-17
@@ -450,7 +450,7 @@ items:
   aliases: []
   mode_boundary: not projection field or event payload
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-18
@@ -475,7 +475,7 @@ items:
   aliases: []
   mode_boundary: not graph authority request
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-19
@@ -500,7 +500,7 @@ items:
   aliases: []
   mode_boundary: respondent not authenticated identity
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: inferred
   id: ENT-20
@@ -526,7 +526,7 @@ items:
   aliases: []
   mode_boundary: excluded graph rollup
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-21
@@ -552,7 +552,7 @@ items:
   aliases: []
   mode_boundary: graph discards structured action log
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-22
@@ -578,7 +578,7 @@ items:
   aliases: []
   mode_boundary: distinct from declared path reference
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-23
@@ -603,7 +603,7 @@ items:
   aliases: []
   mode_boundary: no publication or existence proof
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   epistemic_status: observed
   id: ENT-24
@@ -680,7 +680,7 @@ items:
   aliases: []
   mode_boundary: not model string
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-27
@@ -704,7 +704,7 @@ items:
   aliases: []
   mode_boundary: one model can result from profiles
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-28
@@ -729,7 +729,7 @@ items:
   aliases: []
   mode_boundary: recovery metadata
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   epistemic_status: observed
   id: ENT-29
@@ -757,7 +757,7 @@ items:
   aliases: []
   mode_boundary: excludes WAL/SHM and source DB
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   epistemic_status: observed
   id: ENT-30
@@ -783,7 +783,7 @@ items:
   aliases: []
   mode_boundary: secondary normal output and conditional bootstrap input
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   epistemic_status: observed
   id: ENT-31

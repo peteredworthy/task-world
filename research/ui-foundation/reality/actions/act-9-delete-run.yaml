@@ -3,7 +3,7 @@ title: Delete run
 definition: Synchronously delete an ordinary eligible legacy run, return the deleted-response carrier, and leave later row
   absence separately observable.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-7
 actor: caller

@@ -7,7 +7,7 @@ items:
   title: Legacy run draft
   definition: Persisted legacy run before start.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -27,7 +27,7 @@ items:
   title: Legacy run active
   definition: Persisted row-level active control state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -47,7 +47,7 @@ items:
   title: Legacy run stopping
   definition: Visible row-level pause-request intermediate.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -66,9 +66,9 @@ items:
   title: Legacy run paused
   definition: Persisted row-level paused state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow transition audit
@@ -83,9 +83,9 @@ items:
   title: Legacy run completed
   definition: Terminal legacy run row status.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow engine tests
@@ -100,7 +100,7 @@ items:
   title: Legacy run failed
   definition: Failed legacy run row status.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
@@ -121,9 +121,9 @@ items:
   title: Legacy run cancelled
   definition: Terminal legacy run row status after its cancellation signal is applied.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow cancellation audit
@@ -139,9 +139,9 @@ items:
   title: Legacy task pending
   definition: Legacy task has not started.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: TaskStatus audit
@@ -156,9 +156,9 @@ items:
   title: Legacy task building
   definition: Legacy builder task state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow transition tests
@@ -172,9 +172,9 @@ items:
   title: Legacy task verifying
   definition: Legacy verifier task state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow transition tests
@@ -188,9 +188,9 @@ items:
   title: Legacy task pending user action
   definition: Legacy clarification or approval wait.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow and clarification audit
@@ -206,9 +206,9 @@ items:
   title: Legacy task recovering
   definition: Legacy recovery-outcome wait.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow recovery tests
@@ -222,9 +222,9 @@ items:
   title: Legacy task fan-out running
   definition: Legacy fan-out parent state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow fan-out audit
@@ -238,9 +238,9 @@ items:
   title: Legacy task completed
   definition: Terminal legacy task state except a qualified run-recovery downstream reset.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: workflow engine and run-recovery audits
@@ -258,9 +258,9 @@ items:
   title: Legacy task failed
   definition: Terminal legacy task state except qualified force-accept or retry paths.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: force-accept and fan-out tests
@@ -276,9 +276,9 @@ items:
   title: Graph run draft
   definition: Graph-local initial run state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph COMMAND_SPECS
@@ -293,9 +293,9 @@ items:
   title: Graph run queued
   definition: Graph-local accepted pre-start state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph COMMAND_SPECS
@@ -309,9 +309,9 @@ items:
   title: Graph run active
   definition: Graph scheduler-enabled run state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph runtime audit
@@ -327,9 +327,9 @@ items:
   title: Graph run pausing
   definition: Graph-local pause intermediate.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph COMMAND_SPECS
@@ -343,9 +343,9 @@ items:
   title: Graph run paused
   definition: Graph-local paused state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph COMMAND_SPECS
@@ -362,7 +362,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: workflow/graph audit
@@ -377,9 +377,9 @@ items:
   title: Graph run cancelling
   definition: Graph-local cancellation intermediate.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph cancellation command tests
@@ -394,9 +394,9 @@ items:
   title: Graph run completed
   definition: Graph-local terminal completion state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: final gate tests
@@ -411,7 +411,7 @@ items:
   title: Graph run failed
   definition: Graph-local failed state with a qualified reopen path.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -431,9 +431,9 @@ items:
   title: Graph run cancelled
   definition: Graph-local terminal cancellation state after graph cancellation work.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph cancellation command table
@@ -449,9 +449,9 @@ items:
   title: Graph outbox failed
   definition: Failed graph side-effect outbox row.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: outbox requeue tests
@@ -466,9 +466,9 @@ items:
   title: Graph outbox pending
   definition: Pending or requeued graph side-effect outbox row.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: outbox requeue tests
@@ -483,9 +483,9 @@ items:
   title: Graph node pending
   definition: Graph node awaits readiness or a decision/input condition.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: node state projection audit
@@ -501,9 +501,9 @@ items:
   title: Graph node ready
   definition: Graph node passed readiness evaluation and is eligible for lease selection.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: NodeState and schedule_tick projection audit
@@ -519,9 +519,9 @@ items:
   title: Graph node leased
   definition: Graph node has a granted active lease and awaits acknowledgement or execution progress.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: NodeState, lease_granted, and cancellation audit
@@ -539,9 +539,9 @@ items:
   title: Graph node running
   definition: Graph node acknowledged its matching active lease and is executing.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: NodeState and acknowledge_start command audit
@@ -557,9 +557,9 @@ items:
   title: Graph node suspended
   definition: Graph node has a suspended lease/state awaiting a later lease outcome or cancellation.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: NodeState, lease_suspended, and cancellation audit
@@ -577,9 +577,9 @@ items:
   title: Graph node completed
   definition: Graph node completion projection state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: callback and gate tests
@@ -594,9 +594,9 @@ items:
   title: Graph node failed
   definition: Graph node failure projection state.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: lease-expiry and decision tests
@@ -612,9 +612,9 @@ items:
   title: Graph node cancelled
   definition: Graph node state after graph cancellation revokes its active or suspended lease.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph cancel command table
@@ -629,9 +629,9 @@ items:
   title: Graph decision pending
   definition: Graph decision/gate projection awaits an eligible recorded decision.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph decision command audit
@@ -647,9 +647,9 @@ items:
   title: Graph decision recorded
   definition: Graph decision projection records an accepted approval, authority, or oversight decision.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: record_decision command table
@@ -667,7 +667,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: UI/API review audit
@@ -685,7 +685,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: review operation audit
@@ -701,7 +701,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: review operation audit
@@ -719,7 +719,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: review operation audit
@@ -736,7 +736,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: merge operation audit
@@ -754,7 +754,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: conflict resolution audit
@@ -771,7 +771,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: conflict resolution audit
@@ -789,7 +789,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: environment-files route audit
@@ -807,7 +807,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: environment-files route audit
@@ -825,7 +825,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: routine archive route audit
@@ -843,7 +843,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: routine archive route audit
@@ -860,7 +860,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: runner defaults route audit
@@ -878,7 +878,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: repository administration audit
@@ -896,7 +896,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: repository administration audit
@@ -912,9 +912,9 @@ items:
   title: Clarification response recorded
   definition: Clarification response carrier persisted a response/config effect before eligible task resumption.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: clarification response audit
@@ -930,9 +930,9 @@ items:
   title: Step approval recorded
   definition: Step-approval carrier persisted an approval decision; repeated approval is last-write-wins.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: human approval tests
@@ -948,9 +948,9 @@ items:
   title: Graph patch accepted
   definition: Graph patch-attempt carrier records an accepted patch and its graph effects.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph patch validator and API tests
@@ -967,9 +967,9 @@ items:
   definition: Graph patch-attempt carrier records a validator or stale-position rejection while preserving the source graph
     projection.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: graph patch validator and API tests
@@ -985,9 +985,9 @@ items:
   title: Legacy run absent
   definition: No legacy run row exists for the requested identity before synchronous creation or after synchronous deletion.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: runs create/delete route audit
@@ -1003,9 +1003,9 @@ items:
   title: Legacy run created response
   definition: Synchronous create-route response confirms a new draft row and creation events before normal lifecycle processing.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: runs create route audit
@@ -1021,9 +1021,9 @@ items:
   title: Legacy run deleted response
   definition: Synchronous delete-route completion confirms deletion of an eligible legacy row and owned records.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: runs delete route audit
@@ -1042,7 +1042,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: review/admin action-route audit
@@ -1061,7 +1061,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: environment-files route audit
@@ -1079,7 +1079,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: routines validate route audit
@@ -1097,7 +1097,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: repository administration route audit
@@ -1116,7 +1116,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: review prune preview route audit
@@ -1133,9 +1133,9 @@ items:
   definition: Graph patch-attempt carrier records a submitted REST or execution-bound MCP patch before validator acceptance
     or rejection.
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: high
   confidence_basis: 04-api-actions-authority.md#action-graph-patch and patch validator tests
@@ -1153,7 +1153,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: 04-api-actions-authority.md#action-agent-policy
@@ -1171,7 +1171,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: agents.py::create_agent route inspection
@@ -1189,7 +1189,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: agents.py::update_agent route inspection
@@ -1207,7 +1207,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: agents.py::delete_agent route inspection
@@ -1225,7 +1225,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: agents.py::reset_prompt route inspection
@@ -1243,7 +1243,7 @@ items:
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
-  capability_status: current
+  capability_status: unknown
   epistemic_status: observed
   confidence: medium
   confidence_basis: runs.py::_is_deletable_startup_orphan and delete_run route inspection

@@ -3,7 +3,7 @@ title: Reset run-recovery downstream task to pending
 definition: Run recovery resets each affected downstream legacy task, including a completed task, to pending as compensating
   recovery rather than ordinary progression.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-35
 actor: caller

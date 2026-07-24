@@ -3,7 +3,7 @@ title: Create run
 definition: Synchronously create a legacy run from absent identity, return the created-response carrier, and persist a distinct
   draft row.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-1
 actor: caller

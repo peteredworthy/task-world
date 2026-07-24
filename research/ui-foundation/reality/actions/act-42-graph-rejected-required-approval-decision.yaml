@@ -1,6 +1,6 @@
 id: ACT-42
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-11
 actor: Caller-supplied decider; persisted attribution is not authorization.

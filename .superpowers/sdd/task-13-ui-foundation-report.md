@@ -195,3 +195,27 @@ Final pre-commit evidence: `uv run python research/ui-foundation/tools/validate.
 tests/integration/test_ui_foundation_tools.py -q` passed **49 tests**; `uv run
 ruff check .` reported **All checks passed!**; and `uv run pyright
 research/ui-foundation/tools/validate.py` reported **0 errors, 0 warnings**.
+
+## Semantic-admission and synthesis correction (2026-07-24)
+
+- Exercised semantic records now require linked, exercised direct test evidence
+  with a valid locator and snapshot membership. Current semantic and action
+  records require direct, reachable implementation evidence. Unsupported
+  historical classifications were downgraded conservatively to `unexercised`
+  or `unknown`; directly evidenced graph invariants retain exercised status.
+- `EVD-7` through `EVD-48` are now genuine synthesis records: their authority
+  is an exact `agent-reports/...#Key findings` audit anchor, their `symbol` is
+  that report section, `provenance_role` is `synthesis`, and the former
+  direct-looking text is retained only as `source_label`.
+- Phase 1 snapshot coverage treats absent or malformed include patterns, file
+  lists, and expected/covered counts as errors. A resolved Q7 also requires a
+  structurally valid coverage snapshot. Allocation suffix comparison uses its
+  numeric value, so zero-padded variants collide.
+- The 902-entry snapshot count remains current; snapshot hashes for the
+  validator and focused test suite were refreshed after these changes.
+
+Final pre-commit evidence for this correction: `uv run python
+research/ui-foundation/tools/validate.py --phase 1` exited 0; `uv run pytest
+tests/integration/test_ui_foundation_tools.py -q` passed **53 tests**; `uv run
+ruff check .` reported **All checks passed!**; and standalone Pyright reported
+**0 errors, 0 warnings**.

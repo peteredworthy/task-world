@@ -2,7 +2,7 @@ id: ACT-24
 title: Reject legacy task with revision attempts remaining
 definition: Rejects one approval-pending legacy task when another revision attempt is available.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-30
 actor: fixed or injected user

@@ -2,7 +2,7 @@ id: ACT-33
 title: Abandon legacy recovering task
 definition: Completes recovery with abandon and fails the recovering legacy task.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-9
 actor: caller

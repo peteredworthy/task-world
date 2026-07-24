@@ -1,6 +1,6 @@
 id: ACT-41
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-11
 actor: Caller-supplied decider recorded by ACT-10; no authenticated-subject authorization is enforced.

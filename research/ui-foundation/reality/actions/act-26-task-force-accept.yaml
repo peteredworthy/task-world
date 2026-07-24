@@ -2,7 +2,7 @@ id: ACT-26
 title: Force accept legacy task
 definition: Bypasses grade evaluation and completes one legacy task from its qualified source-state set.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-31
 actor: fixed or injected user

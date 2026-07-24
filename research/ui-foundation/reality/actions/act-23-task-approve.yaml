@@ -2,7 +2,7 @@ id: ACT-23
 title: Approve legacy task awaiting approval
 definition: Approves one legacy task in pending-user-action approval state and completes that task.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-29
 actor: fixed or injected user

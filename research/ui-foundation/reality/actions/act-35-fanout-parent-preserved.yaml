@@ -2,7 +2,7 @@ id: ACT-35
 title: Preserve fan-out parent running state on child retry
 definition: Fan-out retry separately preserves the parent task's fan-out-running carrier while its failed child is reset.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-10
 actor: caller

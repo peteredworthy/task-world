@@ -1,6 +1,6 @@
 id: ACT-11
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-11
 actor: Caller-supplied decider; its persisted identity is attribution, not authenticated-subject authorization.

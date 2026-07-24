@@ -1,6 +1,6 @@
 id: ACT-48
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-6
 actor: REST caller; graph cancellation is a mode-specific consequence and does not grant a product role.

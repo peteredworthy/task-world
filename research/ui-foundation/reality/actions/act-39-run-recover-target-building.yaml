@@ -2,7 +2,7 @@ id: ACT-39
 title: Reset run-recovery target task to building
 definition: Run recovery moves its target task to building with a new attempt and expanded attempt budget.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-35
 actor: caller

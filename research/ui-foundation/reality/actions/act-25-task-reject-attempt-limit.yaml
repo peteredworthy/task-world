@@ -2,7 +2,7 @@ id: ACT-25
 title: Reject legacy task at attempt limit
 definition: Rejects one approval-pending legacy task when no revision attempt remains and fails that task.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-30
 actor: fixed or injected user

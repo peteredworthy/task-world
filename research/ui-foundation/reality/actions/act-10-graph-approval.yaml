@@ -1,6 +1,6 @@
 id: ACT-10
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-11
 actor: Caller-supplied decider; the decision record preserves that attribution without binding it to an authenticated subject.

@@ -1486,3 +1486,105 @@ def test_phase_one_rejects_invalid_q7_coverage_attestation(tmp_path: Path) -> No
     result = run_validator(root, phase=1)
 
     assert "Q7_COVERAGE_ATTESTATION_INVALID" in issue_codes(result)
+
+
+def test_validator_rejects_exercised_semantic_without_direct_test_evidence(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "ENT-01",
+                    test_status="exercised",
+                    evidence_ids=["EVD-01"],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "audit-report",
+                    "test_status": "exercised",
+                }
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "EXERCISED_DIRECT_TEST_EVIDENCE_MISSING" in issue_codes(result)
+
+
+def test_validator_rejects_current_semantic_without_direct_reachable_implementation(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "ENT-01",
+                    capability_status="current",
+                    evidence_ids=["EVD-01"],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-01", "source_kind": "audit-report", "reachable": True}],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "CURRENT_DIRECT_IMPLEMENTATION_EVIDENCE_MISSING" in issue_codes(result)
+
+
+def test_phase_one_rejects_missing_or_malformed_snapshot_coverage_fields(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    for field in ("include_patterns", "files", "expected_count", "covered_count"):
+        snapshot: dict[str, object] = {
+            "id": "phase1",
+            "include_patterns": [],
+            "files": [],
+            "expected_count": 0,
+            "covered_count": 0,
+        }
+        snapshot.pop(field)
+        write_yaml(
+            root / "catalog/evidence.yaml",
+            {"schema_version": "1", "snapshot": snapshot, "items": []},
+        )
+
+        result = run_validator(root, phase=1)
+
+        assert "SOURCE_SNAPSHOT_COVERAGE_INVALID" in issue_codes(result), field
+
+
+def test_validator_rejects_zero_padded_allocation_suffix_collision(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/ids.yaml",
+        {
+            "schema_version": "1",
+            "items": [{"canonical_id": "EVD-01"}, {"canonical_id": "EVD-1"}],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "ID_ALLOCATION_SUFFIX_DUPLICATE" in issue_codes(result)

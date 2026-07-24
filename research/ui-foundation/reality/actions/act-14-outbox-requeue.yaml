@@ -1,6 +1,6 @@
 id: ACT-14
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-14
 actor: Endpoint-fixed human-operator attribution; it is not authenticated-subject authorization.

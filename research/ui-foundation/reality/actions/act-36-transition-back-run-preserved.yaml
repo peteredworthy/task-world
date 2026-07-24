@@ -2,7 +2,7 @@ id: ACT-36
 title: Preserve legacy run carrier during transition-back
 definition: Transition-back preserves the legacy run row carrier while it rewinds current-step position.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-34
 actor: caller

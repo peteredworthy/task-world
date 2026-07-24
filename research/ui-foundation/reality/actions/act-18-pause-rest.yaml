@@ -3,7 +3,7 @@ title: Pause run through REST
 definition: Accept a REST pause request by visibly moving the legacy row from active to stopping; consumer application to
   paused is later and separate.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-4
 actor: caller

@@ -2,7 +2,7 @@ id: ACT-34
 title: Reset failed fan-out child to pending
 definition: Fan-out retry resets the addressed failed child task to pending.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-10
 actor: caller

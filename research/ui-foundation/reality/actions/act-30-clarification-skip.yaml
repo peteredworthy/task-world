@@ -2,7 +2,7 @@ id: ACT-30
 title: Skip legacy clarification question
 definition: Records a skipped answer and reason for a pending legacy clarification and returns the eligible task to building.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-8
 actor: legacy responder

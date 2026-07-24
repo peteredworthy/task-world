@@ -1,6 +1,6 @@
 id: ACT-68
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-38
 actor: caller

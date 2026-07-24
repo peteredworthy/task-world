@@ -2,7 +2,7 @@ id: ACT-19
 title: Resume run through REST
 definition: Accept a REST resume signal while preserving the paused legacy row until later consumer application.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-5
 actor: caller

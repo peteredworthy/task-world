@@ -2,7 +2,7 @@ id: ACT-31
 title: Retry legacy recovering task
 definition: Completes recovery with retry, creates the next attempt, and returns the recovering task to building.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-9
 actor: caller

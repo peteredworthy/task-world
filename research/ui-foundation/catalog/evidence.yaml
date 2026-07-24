@@ -55,7 +55,7 @@ snapshot: &id001
     sha256: 7ad4caa93e1afd4e728f2b7c2fac4b3c54ca441e100ac51e912ff85196d2f2e7
     audited_at: '2026-07-24T03:00:00Z'
   - path: research/ui-foundation/tools/validate.py
-    sha256: 50f4f1d6e40b28786cc2d65aa5cd4c6cc3918f3b1d790ab0069d4351db59f89e
+    sha256: 59a6a33ba022846b98b19fbe989bffa866c2afdf279200905626643686874c52
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/__init__.py
     sha256: b1f14eb507ed5cae44a23dc96212731b2560b970310ef4037e303d90c5271bf4
@@ -1486,7 +1486,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: e4621d6cd8c2704af76738f3f3e5dca0d18aa2912f2e87edfd79e23334452f62
+    sha256: b59b13d2c1fae44dd0aa50c9134b8064e0ffcda1b407df2f4d923f948c8fb590
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236
@@ -3219,644 +3219,812 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions
+  source_label: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-8
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: tests/unit/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused
+  source_label: tests/unit/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-9
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: tests/unit/test_workflow_engine.py completion and failure progression anchors
+  source_label: tests/unit/test_workflow_engine.py completion and failure progression anchors
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-10
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 03-workflow-state.md#CON-WF-05 mode-qualified terminality
+  source_label: 03-workflow-state.md#CON-WF-05 mode-qualified terminality
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-11
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 03-workflow-state.md#Cancel graph cancellation before row cancellation
+  source_label: 03-workflow-state.md#Cancel graph cancellation before row cancellation
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-12
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 03-workflow-state.md#WF-task-edges legacy TaskStatus transitions
+  source_label: 03-workflow-state.md#WF-task-edges legacy TaskStatus transitions
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-13
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume boundary
+  source_label: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume boundary
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-14
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 04-api-actions-authority.md#action-recovery-outcome retry skip abandon outcomes
+  source_label: 04-api-actions-authority.md#action-recovery-outcome retry skip abandon outcomes
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-15
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 03-workflow-state.md#WF-task-edges fan-out parent behavior
+  source_label: 03-workflow-state.md#WF-task-edges fan-out parent behavior
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-16
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: tests/unit/test_transitions_recovering_force_accept.py::TestTransitionForceAccept
+  source_label: tests/unit/test_transitions_recovering_force_accept.py::TestTransitionForceAccept
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-17
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph lifecycle commands
+  source_label: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph lifecycle commands
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-18
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 02-graph-runtime.md#scheduler-and-lease behavior
+  source_label: 02-graph-runtime.md#scheduler-and-lease behavior
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-19
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 03-workflow-state.md#states-only-in-mode graph resuming qualification
+  source_label: 03-workflow-state.md#states-only-in-mode graph resuming qualification
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-20
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 02-graph-runtime.md#cancel lifecycle and node cancellation effects
+  source_label: 02-graph-runtime.md#cancel lifecycle and node cancellation effects
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-21
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 02-graph-runtime.md#evaluate_final_gate completion test anchors
+  source_label: 02-graph-runtime.md#evaluate_final_gate completion test anchors
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-22
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 02-graph-runtime.md#reconcile terminal-failure behavior
+  source_label: 02-graph-runtime.md#reconcile terminal-failure behavior
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-23
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event
+  source_label: tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-24
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 02-graph-runtime.md#node-state projection and readiness fields
+  source_label: 02-graph-runtime.md#node-state projection and readiness fields
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-25
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 02-graph-runtime.md#submit_callback accepted completion effects
+  source_label: 02-graph-runtime.md#submit_callback accepted completion effects
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-26
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry failure
+  source_label: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry failure
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-27
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 04-api-actions-authority.md#action-graph-decision decision record effects
+  source_label: 04-api-actions-authority.md#action-graph-decision decision record effects
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-28
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async review timing
+  source_label: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async review timing
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-29
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 04-api-actions-authority.md#action-branch-sync merge effects and conflicts
+  source_label: 04-api-actions-authority.md#action-branch-sync merge effects and conflicts
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-30
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 04-api-actions-authority.md#action-conflict-resolution staged conflict effects
+  source_label: 04-api-actions-authority.md#action-conflict-resolution staged conflict effects
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-31
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 04-api-actions-authority.md#action-env-files filesystem route boundary
+  source_label: 04-api-actions-authority.md#action-env-files filesystem route boundary
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-32
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 04-api-actions-authority.md#action-routine-archive routine visibility only
+  source_label: 04-api-actions-authority.md#action-routine-archive routine visibility only
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-33
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 04-api-actions-authority.md#action-agent-policy configuration-row effects
+  source_label: 04-api-actions-authority.md#action-agent-policy configuration-row effects
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-34
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 04-api-actions-authority.md#action-agent-policy runner default replacement
+  source_label: 04-api-actions-authority.md#action-agent-policy runner default replacement
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-35
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: 04-api-actions-authority.md#action-repository-admin add/remove boundary
+  source_label: 04-api-actions-authority.md#action-repository-admin add/remove boundary
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-36
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: tests/integration/test_api_human_approval.py::test_approve_step_multiple_times
+  source_label: tests/integration/test_api_human_approval.py::test_approve_step_multiple_times
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-37
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: tests/unit/test_patch_validator.py and 04-api-actions-authority.md#action-graph-patch
+  source_label: tests/unit/test_patch_validator.py and 04-api-actions-authority.md#action-graph-patch
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-38
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: tests/integration/test_api_auth.py global optional bearer-authentication anchors
+  source_label: tests/integration/test_api_auth.py global optional bearer-authentication anchors
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-39
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 04-api-actions-authority.md#api-authz-roles absent subject/role/scope enforcement
+  source_label: 04-api-actions-authority.md#api-authz-roles absent subject/role/scope enforcement
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-40
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input eligibility
+  source_label: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input eligibility
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-41
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: '02-graph-runtime.md#record_decision and #submit_patch domain validation'
+  source_label: '02-graph-runtime.md#record_decision and #submit_patch domain validation'
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-42
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py closure scope
+  source_label: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py closure scope
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-43
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous row creation/deletion routes
+  source_label: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous row creation/deletion routes
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-44
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges fan-out carrier behavior
+  source_label: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges fan-out carrier behavior
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-45
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  label: '04-api-actions-authority.md#action-transition-back and #action-run-recover; tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
+  source_label: '04-api-actions-authority.md#action-transition-back and #action-run-recover; tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-46
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and RoutineConfig validation response
+  source_label: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and RoutineConfig validation response
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-47
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start and completion callback
+  source_label: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start and completion callback
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-48
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  label: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch and AgentFixStarted
+  source_label: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch and AgentFixStarted
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Key findings
+  symbol: Key findings
+  provenance_role: synthesis
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-49
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#Entity and identity inventory
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#Entity and identity inventory
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-50
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/03-workflow-state.md#State carriers and legal transitions
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#State carriers and legal transitions
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-51
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#Conflicts found
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#Conflicts found
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-52
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#Lifecycle boundaries
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#Lifecycle boundaries
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-53
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/06-ui-projections.md#Rendered claim trace
+  path: research/ui-foundation/agent-reports/06-ui-projections.md#Rendered claim trace
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-54
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#Alias and non-alias map
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#Alias and non-alias map
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-55
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#Temporal relationship behavior
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#Temporal relationship behavior
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-56
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-57
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/03-workflow-state.md#Key findings
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Key findings
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-58
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/02-graph-runtime.md#Key findings
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Key findings
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-59
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/03-workflow-state.md#Legacy versus graph mode
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Legacy versus graph mode
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-60
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#Persistence table inventory
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#Persistence table inventory
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-61
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/04-api-actions-authority.md#Transport and capability inventory
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Transport and capability inventory
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-62
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#Ownership and cardinality
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#Ownership and cardinality
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-63
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/04-api-actions-authority.md#Authority model
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Authority model
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-64
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#Important uncertainties
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#Important uncertainties
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-65
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#Conflicts found
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#Conflicts found
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-66
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/04-api-actions-authority.md#CLI database maintenance capability
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#CLI database maintenance capability
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-67
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/03-workflow-state.md#JSONL authority conflict
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#JSONL authority conflict
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-68
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/07-tests-documentation.md#Evidence qualification
+  path: research/ui-foundation/agent-reports/07-tests-documentation.md#Evidence qualification
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-69
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#DP-ENT-event
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#DP-ENT-event
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-70
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/03-workflow-state.md#Durable authority projection and recovery
+  path: research/ui-foundation/agent-reports/03-workflow-state.md#Durable authority projection and recovery
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-71
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-01
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-01
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-72
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/02-graph-runtime.md#Events and projections
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Events and projections
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-73
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-02
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-02
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-74
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#DP-ENT-record
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#DP-ENT-record
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-75
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/02-graph-runtime.md#Typed graph-record inventory
+  path: research/ui-foundation/agent-reports/02-graph-runtime.md#Typed graph-record inventory
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-76
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-03
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-03
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-77
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-04
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-04
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-78
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-05
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-05
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-79
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-80
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-06
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-06
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-81
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-07
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-07
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-82
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/06-ui-projections.md#UIP-16
+  path: research/ui-foundation/agent-reports/06-ui-projections.md#UIP-16
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-83
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/01-domain-persistence.md#DP-ENT-artifact
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#DP-ENT-artifact
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-84
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-09
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-09
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-85
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-10
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-10
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-86
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-11
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-11
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-87
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-08
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-08
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-88
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#File-state producer attribution
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#File-state producer attribution
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-89
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/06-ui-projections.md#UIP-15
+  path: research/ui-foundation/agent-reports/06-ui-projections.md#UIP-15
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-90
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/04-api-actions-authority.md#Race idempotency and action feedback
+  path: research/ui-foundation/agent-reports/04-api-actions-authority.md#Race idempotency and action feedback
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-91
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#jobs.J3.evidence
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#jobs.J3.evidence
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-92
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-12
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-12
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-93
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-13
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-13
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-94
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/05-evidence-telemetry.md#ET-14
+  path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#ET-14
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-95
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/06-ui-projections.md#UIP-18
+  path: research/ui-foundation/agent-reports/06-ui-projections.md#UIP-18
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-96
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/08-domain-synthesis.md#Conflicts found
+  path: research/ui-foundation/agent-reports/08-domain-synthesis.md#Conflicts found
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-97
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/07-tests-documentation.md#Executable invariant index
+  path: research/ui-foundation/agent-reports/07-tests-documentation.md#Executable invariant index
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-98
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/00-delegation-plan.md#domain-persistence
+  path: research/ui-foundation/agent-reports/00-delegation-plan.md#domain-persistence
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-99
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/00-delegation-plan.md#graph-runtime
+  path: research/ui-foundation/agent-reports/00-delegation-plan.md#graph-runtime
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-100
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/00-delegation-plan.md#workflow-state
+  path: research/ui-foundation/agent-reports/00-delegation-plan.md#workflow-state
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-101
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/00-delegation-plan.md#api-actions-authority
+  path: research/ui-foundation/agent-reports/00-delegation-plan.md#api-actions-authority
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-102
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/00-delegation-plan.md#evidence-telemetry
+  path: research/ui-foundation/agent-reports/00-delegation-plan.md#evidence-telemetry
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-103
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/00-delegation-plan.md#ui-projections
+  path: research/ui-foundation/agent-reports/00-delegation-plan.md#ui-projections
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-104
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: agent-reports/00-delegation-plan.md#tests-documentation
+  path: research/ui-foundation/agent-reports/00-delegation-plan.md#tests-documentation
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-105

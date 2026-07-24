@@ -1,6 +1,6 @@
 id: ACT-49
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-6
 actor: REST caller; this is the affected graph-node consequence of CMD-6, not an independent node command.

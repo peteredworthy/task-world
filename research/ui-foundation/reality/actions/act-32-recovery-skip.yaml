@@ -2,7 +2,7 @@ id: ACT-32
 title: Skip legacy recovering task
 definition: Completes recovery with skip and completes the recovering legacy task.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-9
 actor: caller

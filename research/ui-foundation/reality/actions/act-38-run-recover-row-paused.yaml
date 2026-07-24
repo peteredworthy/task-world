@@ -2,7 +2,7 @@ id: ACT-38
 title: Park recovered legacy run row as paused
 definition: Run recovery moves a failed row to paused and preserves an already paused row as paused.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-35
 actor: caller

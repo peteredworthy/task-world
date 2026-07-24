@@ -3,7 +3,7 @@ title: Qualify paused startup orphan for deletion
 definition: Identify the route's narrow paused startup-orphan eligibility before the delete route returns its separate deleted-response
   carrier.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-7
 actor: caller

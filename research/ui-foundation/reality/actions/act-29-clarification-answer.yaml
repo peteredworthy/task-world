@@ -2,7 +2,7 @@ id: ACT-29
 title: Answer legacy clarification
 definition: Records non-skipped answers for a pending legacy clarification and returns the eligible task to building.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-8
 actor: legacy responder

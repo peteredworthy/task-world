@@ -43,6 +43,14 @@ DIRECT_EVIDENCE_SOURCE_KINDS = {
     "invariant-check",
     "test",
 }
+DIRECT_TEST_SOURCE_KINDS = {"test", "integration-test", "unit-test"}
+DIRECT_IMPLEMENTATION_SOURCE_KINDS = {
+    "api",
+    "command",
+    "executable-schema",
+    "implementation",
+    "invariant-check",
+}
 PHASE_ONE_SNAPSHOT_INCLUDE_PATTERNS = (
     "src/orchestrator/**/*.py",
     "tests/**/*.py",
@@ -586,7 +594,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 issues.append(_issue("ID_ALLOCATION_DUPLICATE", location, identifier))
             allocated.add(identifier)
             if match:
-                suffix = (match.group(1), match.group(2))
+                suffix = (match.group(1), str(int(match.group(2))))
                 if suffix in allocated_suffixes:
                     issues.append(_issue("ID_ALLOCATION_SUFFIX_DUPLICATE", location, identifier))
                 allocated_suffixes.add(suffix)
@@ -783,6 +791,11 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         if isinstance(raw_items_value, list)
         else []
     )
+    raw_evidence_by_id = {
+        identifier: item
+        for item in raw_evidence_items
+        if isinstance((identifier := item.get("id")), str)
+    }
     for index, item in enumerate(raw_evidence_items):
         identifier = item.get("id")
         if not isinstance(identifier, str):
@@ -835,6 +848,16 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 ):
                     issues.append(_issue("COMMAND_TEST_EVIDENCE_INVALID", location, test_id))
 
+    issues.extend(
+        _validate_semantic_evidence_admission(
+            package,
+            semantic_items,
+            declarations,
+            raw_evidence_by_id,
+            snapshot_paths,
+        )
+    )
+
     if phase >= 1:
         _validate_q7_coverage_attestation(
             package,
@@ -852,6 +875,47 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         and isinstance(item, dict)
         and isinstance(item.get("id"), str)
     }
+    for identifier, action in action_records.items():
+        evidence_ids = action.get("audit_evidence_ids")
+        records = (
+            [
+                raw_evidence_by_id[evidence_id]
+                for evidence_id in evidence_ids
+                if evidence_id in raw_evidence_by_id
+            ]
+            if isinstance(evidence_ids, list)
+            else []
+        )
+        if action.get("test_status") != "exercised":
+            pass
+        elif not any(
+            _is_direct_evidence(record)
+            and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
+            and record.get("test_status") == "exercised"
+            and _has_valid_direct_locator(record, snapshot_paths)
+            for record in records
+        ):
+            issues.append(
+                _issue(
+                    "EXERCISED_DIRECT_TEST_EVIDENCE_MISSING",
+                    package.root / f"reality/actions/{identifier}.yaml",
+                    identifier,
+                )
+            )
+        if action.get("capability_status") == "current" and not any(
+            _is_direct_evidence(record)
+            and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
+            and record.get("reachable") is True
+            and _has_valid_direct_locator(record, snapshot_paths)
+            for record in records
+        ):
+            issues.append(
+                _issue(
+                    "CURRENT_DIRECT_IMPLEMENTATION_EVIDENCE_MISSING",
+                    package.root / f"reality/actions/{identifier}.yaml",
+                    identifier,
+                )
+            )
     for item in conflict_document.items if conflict_document else []:
         if item.get("status") != "unresolved":
             continue
@@ -1146,6 +1210,70 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
 
     issues.extend(_validate_actions(package, declarations, commands, evidence))
     issues.extend(_validate_epistemics(package, canonical, evidence))
+    return issues
+
+
+def _has_valid_direct_locator(
+    item: dict[str, JsonValue], snapshot_paths: dict[str, set[str]]
+) -> bool:
+    path = item.get("path")
+    symbol = item.get("symbol")
+    snapshot_id = item.get("snapshot_id")
+    snapshot_path = item.get("snapshot_path")
+    return (
+        isinstance(path, str)
+        and bool(path.strip())
+        and isinstance(symbol, str)
+        and bool(symbol.strip())
+        and isinstance(snapshot_id, str)
+        and bool(snapshot_id.strip())
+        and isinstance(snapshot_path, str)
+        and bool(snapshot_path.strip())
+        and path == snapshot_path
+        and snapshot_path in snapshot_paths.get(snapshot_id, set())
+    )
+
+
+def _is_direct_evidence(item: dict[str, JsonValue]) -> bool:
+    return (
+        item.get("provenance_role") == "direct"
+        or item.get("source_kind") in DIRECT_EVIDENCE_SOURCE_KINDS
+    )
+
+
+def _validate_semantic_evidence_admission(
+    package: FoundationPackage,
+    semantic_items: dict[str, SemanticItem],
+    declarations: dict[str, str],
+    evidence: dict[str, dict[str, JsonValue]],
+    snapshot_paths: dict[str, set[str]],
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    for identifier, semantic in semantic_items.items():
+        records = [
+            evidence[evidence_id]
+            for evidence_id in semantic.evidence_ids
+            if evidence_id in evidence
+        ]
+        location = package.root / declarations.get(identifier, "unknown")
+        if semantic.test_status == "exercised" and not any(
+            _is_direct_evidence(record)
+            and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
+            and record.get("test_status") == "exercised"
+            and _has_valid_direct_locator(record, snapshot_paths)
+            for record in records
+        ):
+            issues.append(_issue("EXERCISED_DIRECT_TEST_EVIDENCE_MISSING", location, identifier))
+        if semantic.capability_status == "current" and not any(
+            _is_direct_evidence(record)
+            and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
+            and record.get("reachable") is True
+            and _has_valid_direct_locator(record, snapshot_paths)
+            for record in records
+        ):
+            issues.append(
+                _issue("CURRENT_DIRECT_IMPLEMENTATION_EVIDENCE_MISSING", location, identifier)
+            )
     return issues
 
 
@@ -1588,6 +1716,9 @@ def validate_source_snapshot_coverage(
     package: FoundationPackage, snapshot: JsonValue, phase: int = 0
 ) -> list[ValidationIssue]:
     """Purely prove that declared Phase 1 include patterns cover current files."""
+    location = package.root / "catalog/evidence.yaml"
+    if phase >= 1 and not _has_valid_snapshot_coverage_shape(snapshot):
+        return [_issue("SOURCE_SNAPSHOT_COVERAGE_INVALID", location, "Phase 1 snapshot")]
     if not isinstance(snapshot, dict):
         return []
     patterns = snapshot.get("include_patterns")
@@ -1608,7 +1739,6 @@ def validate_source_snapshot_coverage(
         if isinstance(item, dict) and isinstance((path := item.get("path")), str)
     }
     issues: list[ValidationIssue] = []
-    location = package.root / "catalog/evidence.yaml"
     if phase >= 1 and not set(PHASE_ONE_SNAPSHOT_INCLUDE_PATTERNS) <= set(text_patterns):
         issues.append(_issue("SOURCE_SNAPSHOT_PATTERN_MISSING", location, snapshot.get("id")))
     if not expected <= covered:
@@ -1620,6 +1750,23 @@ def validate_source_snapshot_coverage(
     ):
         issues.append(_issue("SOURCE_SNAPSHOT_COUNT_MISMATCH", location, snapshot.get("id")))
     return issues
+
+
+def _has_valid_snapshot_coverage_shape(snapshot: JsonValue) -> bool:
+    if not isinstance(snapshot, dict):
+        return False
+    patterns = snapshot.get("include_patterns")
+    files = snapshot.get("files")
+    expected_count = snapshot.get("expected_count")
+    covered_count = snapshot.get("covered_count")
+    return (
+        isinstance(patterns, list)
+        and all(isinstance(pattern, str) and pattern for pattern in patterns)
+        and isinstance(files, list)
+        and all(isinstance(file, dict) for file in files)
+        and type(expected_count) is int
+        and type(covered_count) is int
+    )
 
 
 def _validate_q7_coverage_attestation(
@@ -1644,6 +1791,7 @@ def _validate_q7_coverage_attestation(
         and decisive == ["EVD-113"]
         and attestation.get("source_kind") == "snapshot-coverage-attestation"
         and isinstance(primary_snapshot, dict)
+        and _has_valid_snapshot_coverage_shape(primary_snapshot)
         and attestation.get("snapshot_id") == primary_snapshot.get("id")
         and attestation.get("include_patterns") == primary_snapshot.get("include_patterns")
         and attestation.get("expected_count") == primary_snapshot.get("expected_count")

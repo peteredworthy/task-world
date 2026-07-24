@@ -2,7 +2,7 @@ id: ACT-27
 title: Record legacy step approval
 definition: Records approval for the current legacy step's human-approval gate.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-32
 actor: caller-supplied approver
