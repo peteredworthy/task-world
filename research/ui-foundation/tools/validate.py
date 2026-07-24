@@ -641,6 +641,72 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     )
                 )
 
+        if semantic.documentation_status == "conflicting" and not (
+            semantic.conflict_ids or semantic.question_ids
+        ):
+            issues.append(
+                _issue(
+                    "CONFLICTING_SEMANTIC_REFERENCE_MISSING",
+                    package.root / relative,
+                    identifier,
+                )
+            )
+
+    for index, item in enumerate(conflict_document.items if conflict_document else []):
+        if item.get("status") != "unresolved":
+            continue
+        location = f"{package.root / 'catalog/conflicts.yaml'}:items[{index}]"
+        claims_value = item.get("claims")
+        claims = claims_value if isinstance(claims_value, list) else []
+        if len(claims) < 2:
+            issues.append(_issue("CONFLICT_CLAIMS_INSUFFICIENT", location, item.get("id")))
+        propositions = [
+            claim.get("proposition") if isinstance(claim, dict) else claim for claim in claims
+        ]
+        if len(propositions) >= 2 and len({str(value) for value in propositions}) < 2:
+            issues.append(_issue("CONFLICT_CLAIMS_NOT_DISTINCT", location, item.get("id")))
+        claim_evidence = item.get("claim_evidence")
+        if not isinstance(claim_evidence, list) or len(claim_evidence) < 2:
+            issues.append(_issue("CONFLICT_EVIDENCE_INSUFFICIENT", location, item.get("id")))
+        if not isinstance(item.get("affected_ids"), list) or not item["affected_ids"]:
+            issues.append(_issue("CONFLICT_AFFECTED_IDS_MISSING", location, item.get("id")))
+        if not isinstance(item.get("settlement_method"), str) or not item["settlement_method"]:
+            issues.append(_issue("CONFLICT_SETTLEMENT_METHOD_MISSING", location, item.get("id")))
+
+    scope_document = canonical.get("catalog/scope.yaml")
+    evidence_paths = {
+        identifier: path
+        for item in (evidence_document.items if evidence_document else [])
+        if isinstance((identifier := item.get("id")), str)
+        and isinstance((path := item.get("path")), str)
+    }
+    for index, demand in enumerate(scope_document.items if scope_document else []):
+        finding = demand.get("phase_1_finding")
+        location = f"{package.root / 'catalog/scope.yaml'}:items[{index}]"
+        raw_finding_ids = finding.get("evidence_ids") if isinstance(finding, dict) else None
+        if not isinstance(raw_finding_ids, list):
+            issues.append(_issue("SCOPE_FINDING_MISSING", location, demand.get("key")))
+            continue
+        finding_ids: list[JsonValue] = raw_finding_ids
+        if not finding_ids:
+            issues.append(_issue("SCOPE_FINDING_MISSING", location, demand.get("key")))
+            continue
+        for raw_evidence_id in finding_ids:
+            if not isinstance(raw_evidence_id, str):
+                issues.append(
+                    _issue("SCOPE_FINDING_EVIDENCE_UNRESOLVED", location, raw_evidence_id)
+                )
+                continue
+            evidence_id = raw_evidence_id
+            record = evidence.get(evidence_id)
+            if record is None:
+                issues.append(_issue("SCOPE_FINDING_EVIDENCE_UNRESOLVED", location, evidence_id))
+            elif (
+                record.source_kind == "audit-report"
+                and "00-delegation-plan" in evidence_paths.get(evidence_id, "")
+            ):
+                issues.append(_issue("SCOPE_FINDING_NOT_SUBSTANTIVE", location, evidence_id))
+
     registry = canonical.get("capabilities/registry.yaml")
     for item in registry.items if registry else []:
         status = item.get("capability_status")

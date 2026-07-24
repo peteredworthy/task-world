@@ -49,3 +49,4 @@ enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-4 SubmitGraphPatchCommand and patch-validator rejection conditions.
 proposed_role_policy: null
+conflict_ids: []

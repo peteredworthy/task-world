@@ -1,9 +1,3 @@
 # UI foundation status
 
-Phase 1 is normalized from canonical records.
-
-- Scope demands: 132
-- Canonical allocations: 385
-- Unresolved conflicts: 9
-- Blocking questions: 7
-- Phase 2 capability classification: unknown placeholders only.
+Phase 1 canonical records: 132 scope demands, 9 unresolved conflicts, 6 blocking questions, 890 Phase 1 hash entries. Phase 2 classifications remain unknown.

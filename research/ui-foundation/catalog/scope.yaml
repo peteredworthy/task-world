@@ -12,7 +12,7 @@ audit_owners:
 - tests-documentation
 items:
 - ? "\x6bey"
-  : 'jobs.J1.health-class'
+  : jobs.J1.health-class
   source: docs/jtbd/jobs.md
   source_anchor: J1 Must know
   demand_type: claim
@@ -21,12 +21,13 @@ items:
   downstream_jobs:
   - J1
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J1.current-constraint'
+  : jobs.J1.current-constraint
   source: docs/jtbd/jobs.md
   source_anchor: J1 Must know
   demand_type: claim
@@ -35,12 +36,13 @@ items:
   downstream_jobs:
   - J1
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J1.human-wait-state'
+  : jobs.J1.human-wait-state
   source: docs/jtbd/jobs.md
   source_anchor: J1 Must know
   demand_type: claim
@@ -49,12 +51,13 @@ items:
   downstream_jobs:
   - J1
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J1.frontier-activity'
+  : jobs.J1.frontier-activity
   source: docs/jtbd/jobs.md
   source_anchor: J1 Must know
   demand_type: claim
@@ -63,12 +66,13 @@ items:
   downstream_jobs:
   - J1
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J1.last-event-age'
+  : jobs.J1.last-event-age
   source: docs/jtbd/jobs.md
   source_anchor: J1 Must know
   demand_type: claim
@@ -77,12 +81,13 @@ items:
   downstream_jobs:
   - J1
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J1.budget-pace'
+  : jobs.J1.budget-pace
   source: docs/jtbd/jobs.md
   source_anchor: J1 Must know
   demand_type: claim
@@ -92,12 +97,13 @@ items:
   - J1
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J1.blast-radius'
+  : jobs.J1.blast-radius
   source: docs/jtbd/jobs.md
   source_anchor: J1 Must know
   demand_type: claim
@@ -108,12 +114,13 @@ items:
   - J2
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J2.active-nodes-steps'
+  : jobs.J2.active-nodes-steps
   source: docs/jtbd/jobs.md
   source_anchor: J2 Must know
   demand_type: claim
@@ -122,12 +129,13 @@ items:
   downstream_jobs:
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J2.dependency-path'
+  : jobs.J2.dependency-path
   source: docs/jtbd/jobs.md
   source_anchor: J2 Must know
   demand_type: claim
@@ -136,12 +144,13 @@ items:
   downstream_jobs:
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J2.planner-horizon'
+  : jobs.J2.planner-horizon
   source: docs/jtbd/jobs.md
   source_anchor: J2 Must know
   demand_type: claim
@@ -150,12 +159,13 @@ items:
   downstream_jobs:
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J2.blocked-reason'
+  : jobs.J2.blocked-reason
   source: docs/jtbd/jobs.md
   source_anchor: J2 Must know
   demand_type: claim
@@ -164,12 +174,13 @@ items:
   downstream_jobs:
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J2.attempts-left'
+  : jobs.J2.attempts-left
   source: docs/jtbd/jobs.md
   source_anchor: J2 Must know
   demand_type: claim
@@ -179,12 +190,13 @@ items:
   - J2
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J2.final-invariant-progress'
+  : jobs.J2.final-invariant-progress
   source: docs/jtbd/jobs.md
   source_anchor: J2 Must know
   demand_type: claim
@@ -193,12 +205,13 @@ items:
   downstream_jobs:
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J3.exact-question'
+  : jobs.J3.exact-question
   source: docs/jtbd/jobs.md
   source_anchor: J3 Must know
   demand_type: claim
@@ -207,12 +220,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J3.why-now'
+  : jobs.J3.why-now
   source: docs/jtbd/jobs.md
   source_anchor: J3 Must know
   demand_type: claim
@@ -221,12 +235,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J3.proposer'
+  : jobs.J3.proposer
   source: docs/jtbd/jobs.md
   source_anchor: J3 Must know
   demand_type: claim
@@ -235,12 +250,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J3.affected-scope'
+  : jobs.J3.affected-scope
   source: docs/jtbd/jobs.md
   source_anchor: J3 Must know
   demand_type: claim
@@ -249,12 +265,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J3.evidence'
+  : jobs.J3.evidence
   source: docs/jtbd/jobs.md
   source_anchor: J3 Must know
   demand_type: claim
@@ -263,12 +280,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J3.alternatives'
+  : jobs.J3.alternatives
   source: docs/jtbd/jobs.md
   source_anchor: J3 Must know
   demand_type: claim
@@ -277,12 +295,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J3.downstream-effect'
+  : jobs.J3.downstream-effect
   source: docs/jtbd/jobs.md
   source_anchor: J3 Must know
   demand_type: claim
@@ -291,12 +310,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J3.reversibility'
+  : jobs.J3.reversibility
   source: docs/jtbd/jobs.md
   source_anchor: J3 Must know
   demand_type: claim
@@ -305,12 +325,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J4.ordered-events'
+  : jobs.J4.ordered-events
   source: docs/jtbd/jobs.md
   source_anchor: J4 Must know
   demand_type: claim
@@ -319,12 +340,13 @@ items:
   downstream_jobs:
   - J4
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J4.attempt-lineage'
+  : jobs.J4.attempt-lineage
   source: docs/jtbd/jobs.md
   source_anchor: J4 Must know
   demand_type: claim
@@ -333,12 +355,13 @@ items:
   downstream_jobs:
   - J4
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J4.requirement-grade-changes'
+  : jobs.J4.requirement-grade-changes
   source: docs/jtbd/jobs.md
   source_anchor: J4 Must know
   demand_type: claim
@@ -347,12 +370,13 @@ items:
   downstream_jobs:
   - J4
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J4.patch-provenance'
+  : jobs.J4.patch-provenance
   source: docs/jtbd/jobs.md
   source_anchor: J4 Must know
   demand_type: claim
@@ -361,12 +385,13 @@ items:
   downstream_jobs:
   - J4
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J4.state-transitions'
+  : jobs.J4.state-transitions
   source: docs/jtbd/jobs.md
   source_anchor: J4 Must know
   demand_type: claim
@@ -375,12 +400,13 @@ items:
   downstream_jobs:
   - J4
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J4.retries-rejections'
+  : jobs.J4.retries-rejections
   source: docs/jtbd/jobs.md
   source_anchor: J4 Must know
   demand_type: claim
@@ -389,12 +415,13 @@ items:
   downstream_jobs:
   - J4
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.bound-input-records'
+  : jobs.J5.bound-input-records
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -403,12 +430,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.omitted-referenced-context'
+  : jobs.J5.omitted-referenced-context
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -417,12 +445,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.prompt-size'
+  : jobs.J5.prompt-size
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -432,12 +461,13 @@ items:
   - J5
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.transcript'
+  : jobs.J5.transcript
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -446,12 +476,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.tools'
+  : jobs.J5.tools
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -460,12 +491,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.artifacts'
+  : jobs.J5.artifacts
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -474,12 +506,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.file-delta'
+  : jobs.J5.file-delta
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -488,12 +521,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.output-records'
+  : jobs.J5.output-records
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -502,12 +536,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J5.usage'
+  : jobs.J5.usage
   source: docs/jtbd/jobs.md
   source_anchor: J5 Must know
   demand_type: claim
@@ -518,12 +553,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.current-failure'
+  : jobs.J6.current-failure
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -532,12 +568,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.retry-information-delta'
+  : jobs.J6.retry-information-delta
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -547,12 +584,13 @@ items:
   - J6
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.alternatives'
+  : jobs.J6.alternatives
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -561,12 +599,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.expected-effect'
+  : jobs.J6.expected-effect
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -575,12 +614,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.scope'
+  : jobs.J6.scope
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -589,12 +629,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.authority'
+  : jobs.J6.authority
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -603,12 +644,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.budget'
+  : jobs.J6.budget
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -617,12 +659,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.reversibility'
+  : jobs.J6.reversibility
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -631,12 +674,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J6.validation-path'
+  : jobs.J6.validation-path
   source: docs/jtbd/jobs.md
   source_anchor: J6 Must know
   demand_type: claim
@@ -645,12 +689,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J7.spend-tokens-by-node-kind'
+  : jobs.J7.spend-tokens-by-node-kind
   source: docs/jtbd/jobs.md
   source_anchor: J7 Must know
   demand_type: claim
@@ -659,12 +704,13 @@ items:
   downstream_jobs:
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J7.unpriced-share'
+  : jobs.J7.unpriced-share
   source: docs/jtbd/jobs.md
   source_anchor: J7 Must know
   demand_type: claim
@@ -673,12 +719,13 @@ items:
   downstream_jobs:
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J7.prompt-size'
+  : jobs.J7.prompt-size
   source: docs/jtbd/jobs.md
   source_anchor: J7 Must know
   demand_type: claim
@@ -687,12 +734,13 @@ items:
   downstream_jobs:
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J7.retries-without-new-information'
+  : jobs.J7.retries-without-new-information
   source: docs/jtbd/jobs.md
   source_anchor: J7 Must know
   demand_type: claim
@@ -701,12 +749,13 @@ items:
   downstream_jobs:
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J7.repeated-work'
+  : jobs.J7.repeated-work
   source: docs/jtbd/jobs.md
   source_anchor: J7 Must know
   demand_type: claim
@@ -715,12 +764,13 @@ items:
   downstream_jobs:
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J7.verifier-churn'
+  : jobs.J7.verifier-churn
   source: docs/jtbd/jobs.md
   source_anchor: J7 Must know
   demand_type: claim
@@ -729,12 +779,13 @@ items:
   downstream_jobs:
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.comparable-cohort'
+  : jobs.J8.comparable-cohort
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -743,12 +794,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.routine-sha'
+  : jobs.J8.routine-sha
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -757,12 +809,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.model-profile'
+  : jobs.J8.model-profile
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -771,12 +824,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.duration'
+  : jobs.J8.duration
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -785,12 +839,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.tokens'
+  : jobs.J8.tokens
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -799,12 +854,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.price-coverage'
+  : jobs.J8.price-coverage
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -813,12 +869,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.patch-count'
+  : jobs.J8.patch-count
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -827,12 +884,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.retries'
+  : jobs.J8.retries
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -841,12 +899,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.grade-churn'
+  : jobs.J8.grade-churn
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -855,12 +914,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.interventions'
+  : jobs.J8.interventions
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -869,12 +929,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J8.outcome'
+  : jobs.J8.outcome
   source: docs/jtbd/jobs.md
   source_anchor: J8 Must know
   demand_type: claim
@@ -883,12 +944,13 @@ items:
   downstream_jobs:
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'jobs.J7.prompt-pressure'
+  : jobs.J7.prompt-pressure
   source: docs/jtbd/jobs.md
   source_anchor: J7 narrative
   demand_type: claim
@@ -897,12 +959,13 @@ items:
   downstream_jobs:
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'design.initial-claims.final-gate-effect'
+  : design.initial-claims.final-gate-effect
   source: docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md
   source_anchor: "Capability And Derivation Contracts \u2014 Initial coverage"
   demand_type: claim
@@ -912,12 +975,13 @@ items:
   - J2
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.A.freshness-and-connection'
+  : journeys.A.freshness-and-connection
   source: docs/jtbd/journeys.md
   source_anchor: Journey A Orient
   demand_type: claim
@@ -926,12 +990,13 @@ items:
   downstream_jobs:
   - J1
   blocking: true
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.A.positive-empty-needs-you'
+  : journeys.A.positive-empty-needs-you
   source: docs/jtbd/journeys.md
   source_anchor: Journey A Scan
   demand_type: claim
@@ -940,12 +1005,13 @@ items:
   downstream_jobs:
   - J1
   blocking: true
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.A.no-runaway-signal'
+  : journeys.A.no-runaway-signal
   source: docs/jtbd/journeys.md
   source_anchor: Journey A Leave
   demand_type: claim
@@ -954,12 +1020,13 @@ items:
   downstream_jobs:
   - J1
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.B.wait-age'
+  : journeys.B.wait-age
   source: docs/jtbd/journeys.md
   source_anchor: Journey B Notice
   demand_type: claim
@@ -968,12 +1035,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.B.validator-result'
+  : journeys.B.validator-result
   source: docs/jtbd/journeys.md
   source_anchor: Journey B Judge
   demand_type: claim
@@ -982,12 +1050,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.B.recorded-identity-timestamp'
+  : journeys.B.recorded-identity-timestamp
   source: docs/jtbd/journeys.md
   source_anchor: Journey B Act
   demand_type: claim
@@ -996,12 +1065,13 @@ items:
   downstream_jobs:
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.C.cost-of-another-attempt'
+  : journeys.C.cost-of-another-attempt
   source: docs/jtbd/journeys.md
   source_anchor: Journey C Detect
   demand_type: claim
@@ -1011,12 +1081,13 @@ items:
   - J2
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.C.candidate-delta'
+  : journeys.C.candidate-delta
   source: docs/jtbd/journeys.md
   source_anchor: Journey C Compare
   demand_type: claim
@@ -1027,12 +1098,13 @@ items:
   - J5
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.C.causal-gap'
+  : journeys.C.causal-gap
   source: docs/jtbd/journeys.md
   source_anchor: Journey C Explain
   demand_type: claim
@@ -1043,12 +1115,13 @@ items:
   - J5
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.C.directive-binding'
+  : journeys.C.directive-binding
   source: docs/jtbd/journeys.md
   source_anchor: Journey C Watch
   demand_type: claim
@@ -1057,12 +1130,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.D.execution-unit-identity'
+  : journeys.D.execution-unit-identity
   source: docs/jtbd/journeys.md
   source_anchor: Journey D Select
   demand_type: claim
@@ -1071,12 +1145,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.D.file-state-boundary'
+  : journeys.D.file-state-boundary
   source: docs/jtbd/journeys.md
   source_anchor: Journey D Boundary
   demand_type: claim
@@ -1085,12 +1160,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.E.missing-node-attribution'
+  : journeys.E.missing-node-attribution
   source: docs/jtbd/journeys.md
   source_anchor: Journey E Establish coverage
   demand_type: claim
@@ -1100,12 +1176,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.E.detector-evidence'
+  : journeys.E.detector-evidence
   source: docs/jtbd/journeys.md
   source_anchor: Journey E Verify
   demand_type: claim
@@ -1115,12 +1192,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.continuity.canonical-selection'
+  : journeys.continuity.canonical-selection
   source: docs/jtbd/journeys.md
   source_anchor: Cross-journey continuity requirement 1
   demand_type: invariant-demand
@@ -1136,12 +1214,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.continuity.preserve-context'
+  : journeys.continuity.preserve-context
   source: docs/jtbd/journeys.md
   source_anchor: Cross-journey continuity requirement 2
   demand_type: invariant-demand
@@ -1154,12 +1233,13 @@ items:
   - J5
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.continuity.restore-return-state'
+  : journeys.continuity.restore-return-state
   source: docs/jtbd/journeys.md
   source_anchor: Cross-journey continuity requirement 3
   demand_type: invariant-demand
@@ -1175,12 +1255,13 @@ items:
   - J7
   - J8
   blocking: false
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.continuity.derived-evidence-freshness'
+  : journeys.continuity.derived-evidence-freshness
   source: docs/jtbd/journeys.md
   source_anchor: Cross-journey continuity requirement 4
   demand_type: invariant-demand
@@ -1194,12 +1275,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.continuity.action-safety-fields'
+  : journeys.continuity.action-safety-fields
   source: docs/jtbd/journeys.md
   source_anchor: Cross-journey continuity requirement 5
   demand_type: invariant-demand
@@ -1209,12 +1291,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'journeys.continuity.responsive-context'
+  : journeys.continuity.responsive-context
   source: docs/jtbd/journeys.md
   source_anchor: Cross-journey continuity requirement 6
   demand_type: invariant-demand
@@ -1224,12 +1307,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.ignore-watch'
+  : decisions.ignore-watch
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Ignore / keep watching"
   demand_type: implemented-action-candidate
@@ -1238,12 +1322,13 @@ items:
   downstream_jobs:
   - J1
   blocking: false
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.approve-gate-patch'
+  : decisions.approve-gate-patch
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Approve a gate or patch"
   demand_type: implemented-action-candidate
@@ -1253,12 +1338,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.answer-clarification'
+  : decisions.answer-clarification
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Answer a clarification"
   demand_type: implemented-action-candidate
@@ -1268,12 +1354,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.retry'
+  : decisions.retry
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Retry"
   demand_type: implemented-action-candidate
@@ -1282,12 +1369,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.lifecycle'
+  : decisions.lifecycle
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Pause / resume / cancel"
   demand_type: implemented-action-candidate
@@ -1296,12 +1384,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.retire-supersede'
+  : decisions.retire-supersede
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Retire or supersede a strand"
   demand_type: implemented-action-candidate
@@ -1310,12 +1399,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.requeue'
+  : decisions.requeue
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Requeue failed outbox/work"
   demand_type: implemented-action-candidate
@@ -1324,12 +1414,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.steer-context'
+  : decisions.steer-context
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Steer with new context"
   demand_type: absent-intervention
@@ -1338,12 +1429,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.apply-steering-patch'
+  : decisions.apply-steering-patch
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Apply steering patch"
   demand_type: absent-intervention
@@ -1352,12 +1444,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'decisions.change-source'
+  : decisions.change-source
   source: docs/jtbd/decision-information.md
   source_anchor: "Decision inventory \u2014 Change a routine/prompt/policy"
   demand_type: implemented-action-candidate
@@ -1367,12 +1460,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'honesty.live-input-age'
+  : honesty.live-input-age
   source: docs/jtbd/decision-information.md
   source_anchor: Confidence and honesty rule 1
   demand_type: honesty-rule
@@ -1382,12 +1476,13 @@ items:
   - J1
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'honesty.derived-label-evidence'
+  : honesty.derived-label-evidence
   source: docs/jtbd/decision-information.md
   source_anchor: Confidence and honesty rule 2
   demand_type: honesty-rule
@@ -1401,12 +1496,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'honesty.unpriced-not-zero'
+  : honesty.unpriced-not-zero
   source: docs/jtbd/decision-information.md
   source_anchor: Confidence and honesty rule 3
   demand_type: honesty-rule
@@ -1416,12 +1512,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'honesty.no-growing-plan-percent'
+  : honesty.no-growing-plan-percent
   source: docs/jtbd/decision-information.md
   source_anchor: Confidence and honesty rule 4
   demand_type: honesty-rule
@@ -1431,12 +1528,13 @@ items:
   - J1
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'honesty.fact-versus-inference'
+  : honesty.fact-versus-inference
   source: docs/jtbd/decision-information.md
   source_anchor: Confidence and honesty rule 5
   demand_type: honesty-rule
@@ -1447,12 +1545,13 @@ items:
   - J5
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'honesty.approximate-values'
+  : honesty.approximate-values
   source: docs/jtbd/decision-information.md
   source_anchor: Confidence and honesty rule 6
   demand_type: honesty-rule
@@ -1463,12 +1562,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'honesty.directive-binding-proof'
+  : honesty.directive-binding-proof
   source: docs/jtbd/decision-information.md
   source_anchor: Confidence and honesty rule 7
   demand_type: honesty-rule
@@ -1477,12 +1577,13 @@ items:
   downstream_jobs:
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'feedback.command-accepted-rejected'
+  : feedback.command-accepted-rejected
   source: docs/jtbd/decision-information.md
   source_anchor: Action feedback contract 1
   demand_type: action-feedback
@@ -1492,12 +1593,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'feedback.validation-result-reason'
+  : feedback.validation-result-reason
   source: docs/jtbd/decision-information.md
   source_anchor: Action feedback contract 2
   demand_type: action-feedback
@@ -1507,12 +1609,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: graph-runtime
-    evidence_id: EVD-99
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-58
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'feedback.durable-identity'
+  : feedback.durable-identity
   source: docs/jtbd/decision-information.md
   source_anchor: Action feedback contract 3
   demand_type: action-feedback
@@ -1522,12 +1625,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'feedback.resulting-state'
+  : feedback.resulting-state
   source: docs/jtbd/decision-information.md
   source_anchor: Action feedback contract 4
   demand_type: action-feedback
@@ -1537,12 +1641,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'feedback.next-activity'
+  : feedback.next-activity
   source: docs/jtbd/decision-information.md
   source_anchor: Action feedback contract 5
   demand_type: action-feedback
@@ -1552,12 +1657,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'feedback.failure-race-recovery'
+  : feedback.failure-race-recovery
   source: docs/jtbd/decision-information.md
   source_anchor: Action feedback contract 6
   demand_type: action-feedback
@@ -1567,12 +1673,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: api-actions-authority
-    evidence_id: EVD-101
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-61
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.health.evidence-convergence'
+  : ia.health.evidence-convergence
   source: docs/jtbd/information-architecture.md
   source_anchor: "Shared run-health model \u2014 Healthy"
   demand_type: claim
@@ -1582,12 +1689,13 @@ items:
   - J1
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.health.needs-decision'
+  : ia.health.needs-decision
   source: docs/jtbd/information-architecture.md
   source_anchor: "Shared run-health model \u2014 Needs decision"
   demand_type: claim
@@ -1597,12 +1705,13 @@ items:
   - J1
   - J3
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.health.degraded'
+  : ia.health.degraded
   source: docs/jtbd/information-architecture.md
   source_anchor: "Shared run-health model \u2014 Degraded"
   demand_type: claim
@@ -1613,12 +1722,13 @@ items:
   - J4
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.health.stalled'
+  : ia.health.stalled
   source: docs/jtbd/information-architecture.md
   source_anchor: "Shared run-health model \u2014 Stalled"
   demand_type: claim
@@ -1629,12 +1739,13 @@ items:
   - J4
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.health.runaway'
+  : ia.health.runaway
   source: docs/jtbd/information-architecture.md
   source_anchor: "Shared run-health model \u2014 Runaway"
   demand_type: claim
@@ -1645,12 +1756,13 @@ items:
   - J6
   - J7
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.health.steered'
+  : ia.health.steered
   source: docs/jtbd/information-architecture.md
   source_anchor: "Shared run-health model \u2014 Steered"
   demand_type: claim
@@ -1660,12 +1772,13 @@ items:
   - J1
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: evidence-telemetry
-    evidence_id: EVD-102
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-56
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.health.settled'
+  : ia.health.settled
   source: docs/jtbd/information-architecture.md
   source_anchor: "Shared run-health model \u2014 Settled"
   demand_type: claim
@@ -1675,12 +1788,13 @@ items:
   - J1
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: workflow-state
-    evidence_id: EVD-100
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-57
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.selection.identity-chain'
+  : ia.selection.identity-chain
   source: docs/jtbd/information-architecture.md
   source_anchor: Persistent context model
   demand_type: relationship-demand
@@ -1693,12 +1807,13 @@ items:
   - J5
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: domain-persistence
-    evidence_id: EVD-98
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-49
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.selection.comparison-target'
+  : ia.selection.comparison-target
   source: docs/jtbd/information-architecture.md
   source_anchor: Persistent context model
   demand_type: claim
@@ -1708,12 +1823,13 @@ items:
   - J5
   - J8
   blocking: false
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.selection.freshness-annotations'
+  : ia.selection.freshness-annotations
   source: docs/jtbd/information-architecture.md
   source_anchor: Persistent context model
   demand_type: invariant-demand
@@ -1729,12 +1845,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'ia.vocabulary.distinct-entities'
+  : ia.vocabulary.distinct-entities
   source: docs/jtbd/information-architecture.md
   source_anchor: One vocabulary
   demand_type: invariant-demand
@@ -1750,12 +1867,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.attention-clarity'
+  : rubric.attention-clarity
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Attention clarity"
   demand_type: evaluation-demand
@@ -1764,12 +1882,13 @@ items:
   downstream_jobs:
   - J1
   blocking: false
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.position-blast-radius'
+  : rubric.position-blast-radius
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Position and blast radius"
   demand_type: evaluation-demand
@@ -1778,12 +1897,13 @@ items:
   downstream_jobs:
   - J2
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.causal-comprehension'
+  : rubric.causal-comprehension
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Causal comprehension"
   demand_type: evaluation-demand
@@ -1792,12 +1912,13 @@ items:
   downstream_jobs:
   - J4
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.decision-readiness'
+  : rubric.decision-readiness
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Decision readiness"
   demand_type: evaluation-demand
@@ -1807,12 +1928,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.evidence-access'
+  : rubric.evidence-access
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Evidence access"
   demand_type: evaluation-demand
@@ -1821,12 +1943,13 @@ items:
   downstream_jobs:
   - J5
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.context-continuity'
+  : rubric.context-continuity
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Context continuity"
   demand_type: evaluation-demand
@@ -1839,12 +1962,13 @@ items:
   - J5
   - J6
   blocking: false
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.complexity-control'
+  : rubric.complexity-control
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Complexity control"
   demand_type: evaluation-demand
@@ -1860,12 +1984,13 @@ items:
   - J7
   - J8
   blocking: false
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.action-safety-feedback'
+  : rubric.action-safety-feedback
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Action safety and feedback"
   demand_type: evaluation-demand
@@ -1875,12 +2000,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.capability-honesty'
+  : rubric.capability-honesty
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Capability honesty"
   demand_type: evaluation-demand
@@ -1896,12 +2022,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.responsive-integrity'
+  : rubric.responsive-integrity
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: "Weighted criteria \u2014 Responsive integrity"
   demand_type: evaluation-demand
@@ -1911,12 +2038,13 @@ items:
   - J3
   - J6
   blocking: false
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.no-selection-resets'
+  : rubric.no-selection-resets
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: Switching and clutter measures
   demand_type: invariant-demand
@@ -1929,12 +2057,13 @@ items:
   - J5
   - J6
   blocking: false
-  phase_1_owner:
-    audit_owner: ui-projections
-    evidence_id: EVD-103
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-53
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.derived-evidence-access'
+  : rubric.derived-evidence-access
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: Switching and clutter measures
   demand_type: invariant-demand
@@ -1948,12 +2077,13 @@ items:
   - J7
   - J8
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.result-state-confirmation'
+  : rubric.result-state-confirmation
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: Switching and clutter measures
   demand_type: invariant-demand
@@ -1963,12 +2093,13 @@ items:
   - J3
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding
 - ? "\x6bey"
-  : 'rubric.viability-floor'
+  : rubric.viability-floor
   source: docs/jtbd/evaluation-rubric.md
   source_anchor: Decision rule
   demand_type: evaluation-demand
@@ -1979,7 +2110,8 @@ items:
   - J5
   - J6
   blocking: true
-  phase_1_owner:
-    audit_owner: tests-documentation
-    evidence_id: EVD-104
-    classification: unknown
+  phase_1_finding:
+    status: found
+    evidence_ids:
+    - EVD-68
+    finding_kind: approved-audit-finding

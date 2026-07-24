@@ -58,3 +58,4 @@ enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-3 REST cancellation eligibility and PER-4 graph node/lease cancellation rules.
 proposed_role_policy: null
+conflict_ids: []

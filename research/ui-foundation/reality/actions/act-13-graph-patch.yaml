@@ -50,6 +50,6 @@ carrier_relationship:
     result transition.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
-domain_eligibility: PER-4 SubmitGraphPatchCommand and patch-validator role, run, topology, resource, and stale-read-set
-  rules.
+domain_eligibility: PER-4 SubmitGraphPatchCommand and patch-validator role, run, topology, resource, and stale-read-set rules.
 proposed_role_policy: null
+conflict_ids: []

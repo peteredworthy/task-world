@@ -62,3 +62,4 @@ enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-4 graph decision target, state, actor/context, and value validation.
 proposed_role_policy: null
+conflict_ids: []

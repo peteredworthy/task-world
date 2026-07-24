@@ -15,7 +15,8 @@ items:
   confidence_basis: RunStatus and signal tests
   evidence_ids:
   - EVD-7
-  conflict_ids: []
+  conflict_ids:
+  - CON-6
   question_ids: []
   limitations:
   - Row carrier only
@@ -33,7 +34,8 @@ items:
   confidence_basis: Workflow state audit
   evidence_ids:
   - EVD-7
-  conflict_ids: []
+  conflict_ids:
+  - CON-6
   question_ids: []
   limitations:
   - Does not alias graph topology
@@ -51,7 +53,8 @@ items:
   confidence_basis: pause signal test
   evidence_ids:
   - EVD-8
-  conflict_ids: []
+  conflict_ids:
+  - CON-7
   question_ids: []
   limitations:
   - REST pause visibility does not prove consumer application
@@ -102,7 +105,8 @@ items:
   confidence_basis: mode-boundary audit
   evidence_ids:
   - EVD-10
-  conflict_ids: []
+  conflict_ids:
+  - CON-7
   question_ids: []
   limitations:
   - Graph mode has a qualified reopen path
@@ -410,7 +414,8 @@ items:
   confidence_basis: graph COMMAND_SPECS
   evidence_ids:
   - EVD-22
-  conflict_ids: []
+  conflict_ids:
+  - CON-3
   question_ids: []
   limitations:
   - May transition through graph resuming

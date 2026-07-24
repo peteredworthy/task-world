@@ -57,3 +57,4 @@ enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-3 active legacy-row cancel eligibility and PER-4 graph active-to-cancelling eligibility.
 proposed_role_policy: null
+conflict_ids: []

@@ -10,3 +10,4 @@ implementation_constraints: No typed directive command, directive record, or bin
 required_evidence: Future directive identity, scope, actor, acceptance, and packet-binding evidence.
 unresolved_command_decisions: All command, authority, validation, concurrency, retry, reversal, and retention semantics require
   approved future design.
+conflict_ids: []

@@ -40,3 +40,4 @@ enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
 domain_eligibility: Legacy force-accept transition from failed, building, or verifying only.
 proposed_role_policy: null
+conflict_ids: []

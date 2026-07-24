@@ -51,3 +51,4 @@ enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
 domain_eligibility: Failed or paused legacy run with an existing target task.
 proposed_role_policy: null
+conflict_ids: []

@@ -37,3 +37,7 @@ enforced_authentication: Optional global valid-bearer gate; disabled by default.
 enforced_authorization: absent
 domain_eligibility: Legacy row must be draft.
 proposed_role_policy: null
+conflict_ids:
+- CON-6
+question_ids:
+- Q-5

@@ -50,3 +50,4 @@ enforced_authorization: absent
 domain_eligibility: No pre-existing source row for this creation; exactly one routine source, selectable runner, valid configuration,
   and request schema.
 proposed_role_policy: null
+conflict_ids: []

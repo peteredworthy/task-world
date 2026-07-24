@@ -42,3 +42,4 @@ enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
 domain_eligibility: Parent of a failed legacy fan-out child.
 proposed_role_policy: null
+conflict_ids: []

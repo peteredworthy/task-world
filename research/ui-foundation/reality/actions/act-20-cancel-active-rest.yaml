@@ -50,3 +50,7 @@ enforced_authentication: Optional global valid-bearer gate; disabled by default.
 enforced_authorization: absent
 domain_eligibility: Legacy row must be active; graph cancellation ordering is a separate mode-specific effect.
 proposed_role_policy: null
+conflict_ids:
+- CON-7
+question_ids:
+- Q-5

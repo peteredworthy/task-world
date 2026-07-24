@@ -32,3 +32,4 @@ enforced_authentication: optional JWT
 enforced_authorization: absent
 domain_eligibility: PER-7 routine metadata prerequisite
 proposed_role_policy: null
+conflict_ids: []

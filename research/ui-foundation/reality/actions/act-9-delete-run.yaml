@@ -52,3 +52,4 @@ enforced_authorization: absent
 domain_eligibility: Ordinary route eligibility is draft, stopping, completed, failed, or cancelled. This contract does not
   delete an ordinary paused row; the qualified paused startup-orphan path is ACT-22.
 proposed_role_policy: null
+conflict_ids: []

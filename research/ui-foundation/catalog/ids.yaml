@@ -9,10 +9,10 @@ next_suffixes:
   ACT: 72
   EVI: 10
   CMD: 42
-  INV: 8
+  INV: 12
   Q: 8
   CON: 10
-  EVD: 105
+  EVD: 113
 items:
 - namespace: ENT
   provisional_key: DS-ENT-routine-config
@@ -1941,3 +1941,79 @@ items:
   title: agent-reports/00-delegation-plan.md#tests-documentation
   status: active
   canonical_id: EVD-104
+- namespace: EVD
+  canonical_id: EVD-01
+  provisional_key: EVD-01
+  title: docs/jtbd/jobs.md
+  status: active
+  public_id: true
+- namespace: EVD
+  canonical_id: EVD-02
+  provisional_key: EVD-02
+  title: docs/jtbd/journeys.md
+  status: active
+  public_id: true
+- namespace: EVD
+  canonical_id: EVD-03
+  provisional_key: EVD-03
+  title: docs/jtbd/decision-information.md
+  status: active
+  public_id: true
+- namespace: EVD
+  canonical_id: EVD-04
+  provisional_key: EVD-04
+  title: docs/jtbd/information-architecture.md
+  status: active
+  public_id: true
+- namespace: EVD
+  canonical_id: EVD-05
+  provisional_key: EVD-05
+  title: docs/jtbd/evaluation-rubric.md
+  status: active
+  public_id: true
+- namespace: EVD
+  canonical_id: EVD-06
+  provisional_key: EVD-06
+  title: docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md
+  status: active
+  public_id: true
+- namespace: EVD
+  canonical_id: EVD-105
+  provisional_key: EVD-105
+  title: validate_patch
+  status: active
+- namespace: EVD
+  canonical_id: EVD-106
+  provisional_key: EVD-106
+  title: test_fr08_invalid_patch_matrix_rejected_and_readable
+  status: active
+- namespace: EVD
+  canonical_id: EVD-107
+  provisional_key: EVD-107
+  title: SqliteEventStore.append
+  status: active
+- namespace: EVD
+  canonical_id: EVD-108
+  provisional_key: EVD-108
+  title: test_graph_read_models_are_rebuildable_and_idempotent
+  status: active
+- namespace: EVD
+  canonical_id: EVD-109
+  provisional_key: EVD-109
+  title: start_run
+  status: active
+- namespace: EVD
+  canonical_id: EVD-110
+  provisional_key: EVD-110
+  title: legacy submit verification completion and cancellation idempotency
+  status: active
+- namespace: EVD
+  canonical_id: EVD-111
+  provisional_key: EVD-111
+  title: record_decision and submit_patch routes
+  status: active
+- namespace: EVD
+  canonical_id: EVD-112
+  provisional_key: EVD-112
+  title: test_fr08_authority_denial_and_rejection_readbacks
+  status: active

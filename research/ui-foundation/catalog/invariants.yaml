@@ -3,7 +3,8 @@ phase_status: complete
 completion_phase: 1
 items:
 - title: Graph patch validation rejects invalid topology before visible acceptance
-  definition: Graph patch validation rejects invalid topology before visible acceptance
+  definition: Graph patch validation rejects stale bases, role-disallowed or hidden commands, resource escalation, invalid
+    topology, and retirement of active nodes before accepted topology becomes visible.
   implementation_status: present
   test_status: exercised
   documentation_status: documented
@@ -13,12 +14,13 @@ items:
   capability_status: unknown
   epistemic_status: unknown
   evidence_ids:
-  - EVD-97
-  conflict_ids: []
-  question_ids: []
-  limitations:
-  - Applies only to represented tested paths.
-  prohibited_interpretations:
+  - EVD-105
+  - EVD-106
+  conflict_ids: &id001 []
+  question_ids: &id002 []
+  limitations: &id003
+  - Covers supplied graph command context, not authenticated external role policy.
+  prohibited_interpretations: &id004
   - Do not generalize beyond represented paths.
 - title: Final graph completion requires a passing deterministic final check
   definition: Final graph completion requires a passing deterministic final check
@@ -128,3 +130,73 @@ items:
   - Applies only to represented tested paths.
   prohibited_interpretations:
   - Do not generalize beyond represented paths.
+- title: Graph patch stale and rejected outcomes remain explicit
+  definition: Invalid or stale patch commands return explicit rejection/conflict outcomes and preserve prior topology.
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-8
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-106
+  conflict_ids: *id001
+  question_ids: *id002
+  limitations: *id003
+  prohibited_interpretations: *id004
+- title: Graph replay rebuild preserves compact parity
+  definition: Graph event/read-model replay is idempotent and preserves compact/checkpoint lifecycle, task, and final-gate
+    parity while omitting heavy bodies.
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-9
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-107
+  - EVD-108
+  conflict_ids: *id001
+  question_ids: *id002
+  limitations: *id003
+  prohibited_interpretations: *id004
+- title: Qualifying actions create durable audit events
+  definition: Represented graph and workflow actions retain durable audit evidence rather than treating acceptance prose as
+    a result.
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-10
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-109
+  - EVD-112
+  conflict_ids: *id001
+  question_ids: *id002
+  limitations: *id003
+  prohibited_interpretations: *id004
+- title: Legacy lifecycle commands are idempotent or state-validated
+  definition: Represented legacy submit, verification completion, cancellation, agent resume changes, and backward transitions
+    are idempotent or state-validated.
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
+  confidence: high
+  confidence_basis: Approved test adjudication
+  id: INV-11
+  capability_status: unknown
+  epistemic_status: unknown
+  evidence_ids:
+  - EVD-109
+  - EVD-110
+  conflict_ids: *id001
+  question_ids: *id002
+  limitations: *id003
+  prohibited_interpretations: *id004

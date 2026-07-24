@@ -94,3 +94,38 @@ claims.  No product behavior was changed.
 ## Commit
 
 Canonical artifact commit: `48a86f7f8` (`docs: normalize UI foundation Phase 1`).
+
+## Review-rejection remediation (2026-07-24)
+
+The rejected semantic/data-quality review was addressed in a follow-up commit.
+The validator initially permitted a one-sentence conflict title, delegation-plan
+ownership as demand evidence, and a `documentation_status: conflicting` semantic
+item without a canonical conflict/question link.  Focused integration tests were
+added first and observed RED (three failures), then the unmodified validation
+principles were strengthened to reject those contracts; the focused suite is now
+GREEN at 40 passing tests.
+
+- Each `CON-1` through `CON-9` now has two distinct, source-specific
+  propositions, per-claim approved-audit evidence and path/heading, affected
+  canonical IDs, decisive source/evidence, explicit settlement method, and
+  unresolved status.  Affected entities, relationships, states, permissions,
+  actions, and invariants link back through `conflict_ids`/`question_ids`.
+- The public immutable `EVD-01` through `EVD-06` records were added to the ID
+  ledger without renumbering.  The Phase 0 snapshot is retained immutably beside
+  the recomputed Phase 1 source/test snapshot; every evidence record declares its
+  applicable snapshot and direct records also name their hash-snapshot path.
+- The invariant catalog now retains the material graph patch restrictions
+  (stale, role, hidden command, resource, active-node retirement), explicit
+  rejection outcomes, replay/rebuild idempotency and compact parity, durable
+  action audit events, and legacy idempotency/state-validation conditions as
+  separately reviewable canonical invariants.
+- `Q-7` is resolved: Phase 1 now covers every `src/orchestrator` Python source,
+  repository Python test, and UI source TS/TSX file.  The remaining questions use
+  specific implementation/test settlement criteria.
+- All 132 scope demands now map to an approved substantive audit finding record
+  rather than the delegation-plan ownership entry.  Canonical-record projections
+  were regenerated.
+
+Follow-up checks: `uv run python research/ui-foundation/tools/validate.py --phase
+1` exits without diagnostics and `uv run pytest
+tests/integration/test_ui_foundation_tools.py -q` reports `40 passed`.

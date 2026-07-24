@@ -34,3 +34,4 @@ enforced_authentication: optional JWT
 enforced_authorization: absent
 domain_eligibility: PER-6 parse/schema eligibility
 proposed_role_policy: null
+conflict_ids: []

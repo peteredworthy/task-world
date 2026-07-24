@@ -34,3 +34,7 @@ enforced_authentication: No REST bearer gate; local CLI process directly applies
 enforced_authorization: absent
 domain_eligibility: Legacy row must be draft.
 proposed_role_policy: null
+conflict_ids:
+- CON-6
+question_ids:
+- Q-5

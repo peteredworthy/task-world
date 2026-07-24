@@ -49,3 +49,4 @@ enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
 domain_eligibility: Non-completed task in the legacy run's rewound step range.
 proposed_role_policy: null
+conflict_ids: []

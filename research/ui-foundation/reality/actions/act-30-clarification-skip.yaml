@@ -41,3 +41,4 @@ enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
 domain_eligibility: Legacy clarification request and task wait state.
 proposed_role_policy: null
+conflict_ids: []

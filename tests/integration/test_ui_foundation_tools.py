@@ -1082,3 +1082,85 @@ def test_derived_classification_rejects_all_conflicting_semantic_evidence(
         "DERIVED_EVIDENCE_CONTRADICTED",
         "DERIVED_CONFLICTING",
     } <= set(issue_codes(result))
+
+
+def test_unresolved_conflict_requires_distinct_claims_evidence_and_affected_ids(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/conflicts.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "id": "CON-01",
+                    "status": "unresolved",
+                    "claims": [{"proposition": "same"}, {"proposition": "same"}],
+                    "claim_evidence": [{"claim_index": 0, "evidence_ids": ["EVD-01"]}],
+                    "affected_ids": [],
+                    "settlement_method": "decide",
+                }
+            ],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert {
+        "CONFLICT_CLAIMS_NOT_DISTINCT",
+        "CONFLICT_EVIDENCE_INSUFFICIENT",
+        "CONFLICT_AFFECTED_IDS_MISSING",
+    } <= set(issue_codes(result))
+
+
+def test_conflicting_semantic_item_requires_conflict_or_question_reference(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [semantic_item("ENT-01", documentation_status="conflicting")],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "CONFLICTING_SEMANTIC_REFERENCE_MISSING" in issue_codes(result)
+
+
+def test_scope_demand_requires_substantive_finding_not_delegation_assignment(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "key": "demand.one",
+                    "source": "docs/jtbd/jobs.md",
+                    "source_anchor": "J1",
+                    "demand_type": "claim",
+                    "label": "Demand",
+                    "audit_owner": "graph-runtime",
+                    "downstream_jobs": ["J1"],
+                    "blocking": True,
+                    "phase_1_finding": {"evidence_ids": ["EVD-01"], "status": "found"},
+                }
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "audit-report",
+                    "path": "agent-reports/00-delegation-plan.md#Key findings",
+                }
+            ],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "SCOPE_FINDING_NOT_SUBSTANTIVE" in issue_codes(result)

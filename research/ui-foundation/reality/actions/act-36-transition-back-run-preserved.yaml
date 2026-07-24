@@ -43,3 +43,4 @@ enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
 domain_eligibility: Legacy run with an earlier in-bounds target step.
 proposed_role_policy: null
+conflict_ids: []

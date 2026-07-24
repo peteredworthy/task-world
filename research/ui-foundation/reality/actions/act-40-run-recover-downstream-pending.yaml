@@ -63,3 +63,4 @@ enforced_authorization: absent
 domain_eligibility: Downstream task explicitly selected by compensating run recovery in a failed or paused legacy run; includes
   the qualified completed-task reset.
 proposed_role_policy: null
+conflict_ids: []

@@ -13,3 +13,4 @@ required_evidence:
 - endpoint test
 unresolved_command_decisions:
 - Authority, authorization, and domain eligibility remain unresolved until a concrete backend command is designed and implemented.
+conflict_ids: []

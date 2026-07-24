@@ -38,3 +38,4 @@ enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
 domain_eligibility: Current legacy step with a human-approval gate.
 proposed_role_policy: null
+conflict_ids: []
