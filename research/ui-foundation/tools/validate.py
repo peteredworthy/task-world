@@ -840,6 +840,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 issues.append(_issue("SCOPE_FINDING_NOT_SUBSTANTIVE", location, evidence_id))
 
     raw_evidence_document = package.documents.get("catalog/evidence.yaml")
+    issues.extend(_validate_snapshot_lineage(package, raw_evidence_document))
     snapshot_values: list[dict[str, JsonValue]] = []
     if isinstance(raw_evidence_document, dict):
         raw_snapshot = raw_evidence_document.get("snapshot")
@@ -3826,7 +3827,7 @@ def _active_snapshot(evidence: dict[str, JsonValue]) -> dict[str, JsonValue] | N
     snapshots = evidence.get("snapshots")
     if not isinstance(active_id, str) or not isinstance(snapshots, list):
         return evidence.get("snapshot") if isinstance(evidence.get("snapshot"), dict) else None
-    return next(
+    active = next(
         (
             snapshot
             for snapshot in snapshots
@@ -3834,11 +3835,191 @@ def _active_snapshot(evidence: dict[str, JsonValue]) -> dict[str, JsonValue] | N
         ),
         None,
     )
+    if not isinstance(active, dict):
+        return None
+    by_id = {
+        identifier: snapshot
+        for snapshot in snapshots
+        if isinstance(snapshot, dict) and isinstance((identifier := snapshot.get("id")), str)
+    }
+    resolved = dict(active)
+    files = {
+        record["path"]: record
+        for record in active.get("files", [])
+        if isinstance(record, dict) and isinstance(record.get("path"), str)
+    }
+    parent = active.get("parent_snapshot_id")
+    visited = {active_id}
+    while isinstance(parent, str) and parent in by_id and parent not in visited:
+        visited.add(parent)
+        parent_snapshot = by_id[parent]
+        for record in parent_snapshot.get("files", []):
+            if isinstance(record, dict) and isinstance(record.get("path"), str):
+                files.setdefault(record["path"], record)
+        parent = parent_snapshot.get("parent_snapshot_id")
+    resolved["files"] = list(files.values())
+    return resolved
 
 
 def _snapshot_digest(snapshot: dict[str, JsonValue]) -> str:
     canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _lineage_entry_digest(entry: dict[str, JsonValue]) -> str:
+    """Hash a lineage registration without recursively hashing its digest field."""
+    value = {key: item for key, item in entry.items() if key != "lineage_entry_digest"}
+    canonical = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _evidence_snapshots(evidence: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
+    snapshots: list[dict[str, JsonValue]] = []
+    phase_one = evidence.get("snapshot")
+    if isinstance(phase_one, dict):
+        snapshots.append(phase_one)
+    registered = evidence.get("snapshots")
+    if isinstance(registered, list):
+        snapshots.extend(value for value in registered if isinstance(value, dict))
+    by_id: dict[str, dict[str, JsonValue]] = {}
+    for snapshot in snapshots:
+        identifier = snapshot.get("id")
+        if isinstance(identifier, str) and identifier not in by_id:
+            by_id[identifier] = snapshot
+    return list(by_id.values())
+
+
+def _validate_snapshot_lineage(
+    package: FoundationPackage, evidence_value: JsonValue
+) -> list[ValidationIssue]:
+    """Mechanically bind each evidence snapshot to an append-only lineage entry."""
+    location = package.root / "catalog/snapshot-lineage.yaml"
+    if not isinstance(evidence_value, dict):
+        return [_issue("SNAPSHOT_LINEAGE_MISSING", location, "evidence missing")]
+    lineage_value = package.documents.get("catalog/snapshot-lineage.yaml")
+    if not isinstance(lineage_value, dict) or not isinstance(lineage_value.get("entries"), list):
+        return [_issue("SNAPSHOT_LINEAGE_MISSING", location, "entries missing")]
+
+    issues: list[ValidationIssue] = []
+    entries = [entry for entry in lineage_value["entries"] if isinstance(entry, dict)]
+    if len(entries) != len(lineage_value["entries"]):
+        issues.append(_issue("SNAPSHOT_LINEAGE_ENTRY_INVALID", location, "entry must be mapping"))
+    evidence_by_id = {
+        identifier: snapshot
+        for snapshot in _evidence_snapshots(evidence_value)
+        if isinstance((identifier := snapshot.get("id")), str)
+    }
+    entry_by_id: dict[str, dict[str, JsonValue]] = {}
+    for index, entry in enumerate(entries):
+        identifier = entry.get("snapshot_id")
+        entry_location = f"{location}:entries[{index}]"
+        if not isinstance(identifier, str) or not identifier:
+            issues.append(_issue("SNAPSHOT_LINEAGE_ENTRY_INVALID", entry_location, "snapshot_id"))
+            continue
+        if identifier in entry_by_id:
+            issues.append(_issue("SNAPSHOT_LINEAGE_ID_DUPLICATE", entry_location, identifier))
+        else:
+            entry_by_id[identifier] = entry
+        if entry.get("status") not in {"historical", "active"}:
+            issues.append(_issue("SNAPSHOT_LINEAGE_ENTRY_INVALID", entry_location, "status"))
+        if entry.get("snapshot_digest") != _snapshot_digest(evidence_by_id.get(identifier, {})):
+            issues.append(_issue("SNAPSHOT_LINEAGE_SNAPSHOT_MISMATCH", entry_location, identifier))
+        snapshot_parent = evidence_by_id.get(identifier, {}).get("parent_snapshot_id")
+        if snapshot_parent is not None and entry.get("parent_snapshot_id") != snapshot_parent:
+            issues.append(_issue("SNAPSHOT_LINEAGE_REPARENTED", entry_location, identifier))
+        if entry.get("lineage_entry_digest") != _lineage_entry_digest(entry):
+            issues.append(
+                _issue("SNAPSHOT_LINEAGE_ENTRY_DIGEST_INVALID", entry_location, identifier)
+            )
+
+    if set(entry_by_id) != set(evidence_by_id):
+        issues.append(
+            _issue(
+                "SNAPSHOT_LINEAGE_SET_MISMATCH",
+                location,
+                sorted(set(entry_by_id) ^ set(evidence_by_id)),
+            )
+        )
+    phase_one = evidence_value.get("snapshot")
+    phase_one_id = phase_one.get("id") if isinstance(phase_one, dict) else None
+    roots = [entry for entry in entries if entry.get("parent_snapshot_id") is None]
+    if (
+        len(roots) != 1
+        or not isinstance(phase_one_id, str)
+        or roots[0].get("snapshot_id") != phase_one_id
+    ):
+        issues.append(_issue("SNAPSHOT_LINEAGE_ROOT_INVALID", location, "Phase 1 root"))
+    for index, entry in enumerate(entries):
+        identifier = entry.get("snapshot_id")
+        parent = entry.get("parent_snapshot_id")
+        if parent is not None and (not isinstance(parent, str) or parent not in entry_by_id):
+            issues.append(
+                _issue("SNAPSHOT_LINEAGE_PARENT_UNKNOWN", f"{location}:entries[{index}]", parent)
+            )
+        if index == 0:
+            expected_predecessor: str | None = None
+        else:
+            expected_predecessor = entries[index - 1].get("lineage_entry_digest")
+        if entry.get("predecessor_lineage_digest") != expected_predecessor:
+            issues.append(
+                _issue(
+                    "SNAPSHOT_LINEAGE_PREDECESSOR_INVALID",
+                    f"{location}:entries[{index}]",
+                    identifier,
+                )
+            )
+
+    def reaches_cycle(identifier: str) -> bool:
+        seen: set[str] = set()
+        current = identifier
+        while current in entry_by_id:
+            if current in seen:
+                return True
+            seen.add(current)
+            parent = entry_by_id[current].get("parent_snapshot_id")
+            if not isinstance(parent, str):
+                return False
+            current = parent
+        return False
+
+    if any(reaches_cycle(identifier) for identifier in entry_by_id):
+        issues.append(_issue("SNAPSHOT_LINEAGE_CYCLE", location, "parent cycle"))
+    children = {
+        parent for entry in entries if isinstance((parent := entry.get("parent_snapshot_id")), str)
+    }
+    active = [entry for entry in entries if entry.get("status") == "active"]
+    if len(active) != 1:
+        issues.append(_issue("SNAPSHOT_LINEAGE_ACTIVE_INVALID", location, "exactly one active"))
+    elif active[0].get("snapshot_id") in children:
+        issues.append(
+            _issue("SNAPSHOT_LINEAGE_ACTIVE_NONLEAF", location, active[0].get("snapshot_id"))
+        )
+    active_id = evidence_value.get("active_snapshot_id")
+    if len(active) == 1 and active[0].get("snapshot_id") != active_id:
+        issues.append(_issue("SNAPSHOT_LINEAGE_ACTIVE_TARGET_MISSING", location, active_id))
+    active_snapshot = evidence_by_id.get(active_id) if isinstance(active_id, str) else None
+    if not isinstance(active_snapshot, dict) or not active_snapshot.get("files"):
+        issues.append(_issue("SNAPSHOT_LINEAGE_ACTIVE_EMPTY", location, active_id))
+    for snapshot in _evidence_snapshots(evidence_value):
+        files = snapshot.get("files")
+        seen_paths: dict[str, str] = {}
+        if not isinstance(files, list):
+            continue
+        for record in files:
+            if not isinstance(record, dict):
+                continue
+            path, digest = record.get("path"), record.get("sha256")
+            if not isinstance(path, str) or not isinstance(digest, str):
+                continue
+            if path in seen_paths:
+                code = (
+                    "SNAPSHOT_FILE_PATH_CONFLICT"
+                    if seen_paths[path] != digest
+                    else "SNAPSHOT_FILE_PATH_DUPLICATE"
+                )
+                issues.append(_issue(code, location, f"{snapshot.get('id')}:{path}"))
+            seen_paths[path] = digest
+    return issues
 
 
 def _validate_phase_one_snapshot_immutable(
@@ -3869,8 +4050,6 @@ def _validate_active_snapshot_lineage(
         return [_issue("ACTIVE_SNAPSHOT_LINEAGE_INVALID", location, "missing snapshot")]
     if active_snapshot.get("id") == phase_one_snapshot.get("id"):
         return [_issue("ACTIVE_SNAPSHOT_LINEAGE_INVALID", location, "active snapshot is Phase 1")]
-    if active_snapshot.get("parent_snapshot_id") != phase_one_snapshot.get("id"):
-        return [_issue("ACTIVE_SNAPSHOT_LINEAGE_INVALID", location, "parent snapshot")]
     try:
         SourceSnapshot.model_validate(active_snapshot)
     except ValidationError as error:

@@ -27,6 +27,8 @@ def append_yaml_item(path: Path, item: dict[str, object]) -> None:
 
 def write_minimal_foundation(tmp_path: Path) -> Path:
     root = tmp_path / "research/ui-foundation"
+    source = tmp_path / "source.txt"
+    source.write_text("snapshot source\n", encoding="utf-8")
     for relative in (
         "catalog/ids.yaml",
         "catalog/claims.yaml",
@@ -46,10 +48,45 @@ def write_minimal_foundation(tmp_path: Path) -> Path:
         root / "catalog/evidence.yaml",
         {
             "schema_version": "1",
-            "snapshot": {"id": "snapshot-test", "files": []},
+            "active_snapshot_id": "snapshot-test",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [
+                    {
+                        "path": "source.txt",
+                        "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                        "audited_at": "2026-07-24T00:00:00Z",
+                    }
+                ],
+            },
             "items": [],
         },
     )
+    snapshot = {
+        "id": "snapshot-test",
+        "files": [
+            {
+                "path": "source.txt",
+                "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                "audited_at": "2026-07-24T00:00:00Z",
+            }
+        ],
+    }
+    snapshot_digest = hashlib.sha256(
+        json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    (root / "catalog/phase-1-snapshot.sha256").write_text(f"{snapshot_digest}\n", encoding="utf-8")
+    entry = {
+        "snapshot_id": "snapshot-test",
+        "parent_snapshot_id": None,
+        "snapshot_digest": snapshot_digest,
+        "predecessor_lineage_digest": None,
+        "status": "active",
+    }
+    entry["lineage_entry_digest"] = hashlib.sha256(
+        json.dumps(entry, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    write_yaml(root / "catalog/snapshot-lineage.yaml", {"schema_version": "1", "entries": [entry]})
     return root
 
 
@@ -818,6 +855,144 @@ def test_phase_one_snapshot_is_checked_against_its_checked_in_immutable_baseline
     result = run_validator(root)
 
     assert "PHASE_ONE_SNAPSHOT_IMMUTABLE_MISMATCH" in issue_codes(result)
+
+
+def test_snapshot_lineage_registry_is_required_for_every_evidence_snapshot(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    (root / "catalog/snapshot-lineage.yaml").unlink()
+
+    result = run_validator(root)
+
+    assert "SNAPSHOT_LINEAGE_MISSING" in issue_codes(result)
+
+
+def snapshot_lineage(root: Path) -> dict[str, object]:
+    return yaml.safe_load((root / "catalog/snapshot-lineage.yaml").read_text(encoding="utf-8"))
+
+
+def test_snapshot_lineage_rejects_mutated_registered_active_snapshot(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["snapshots"][-1]["files"][0]["sha256"] = "0" * 64
+    write_yaml(evidence_path, evidence)
+
+    assert "SNAPSHOT_LINEAGE_SNAPSHOT_MISMATCH" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_removed_historical_snapshot(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"] = lineage["entries"][1:]
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_SET_MISMATCH" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_duplicate_id(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"].append(dict(lineage["entries"][-1]))
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_ID_DUPLICATE" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_unknown_parent(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"][-1]["parent_snapshot_id"] = "snapshot-unknown"
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_PARENT_UNKNOWN" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_cycle(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"][0]["parent_snapshot_id"] = lineage["entries"][-1]["snapshot_id"]
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_CYCLE" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_active_non_leaf(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    for entry in lineage["entries"]:
+        entry["status"] = (
+            "active" if entry["snapshot_id"] == "snapshot-2026-07-24-phase-1" else "historical"
+        )
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_ACTIVE_NONLEAF" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_reparented_snapshot(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"][-1]["parent_snapshot_id"] = "snapshot-2026-07-23-phase-0"
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_REPARENTED" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_reordered_entries(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"][1], lineage["entries"][2] = lineage["entries"][2], lineage["entries"][1]
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_PREDECESSOR_INVALID" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_bad_predecessor_digest(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"][-1]["predecessor_lineage_digest"] = "0" * 64
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_PREDECESSOR_INVALID" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_duplicate_file_paths_with_same_hash(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["snapshots"][-1]["files"].append(dict(evidence["snapshots"][-1]["files"][0]))
+    write_yaml(evidence_path, evidence)
+
+    assert "SNAPSHOT_FILE_PATH_DUPLICATE" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_duplicate_file_paths_with_different_hash(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    duplicate = dict(evidence["snapshots"][-1]["files"][0])
+    duplicate["sha256"] = "0" * 64
+    evidence["snapshots"][-1]["files"].append(duplicate)
+    write_yaml(evidence_path, evidence)
+
+    assert "SNAPSHOT_FILE_PATH_CONFLICT" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_missing_active_target(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["active_snapshot_id"] = "snapshot-unknown"
+    write_yaml(evidence_path, evidence)
+
+    assert "SNAPSHOT_LINEAGE_ACTIVE_TARGET_MISSING" in issue_codes(run_validator(root))
 
 
 def test_q5_backlinks_cover_every_externally_callable_unauthorized_mutation(

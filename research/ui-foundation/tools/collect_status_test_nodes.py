@@ -48,7 +48,28 @@ def _active_snapshot(root: Path) -> dict[str, object]:
         snapshot = evidence.get("snapshot")
     if not isinstance(snapshot, dict) or not isinstance(snapshot.get("id"), str):
         raise ValueError("ACTIVE_SNAPSHOT_INVALID")
-    return cast(dict[str, object], snapshot)
+    by_id = {
+        item["id"]: item
+        for item in snapshots
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    }
+    resolved = dict(snapshot)
+    files = {
+        item["path"]: item
+        for item in snapshot.get("files", [])
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    parent = snapshot.get("parent_snapshot_id")
+    visited = {snapshot["id"]}
+    while isinstance(parent, str) and parent in by_id and parent not in visited:
+        visited.add(parent)
+        parent_snapshot = by_id[parent]
+        for item in parent_snapshot.get("files", []):
+            if isinstance(item, dict) and isinstance(item.get("path"), str):
+                files.setdefault(item["path"], item)
+        parent = parent_snapshot.get("parent_snapshot_id")
+    resolved["files"] = list(files.values())
+    return cast(dict[str, object], resolved)
 
 
 def _exercised_locators(root: Path) -> list[str]:
