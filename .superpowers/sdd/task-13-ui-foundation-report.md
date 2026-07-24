@@ -237,3 +237,19 @@ were normalized to real `key-findings` anchors where their former anchors named
 non-heading table keys. Snapshot hashes were refreshed. Final pre-commit
 evidence: Phase 1 validation exited 0, the focused suite passed **56 tests**,
 Ruff passed, and standalone Pyright reported **0 errors, 0 warnings**.
+
+## Synthesis-evidence field-contract correction (2026-07-24)
+
+Every audit-report or synthesis-provenance record now requires nonempty
+`path`, `symbol`, `source_label`, `snapshot_id`, and `snapshot_path`. Its path
+must contain a heading anchor; `snapshot_path` must equal the report portion of
+that path and the report must be declared by the selected snapshot. Missing
+fields, missing anchors, report/snapshot mismatches, unresolved snapshot paths,
+and source-label/report mismatches produce distinct validation issues. Historic
+audit records were completed with their report/heading source labels, synthesis
+claim symbols, and matching snapshot paths without changing their provenance or
+honest status.
+
+Final pre-commit evidence: Phase 1 validation exited 0, the focused suite
+passed **58 tests**, Ruff passed, and standalone Pyright reported **0 errors,
+0 warnings**.

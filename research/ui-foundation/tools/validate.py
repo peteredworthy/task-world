@@ -1242,17 +1242,44 @@ def _validate_synthesis_report_anchors(
     for index, item in enumerate(evidence_items):
         if item.get("source_kind") != "audit-report" and item.get("provenance_role") != "synthesis":
             continue
+        location = f"{package.root / 'catalog/evidence.yaml'}:items[{index}]"
         path = item.get("path")
+        symbol = item.get("symbol")
+        source_label = item.get("source_label")
         snapshot_id = item.get("snapshot_id")
-        if not isinstance(path, str) or "#" not in path or not isinstance(snapshot_id, str):
+        snapshot_path = item.get("snapshot_path")
+        fields = {
+            "path": path,
+            "symbol": symbol,
+            "source_label": source_label,
+            "snapshot_id": snapshot_id,
+            "snapshot_path": snapshot_path,
+        }
+        for field, value in fields.items():
+            if not isinstance(value, str) or not value.strip():
+                issues.append(_issue("SYNTHESIS_EVIDENCE_FIELD_MISSING", location, field))
+        if not isinstance(path, str) or not path.strip() or "#" not in path:
+            if isinstance(path, str) and path.strip():
+                issues.append(_issue("SYNTHESIS_EVIDENCE_PATH_ANCHOR_MISSING", location, path))
             continue
         report_path, anchor = path.split("#", maxsplit=1)
-        location = f"{package.root / 'catalog/evidence.yaml'}:items[{index}]"
+        if not anchor:
+            issues.append(_issue("SYNTHESIS_EVIDENCE_PATH_ANCHOR_MISSING", location, path))
+            continue
+        if not isinstance(snapshot_id, str) or not isinstance(snapshot_path, str):
+            continue
+        if snapshot_path != report_path:
+            issues.append(
+                _issue("SYNTHESIS_EVIDENCE_SNAPSHOT_PATH_MISMATCH", location, report_path)
+            )
+        if report_path not in snapshot_paths.get(snapshot_id, set()):
+            issues.append(
+                _issue("SYNTHESIS_EVIDENCE_SNAPSHOT_PATH_UNRESOLVED", location, report_path)
+            )
         if report_path not in snapshot_paths.get(
             snapshot_id, set()
         ) or anchor not in _markdown_heading_slugs(source_text.get(report_path, "")):
             issues.append(_issue("SYNTHESIS_REPORT_ANCHOR_UNRESOLVED", location, path))
-        source_label = item.get("source_label")
         source_reports: set[str] = (
             set(cast(list[str], re.findall(r"([A-Za-z0-9_-]+\.md)#", source_label)))
             if isinstance(source_label, str)

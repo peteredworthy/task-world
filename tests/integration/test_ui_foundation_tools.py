@@ -1713,3 +1713,78 @@ def test_validator_accepts_synthesis_evidence_with_specific_report_anchor(tmp_pa
 
     assert "SYNTHESIS_REPORT_ANCHOR_UNRESOLVED" not in issue_codes(result)
     assert "SYNTHESIS_REPORT_SOURCE_LABEL_MISMATCH" not in issue_codes(result)
+
+
+def test_validator_rejects_synthesis_evidence_missing_each_required_field(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    report_path = "research/ui-foundation/agent-reports/03-workflow-state.md"
+    report = root.parents[1] / report_path
+    report.parent.mkdir(parents=True)
+    report.write_text("# Workflow\n\n## Key findings\n", encoding="utf-8")
+    items = []
+    for index, field in enumerate(
+        ("path", "symbol", "source_label", "snapshot_id", "snapshot_path")
+    ):
+        item: dict[str, object] = {
+            "id": f"EVD-{index + 1:02}",
+            "source_kind": "audit-report",
+            "provenance_role": "synthesis",
+            "path": f"{report_path}#key-findings",
+            "symbol": "finding",
+            "source_label": "03-workflow-state.md#key-findings",
+            "snapshot_id": "snapshot-test",
+            "snapshot_path": report_path,
+        }
+        item.pop(field)
+        items.append(item)
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [{"path": report_path, "sha256": "0" * 64, "audited_at": "now"}],
+            },
+            "items": items,
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert issue_codes(result).count("SYNTHESIS_EVIDENCE_FIELD_MISSING") == 5
+    for field in ("path", "symbol", "source_label", "snapshot_id", "snapshot_path"):
+        assert field in result.stderr
+
+
+def test_validator_rejects_synthesis_evidence_path_snapshot_mismatch(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    report_path = "research/ui-foundation/agent-reports/03-workflow-state.md"
+    report = root.parents[1] / report_path
+    report.parent.mkdir(parents=True)
+    report.write_text("# Workflow\n\n## Key findings\n", encoding="utf-8")
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [{"path": report_path, "sha256": "0" * 64, "audited_at": "now"}],
+            },
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "audit-report",
+                    "provenance_role": "synthesis",
+                    "path": f"{report_path}#key-findings",
+                    "symbol": "finding",
+                    "source_label": "03-workflow-state.md#key-findings",
+                    "snapshot_id": "snapshot-test",
+                    "snapshot_path": "research/ui-foundation/agent-reports/other.md",
+                }
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "SYNTHESIS_EVIDENCE_SNAPSHOT_PATH_MISMATCH" in issue_codes(result)

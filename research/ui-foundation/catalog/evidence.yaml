@@ -55,7 +55,7 @@ snapshot: &id001
     sha256: 7ad4caa93e1afd4e728f2b7c2fac4b3c54ca441e100ac51e912ff85196d2f2e7
     audited_at: '2026-07-24T03:00:00Z'
   - path: research/ui-foundation/tools/validate.py
-    sha256: 7cd0b519c291f39019c704b51f098ed7ec898b319dca333db33ca753a262e545
+    sha256: c8e70fa45a667c99316eb9fcb97aab28f3d3ecd046d440fd8703c2cd5cb3d1ac
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/__init__.py
     sha256: b1f14eb507ed5cae44a23dc96212731b2560b970310ef4037e303d90c5271bf4
@@ -1486,7 +1486,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: ae437b599b53165fe6bca2de79f1f901c73e55b01b387292b431f0efbd330dae
+    sha256: 34ebd866fd0f2b0ef3e8a640ed8981278055b5e4e7577fda8c15e45e9089c0aa
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236
@@ -3640,6 +3640,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-7
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-50
@@ -3647,6 +3650,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/03-workflow-state.md#key-findings
+  symbol: synthesis claim EVD-50
+  source_label: 03-workflow-state.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-51
@@ -3654,6 +3660,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-51
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-52
@@ -3661,6 +3670,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-52
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-53
@@ -3668,6 +3680,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/06-ui-projections.md#key-findings
+  symbol: synthesis claim EVD-53
+  source_label: 06-ui-projections.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/06-ui-projections.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-54
@@ -3675,6 +3690,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-54
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-55
@@ -3682,6 +3700,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-55
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-56
@@ -3689,6 +3710,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-56
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-57
@@ -3696,6 +3720,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/03-workflow-state.md#key-findings
+  symbol: synthesis claim EVD-57
+  source_label: 03-workflow-state.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-58
@@ -3703,6 +3730,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/02-graph-runtime.md#key-findings
+  symbol: synthesis claim EVD-58
+  source_label: 02-graph-runtime.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-59
@@ -3710,6 +3740,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/03-workflow-state.md#key-findings
+  symbol: synthesis claim EVD-59
+  source_label: 03-workflow-state.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-60
@@ -3717,6 +3750,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-60
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-61
@@ -3724,6 +3760,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#key-findings
+  symbol: synthesis claim EVD-61
+  source_label: 04-api-actions-authority.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-62
@@ -3731,6 +3770,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-62
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-63
@@ -3738,6 +3780,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#key-findings
+  symbol: synthesis claim EVD-63
+  source_label: 04-api-actions-authority.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-64
@@ -3745,6 +3790,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-64
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-65
@@ -3752,6 +3800,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-65
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-66
@@ -3759,6 +3810,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#key-findings
+  symbol: synthesis claim EVD-66
+  source_label: 04-api-actions-authority.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-67
@@ -3766,6 +3820,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/03-workflow-state.md#key-findings
+  symbol: synthesis claim EVD-67
+  source_label: 03-workflow-state.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-68
@@ -3773,6 +3830,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/07-tests-documentation.md#key-findings
+  symbol: synthesis claim EVD-68
+  source_label: 07-tests-documentation.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/07-tests-documentation.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-69
@@ -3780,6 +3840,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-69
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-70
@@ -3787,6 +3850,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/03-workflow-state.md#key-findings
+  symbol: synthesis claim EVD-70
+  source_label: 03-workflow-state.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/03-workflow-state.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-71
@@ -3794,6 +3860,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-71
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-72
@@ -3801,6 +3870,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/02-graph-runtime.md#key-findings
+  symbol: synthesis claim EVD-72
+  source_label: 02-graph-runtime.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-73
@@ -3808,6 +3880,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-73
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-74
@@ -3815,6 +3890,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-74
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-75
@@ -3822,6 +3900,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/02-graph-runtime.md#key-findings
+  symbol: synthesis claim EVD-75
+  source_label: 02-graph-runtime.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/02-graph-runtime.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-76
@@ -3829,6 +3910,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-76
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-77
@@ -3836,6 +3920,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-77
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-78
@@ -3843,6 +3930,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-78
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-79
@@ -3850,6 +3940,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-79
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-80
@@ -3857,6 +3950,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-80
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-81
@@ -3864,6 +3960,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-81
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-82
@@ -3871,6 +3970,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/06-ui-projections.md#key-findings
+  symbol: synthesis claim EVD-82
+  source_label: 06-ui-projections.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/06-ui-projections.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-83
@@ -3878,6 +3980,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
+  symbol: synthesis claim EVD-83
+  source_label: 01-domain-persistence.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-84
@@ -3885,6 +3990,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-84
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-85
@@ -3892,6 +4000,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-85
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-86
@@ -3899,6 +4010,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-86
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-87
@@ -3906,6 +4020,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-87
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-88
@@ -3913,6 +4030,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-88
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-89
@@ -3920,6 +4040,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/06-ui-projections.md#key-findings
+  symbol: synthesis claim EVD-89
+  source_label: 06-ui-projections.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/06-ui-projections.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-90
@@ -3927,6 +4050,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#key-findings
+  symbol: synthesis claim EVD-90
+  source_label: 04-api-actions-authority.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/04-api-actions-authority.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-91
@@ -3934,6 +4060,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-91
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-92
@@ -3941,6 +4070,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-92
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-93
@@ -3948,6 +4080,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-93
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-94
@@ -3955,6 +4090,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/05-evidence-telemetry.md#key-findings
+  symbol: synthesis claim EVD-94
+  source_label: 05-evidence-telemetry.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/05-evidence-telemetry.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-95
@@ -3962,6 +4100,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/06-ui-projections.md#key-findings
+  symbol: synthesis claim EVD-95
+  source_label: 06-ui-projections.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/06-ui-projections.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-96
@@ -3969,6 +4110,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/08-domain-synthesis.md#key-findings
+  symbol: synthesis claim EVD-96
+  source_label: 08-domain-synthesis.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/08-domain-synthesis.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-97
@@ -3976,6 +4120,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/07-tests-documentation.md#key-findings
+  symbol: synthesis claim EVD-97
+  source_label: 07-tests-documentation.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/07-tests-documentation.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-98
@@ -3983,6 +4130,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/00-delegation-plan.md#key-findings
+  symbol: synthesis claim EVD-98
+  source_label: 00-delegation-plan.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/00-delegation-plan.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-99
@@ -3990,6 +4140,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/00-delegation-plan.md#key-findings
+  symbol: synthesis claim EVD-99
+  source_label: 00-delegation-plan.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/00-delegation-plan.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-100
@@ -3997,6 +4150,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/00-delegation-plan.md#key-findings
+  symbol: synthesis claim EVD-100
+  source_label: 00-delegation-plan.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/00-delegation-plan.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-101
@@ -4004,6 +4160,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/00-delegation-plan.md#key-findings
+  symbol: synthesis claim EVD-101
+  source_label: 00-delegation-plan.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/00-delegation-plan.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-102
@@ -4011,6 +4170,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/00-delegation-plan.md#key-findings
+  symbol: synthesis claim EVD-102
+  source_label: 00-delegation-plan.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/00-delegation-plan.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-103
@@ -4018,6 +4180,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/00-delegation-plan.md#key-findings
+  symbol: synthesis claim EVD-103
+  source_label: 00-delegation-plan.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/00-delegation-plan.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-104
@@ -4025,6 +4190,9 @@ items:
   reachable: false
   test_status: unknown
   path: research/ui-foundation/agent-reports/00-delegation-plan.md#key-findings
+  symbol: synthesis claim EVD-104
+  source_label: 00-delegation-plan.md#key-findings
+  snapshot_path: research/ui-foundation/agent-reports/00-delegation-plan.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
 - id: EVD-105
