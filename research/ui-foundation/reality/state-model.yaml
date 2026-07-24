@@ -479,24 +479,42 @@ items:
   limitations: []
   prohibited_interpretations:
   - Action universally applied
-- id: STA-28
-  title: Graph node pending
-  definition: Graph node awaits readiness or a decision/input condition.
+- id: STA-71
+  title: Graph node planned
+  definition: Graph node exists before readiness evaluation or a command-specific decision outcome.
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
   confidence: high
-  confidence_basis: node state projection audit
+  confidence_basis: NodeState executable enum and graph command audit
   evidence_ids:
   - EVD-24
   conflict_ids: []
   question_ids: []
   limitations:
-  - Ready, leased, and running remain more specific projection values
+  - Planning does not establish scheduler eligibility.
   prohibited_interpretations:
-  - Legacy task pending
+  - Graph node pending
+- id: STA-72
+  title: Graph node blocked
+  definition: Graph node is not currently schedulable because a command-specific dependency, backoff, or gate condition remains.
+  implementation_status: present
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: observed
+  confidence: high
+  confidence_basis: NodeState executable enum and scheduler/command audits
+  evidence_ids:
+  - EVD-24
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - A blocked state is not a normalized blocker reason.
+  prohibited_interpretations:
+  - Graph node pending
 - id: STA-29
   title: Graph node ready
   definition: Graph node passed readiness evaluation and is eligible for lease selection.
@@ -608,6 +626,24 @@ items:
   - Recovery or topology repair is command-specific
   prohibited_interpretations:
   - Graph run failed
+- id: STA-73
+  title: Graph node retired
+  definition: Graph node is terminally retired by accepted patch or reconciliation after terminal evidence makes it unreachable.
+  implementation_status: present
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: unknown
+  epistemic_status: observed
+  confidence: high
+  confidence_basis: node_retired and node_state_changed(retired) command audit
+  evidence_ids:
+  - EVD-24
+  conflict_ids: []
+  question_ids: []
+  limitations:
+  - Retirement is command-specific and is not cancellation.
+  prohibited_interpretations:
+  - Graph node pending
 - id: STA-35
   title: Graph node cancelled
   definition: Graph node state after graph cancellation revokes its active or suspended lease.
@@ -1374,12 +1410,34 @@ transitions:
   to_state_id: STA-23
 - from_state_id: STA-18
   to_state_id: STA-24
-- from_state_id: STA-28
-  to_state_id: STA-33
-- from_state_id: STA-28
-  to_state_id: STA-34
-- from_state_id: STA-28
+- from_state_id: STA-71
   to_state_id: STA-29
+- from_state_id: STA-72
+  to_state_id: STA-29
+- from_state_id: STA-71
+  to_state_id: STA-33
+- from_state_id: STA-72
+  to_state_id: STA-33
+- from_state_id: STA-29
+  to_state_id: STA-33
+- from_state_id: STA-30
+  to_state_id: STA-33
+- from_state_id: STA-31
+  to_state_id: STA-33
+- from_state_id: STA-32
+  to_state_id: STA-33
+- from_state_id: STA-71
+  to_state_id: STA-34
+- from_state_id: STA-72
+  to_state_id: STA-34
+- from_state_id: STA-29
+  to_state_id: STA-34
+- from_state_id: STA-30
+  to_state_id: STA-34
+- from_state_id: STA-31
+  to_state_id: STA-34
+- from_state_id: STA-32
+  to_state_id: STA-34
 - from_state_id: STA-29
   to_state_id: STA-30
 - from_state_id: STA-30
@@ -1498,7 +1556,7 @@ carrier_synchronization:
 - REST lifecycle acceptance is command evidence and commonly source-preserving; the signal consumer later applies the row
   transition.
 - Graph cancellation transitions graph-run cancelling to graph-run cancelled; affected graph nodes separately transition from
-  their own pending carrier to cancelled before the consumer separately applies legacy row cancellation. No cross-carrier
+  their own leased, running, or suspended carrier to cancelled before the consumer separately applies legacy row cancellation. No cross-carrier
   transition is declared.
 - Graph completion and failure, legacy row completion and failure, graph node outcomes, and decision records are separately
   observed carriers, not aliases.
@@ -1511,12 +1569,12 @@ carrier_synchronization:
   to pending.
 - The REST lifecycle routes inspected reject STOPPING for pause, resume, cancel, and recover. No stopping-to-stopping acceptance
   transition is declared.
-- Graph decision pending-to-recorded, graph node pending-to-outcome, and graph run cancellation are separate carrier-local
-  transitions. Decision recording does not transition a graph node.
+- Graph decision pending-to-recorded and graph node command outcomes are separate carrier-local
+  effects. RecordDecisionCommand rejects terminal graph nodes and completes every eligible nonterminal target, except a rejected approval, which fails its target; decision recording does not transition a graph node.
 - Graph patch submission preserves graph active on the separate graph-run carrier. Submitted patches transition to accepted
   or rejected patch-attempt carriers; budget rejection can separately create a ready gate.
-- Graph node readiness, leasing, running, suspension, and cancellation are node-local NodeState transitions. Graph-run active
-  or paused may independently enter cancelling; cancellation does not use pending as a substitute for an already leased, running,
+- Graph node readiness, leasing, running, suspension, retirement, and cancellation are node-local NodeState transitions. Graph-run active
+  or paused may independently enter cancelling; cancellation does not use planned or blocked as a substitute for an already leased, running,
   or suspended node.
 - The qualified run-recovery command can reset completed downstream legacy tasks to pending; this does not make ordinary completed-task
   transitions nonterminal.

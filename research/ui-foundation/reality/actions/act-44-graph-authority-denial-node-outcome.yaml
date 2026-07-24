@@ -37,7 +37,7 @@ reversibility: No authority-decision or node-completion reversal command exists.
 audit_evidence_ids:
 - EVD-27
 transition:
-  from_state_id: STA-28
+  from_state_ids: [STA-71, STA-72, STA-29, STA-30, STA-31, STA-32]
   to_state_id: STA-33
 carrier_relationship:
   kind: same-command node consequence
@@ -46,8 +46,8 @@ carrier_relationship:
     from_state_id: STA-36
     to_state_id: STA-37
   command_id: CMD-11
-  deferred_downstream_node_state_id: STA-28
-  ordering: The authority request was pending before the command; the authority decision and request-node completion are separate
+  deferred_downstream_node_state_id: STA-71
+  ordering: The authority request is any eligible nonterminal node before the command; the authority decision and request-node completion are separate
     carrier-local effects of one discriminated command.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent

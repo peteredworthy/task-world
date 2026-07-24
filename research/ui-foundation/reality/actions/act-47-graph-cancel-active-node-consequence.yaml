@@ -51,7 +51,8 @@ carrier_relationship:
   rest_acceptance_action_id: ACT-20
   command_id: CMD-6
   excluded_source_state_ids:
-  - STA-28
+  - STA-71
+  - STA-72
   ordering: Only leased, running, or suspended nodes are directly cancelled by CMD-6 evidence. The graph node transitions
     on its own carrier while ACT-50/ACT-46 transition the graph run; neither action transitions to the legacy row.
 enforced_authentication: PER-1 optional global valid-bearer gate.

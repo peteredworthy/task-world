@@ -5,7 +5,7 @@ allocation_policy: Task 13 canonical allocation; values are monotonic and retain
 next_suffixes:
   ENT: 32
   REL: 36
-  STA: 71
+  STA: 74
   PER: 8
   ACT: 72
   EVI: 10
@@ -1145,8 +1145,11 @@ items:
 - namespace: STA
   provisional_key: STA-926
   title: Graph node pending
-  status: active
+  status: rejected
   canonical_id: STA-28
+  history:
+  - status: rejected
+    reason: SV-001 rejected invented graph pending state; no executable NodeState value exists.
 - namespace: STA
   provisional_key: STA-969
   title: Graph node ready
@@ -1357,6 +1360,21 @@ items:
   title: Legacy run paused startup orphan
   status: active
   canonical_id: STA-70
+- namespace: STA
+  provisional_key: SV-001-graph-node-planned
+  title: Graph node planned
+  status: active
+  canonical_id: STA-71
+- namespace: STA
+  provisional_key: SV-001-graph-node-blocked
+  title: Graph node blocked
+  status: active
+  canonical_id: STA-72
+- namespace: STA
+  provisional_key: SV-001-graph-node-retired
+  title: Graph node retired
+  status: active
+  canonical_id: STA-73
 - namespace: PER
   provisional_key: PER-900
   title: Optional global bearer authentication

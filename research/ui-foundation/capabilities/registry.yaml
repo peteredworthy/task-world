@@ -225,7 +225,12 @@ items:
     evidence_ids:
     - EVD-60
     - EVD-58
-  - id: STA-28
+  - id: STA-71
+    role: state-input
+    semantic_type: StateRecord
+    evidence_ids:
+    - EVD-24
+  - id: STA-72
     role: state-input
     semantic_type: StateRecord
     evidence_ids:
@@ -453,7 +458,12 @@ items:
     semantic_type: StateRecord
     evidence_ids:
     - EVD-18
-  - id: STA-28
+  - id: STA-71
+    role: state-input
+    semantic_type: StateRecord
+    evidence_ids:
+    - EVD-24
+  - id: STA-72
     role: state-input
     semantic_type: StateRecord
     evidence_ids:
@@ -556,7 +566,12 @@ items:
     semantic_type: EntityRecord
     evidence_ids:
     - EVD-58
-  - id: STA-28
+  - id: STA-71
+    role: state-input
+    semantic_type: StateRecord
+    evidence_ids:
+    - EVD-24
+  - id: STA-72
     role: state-input
     semantic_type: StateRecord
     evidence_ids:
@@ -633,7 +648,12 @@ items:
     semantic_type: StateRecord
     evidence_ids:
     - EVD-23
-  - id: STA-28
+  - id: STA-71
+    role: state-input
+    semantic_type: StateRecord
+    evidence_ids:
+    - EVD-24
+  - id: STA-72
     role: state-input
     semantic_type: StateRecord
     evidence_ids:
@@ -4738,6 +4758,11 @@ items:
     semantic_type: ActionContract
     evidence_ids:
     - EVD-37
+  - id: STA-73
+    role: state-input
+    semantic_type: StateRecord
+    evidence_ids:
+    - EVD-24
   - id: PER-4
     role: permission-contract
     semantic_type: PermissionContract

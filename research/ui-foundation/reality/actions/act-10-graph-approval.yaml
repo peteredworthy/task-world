@@ -54,7 +54,7 @@ carrier_relationship:
   kind: same-command decision carrier
   paired_node_outcome_action_id: ACT-41
   node_transition:
-    from_state_id: STA-28
+    from_state_ids: [STA-71, STA-72, STA-29, STA-30, STA-31, STA-32]
     to_state_id: STA-33
   ordering: One CMD-11 command records the decision and separately projects the node outcome; this is not a STA-37-to-node
     edge.

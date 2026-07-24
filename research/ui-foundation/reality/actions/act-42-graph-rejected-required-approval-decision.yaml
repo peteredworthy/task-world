@@ -50,7 +50,7 @@ carrier_relationship:
   kind: same-command decision carrier
   paired_node_outcome_action_id: ACT-43
   node_transition:
-    from_state_id: STA-28
+    from_state_ids: [STA-71, STA-72, STA-29, STA-30, STA-31, STA-32]
     to_state_id: STA-34
   ordering: One CMD-11 command records the rejected decision and separately projects required-node failure; this is not a
     STA-37-to-node edge.

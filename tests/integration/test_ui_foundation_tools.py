@@ -230,6 +230,54 @@ def test_valid_phase_zero_package_succeeds(tmp_path: Path) -> None:
     assert result.stderr == ""
 
 
+def test_graph_node_state_contract_rejects_pending_alias_and_missing_node_states(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    state_path = root / "reality/state-model.yaml"
+    state_model = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    for item in state_model["items"]:
+        if item["id"] == "STA-71":
+            item["id"] = "STA-28"
+            item["title"] = "Graph node pending"
+    state_model["items"] = [
+        item for item in state_model["items"] if item["id"] not in {"STA-72", "STA-73"}
+    ]
+    state_path.write_text(yaml.safe_dump(state_model, sort_keys=False), encoding="utf-8")
+
+    validator = load_validator()
+    issues = validator.validate_graph_node_state_contract(root)
+
+    assert {"GRAPH_NODE_STATE_ALIAS", "GRAPH_NODE_STATE_COVERAGE_MISMATCH"} <= {
+        issue.code for issue in issues
+    }
+
+
+def test_graph_node_state_contract_rejects_inactive_links_without_ledger_history(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    ids_path = root / "catalog/ids.yaml"
+    ids = yaml.safe_load(ids_path.read_text(encoding="utf-8"))
+    allocation = next(item for item in ids["items"] if item["canonical_id"] == "STA-28")
+    allocation["status"] = "rejected"
+    allocation.pop("history", None)
+    ids_path.write_text(yaml.safe_dump(ids, sort_keys=False), encoding="utf-8")
+    action_path = root / "reality/actions/act-41-graph-approved-approval-node-outcome.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["transition"] = {"from_state_id": "STA-28", "to_state_id": "STA-33"}
+    action_path.write_text(yaml.safe_dump(action, sort_keys=False), encoding="utf-8")
+
+    validator = load_validator()
+    issues = validator.validate_graph_node_state_contract(root)
+
+    codes = {issue.code for issue in issues}
+    assert "RETIRED_SEMANTIC_ID_HISTORY_MISSING" in codes
+    assert "INACTIVE_STATE_REFERENCE" in codes
+
+
 def test_validator_rejects_malformed_items_and_semantic_fields(tmp_path: Path) -> None:
     root = write_valid_phase_zero(tmp_path)
     write_yaml(root / "catalog/claims.yaml", {"schema_version": "1", "items": "bad"})

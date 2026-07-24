@@ -13,6 +13,8 @@ from typing import ClassVar, Literal, cast
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 import yaml
 
+from orchestrator.graph.models import NodeState
+
 
 type JsonValue = dict[str, JsonValue] | list[JsonValue] | str | int | float | bool | None
 
@@ -1617,7 +1619,95 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 )
 
     issues.extend(_validate_actions(package, declarations, commands, evidence))
+    if phase >= 1:
+        issues.extend(validate_graph_node_state_contract(package.root))
     issues.extend(_validate_epistemics(package, canonical, evidence))
+    return issues
+
+
+def validate_graph_node_state_contract(root: Path) -> list[ValidationIssue]:
+    """Check that canonical graph-node state names match the executable enum exactly."""
+    state_path = root / "reality/state-model.yaml"
+    ids_path = root / "catalog/ids.yaml"
+    if not state_path.exists() or not ids_path.exists():
+        return []
+    state_document = yaml.safe_load(state_path.read_text(encoding="utf-8")) or {}
+    ids_document = yaml.safe_load(ids_path.read_text(encoding="utf-8")) or {}
+    state_items = state_document.get("items", []) if isinstance(state_document, dict) else []
+    allocations = ids_document.get("items", []) if isinstance(ids_document, dict) else []
+    allocation_by_id = {
+        item.get("canonical_id"): item for item in allocations if isinstance(item, dict)
+    }
+    issues: list[ValidationIssue] = []
+    expected = {state.value for state in NodeState}
+    active_graph_states: set[str] = set()
+    for item in state_items if isinstance(state_items, list) else []:
+        if not isinstance(item, dict) or not str(item.get("title", "")).startswith("Graph node "):
+            continue
+        identifier = item.get("id")
+        title_value = str(item.get("title", ""))[len("Graph node ") :]
+        allocation = allocation_by_id.get(identifier)
+        if title_value not in expected:
+            issues.append(
+                _issue("GRAPH_NODE_STATE_ALIAS", state_path, f"{identifier}:{title_value}")
+            )
+        if isinstance(allocation, dict) and allocation.get("status") == "active":
+            active_graph_states.add(title_value)
+    if active_graph_states != expected:
+        issues.append(
+            _issue(
+                "GRAPH_NODE_STATE_COVERAGE_MISMATCH",
+                state_path,
+                f"canonical={sorted(active_graph_states)} executable={sorted(expected)}",
+            )
+        )
+    inactive_ids: set[str] = set()
+    for allocation in allocations if isinstance(allocations, list) else []:
+        if not isinstance(allocation, dict) or allocation.get("namespace") != "STA":
+            continue
+        if allocation.get("status") == "active":
+            continue
+        identifier = allocation.get("canonical_id")
+        if isinstance(identifier, str):
+            inactive_ids.add(identifier)
+            history = allocation.get("history")
+            if not isinstance(history, list) or not history:
+                issues.append(_issue("RETIRED_SEMANTIC_ID_HISTORY_MISSING", ids_path, identifier))
+
+    def references_in(value: object) -> set[str]:
+        if isinstance(value, dict):
+            references = {
+                item
+                for key, item in value.items()
+                if key.endswith("state_id") and isinstance(item, str)
+            }
+            for nested in value.values():
+                references.update(references_in(nested))
+            return references
+        if isinstance(value, list):
+            return set().union(*(references_in(item) for item in value)) if value else set()
+        return set()
+
+    for relative in ("capabilities/registry.yaml", "catalog/claims.yaml"):
+        path = root / relative
+        if not path.exists():
+            continue
+        document = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for item in document.get("items", []) if isinstance(document, dict) else []:
+            if isinstance(item, dict) and (references_in(item) & inactive_ids):
+                issues.append(_issue("INACTIVE_STATE_REFERENCE", path, item.get("id")))
+            if isinstance(item, dict):
+                bindings = item.get("implementation_carrier_bindings")
+                if isinstance(bindings, list) and any(
+                    isinstance(binding, dict) and binding.get("id") in inactive_ids
+                    for binding in bindings
+                ):
+                    issues.append(_issue("INACTIVE_STATE_REFERENCE", path, item.get("id")))
+    actions = root / "reality/actions"
+    for path in actions.glob("*.yaml") if actions.exists() else []:
+        action = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if isinstance(action, dict) and references_in(action) & inactive_ids:
+            issues.append(_issue("INACTIVE_STATE_REFERENCE", path, action.get("id")))
     return issues
 
 
@@ -2254,6 +2344,8 @@ def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
         "# UI foundation status",
         "",
         f"Phase 2 is complete with {len(items)} one-to-one scope-demand classifications and {sum(counts.values())} projected claims.",
+        "",
+        "Task15 in progress: SV-001 adjudicated",
         "",
     ]
     for status in CAPABILITY_STATUSES:
