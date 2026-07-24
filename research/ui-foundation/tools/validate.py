@@ -848,6 +848,20 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 ):
                     issues.append(_issue("COMMAND_TEST_EVIDENCE_INVALID", location, test_id))
 
+    source_text = {
+        source.relative: source.content.decode("utf-8")
+        for source in package.source_loads
+        if source.content is not None
+    }
+    issues.extend(
+        _validate_synthesis_report_anchors(
+            package,
+            raw_evidence_items,
+            snapshot_paths,
+            source_text,
+        )
+    )
+
     issues.extend(
         _validate_semantic_evidence_admission(
             package,
@@ -1210,6 +1224,42 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
 
     issues.extend(_validate_actions(package, declarations, commands, evidence))
     issues.extend(_validate_epistemics(package, canonical, evidence))
+    return issues
+
+
+def _markdown_heading_slugs(markdown: str) -> set[str]:
+    headings = re.findall(r"(?m)^#{1,6}\s+(.+?)\s*#*\s*$", markdown)
+    return {re.sub(r"[^a-z0-9_ -]", "", heading.lower()).replace(" ", "-") for heading in headings}
+
+
+def _validate_synthesis_report_anchors(
+    package: FoundationPackage,
+    evidence_items: list[dict[str, JsonValue]],
+    snapshot_paths: dict[str, set[str]],
+    source_text: dict[str, str],
+) -> list[ValidationIssue]:
+    issues: list[ValidationIssue] = []
+    for index, item in enumerate(evidence_items):
+        if item.get("source_kind") != "audit-report" and item.get("provenance_role") != "synthesis":
+            continue
+        path = item.get("path")
+        snapshot_id = item.get("snapshot_id")
+        if not isinstance(path, str) or "#" not in path or not isinstance(snapshot_id, str):
+            continue
+        report_path, anchor = path.split("#", maxsplit=1)
+        location = f"{package.root / 'catalog/evidence.yaml'}:items[{index}]"
+        if report_path not in snapshot_paths.get(
+            snapshot_id, set()
+        ) or anchor not in _markdown_heading_slugs(source_text.get(report_path, "")):
+            issues.append(_issue("SYNTHESIS_REPORT_ANCHOR_UNRESOLVED", location, path))
+        source_label = item.get("source_label")
+        source_reports: set[str] = (
+            set(cast(list[str], re.findall(r"([A-Za-z0-9_-]+\.md)#", source_label)))
+            if isinstance(source_label, str)
+            else set()
+        )
+        if source_reports and Path(report_path).name not in source_reports:
+            issues.append(_issue("SYNTHESIS_REPORT_SOURCE_LABEL_MISMATCH", location, source_label))
     return issues
 
 

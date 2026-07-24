@@ -219,3 +219,21 @@ research/ui-foundation/tools/validate.py --phase 1` exited 0; `uv run pytest
 tests/integration/test_ui_foundation_tools.py -q` passed **53 tests**; `uv run
 ruff check .` reported **All checks passed!**; and standalone Pyright reported
 **0 errors, 0 warnings**.
+
+## Synthesis-anchor audit correction (2026-07-24)
+
+Every `EVD-7` through `EVD-48` record was individually compared with the
+approved workflow-state, graph-runtime, and API-actions reports. Each now names
+the report containing its finding, a real Markdown heading slug, and the most
+specific table row, claim key, or test label available in `symbol`. In
+particular, EVD-13 and EVD-14 now point to the legacy task/clarification/recovery
+capability table, while EVD-19 points to the workflow report's legacy-versus-
+graph-mode section. The former direct-looking source text remains `source_label`
+only; every record remains synthesis evidence with its existing honest status.
+
+The validator now rejects unresolved report-heading anchors and source-label
+report mismatches for synthesis/audit-report records. Existing audit records
+were normalized to real `key-findings` anchors where their former anchors named
+non-heading table keys. Snapshot hashes were refreshed. Final pre-commit
+evidence: Phase 1 validation exited 0, the focused suite passed **56 tests**,
+Ruff passed, and standalone Pyright reported **0 errors, 0 warnings**.

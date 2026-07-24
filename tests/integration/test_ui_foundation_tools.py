@@ -1588,3 +1588,128 @@ def test_validator_rejects_zero_padded_allocation_suffix_collision(tmp_path: Pat
     result = run_validator(root, phase=0)
 
     assert "ID_ALLOCATION_SUFFIX_DUPLICATE" in issue_codes(result)
+
+
+def test_validator_rejects_synthesis_evidence_with_missing_markdown_anchor(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    report = root.parents[1] / "research/ui-foundation/agent-reports/03-workflow-state.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# Workflow state\n\n## Key findings\n", encoding="utf-8")
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [
+                    {
+                        "path": "research/ui-foundation/agent-reports/03-workflow-state.md",
+                        "sha256": "0" * 64,
+                        "audited_at": "now",
+                    }
+                ],
+            },
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "audit-report",
+                    "provenance_role": "synthesis",
+                    "source_label": "03-workflow-state.md#Key findings",
+                    "path": "research/ui-foundation/agent-reports/03-workflow-state.md#missing",
+                    "snapshot_id": "snapshot-test",
+                    "snapshot_path": "research/ui-foundation/agent-reports/03-workflow-state.md",
+                }
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "SYNTHESIS_REPORT_ANCHOR_UNRESOLVED" in issue_codes(result)
+
+
+def test_validator_rejects_synthesis_evidence_in_wrong_source_label_report(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    repository = root.parents[1]
+    for name in ("03-workflow-state.md", "04-api-actions-authority.md"):
+        report = repository / "research/ui-foundation/agent-reports" / name
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text("# Report\n\n## Key findings\n", encoding="utf-8")
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [
+                    {
+                        "path": "research/ui-foundation/agent-reports/03-workflow-state.md",
+                        "sha256": "0" * 64,
+                        "audited_at": "now",
+                    },
+                    {
+                        "path": "research/ui-foundation/agent-reports/04-api-actions-authority.md",
+                        "sha256": "0" * 64,
+                        "audited_at": "now",
+                    },
+                ],
+            },
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "audit-report",
+                    "provenance_role": "synthesis",
+                    "source_label": "03-workflow-state.md#Key findings",
+                    "path": "research/ui-foundation/agent-reports/04-api-actions-authority.md#key-findings",
+                    "snapshot_id": "snapshot-test",
+                    "snapshot_path": "research/ui-foundation/agent-reports/04-api-actions-authority.md",
+                }
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "SYNTHESIS_REPORT_SOURCE_LABEL_MISMATCH" in issue_codes(result)
+
+
+def test_validator_accepts_synthesis_evidence_with_specific_report_anchor(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    report = root.parents[1] / "research/ui-foundation/agent-reports/03-workflow-state.md"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        "# Workflow state\n\n## State carriers and legal transitions\n", encoding="utf-8"
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [
+                    {
+                        "path": "research/ui-foundation/agent-reports/03-workflow-state.md",
+                        "sha256": "0" * 64,
+                        "audited_at": "now",
+                    }
+                ],
+            },
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "audit-report",
+                    "provenance_role": "synthesis",
+                    "source_label": "03-workflow-state.md#state-carriers-and-legal-transitions",
+                    "path": "research/ui-foundation/agent-reports/03-workflow-state.md#state-carriers-and-legal-transitions",
+                    "symbol": "WF-run-status",
+                    "snapshot_id": "snapshot-test",
+                    "snapshot_path": "research/ui-foundation/agent-reports/03-workflow-state.md",
+                }
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "SYNTHESIS_REPORT_ANCHOR_UNRESOLVED" not in issue_codes(result)
+    assert "SYNTHESIS_REPORT_SOURCE_LABEL_MISMATCH" not in issue_codes(result)
