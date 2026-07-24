@@ -5,7 +5,8 @@ key_namespace: canonical
 items:
 - id: PER-1
   title: Optional global bearer authentication
-  definition: When enabled, API and MCP middleware require a valid bearer JWT; authentication is disabled by default.
+  definition: When enabled, API and MCP middleware require a valid bearer JWT; authentication is disabled
+    by default.
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
@@ -30,7 +31,8 @@ items:
   proposed_product_role_policy: null
 - id: PER-2
   title: Routed endpoint authorization boundary
-  definition: Routed mutations have no verified per-action subject, role, scope, ownership, membership, or permission check.
+  definition: Routed mutations have no verified per-action subject, role, scope, ownership, membership,
+    or permission check.
   implementation_status: absent
   test_status: unexercised
   documentation_status: documented
@@ -54,8 +56,8 @@ items:
   proposed_product_role_policy: Unspecified; no role policy is admitted by this synthesis.
 - id: PER-3
   title: Legacy workflow domain eligibility
-  definition: Legacy run, task, step, clarification, recovery, fan-out, transition-back, and run-recover routes apply workflow
-    state, gate, request, and target prerequisites.
+  definition: Legacy run, task, step, clarification, recovery, fan-out, transition-back, and run-recover
+    routes apply workflow state, gate, request, and target prerequisites.
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
@@ -77,12 +79,13 @@ items:
   - Review or administration eligibility
   enforced_authentication: Optional global valid-bearer gate
   enforced_authorization: absent
-  domain_eligibility: Legacy run/task state, gate, request, target, validation, and operation-specific prerequisites only.
+  domain_eligibility: Legacy run/task state, gate, request, target, validation, and operation-specific
+    prerequisites only.
   proposed_product_role_policy: null
 - id: PER-4
   title: Graph command domain eligibility
-  definition: Graph commands validate target kind/state, decision type/value, graph position, actor/context shape, lease,
-    topology, resource, and patch constraints.
+  definition: Graph commands validate target kind/state, decision type/value, graph position, actor/context
+    shape, lease, topology, resource, and patch constraints.
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
@@ -130,8 +133,8 @@ items:
   proposed_product_role_policy: null
 - id: PER-6
   title: Routine YAML validation domain eligibility
-  definition: The routine validation route accepts YAML content, parses it, unwraps an optional routine key, and validates
-    RoutineConfig without saving it.
+  definition: The routine validation route accepts YAML content, parses it, unwraps an optional routine
+    key, and validates RoutineConfig without saving it.
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
@@ -155,8 +158,9 @@ items:
   proposed_product_role_policy: null
 - id: PER-7
   title: Review and administration domain eligibility
-  definition: Review, git, environment, routine metadata, agent, runner-default, and repository routes apply their route-specific
-    worktree, readiness, schema, identity, or filesystem prerequisites outside the legacy workflow transition model.
+  definition: Review, git, environment, routine metadata, agent, runner-default, and repository routes
+    apply their route-specific worktree, readiness, schema, identity, or filesystem prerequisites outside
+    the legacy workflow transition model.
   implementation_status: present
   test_status: unexercised
   documentation_status: documented
@@ -177,12 +181,13 @@ items:
   question_ids:
   - Q-5
   limitations:
-  - Route eligibility does not establish ownership, containment, or role authorization beyond what the specific route checks
+  - Route eligibility does not establish ownership, containment, or role authorization beyond what the
+    specific route checks
   prohibited_interpretations:
   - Git, filesystem, or configuration eligibility is product-role authorization
   - Legacy workflow transition eligibility
   enforced_authentication: Optional global valid-bearer gate
   enforced_authorization: absent
-  domain_eligibility: Concrete review/admin endpoint prerequisites; no shared administrative permission or legacy workflow
-    transition rule is inferred.
+  domain_eligibility: Concrete review/admin endpoint prerequisites; no shared administrative permission
+    or legacy workflow transition rule is inferred.
   proposed_product_role_policy: null

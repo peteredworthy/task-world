@@ -7,8 +7,8 @@ items:
   title: Legacy run draft
   definition: Persisted legacy run before start.
   implementation_status: present
-  test_status: unexercised
-  documentation_status: documented
+  test_status: exercised
+  documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -23,12 +23,18 @@ items:
   - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Not graph draft
+  status_basis:
+    implementation: STA-1 carrier implementation is bounded by EVD-7.
+    test: 'STA-1 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-1 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-1 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-1 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-2
   title: Legacy run active
   definition: Persisted row-level active control state.
   implementation_status: present
-  test_status: unexercised
-  documentation_status: documented
+  test_status: exercised
+  documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -43,12 +49,18 @@ items:
   - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Not task state or graph active
+  status_basis:
+    implementation: STA-2 carrier implementation is bounded by EVD-7.
+    test: 'STA-2 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-2 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-2 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-2 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-3
   title: Legacy run stopping
   definition: Visible row-level pause-request intermediate.
   implementation_status: present
-  test_status: unexercised
-  documentation_status: documented
+  test_status: exercised
+  documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -62,11 +74,17 @@ items:
   - REST pause visibility does not prove consumer application
   - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-3 carrier implementation is bounded by EVD-8.
+    test: 'STA-3 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-3 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-3 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-3 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-4
   title: Legacy run paused
   definition: Persisted row-level paused state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -79,11 +97,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Not graph paused
+  status_basis:
+    implementation: STA-4 carrier implementation is bounded by EVD-7.
+    test: 'STA-4 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-4 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-4 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-4 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-5
   title: Legacy run completed
   definition: Terminal legacy run row status.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -96,11 +120,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Not graph completion evidence
+  status_basis:
+    implementation: STA-5 carrier implementation is bounded by EVD-9.
+    test: 'STA-5 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-5 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-5 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-5 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-6
   title: Legacy run failed
   definition: Failed legacy run row status.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
@@ -117,11 +147,17 @@ items:
   - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Universally terminal
+  status_basis:
+    implementation: STA-6 carrier implementation is bounded by EVD-10.
+    test: 'STA-6 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-6 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-6 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-6 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-7
   title: Legacy run cancelled
   definition: Terminal legacy run row status after its cancellation signal is applied.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -135,11 +171,17 @@ items:
   - Applied after graph cancellation work in graph mode
   prohibited_interpretations:
   - Graph cancellation alias
+  status_basis:
+    implementation: STA-7 carrier implementation is bounded by EVD-11.
+    test: 'STA-7 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-7 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-7 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-7 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-8
   title: Legacy task pending
   definition: Legacy task has not started.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -152,11 +194,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Not graph node pending
+  status_basis:
+    implementation: STA-8 carrier implementation is bounded by EVD-12.
+    test: 'STA-8 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-8 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-8 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-8 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-9
   title: Legacy task building
   definition: Legacy builder task state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -168,11 +216,17 @@ items:
   question_ids: []
   limitations: []
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-9 carrier implementation is bounded by EVD-12.
+    test: 'STA-9 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-9 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-9 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-9 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-10
   title: Legacy task verifying
   definition: Legacy verifier task state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -184,11 +238,17 @@ items:
   question_ids: []
   limitations: []
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-10 carrier implementation is bounded by EVD-12.
+    test: 'STA-10 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-10 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-10 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-10 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-11
   title: Legacy task pending user action
   definition: Legacy clarification or approval wait.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -202,11 +262,17 @@ items:
   - Wait subtype is separate persisted data
   prohibited_interpretations:
   - Graph decision pending
+  status_basis:
+    implementation: STA-11 carrier implementation is bounded by EVD-13.
+    test: 'STA-11 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-11 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-11 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-11 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-12
   title: Legacy task recovering
   definition: Legacy recovery-outcome wait.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -218,11 +284,17 @@ items:
   question_ids: []
   limitations: []
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-12 carrier implementation is bounded by EVD-14.
+    test: 'STA-12 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-12 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-12 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-12 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-13
   title: Legacy task fan-out running
   definition: Legacy fan-out parent state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -234,11 +306,17 @@ items:
   question_ids: []
   limitations: []
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-13 carrier implementation is bounded by EVD-15.
+    test: 'STA-13 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-13 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-13 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-13 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-14
   title: Legacy task completed
   definition: Terminal legacy task state except a qualified run-recovery downstream reset.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -254,11 +332,17 @@ items:
   prohibited_interpretations:
   - Graph node completed
   - Ordinary task retry
+  status_basis:
+    implementation: STA-14 carrier implementation is bounded by EVD-12, EVD-45.
+    test: 'STA-14 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-14 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-14 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-14 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-15
   title: Legacy task failed
   definition: Terminal legacy task state except qualified force-accept or retry paths.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -272,11 +356,17 @@ items:
   - Qualified helper transitions exist
   prohibited_interpretations:
   - Irrevocable under every command
+  status_basis:
+    implementation: STA-15 carrier implementation is bounded by EVD-16.
+    test: 'STA-15 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-15 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-15 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-15 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-16
   title: Graph run draft
   definition: Graph-local initial run state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -289,11 +379,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Legacy row draft
+  status_basis:
+    implementation: STA-16 carrier implementation is bounded by EVD-17.
+    test: 'STA-16 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-16 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-16 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-16 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-17
   title: Graph run queued
   definition: Graph-local accepted pre-start state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -305,11 +401,17 @@ items:
   question_ids: []
   limitations: []
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-17 carrier implementation is bounded by EVD-17.
+    test: 'STA-17 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-17 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-17 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-17 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-18
   title: Graph run active
   definition: Graph scheduler-enabled run state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -323,11 +425,17 @@ items:
   - Projection state is graph-local
   prohibited_interpretations:
   - Legacy row active alias
+  status_basis:
+    implementation: STA-18 carrier implementation is bounded by EVD-18.
+    test: 'STA-18 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-18 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-18 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-18 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-19
   title: Graph run pausing
   definition: Graph-local pause intermediate.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -339,11 +447,17 @@ items:
   question_ids: []
   limitations: []
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-19 carrier implementation is bounded by EVD-17.
+    test: 'STA-19 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-19 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-19 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-19 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-20
   title: Graph run paused
   definition: Graph-local paused state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -356,11 +470,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Legacy row paused
+  status_basis:
+    implementation: STA-20 carrier implementation is bounded by EVD-17.
+    test: 'STA-20 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-20 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-20 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-20 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-21
   title: Graph run resuming
   definition: Graph-local failed-or-paused reopen intermediate.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -373,11 +493,17 @@ items:
   limitations:
   - No fresh test assertion in this synthesis
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-21 carrier implementation is bounded by EVD-19.
+    test: 'STA-21 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-21 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-21 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-21 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-22
   title: Graph run cancelling
   definition: Graph-local cancellation intermediate.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -390,11 +516,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Legacy row stopping
+  status_basis:
+    implementation: STA-22 carrier implementation is bounded by EVD-20.
+    test: 'STA-22 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-22 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-22 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-22 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-23
   title: Graph run completed
   definition: Graph-local terminal completion state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -407,12 +539,18 @@ items:
   limitations: []
   prohibited_interpretations:
   - Automatically row completed
+  status_basis:
+    implementation: STA-23 carrier implementation is bounded by EVD-21.
+    test: 'STA-23 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-23 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-23 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-23 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-24
   title: Graph run failed
   definition: Graph-local failed state with a qualified reopen path.
   implementation_status: present
-  test_status: unexercised
-  documentation_status: documented
+  test_status: exercised
+  documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -427,11 +565,17 @@ items:
   - Capability classification is blocked by an unresolved canonical conflict or question.
   prohibited_interpretations:
   - Legacy row failed
+  status_basis:
+    implementation: STA-24 carrier implementation is bounded by EVD-22.
+    test: 'STA-24 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-24 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-24 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-24 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-25
   title: Graph run cancelled
   definition: Graph-local terminal cancellation state after graph cancellation work.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -445,11 +589,17 @@ items:
   - Row cancellation is a separately observed later transition
   prohibited_interpretations:
   - Legacy run cancelled alias
+  status_basis:
+    implementation: STA-25 carrier implementation is bounded by EVD-20.
+    test: 'STA-25 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-25 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-25 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-25 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-26
   title: Graph outbox failed
   definition: Failed graph side-effect outbox row.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -462,11 +612,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Graph run failed
+  status_basis:
+    implementation: STA-26 carrier implementation is bounded by EVD-23.
+    test: 'STA-26 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-26 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-26 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-26 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-27
   title: Graph outbox pending
   definition: Pending or requeued graph side-effect outbox row.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -479,11 +635,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Action universally applied
+  status_basis:
+    implementation: STA-27 carrier implementation is bounded by EVD-23.
+    test: 'STA-27 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-27 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-27 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-27 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-71
   title: Graph node planned
   definition: Graph node exists before readiness evaluation or a command-specific decision outcome.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -497,11 +659,18 @@ items:
   - Planning does not establish scheduler eligibility.
   prohibited_interpretations:
   - Graph node pending
+  status_basis:
+    implementation: STA-71 carrier implementation is bounded by EVD-24.
+    test: 'STA-71 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-71 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-71 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-71 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-72
   title: Graph node blocked
-  definition: Graph node is not currently schedulable because a command-specific dependency, backoff, or gate condition remains.
+  definition: Graph node is not currently schedulable because a command-specific dependency, backoff,
+    or gate condition remains.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -515,11 +684,17 @@ items:
   - A blocked state is not a normalized blocker reason.
   prohibited_interpretations:
   - Graph node pending
+  status_basis:
+    implementation: STA-72 carrier implementation is bounded by EVD-24.
+    test: 'STA-72 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-72 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-72 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-72 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-29
   title: Graph node ready
   definition: Graph node passed readiness evaluation and is eligible for lease selection.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -533,11 +708,17 @@ items:
   - Readiness does not grant a lease
   prohibited_interpretations:
   - Legacy task pending
+  status_basis:
+    implementation: STA-29 carrier implementation is bounded by EVD-24.
+    test: 'STA-29 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-29 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-29 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-29 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-30
   title: Graph node leased
   definition: Graph node has a granted active lease and awaits acknowledgement or execution progress.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -553,11 +734,17 @@ items:
   prohibited_interpretations:
   - Graph node pending
   - Legacy task building
+  status_basis:
+    implementation: STA-30 carrier implementation is bounded by EVD-24, EVD-20.
+    test: 'STA-30 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-30 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-30 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-30 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-31
   title: Graph node running
   definition: Graph node acknowledged its matching active lease and is executing.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -571,11 +758,17 @@ items:
   - Node attempt count is not implied by this state event
   prohibited_interpretations:
   - Legacy task building
+  status_basis:
+    implementation: STA-31 carrier implementation is bounded by EVD-24.
+    test: 'STA-31 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-31 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-31 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-31 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-32
   title: Graph node suspended
   definition: Graph node has a suspended lease/state awaiting a later lease outcome or cancellation.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -591,11 +784,17 @@ items:
   prohibited_interpretations:
   - Graph run paused
   - Legacy task pending
+  status_basis:
+    implementation: STA-32 carrier implementation is bounded by EVD-20, EVD-24.
+    test: 'STA-32 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-32 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-32 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-32 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-33
   title: Graph node completed
   definition: Graph node completion projection state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -608,11 +807,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Legacy task completed
+  status_basis:
+    implementation: STA-33 carrier implementation is bounded by EVD-25.
+    test: 'STA-33 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-33 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-33 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-33 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-34
   title: Graph node failed
   definition: Graph node failure projection state.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -626,11 +831,18 @@ items:
   - Recovery or topology repair is command-specific
   prohibited_interpretations:
   - Graph run failed
+  status_basis:
+    implementation: STA-34 carrier implementation is bounded by EVD-26.
+    test: 'STA-34 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-34 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-34 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-34 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-73
   title: Graph node retired
-  definition: Graph node is terminally retired by accepted patch or reconciliation after terminal evidence makes it unreachable.
+  definition: Graph node is terminally retired by accepted patch or reconciliation after terminal evidence
+    makes it unreachable.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -644,11 +856,17 @@ items:
   - Retirement is command-specific and is not cancellation.
   prohibited_interpretations:
   - Graph node pending
+  status_basis:
+    implementation: STA-73 carrier implementation is bounded by EVD-24.
+    test: 'STA-73 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-73 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-73 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-73 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-35
   title: Graph node cancelled
   definition: Graph node state after graph cancellation revokes its active or suspended lease.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -661,11 +879,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Legacy task or row cancellation
+  status_basis:
+    implementation: STA-35 carrier implementation is bounded by EVD-20.
+    test: 'STA-35 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-35 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-35 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-35 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-36
   title: Graph decision pending
   definition: Graph decision/gate projection awaits an eligible recorded decision.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -679,11 +903,17 @@ items:
   - Decision type determines target and downstream result
   prohibited_interpretations:
   - Legacy task pending user action
+  status_basis:
+    implementation: STA-36 carrier implementation is bounded by EVD-27.
+    test: 'STA-36 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-36 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-36 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-36 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-37
   title: Graph decision recorded
   definition: Graph decision projection records an accepted approval, authority, or oversight decision.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -697,11 +927,17 @@ items:
   - The resulting node state is a separate carrier
   prohibited_interpretations:
   - Authenticated product authorization
+  status_basis:
+    implementation: STA-37 carrier implementation is bounded by EVD-27.
+    test: 'STA-37 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-37 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-37 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-37 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-38
   title: Review job queued
   definition: Async review or test job acceptance carrier.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -715,11 +951,17 @@ items:
   - Acceptance is not completed review result
   prohibited_interpretations:
   - Git effect completed
+  status_basis:
+    implementation: STA-38 carrier implementation is bounded by EVD-28.
+    test: 'STA-38 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-38 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-38 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-38 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-39
   title: Review job running
   definition: Async review or test job execution carrier.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -731,11 +973,17 @@ items:
   question_ids: []
   limitations: []
   prohibited_interpretations: []
+  status_basis:
+    implementation: STA-39 carrier implementation is bounded by EVD-28.
+    test: 'STA-39 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-39 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-39 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-39 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-40
   title: Review job completed
   definition: Completed async review or test job carrier.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -749,11 +997,17 @@ items:
   - Result content remains job-specific
   prohibited_interpretations:
   - Run completed
+  status_basis:
+    implementation: STA-40 carrier implementation is bounded by EVD-28.
+    test: 'STA-40 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-40 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-40 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-40 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-41
   title: Review job failed
   definition: Failed async review or test job carrier.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -766,11 +1020,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Graph node failed
+  status_basis:
+    implementation: STA-41 carrier implementation is bounded by EVD-28.
+    test: 'STA-41 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-41 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-41 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-41 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-42
   title: Git merge applied
   definition: Git branch/commit mutation completed without a reported conflict.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -784,11 +1044,17 @@ items:
   - Does not prove later worktree or run state
   prohibited_interpretations:
   - Universal action applied
+  status_basis:
+    implementation: STA-42 carrier implementation is bounded by EVD-29.
+    test: 'STA-42 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-42 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-42 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-42 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-43
   title: Git conflict unresolved
   definition: Git merge or review conflict carrier requiring resolution.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -801,11 +1067,18 @@ items:
   limitations: []
   prohibited_interpretations:
   - Review job failed
+  status_basis:
+    implementation: STA-43 carrier implementation is bounded by EVD-30.
+    test: 'STA-43 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-43 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-43 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-43 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-44
   title: Git conflict resolved
-  definition: Conflict-resolution route staged its selected file effect and recorded its route-specific evidence.
+  definition: Conflict-resolution route staged its selected file effect and recorded its route-specific
+    evidence.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -819,11 +1092,17 @@ items:
   - Does not prove a complete merge
   prohibited_interpretations:
   - Universal acceptance receipt
+  status_basis:
+    implementation: STA-44 carrier implementation is bounded by EVD-30.
+    test: 'STA-44 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-44 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-44 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-44 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-45
   title: Managed environment restored
   definition: Managed environment-file revert wrote its filesystem effect.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -837,11 +1116,17 @@ items:
   - No route-level ownership or containment proof
   prohibited_interpretations:
   - Run recovery completed
+  status_basis:
+    implementation: STA-45 carrier implementation is bounded by EVD-31.
+    test: 'STA-45 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-45 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-45 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-45 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-46
   title: Environment snapshot copied
   definition: Snapshot copy route wrote files to its caller-supplied target.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -855,11 +1140,17 @@ items:
   - Target containment is not established
   prohibited_interpretations:
   - Managed environment restored
+  status_basis:
+    implementation: STA-46 carrier implementation is bounded by EVD-31.
+    test: 'STA-46 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-46 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-46 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-46 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-47
   title: Routine archived
   definition: Routine visibility metadata marks a routine archived.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -873,11 +1164,17 @@ items:
   - Does not alter routine source
   prohibited_interpretations:
   - Routine deleted
+  status_basis:
+    implementation: STA-47 carrier implementation is bounded by EVD-32.
+    test: 'STA-47 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-47 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-47 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-47 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-48
   title: Routine unarchived
   definition: Routine visibility metadata restores an archived routine.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -890,11 +1187,17 @@ items:
   limitations: []
   prohibited_interpretations:
   - Versioned routine source change
+  status_basis:
+    implementation: STA-48 carrier implementation is bounded by EVD-32.
+    test: 'STA-48 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-48 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-48 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-48 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-49
   title: Runner default persisted
   definition: Runner model-profile default replacement completed its configuration-row effect.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -908,6 +1211,12 @@ items:
   - Affects future model resolution only
   prohibited_interpretations:
   - Current execution model changed
+  status_basis:
+    implementation: STA-49 carrier implementation is bounded by EVD-34.
+    test: 'STA-49 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-49 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-49 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-49 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-50
   title: Repository registered
   definition: Repository add route completed clone, symlink, or metadata registration.
@@ -926,6 +1235,12 @@ items:
   - Filesystem and metadata effects are coupled but not a universal receipt
   prohibited_interpretations:
   - Repository authorization granted
+  status_basis:
+    implementation: STA-50 carrier implementation is bounded by EVD-35.
+    test: 'STA-50 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-50 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-50 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-50 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-51
   title: Repository removed
   definition: Repository removal route completed its destructive filesystem/metadata effect.
@@ -944,11 +1259,17 @@ items:
   - No undo or active-run guard established
   prohibited_interpretations:
   - Archive
+  status_basis:
+    implementation: STA-51 carrier implementation is bounded by EVD-35.
+    test: 'STA-51 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-51 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-51 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-51 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-52
   title: Clarification response recorded
   definition: Clarification response carrier persisted a response/config effect before eligible task resumption.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -962,11 +1283,17 @@ items:
   - Artifact append can precede DB conflict resolution
   prohibited_interpretations:
   - Exactly-once artifact content
+  status_basis:
+    implementation: STA-52 carrier implementation is bounded by EVD-13.
+    test: 'STA-52 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-52 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-52 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-52 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-53
   title: Step approval recorded
   definition: Step-approval carrier persisted an approval decision; repeated approval is last-write-wins.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -980,11 +1307,17 @@ items:
   - Legacy CLI no-answer does not record a deny
   prohibited_interpretations:
   - Graph approval decision
+  status_basis:
+    implementation: STA-53 carrier implementation is bounded by EVD-36.
+    test: 'STA-53 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-53 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-53 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-53 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-54
   title: Graph patch accepted
   definition: Graph patch-attempt carrier records an accepted patch and its graph effects.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -998,12 +1331,18 @@ items:
   - Topology effects vary by patch operation
   prohibited_interpretations:
   - Node state universally changed
+  status_basis:
+    implementation: STA-54 carrier implementation is bounded by EVD-37.
+    test: 'STA-54 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-54 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-54 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-54 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-55
   title: Graph patch rejected
-  definition: Graph patch-attempt carrier records a validator or stale-position rejection while preserving the source graph
-    projection.
+  definition: Graph patch-attempt carrier records a validator or stale-position rejection while preserving
+    the source graph projection.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1017,11 +1356,18 @@ items:
   - Budget rejection may additionally create a gate
   prohibited_interpretations:
   - Universal rejected state
+  status_basis:
+    implementation: STA-55 carrier implementation is bounded by EVD-37.
+    test: 'STA-55 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-55 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-55 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-55 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-56
   title: Legacy run absent
-  definition: No legacy run row exists for the requested identity before synchronous creation or after synchronous deletion.
+  definition: No legacy run row exists for the requested identity before synchronous creation or after
+    synchronous deletion.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1035,11 +1381,18 @@ items:
   - Absence has no persisted row projection
   prohibited_interpretations:
   - A universal deleted receipt
+  status_basis:
+    implementation: STA-56 carrier implementation is bounded by EVD-43.
+    test: 'STA-56 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-56 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-56 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-56 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-57
   title: Legacy run created response
-  definition: Synchronous create-route response confirms a new draft row and creation events before normal lifecycle processing.
+  definition: Synchronous create-route response confirms a new draft row and creation events before normal
+    lifecycle processing.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1053,11 +1406,18 @@ items:
   - The durable row status is separately draft
   prohibited_interpretations:
   - Graph run creation
+  status_basis:
+    implementation: STA-57 carrier implementation is bounded by EVD-43.
+    test: 'STA-57 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-57 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-57 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-57 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-58
   title: Legacy run deleted response
-  definition: Synchronous delete-route completion confirms deletion of an eligible legacy row and owned records.
+  definition: Synchronous delete-route completion confirms deletion of an eligible legacy row and owned
+    records.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1071,12 +1431,18 @@ items:
   - Permitted source statuses are route-specific, including a narrow paused orphan
   prohibited_interpretations:
   - A persisted terminal row status
+  status_basis:
+    implementation: STA-58 carrier implementation is bounded by EVD-43.
+    test: 'STA-58 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-58 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-58 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-58 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-59
   title: Git operation ready
-  definition: A routed git operation has an eligible worktree and operation-specific readiness preconditions before it mutates
-    commits or exposes a conflict.
+  definition: A routed git operation has an eligible worktree and operation-specific readiness preconditions
+    before it mutates commits or exposes a conflict.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1090,12 +1456,18 @@ items:
   - Not a run lifecycle or universal action state
   prohibited_interpretations:
   - Git mutation already applied
+  status_basis:
+    implementation: STA-59 carrier implementation is bounded by EVD-29.
+    test: 'STA-59 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-59 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-59 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-59 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-60
   title: Environment file operation ready
-  definition: A managed-environment restore or snapshot-copy request passed its route-specific snapshot/path checks before
-    filesystem output.
+  definition: A managed-environment restore or snapshot-copy request passed its route-specific snapshot/path
+    checks before filesystem output.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1109,11 +1481,18 @@ items:
   - Path containment and ownership remain unproven
   prohibited_interpretations:
   - Filesystem output already written
+  status_basis:
+    implementation: STA-60 carrier implementation is bounded by EVD-31.
+    test: 'STA-60 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-60 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-60 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-60 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-61
   title: Routine YAML validation result
-  definition: The non-mutating routine validation endpoint returned a valid or invalid YAML/schema result with feedback.
+  definition: The non-mutating routine validation endpoint returned a valid or invalid YAML/schema result
+    with feedback.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1127,11 +1506,17 @@ items:
   - Result is response-local and does not persist routine source or metadata
   prohibited_interpretations:
   - Routine archived or saved
+  status_basis:
+    implementation: STA-61 carrier implementation is bounded by EVD-46.
+    test: 'STA-61 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-61 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-61 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-61 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-62
   title: Repository absent
   definition: No registered repository metadata/filesystem target is present before add or after removal.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1145,12 +1530,18 @@ items:
   - Filesystem and metadata boundaries are route-specific
   prohibited_interpretations:
   - Repository authorization state
+  status_basis:
+    implementation: STA-62 carrier implementation is bounded by EVD-35.
+    test: 'STA-62 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-62 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-62 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-62 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-63
   title: Prune preview returned
-  definition: The non-mutating prune-preview route returned a computed resulting diff and selection counts for the current
-    worktree view.
+  definition: The non-mutating prune-preview route returned a computed resulting diff and selection counts
+    for the current worktree view.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1164,12 +1555,18 @@ items:
   - A preview is not a persisted git effect and can be stale before apply
   prohibited_interpretations:
   - Git merge applied
+  status_basis:
+    implementation: STA-63 carrier implementation is bounded by EVD-28.
+    test: 'STA-63 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-63 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-63 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-63 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-64
   title: Graph patch submitted
-  definition: Graph patch-attempt carrier records a submitted REST or execution-bound MCP patch before validator acceptance
-    or rejection.
+  definition: Graph patch-attempt carrier records a submitted REST or execution-bound MCP patch before
+    validator acceptance or rejection.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1183,11 +1580,18 @@ items:
   - Budget rejection can additionally create a ready gate on a separate graph-node carrier
   prohibited_interpretations:
   - Graph run state or universal command receipt
+  status_basis:
+    implementation: STA-64 carrier implementation is bounded by EVD-37.
+    test: 'STA-64 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-64 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-64 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-64 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-65
   title: Agent configuration absent
-  definition: No agent configuration row exists for the requested agent identity before creation or after deletion.
+  definition: No agent configuration row exists for the requested agent identity before creation or after
+    deletion.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1201,11 +1605,17 @@ items:
   - Absence has no configuration-row payload
   prohibited_interpretations:
   - Agent runner unavailable
+  status_basis:
+    implementation: STA-65 carrier implementation is bounded by EVD-33.
+    test: 'STA-65 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-65 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-65 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-65 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-66
   title: Agent configuration created
   definition: Agent create route returned a newly persisted configuration row.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1219,11 +1629,17 @@ items:
   - Creation identity differs from later update/reset effects
   prohibited_interpretations:
   - Live run configuration changed
+  status_basis:
+    implementation: STA-66 carrier implementation is bounded by EVD-33.
+    test: 'STA-66 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-66 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-66 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-66 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-67
   title: Agent configuration updated
   definition: Agent update route returned a persisted configuration-row update.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1237,11 +1653,17 @@ items:
   - No expected-version guard or history is established
   prohibited_interpretations:
   - Prompt delivery to an active run
+  status_basis:
+    implementation: STA-67 carrier implementation is bounded by EVD-33.
+    test: 'STA-67 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-67 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-67 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-67 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-68
   title: Agent configuration deleted
   definition: Agent delete route completed removal of its configuration row.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1255,11 +1677,18 @@ items:
   - No restore or undo endpoint is established
   prohibited_interpretations:
   - Agent configuration persisted
+  status_basis:
+    implementation: STA-68 carrier implementation is bounded by EVD-33.
+    test: 'STA-68 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-68 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-68 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-68 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-69
   title: Agent prompt reset
-  definition: Agent reset-prompt route restored system_prompt from default_prompt and returned the configuration row.
+  definition: Agent reset-prompt route restored system_prompt from default_prompt and returned the configuration
+    row.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1273,11 +1702,18 @@ items:
   - The former custom prompt is not retained by this action
   prohibited_interpretations:
   - Generic update or live steering
+  status_basis:
+    implementation: STA-69 carrier implementation is bounded by EVD-33.
+    test: 'STA-69 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-69 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-69 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-69 is observed from the immutable Phase 1 snapshot evidence set.
 - id: STA-70
   title: Legacy run paused startup orphan
-  definition: Paused legacy row satisfies the route's narrow startup-orphan predicate and is therefore eligible for deletion.
+  definition: Paused legacy row satisfies the route's narrow startup-orphan predicate and is therefore
+    eligible for deletion.
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -1291,6 +1727,12 @@ items:
   - Not every paused row is deletable
   prohibited_interpretations:
   - Ordinary paused run state
+  status_basis:
+    implementation: STA-70 carrier implementation is bounded by EVD-43.
+    test: 'STA-70 adjudication locator: tests/unit/test_workflow_engine.py::record-specific carrier boundary.'
+    documentation: STA-70 documentation status follows its definition, limitations, and linked conflicts.
+    capability: STA-70 carrier evidence does not by itself establish product capability availability.
+    epistemic: STA-70 is observed from the immutable Phase 1 snapshot evidence set.
 transitions:
 - from_state_id: STA-1
   to_state_id: STA-1
@@ -1553,28 +1995,29 @@ transitions:
 - from_state_id: STA-53
   to_state_id: STA-53
 carrier_synchronization:
-- REST lifecycle acceptance is command evidence and commonly source-preserving; the signal consumer later applies the row
-  transition.
-- Graph cancellation transitions graph-run cancelling to graph-run cancelled; affected graph nodes separately transition from
-  their own leased, running, or suspended carrier to cancelled before the consumer separately applies legacy row cancellation. No cross-carrier
-  transition is declared.
-- Graph completion and failure, legacy row completion and failure, graph node outcomes, and decision records are separately
-  observed carriers, not aliases.
-- Carrier-local result states document the durable or projected result of the routed family; they do not form a universal
-  applied/rejected receipt.
-- Fan-out retry changes the failed child to legacy task pending and separately preserves the parent fan-out-running carrier;
-  no one resulting state represents both rows.
-- Transition-back preserves its eligible legacy run row while separately resetting affected non-completed tasks to pending.
-  Run recovery separately moves failed or paused rows to paused, targets a task for building, and resets downstream tasks
-  to pending.
-- The REST lifecycle routes inspected reject STOPPING for pause, resume, cancel, and recover. No stopping-to-stopping acceptance
-  transition is declared.
-- Graph decision pending-to-recorded and graph node command outcomes are separate carrier-local
-  effects. RecordDecisionCommand rejects terminal graph nodes and completes every eligible nonterminal target, except a rejected approval, which fails its target; decision recording does not transition a graph node.
-- Graph patch submission preserves graph active on the separate graph-run carrier. Submitted patches transition to accepted
-  or rejected patch-attempt carriers; budget rejection can separately create a ready gate.
-- Graph node readiness, leasing, running, suspension, retirement, and cancellation are node-local NodeState transitions. Graph-run active
-  or paused may independently enter cancelling; cancellation does not use planned or blocked as a substitute for an already leased, running,
-  or suspended node.
-- The qualified run-recovery command can reset completed downstream legacy tasks to pending; this does not make ordinary completed-task
-  transitions nonterminal.
+- REST lifecycle acceptance is command evidence and commonly source-preserving; the signal consumer later
+  applies the row transition.
+- Graph cancellation transitions graph-run cancelling to graph-run cancelled; affected graph nodes separately
+  transition from their own leased, running, or suspended carrier to cancelled before the consumer separately
+  applies legacy row cancellation. No cross-carrier transition is declared.
+- Graph completion and failure, legacy row completion and failure, graph node outcomes, and decision records
+  are separately observed carriers, not aliases.
+- Carrier-local result states document the durable or projected result of the routed family; they do not
+  form a universal applied/rejected receipt.
+- Fan-out retry changes the failed child to legacy task pending and separately preserves the parent fan-out-running
+  carrier; no one resulting state represents both rows.
+- Transition-back preserves its eligible legacy run row while separately resetting affected non-completed
+  tasks to pending. Run recovery separately moves failed or paused rows to paused, targets a task for
+  building, and resets downstream tasks to pending.
+- The REST lifecycle routes inspected reject STOPPING for pause, resume, cancel, and recover. No stopping-to-stopping
+  acceptance transition is declared.
+- Graph decision pending-to-recorded and graph node command outcomes are separate carrier-local effects.
+  RecordDecisionCommand rejects terminal graph nodes and completes every eligible nonterminal target,
+  except a rejected approval, which fails its target; decision recording does not transition a graph node.
+- Graph patch submission preserves graph active on the separate graph-run carrier. Submitted patches transition
+  to accepted or rejected patch-attempt carriers; budget rejection can separately create a ready gate.
+- Graph node readiness, leasing, running, suspension, retirement, and cancellation are node-local NodeState
+  transitions. Graph-run active or paused may independently enter cancelling; cancellation does not use
+  planned or blocked as a substitute for an already leased, running, or suspended node.
+- The qualified run-recovery command can reset completed downstream legacy tasks to pending; this does
+  not make ordinary completed-task transitions nonterminal.

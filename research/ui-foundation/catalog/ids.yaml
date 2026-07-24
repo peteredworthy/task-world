@@ -1,7 +1,7 @@
 schema_version: '1'
 phase_status: complete
-allocation_policy: Task 13 canonical allocation; values are monotonic and retained
-  after rejection or supersession.
+allocation_policy: Task 13 canonical allocation; values are monotonic and retained after rejection or
+  supersession.
 next_suffixes:
   ENT: 32
   REL: 36
@@ -805,8 +805,12 @@ items:
 - namespace: ENT
   provisional_key: DS-TAX-artifact-carriers
   title: Artifact carrier taxonomy
-  status: active
+  status: rejected
   canonical_id: ENT-26
+  retirement_reason: 'SV-007: artifact carrier taxonomy has no identity, ownership, persistence, or lifecycle;
+    represented by EVI-6 and ENT-22 through ENT-25 instead.'
+  supersession_note: Distributed carrier taxonomy; no identity-preserving successor and ENT-26 must not
+    be reused.
 - namespace: ENT
   provisional_key: DS-ENT-model-profile
   title: Model profile
@@ -1817,8 +1821,7 @@ items:
   canonical_id: CMD-1
 - namespace: CMD
   provisional_key: CMD-901
-  title: REST POST /api/runs/{id}/start; start_run; 202 signal accepted before consumer
-    application
+  title: REST POST /api/runs/{id}/start; start_run; 202 signal accepted before consumer application
   status: active
   canonical_id: CMD-2
 - namespace: CMD
@@ -1833,14 +1836,12 @@ items:
   canonical_id: CMD-4
 - namespace: CMD
   provisional_key: CMD-904
-  title: REST POST /api/runs/{id}/resume; resume_run; 202 signal accepted before consumer
-    application
+  title: REST POST /api/runs/{id}/resume; resume_run; 202 signal accepted before consumer application
   status: active
   canonical_id: CMD-5
 - namespace: CMD
   provisional_key: CMD-905
-  title: REST POST /api/runs/{id}/cancel; cancel_run; 202 signal accepted before row
-    application
+  title: REST POST /api/runs/{id}/cancel; cancel_run; 202 signal accepted before row application
   status: active
   canonical_id: CMD-6
 - namespace: CMD
@@ -1850,8 +1851,7 @@ items:
   canonical_id: CMD-7
 - namespace: CMD
   provisional_key: CMD-908
-  title: REST clarification response; respond_to_clarification; synchronous response
-    plus eligible resumption
+  title: REST clarification response; respond_to_clarification; synchronous response plus eligible resumption
   status: active
   canonical_id: CMD-8
 - namespace: CMD
@@ -1866,26 +1866,25 @@ items:
   canonical_id: CMD-10
 - namespace: CMD
   provisional_key: CMD-912
-  title: REST POST /graph/decisions; RecordDecisionCommand with discriminated approval,
-    authority, or oversight type/value; synchronous graph append/projection
+  title: REST POST /graph/decisions; RecordDecisionCommand with discriminated approval, authority, or
+    oversight type/value; synchronous graph append/projection
   status: active
   canonical_id: CMD-11
 - namespace: CMD
   provisional_key: CMD-915
-  title: REST POST /graph/patch; SubmitGraphPatchCommand; synchronous accepted/rejected
-    patch attempt
+  title: REST POST /graph/patch; SubmitGraphPatchCommand; synchronous accepted/rejected patch attempt
   status: active
   canonical_id: CMD-12
 - namespace: CMD
   provisional_key: CMD-916
-  title: Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand;
-    synchronous graph append/projection
+  title: Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand; synchronous
+    graph append/projection
   status: active
   canonical_id: CMD-13
 - namespace: CMD
   provisional_key: CMD-917
-  title: REST POST /graph/outbox/requeue/{event_id}; requeue_outbox; transactional
-    pending reset plus event
+  title: REST POST /graph/outbox/requeue/{event_id}; requeue_outbox; transactional pending reset plus
+    event
   status: active
   canonical_id: CMD-14
 - namespace: CMD
@@ -1900,14 +1899,12 @@ items:
   canonical_id: CMD-16
 - namespace: CMD
   provisional_key: CMD-920
-  title: REST review revert-back-merge; revert_back_merge; synchronous git mutation
-    or conflict
+  title: REST review revert-back-merge; revert_back_merge; synchronous git mutation or conflict
   status: active
   canonical_id: CMD-17
 - namespace: CMD
   provisional_key: CMD-922
-  title: REST review conflict resolution; resolve_conflict; synchronous staged conflict
-    effect
+  title: REST review conflict resolution; resolve_conflict; synchronous staged conflict effect
   status: active
   canonical_id: CMD-18
 - namespace: CMD
@@ -1927,44 +1924,40 @@ items:
   canonical_id: CMD-21
 - namespace: CMD
   provisional_key: CMD-926
-  title: REST environment snapshot copy; copy_env_snapshot; synchronous filesystem
-    write
+  title: REST environment snapshot copy; copy_env_snapshot; synchronous filesystem write
   status: active
   canonical_id: CMD-22
 - namespace: CMD
   provisional_key: CMD-929
-  title: REST runner model-profile defaults PUT; runner defaults service; synchronous
-    configuration-row replacement
+  title: REST runner model-profile defaults PUT; runner defaults service; synchronous configuration-row
+    replacement
   status: active
   canonical_id: CMD-23
 - namespace: CMD
   provisional_key: CMD-930
-  title: REST repository add; repository service; synchronous clone/symlink/metadata
-    mutation
+  title: REST repository add; repository service; synchronous clone/symlink/metadata mutation
   status: active
   canonical_id: CMD-24
 - namespace: CMD
   provisional_key: CMD-931
-  title: REST repository remove; repository service; synchronous destructive filesystem/metadata
-    mutation
+  title: REST repository remove; repository service; synchronous destructive filesystem/metadata mutation
   status: active
   canonical_id: CMD-25
 - namespace: CMD
   provisional_key: CMD-932
-  title: REST POST /api/routines/validate; validate_routine; synchronous non-mutating
-    YAML/schema response
+  title: REST POST /api/routines/validate; validate_routine; synchronous non-mutating YAML/schema response
   status: active
   canonical_id: CMD-26
 - namespace: CMD
   provisional_key: CMD-933
-  title: REST POST /api/runs/{run_id}/review/test; start_test_run; 202 asynchronous
-    test-job start before result
+  title: REST POST /api/runs/{run_id}/review/test; start_test_run; 202 asynchronous test-job start before
+    result
   status: active
   canonical_id: CMD-27
 - namespace: CMD
   provisional_key: CMD-934
-  title: REST POST /api/runs/{run_id}/review/conflicts/agent-resolve; agent_resolve_conflicts;
-    synchronous dispatch acceptance before agent result
+  title: REST POST /api/runs/{run_id}/review/conflicts/agent-resolve; agent_resolve_conflicts; synchronous
+    dispatch acceptance before agent result
   status: active
   canonical_id: CMD-28
 - namespace: CMD
@@ -1974,14 +1967,12 @@ items:
   canonical_id: CMD-29
 - namespace: CMD
   provisional_key: CMD-936
-  title: REST task reject endpoint; reject_task; synchronous building-or-failed legacy
-    task outcome
+  title: REST task reject endpoint; reject_task; synchronous building-or-failed legacy task outcome
   status: active
   canonical_id: CMD-30
 - namespace: CMD
   provisional_key: CMD-937
-  title: REST task force-accept endpoint; force_accept_task; synchronous qualified
-    task completion
+  title: REST task force-accept endpoint; force_accept_task; synchronous qualified task completion
   status: active
   canonical_id: CMD-31
 - namespace: CMD
@@ -1996,26 +1987,23 @@ items:
   canonical_id: CMD-33
 - namespace: CMD
   provisional_key: CMD-940
-  title: REST backward-transition endpoint; backward_transition; synchronous legacy
-    step/task rewind
+  title: REST backward-transition endpoint; backward_transition; synchronous legacy step/task rewind
   status: active
   canonical_id: CMD-34
 - namespace: CMD
   provisional_key: CMD-941
-  title: REST POST /api/runs/{run_id}/recover; recover_run; synchronous compensating
-    recovery to paused
+  title: REST POST /api/runs/{run_id}/recover; recover_run; synchronous compensating recovery to paused
   status: active
   canonical_id: CMD-35
 - namespace: CMD
   provisional_key: CMD-942
-  title: REST POST /api/routines/{routine_id}/archive; archive_routine; synchronous
-    routine metadata update
+  title: REST POST /api/routines/{routine_id}/archive; archive_routine; synchronous routine metadata update
   status: active
   canonical_id: CMD-36
 - namespace: CMD
   provisional_key: CMD-943
-  title: REST POST /api/routines/{routine_id}/unarchive; unarchive_routine; synchronous
-    routine metadata update
+  title: REST POST /api/routines/{routine_id}/unarchive; unarchive_routine; synchronous routine metadata
+    update
   status: active
   canonical_id: CMD-37
 - namespace: CMD
@@ -2025,26 +2013,22 @@ items:
   canonical_id: CMD-38
 - namespace: CMD
   provisional_key: CMD-945
-  title: REST PUT /api/agents/{agent_id}; update_agent; synchronous configuration-row
-    update
+  title: REST PUT /api/agents/{agent_id}; update_agent; synchronous configuration-row update
   status: active
   canonical_id: CMD-39
 - namespace: CMD
   provisional_key: CMD-946
-  title: REST DELETE /api/agents/{agent_id}; delete_agent; synchronous configuration-row
-    deletion
+  title: REST DELETE /api/agents/{agent_id}; delete_agent; synchronous configuration-row deletion
   status: active
   canonical_id: CMD-40
 - namespace: CMD
   provisional_key: CMD-947
-  title: REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous
-    default-prompt restoration
+  title: REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous default-prompt restoration
   status: active
   canonical_id: CMD-41
 - namespace: EVD
   provisional_key: EVI-900
-  title: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row
-    transitions
+  title: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions
   status: active
   canonical_id: EVD-7
 - namespace: EVD
@@ -2074,8 +2058,7 @@ items:
   canonical_id: EVD-12
 - namespace: EVD
   provisional_key: EVI-906
-  title: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume
-    boundary
+  title: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume boundary
   status: active
   canonical_id: EVD-13
 - namespace: EVD
@@ -2095,8 +2078,7 @@ items:
   canonical_id: EVD-16
 - namespace: EVD
   provisional_key: EVI-910
-  title: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph
-    lifecycle commands
+  title: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph lifecycle commands
   status: active
   canonical_id: EVD-17
 - namespace: EVD
@@ -2141,8 +2123,7 @@ items:
   canonical_id: EVD-25
 - namespace: EVD
   provisional_key: EVI-919
-  title: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry
-    failure
+  title: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry failure
   status: active
   canonical_id: EVD-26
 - namespace: EVD
@@ -2152,8 +2133,7 @@ items:
   canonical_id: EVD-27
 - namespace: EVD
   provisional_key: EVI-921
-  title: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async
-    review timing
+  title: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async review timing
   status: active
   canonical_id: EVD-28
 - namespace: EVD
@@ -2203,8 +2183,7 @@ items:
   canonical_id: EVD-37
 - namespace: EVD
   provisional_key: EVI-931
-  title: tests/integration/test_api_auth.py global optional bearer-authentication
-    anchors
+  title: tests/integration/test_api_auth.py global optional bearer-authentication anchors
   status: active
   canonical_id: EVD-38
 - namespace: EVD
@@ -2214,8 +2193,7 @@ items:
   canonical_id: EVD-39
 - namespace: EVD
   provisional_key: EVI-933
-  title: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input
-    eligibility
+  title: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input eligibility
   status: active
   canonical_id: EVD-40
 - namespace: EVD
@@ -2225,44 +2203,41 @@ items:
   canonical_id: EVD-41
 - namespace: EVD
   provisional_key: EVI-935
-  title: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py
-    closure scope
+  title: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py closure
+    scope
   status: active
   canonical_id: EVD-42
 - namespace: EVD
   provisional_key: EVI-936
-  title: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous
-    row creation/deletion routes
+  title: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous row creation/deletion
+    routes
   status: active
   canonical_id: EVD-43
 - namespace: EVD
   provisional_key: EVI-937
-  title: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges
-    fan-out carrier behavior
+  title: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges fan-out
+    carrier behavior
   status: active
   canonical_id: EVD-44
 - namespace: EVD
   provisional_key: EVI-938
-  title: '04-api-actions-authority.md#action-transition-back and #action-run-recover;
-    tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
+  title: '04-api-actions-authority.md#action-transition-back and #action-run-recover; tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
   status: active
   canonical_id: EVD-45
 - namespace: EVD
   provisional_key: EVI-939
-  title: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and
-    RoutineConfig validation response
+  title: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and RoutineConfig validation
+    response
   status: active
   canonical_id: EVD-46
 - namespace: EVD
   provisional_key: EVI-940
-  title: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start
-    and completion callback
+  title: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start and completion callback
   status: active
   canonical_id: EVD-47
 - namespace: EVD
   provisional_key: EVI-941
-  title: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch
-    and AgentFixStarted
+  title: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch and AgentFixStarted
   status: active
   canonical_id: EVD-48
 - namespace: EVD
@@ -2301,8 +2276,7 @@ items:
   status: active
   canonical_id: EVD-55
 - namespace: EVD
-  provisional_key: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer
-    wiring
+  provisional_key: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring
   title: agent-reports/05-evidence-telemetry.md#Evidence inventory and producer wiring
   status: active
   canonical_id: EVD-56
@@ -2327,8 +2301,7 @@ items:
   status: active
   canonical_id: EVD-60
 - namespace: EVD
-  provisional_key: agent-reports/04-api-actions-authority.md#Transport and capability
-    inventory
+  provisional_key: agent-reports/04-api-actions-authority.md#Transport and capability inventory
   title: agent-reports/04-api-actions-authority.md#Transport and capability inventory
   status: active
   canonical_id: EVD-61
@@ -2353,8 +2326,7 @@ items:
   status: active
   canonical_id: EVD-65
 - namespace: EVD
-  provisional_key: agent-reports/04-api-actions-authority.md#CLI database maintenance
-    capability
+  provisional_key: agent-reports/04-api-actions-authority.md#CLI database maintenance capability
   title: agent-reports/04-api-actions-authority.md#CLI database maintenance capability
   status: active
   canonical_id: EVD-66
@@ -2374,8 +2346,7 @@ items:
   status: active
   canonical_id: EVD-69
 - namespace: EVD
-  provisional_key: agent-reports/03-workflow-state.md#Durable authority projection
-    and recovery
+  provisional_key: agent-reports/03-workflow-state.md#Durable authority projection and recovery
   title: agent-reports/03-workflow-state.md#Durable authority projection and recovery
   status: active
   canonical_id: EVD-70
@@ -2420,8 +2391,7 @@ items:
   status: active
   canonical_id: EVD-78
 - namespace: EVD
-  provisional_key: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and
-    file boundaries
+  provisional_key: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries
   title: agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries
   status: active
   canonical_id: EVD-79
@@ -2476,8 +2446,7 @@ items:
   status: active
   canonical_id: EVD-89
 - namespace: EVD
-  provisional_key: agent-reports/04-api-actions-authority.md#Race idempotency and
-    action feedback
+  provisional_key: agent-reports/04-api-actions-authority.md#Race idempotency and action feedback
   title: agent-reports/04-api-actions-authority.md#Race idempotency and action feedback
   status: active
   canonical_id: EVD-90
@@ -2527,20 +2496,17 @@ items:
   status: active
   canonical_id: CON-3
 - namespace: CON
-  provisional_key: report-conflict:Recorded action attribution is not an authenticated
-    identity
+  provisional_key: report-conflict:Recorded action attribution is not an authenticated identity
   title: Recorded action attribution is not an authenticated identity
   status: active
   canonical_id: CON-4
 - namespace: CON
-  provisional_key: report-conflict:Artifact and telemetry coverage differs between
-    graph and legacy
+  provisional_key: report-conflict:Artifact and telemetry coverage differs between graph and legacy
   title: Artifact and telemetry coverage differs between graph and legacy
   status: active
   canonical_id: CON-5
 - namespace: CON
-  provisional_key: report-conflict:Lifecycle REST acceptance differs from direct CLI
-    application
+  provisional_key: report-conflict:Lifecycle REST acceptance differs from direct CLI application
   title: Lifecycle REST acceptance differs from direct CLI application
   status: active
   canonical_id: CON-6
@@ -2565,14 +2531,12 @@ items:
   status: active
   canonical_id: Q-1
 - namespace: Q
-  provisional_key: report-question:Define typed cross-mode conversion and selection
-    contracts
+  provisional_key: report-question:Define typed cross-mode conversion and selection contracts
   title: Define typed cross-mode conversion and selection contracts
   status: active
   canonical_id: Q-2
 - namespace: Q
-  provisional_key: report-question:Reconcile JSONL authority documentation with executable
-    SQL authority
+  provisional_key: report-question:Reconcile JSONL authority documentation with executable SQL authority
   title: Reconcile JSONL authority documentation with executable SQL authority
   status: active
   canonical_id: Q-3
@@ -2582,14 +2546,13 @@ items:
   status: active
   canonical_id: Q-4
 - namespace: Q
-  provisional_key: report-question:Define product-role authorization before treating
-    actor text as authority
+  provisional_key: report-question:Define product-role authorization before treating actor text as authority
   title: Define product-role authorization before treating actor text as authority
   status: active
   canonical_id: Q-5
 - namespace: Q
-  provisional_key: report-question:Decide whether execution-bound graph MCP patch
-    macros need an action contract
+  provisional_key: report-question:Decide whether execution-bound graph MCP patch macros need an action
+    contract
   title: Decide whether execution-bound graph MCP patch macros need an action contract
   status: active
   canonical_id: Q-6
@@ -2604,28 +2567,24 @@ items:
   status: active
   canonical_id: EVD-97
 - namespace: INV
-  provisional_key: invariant:Graph patch validation rejects invalid topology before
-    visible acceptance
+  provisional_key: invariant:Graph patch validation rejects invalid topology before visible acceptance
   title: Graph patch validation rejects invalid topology before visible acceptance
   status: active
   canonical_id: INV-1
 - namespace: INV
-  provisional_key: invariant:Final graph completion requires a passing deterministic
-    final check
+  provisional_key: invariant:Final graph completion requires a passing deterministic final check
   title: Final graph completion requires a passing deterministic final check
   status: active
   canonical_id: INV-2
 - namespace: INV
-  provisional_key: invariant:Graph event append and read-model update share rollback
-    behavior
+  provisional_key: invariant:Graph event append and read-model update share rollback behavior
   title: Graph event append and read-model update share rollback behavior
   status: active
   canonical_id: INV-3
 - namespace: INV
-  provisional_key: invariant:Accepted callbacks and usage records are idempotent for
-    their represented keys
-  title: Accepted callbacks and usage records are idempotent for their represented
+  provisional_key: invariant:Accepted callbacks and usage records are idempotent for their represented
     keys
+  title: Accepted callbacks and usage records are idempotent for their represented keys
   status: active
   canonical_id: INV-4
 - namespace: INV

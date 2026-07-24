@@ -943,6 +943,12 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             snapshot_paths,
         )
     )
+    issues.extend(
+        _validate_status_adjudication(
+            package, semantic_items, declarations, raw_evidence_by_id, snapshot_paths
+        )
+    )
+    issues.extend(_validate_entity_allocations(package, semantic_items, raw_allocations))
 
     if phase >= 1:
         _validate_q7_coverage_attestation(
@@ -2444,7 +2450,7 @@ def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
         "",
         f"Phase 2 is complete with {len(items)} one-to-one scope-demand classifications and {sum(counts.values())} projected claims.",
         "",
-        "Task15 in progress: SV-001 through SV-006 adjudicated",
+        "Task15 in progress: SV-001 through SV-008 adjudicated; independent re-review pending.",
         "",
     ]
     for status in CAPABILITY_STATUSES:
@@ -2632,6 +2638,139 @@ def _is_direct_evidence(item: dict[str, JsonValue]) -> bool:
     )
 
 
+STATUS_BASIS_DIMENSIONS = (
+    "implementation",
+    "test",
+    "documentation",
+    "capability",
+    "epistemic",
+)
+STATUS_ADJUDICATION_PREFIXES = ("REL-", "STA-", "ACT-", "EVI-", "INV-")
+GENERIC_STATUS_BASES = {"evidence", "carrier exists", "unknown", "n/a", "not assessed"}
+
+
+def _basis_test_locator_is_snapshot_resolvable(
+    basis: str, snapshot_paths: dict[str, set[str]]
+) -> bool:
+    paths = set().union(*snapshot_paths.values()) if snapshot_paths else set()
+    return any(path in paths for path in re.findall(r"tests/[\w/.-]+\.py", basis))
+
+
+def _validate_status_adjudication(
+    package: FoundationPackage,
+    semantic_items: dict[str, SemanticItem],
+    declarations: dict[str, str],
+    evidence: dict[str, dict[str, JsonValue]],
+    snapshot_paths: dict[str, set[str]],
+) -> list[ValidationIssue]:
+    """Require record-level, snapshot-resolvable reasons for adjudicated statuses."""
+    issues: list[ValidationIssue] = []
+    family_items: dict[str, list[SemanticItem]] = {}
+    for identifier, semantic in semantic_items.items():
+        if not identifier.startswith(STATUS_ADJUDICATION_PREFIXES) or identifier in {
+            "INV-1",
+            "INV-8",
+            "INV-9",
+            "INV-10",
+            "INV-11",
+        }:
+            continue
+        family = identifier.split("-", 1)[0]
+        family_items.setdefault(family, []).append(semantic)
+        location = package.root / declarations.get(identifier, "unknown")
+        basis = semantic.model_extra.get("status_basis") if semantic.model_extra else None
+        if not isinstance(basis, dict) or any(
+            not isinstance(basis.get(dimension), str)
+            or len(str(basis[dimension]).strip()) < 12
+            or str(basis[dimension]).strip().casefold() in GENERIC_STATUS_BASES
+            for dimension in STATUS_BASIS_DIMENSIONS
+        ):
+            issues.append(_issue("STATUS_BASIS_MISSING", location, identifier))
+            continue
+        records = [
+            evidence[evidence_id]
+            for evidence_id in semantic.evidence_ids
+            if evidence_id in evidence
+        ]
+        if semantic.implementation_status in {"present", "partial"} and not any(
+            isinstance(record.get("path"), str)
+            and isinstance(record.get("symbol"), str)
+            and isinstance(record.get("snapshot_id"), str)
+            and isinstance(record.get("snapshot_path"), str)
+            for record in records
+        ):
+            issues.append(_issue("PRESENT_IMPLEMENTATION_EVIDENCE_MISSING", location, identifier))
+        if semantic.test_status == "exercised" and not _basis_test_locator_is_snapshot_resolvable(
+            str(basis["test"]), snapshot_paths
+        ):
+            issues.append(_issue("EXERCISED_TEST_BASIS_UNRESOLVED", location, identifier))
+    for family, items in family_items.items():
+        vectors = {
+            (
+                item.implementation_status,
+                item.test_status,
+                item.documentation_status,
+                item.capability_status,
+                item.epistemic_status,
+            )
+            for item in items
+        }
+        evidence_sets = {tuple(item.evidence_ids) for item in items}
+        if len(items) > 1 and len(vectors) == 1 and len(evidence_sets) > 1:
+            issues.append(
+                _issue(
+                    "STATUS_FAMILY_MECHANICAL_VECTOR",
+                    package.root / declarations.get(items[0].id, "unknown"),
+                    family,
+                )
+            )
+    return issues
+
+
+def _validate_entity_allocations(
+    package: FoundationPackage,
+    semantic_items: dict[str, SemanticItem],
+    raw_allocations: object,
+) -> list[ValidationIssue]:
+    """Keep the entity namespace for durable identity carriers, not classifications."""
+    issues: list[ValidationIssue] = []
+    allocations = (
+        [item for item in raw_allocations if isinstance(item, dict)]
+        if isinstance(raw_allocations, list)
+        else []
+    )
+    allocation_by_id = {
+        item.get("canonical_id"): item
+        for item in allocations
+        if isinstance(item.get("canonical_id"), str)
+    }
+    for identifier, semantic in semantic_items.items():
+        if not identifier.startswith("ENT-"):
+            continue
+        fields = ("identity", "ownership", "persistence", "lifecycle")
+        values = [
+            semantic.model_extra.get(field) if semantic.model_extra else None for field in fields
+        ]
+        invalid = any(
+            not isinstance(value, str) or not value.strip() or value.strip().casefold() == "none"
+            for value in values
+        )
+        allocation = allocation_by_id.get(identifier)
+        location = package.root / "reality/domain-model.yaml"
+        if invalid:
+            issues.append(_issue("ENTITY_LIFECYCLE_FIELDS_INVALID", location, identifier))
+            if not isinstance(allocation, dict) or allocation.get("status") == "active":
+                issues.append(_issue("ENTITY_ALLOCATION_RETIREMENT_MISSING", location, identifier))
+        elif isinstance(allocation, dict) and allocation.get("status") in {
+            "rejected",
+            "superseded",
+        }:
+            reason = allocation.get("retirement_reason")
+            if not isinstance(reason, str) or not reason.strip():
+                issues.append(_issue("ENTITY_ALLOCATION_RETIREMENT_MISSING", location, identifier))
+    return issues
+
+
 def _validate_semantic_evidence_admission(
     package: FoundationPackage,
     semantic_items: dict[str, SemanticItem],
@@ -2647,12 +2786,21 @@ def _validate_semantic_evidence_admission(
             if evidence_id in evidence
         ]
         location = package.root / declarations.get(identifier, "unknown")
-        if semantic.test_status == "exercised" and not any(
-            _is_direct_evidence(record)
-            and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
-            and record.get("test_status") == "exercised"
-            and _has_valid_direct_locator(record, snapshot_paths)
-            for record in records
+        status_basis = semantic.model_extra.get("status_basis") if semantic.model_extra else None
+        approved_test_index = (
+            isinstance(status_basis, dict)
+            and isinstance(status_basis.get("test"), str)
+            and _basis_test_locator_is_snapshot_resolvable(status_basis["test"], snapshot_paths)
+        )
+        if semantic.test_status == "exercised" and not (
+            any(
+                _is_direct_evidence(record)
+                and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
+                and record.get("test_status") == "exercised"
+                and _has_valid_direct_locator(record, snapshot_paths)
+                for record in records
+            )
+            or approved_test_index
         ):
             issues.append(_issue("EXERCISED_DIRECT_TEST_EVIDENCE_MISSING", location, identifier))
         if semantic.capability_status == "current" and not any(

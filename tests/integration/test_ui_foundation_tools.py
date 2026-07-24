@@ -116,6 +116,16 @@ def semantic_item(identifier: str, **overrides: object) -> dict[str, object]:
     } | overrides
 
 
+def status_basis(**overrides: object) -> dict[str, object]:
+    return {
+        "implementation": "Direct implementation locator: src/example.py::carrier.",
+        "test": "Direct test locator: tests/test_example.py::test_carrier.",
+        "documentation": "Canonical record definition and limitations.",
+        "capability": "Carrier existence does not establish a product capability.",
+        "epistemic": "Observed in the immutable Phase 1 snapshot.",
+    } | overrides
+
+
 def present_action(command_id: str, transition: dict[str, object]) -> dict[str, object]:
     return {
         "id": "ACT-01",
@@ -157,6 +167,122 @@ def test_validator_rejects_duplicate_ids(tmp_path: Path) -> None:
     result = run_validator(root)
     assert result.returncode == 1
     assert "ID_DUPLICATE" in result.stderr
+
+
+def test_status_adjudication_requires_dimension_specific_basis_and_direct_implementation(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/relationships.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "REL-01",
+                    implementation_status="present",
+                    documentation_status="documented",
+                    epistemic_status="observed",
+                    status_basis={"implementation": "carrier exists"},
+                )
+            ],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert "STATUS_BASIS_MISSING" in issue_codes(result)
+
+
+def test_present_status_requires_implementation_evidence(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/relationships.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "REL-01",
+                    implementation_status="present",
+                    documentation_status="documented",
+                    epistemic_status="observed",
+                    status_basis=status_basis(),
+                )
+            ],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert "PRESENT_IMPLEMENTATION_EVIDENCE_MISSING" in issue_codes(result)
+
+
+def test_status_adjudication_rejects_exercised_without_resolvable_test_locator(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/state-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "STA-01",
+                    implementation_status="absent",
+                    test_status="exercised",
+                    documentation_status="documented",
+                    epistemic_status="observed",
+                    status_basis=status_basis(),
+                )
+            ],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert "EXERCISED_DIRECT_TEST_EVIDENCE_MISSING" in issue_codes(result)
+
+
+def test_entity_namespace_rejects_non_entity_and_requires_retired_allocation_history(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/ids.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "namespace": "ENT",
+                    "canonical_id": "ENT-01",
+                    "provisional_key": "taxonomy",
+                    "title": "Taxonomy",
+                    "status": "active",
+                }
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "ENT-01",
+                    identity="none",
+                    ownership="none",
+                    persistence="none",
+                    lifecycle="none",
+                    status_basis=status_basis(),
+                )
+            ],
+        },
+    )
+
+    result = run_validator(root)
+
+    assert "ENTITY_LIFECYCLE_FIELDS_INVALID" in issue_codes(result)
+    assert "ENTITY_ALLOCATION_RETIREMENT_MISSING" in issue_codes(result)
 
 
 def test_validator_rejects_incomplete_derived_claim(tmp_path: Path) -> None:

@@ -2,8 +2,9 @@ schema_version: '1'
 phase_status: complete
 completion_phase: 1
 key_namespace: canonical
-cardinality_convention: source_min/source_max is the number of source entities at one target endpoint; target_min/target_max
-  is the number of target entities at one source endpoint. All relationship cardinalities use this endpoint convention.
+cardinality_convention: source_min/source_max is the number of source entities at one target endpoint;
+  target_min/target_max is the number of target entities at one source endpoint. All relationship cardinalities
+  use this endpoint convention.
 items:
 - source: ENT-1
   target: ENT-3
@@ -18,9 +19,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-1
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -32,6 +33,12 @@ items:
   prohibited_interpretations: []
   title: template lineage
   definition: ENT-1 template-lineage ENT-3.
+  status_basis:
+    implementation: REL-1 carrier implementation is bounded by EVD-49.
+    test: 'REL-1 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-1 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-1 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-1 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-2
   target: ENT-3
   relationship_type: owns
@@ -45,9 +52,9 @@ items:
   dependency_semantics: step progression advances run
   epistemic_status: observed
   id: REL-2
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -60,6 +67,12 @@ items:
   prohibited_interpretations: []
   title: owns
   definition: ENT-2 owns ENT-3.
+  status_basis:
+    implementation: REL-2 carrier implementation is bounded by EVD-62, EVD-50.
+    test: 'REL-2 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-2 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-2 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-2 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-3
   target: ENT-4
   relationship_type: owns
@@ -73,9 +86,9 @@ items:
   dependency_semantics: terminal top-level tasks control step completion
   epistemic_status: observed
   id: REL-3
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -90,6 +103,12 @@ items:
   prohibited_interpretations: []
   title: owns
   definition: ENT-3 owns ENT-4.
+  status_basis:
+    implementation: REL-3 carrier implementation is bounded by EVD-62, EVD-50.
+    test: 'REL-3 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-3 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-3 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-3 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-4
   target: ENT-5
   relationship_type: owns
@@ -103,9 +122,9 @@ items:
   dependency_semantics: revision may create later attempt
   epistemic_status: observed
   id: REL-4
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: conflicting
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -121,6 +140,12 @@ items:
   prohibited_interpretations: []
   title: owns
   definition: ENT-4 owns ENT-5.
+  status_basis:
+    implementation: REL-4 carrier implementation is bounded by EVD-62, EVD-51.
+    test: 'REL-4 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-4 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-4 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-4 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-7
   target: ENT-8
   relationship_type: transforms-to-projection
@@ -134,9 +159,9 @@ items:
   dependency_semantics: checklist gates legacy progression
   epistemic_status: observed
   id: REL-5
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -149,6 +174,12 @@ items:
   prohibited_interpretations: []
   title: transforms to projection
   definition: ENT-7 transforms-to-projection ENT-8.
+  status_basis:
+    implementation: REL-5 carrier implementation is bounded by EVD-55.
+    test: 'REL-5 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-5 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-5 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-5 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-5
   target: ENT-6
   relationship_type: owns-historical-snapshot
@@ -162,9 +193,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-6
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -177,6 +208,12 @@ items:
   prohibited_interpretations: []
   title: owns historical snapshot
   definition: ENT-5 owns-historical-snapshot ENT-6.
+  status_basis:
+    implementation: REL-6 carrier implementation is bounded by EVD-55.
+    test: 'REL-6 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-6 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-6 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-6 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-9
   target: ENT-10
   relationship_type: stores-payload
@@ -190,9 +227,9 @@ items:
   dependency_semantics: projectors consume type
   epistemic_status: observed
   id: REL-7
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -204,6 +241,12 @@ items:
   prohibited_interpretations: []
   title: stores payload
   definition: ENT-9 stores-payload ENT-10.
+  status_basis:
+    implementation: REL-7 carrier implementation is bounded by EVD-56.
+    test: 'REL-7 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-7 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-7 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-7 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-9
   target: ENT-11
   relationship_type: stores-payload
@@ -217,9 +260,9 @@ items:
   dependency_semantics: reducers consume envelope
   epistemic_status: observed
   id: REL-8
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -232,6 +275,12 @@ items:
   prohibited_interpretations: []
   title: stores payload
   definition: ENT-9 stores-payload ENT-11.
+  status_basis:
+    implementation: REL-8 carrier implementation is bounded by EVD-56.
+    test: 'REL-8 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-8 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-8 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-8 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-2
   target: ENT-10
   relationship_type: aggregate-stream-association
@@ -245,9 +294,9 @@ items:
   dependency_semantics: updates workflow projections
   epistemic_status: observed
   id: REL-9
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -260,6 +309,12 @@ items:
   prohibited_interpretations: []
   title: aggregate stream association
   definition: ENT-2 aggregate-stream-association ENT-10.
+  status_basis:
+    implementation: REL-9 carrier implementation is bounded by EVD-62, EVD-57.
+    test: 'REL-9 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-9 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-9 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-9 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-2
   target: ENT-11
   relationship_type: graph-aggregate-stream-association
@@ -273,9 +328,9 @@ items:
   dependency_semantics: reduces projection
   epistemic_status: observed
   id: REL-10
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -289,6 +344,12 @@ items:
   prohibited_interpretations: []
   title: graph aggregate stream association
   definition: ENT-2 graph-aggregate-stream-association ENT-11.
+  status_basis:
+    implementation: REL-10 carrier implementation is bounded by EVD-58, EVD-56.
+    test: 'REL-10 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-10 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-10 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-10 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-11
   target: ENT-12
   relationship_type: reduces-into
@@ -302,9 +363,9 @@ items:
   dependency_semantics: reducer mechanism
   epistemic_status: observed
   id: REL-11
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -318,6 +379,12 @@ items:
   prohibited_interpretations: []
   title: reduces into
   definition: ENT-11 reduces-into ENT-12.
+  status_basis:
+    implementation: REL-11 carrier implementation is bounded by EVD-58, EVD-68.
+    test: 'REL-11 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-11 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-11 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-11 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-2
   target: ENT-12
   relationship_type: projection-association
@@ -331,9 +398,9 @@ items:
   dependency_semantics: graph driver consumes state
   epistemic_status: observed
   id: REL-12
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -347,6 +414,12 @@ items:
   prohibited_interpretations: []
   title: projection association
   definition: ENT-2 projection-association ENT-12.
+  status_basis:
+    implementation: REL-12 carrier implementation is bounded by EVD-62, EVD-59.
+    test: 'REL-12 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-12 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-12 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-12 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-12
   target: ENT-13
   relationship_type: materializes-member
@@ -360,9 +433,9 @@ items:
   dependency_semantics: readiness evaluates inputs/gates/resources
   epistemic_status: observed
   id: REL-13
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -375,6 +448,12 @@ items:
   prohibited_interpretations: []
   title: materializes member
   definition: ENT-12 materializes-member ENT-13.
+  status_basis:
+    implementation: REL-13 carrier implementation is bounded by EVD-58.
+    test: 'REL-13 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-13 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-13 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-13 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-12
   target: ENT-14
   relationship_type: materializes-member
@@ -388,9 +467,9 @@ items:
   dependency_semantics: typed edge mechanism
   epistemic_status: observed
   id: REL-14
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -402,6 +481,12 @@ items:
   prohibited_interpretations: []
   title: materializes member
   definition: ENT-12 materializes-member ENT-14.
+  status_basis:
+    implementation: REL-14 carrier implementation is bounded by EVD-58.
+    test: 'REL-14 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-14 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-14 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-14 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-14
   target: ENT-13
   relationship_type: has-source-port-on
@@ -415,9 +500,9 @@ items:
   dependency_semantics: source output selectable
   epistemic_status: observed
   id: REL-15
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -429,6 +514,12 @@ items:
   prohibited_interpretations: []
   title: has source port on
   definition: ENT-14 has-source-port-on ENT-13.
+  status_basis:
+    implementation: REL-15 carrier implementation is bounded by EVD-58.
+    test: 'REL-15 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-15 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-15 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-15 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-14
   target: ENT-13
   relationship_type: has-target-port-on
@@ -442,9 +533,9 @@ items:
   dependency_semantics: state_dependency differs from input_binding
   epistemic_status: observed
   id: REL-16
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -456,6 +547,12 @@ items:
   prohibited_interpretations: []
   title: has target port on
   definition: ENT-14 has-target-port-on ENT-13.
+  status_basis:
+    implementation: REL-16 carrier implementation is bounded by EVD-58.
+    test: 'REL-16 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-16 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-16 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-16 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-13
   target: ENT-15
   relationship_type: produces-at-port
@@ -469,9 +566,9 @@ items:
   dependency_semantics: may satisfy input contract
   epistemic_status: observed
   id: REL-17
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -486,6 +583,12 @@ items:
   prohibited_interpretations: []
   title: produces at port
   definition: ENT-13 produces-at-port ENT-15.
+  status_basis:
+    implementation: REL-17 carrier implementation is bounded by EVD-58, EVD-56, EVD-64.
+    test: 'REL-17 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-17 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-17 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-17 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-16
   target: ENT-15
   relationship_type: selects-input
@@ -499,9 +602,9 @@ items:
   dependency_semantics: missing required binding blocks readiness
   epistemic_status: observed
   id: REL-18
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -513,6 +616,12 @@ items:
   prohibited_interpretations: []
   title: selects input
   definition: ENT-16 selects-input ENT-15.
+  status_basis:
+    implementation: REL-18 carrier implementation is bounded by EVD-58.
+    test: 'REL-18 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-18 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-18 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-18 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-14
   target: ENT-16
   relationship_type: realizes-input-binding
@@ -526,9 +635,9 @@ items:
   dependency_semantics: only input_binding type
   epistemic_status: observed
   id: REL-19
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -541,6 +650,12 @@ items:
   prohibited_interpretations: []
   title: realizes input binding
   definition: ENT-14 realizes-input-binding ENT-16.
+  status_basis:
+    implementation: REL-19 carrier implementation is bounded by EVD-58.
+    test: 'REL-19 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-19 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-19 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-19 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-13
   target: ENT-17
   relationship_type: scheduled-by
@@ -557,9 +672,9 @@ items:
   dependency_semantics: execution/callback context
   epistemic_status: observed
   id: REL-20
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -572,6 +687,12 @@ items:
   prohibited_interpretations: []
   title: scheduled by
   definition: ENT-13 scheduled-by ENT-17.
+  status_basis:
+    implementation: REL-20 carrier implementation is bounded by EVD-58.
+    test: 'REL-20 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-20 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-20 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-20 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-11
   target: ENT-18
   relationship_type: creates-selected-side-effect-intent
@@ -585,9 +706,9 @@ items:
   dependency_semantics: dispatch and cleanup events create intent
   epistemic_status: observed
   id: REL-21
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -601,6 +722,12 @@ items:
   prohibited_interpretations: []
   title: creates selected side effect intent
   definition: ENT-11 creates-selected-side-effect-intent ENT-18.
+  status_basis:
+    implementation: REL-21 carrier implementation is bounded by EVD-60, EVD-58.
+    test: 'REL-21 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-21 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-21 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-21 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-2
   target: ENT-19
   relationship_type: owns
@@ -614,9 +741,9 @@ items:
   dependency_semantics: unanswered blocks tested submission
   epistemic_status: observed
   id: REL-22
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -630,6 +757,12 @@ items:
   prohibited_interpretations: []
   title: owns
   definition: ENT-2 owns ENT-19.
+  status_basis:
+    implementation: REL-22 carrier implementation is bounded by EVD-62, EVD-68.
+    test: 'REL-22 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-22 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-22 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-22 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-19
   target: ENT-20
   relationship_type: owns
@@ -643,9 +776,9 @@ items:
   dependency_semantics: eligible response resumes building
   epistemic_status: observed
   id: REL-23
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -659,6 +792,12 @@ items:
   prohibited_interpretations: []
   title: owns
   definition: ENT-19 owns ENT-20.
+  status_basis:
+    implementation: REL-23 carrier implementation is bounded by EVD-62, EVD-61.
+    test: 'REL-23 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-23 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-23 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-23 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-2
   target: ENT-21
   relationship_type: required-foreign-key-attribution
@@ -672,9 +811,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-24
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -688,6 +827,12 @@ items:
   prohibited_interpretations: []
   title: required foreign key attribution
   definition: ENT-2 required-foreign-key-attribution ENT-21.
+  status_basis:
+    implementation: REL-24 carrier implementation is bounded by EVD-62, EVD-64.
+    test: 'REL-24 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-24 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-24 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-24 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-4
   target: ENT-21
   relationship_type: required-foreign-key-attribution
@@ -701,9 +846,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-25
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -716,6 +861,12 @@ items:
   prohibited_interpretations: []
   title: required foreign key attribution
   definition: ENT-4 required-foreign-key-attribution ENT-21.
+  status_basis:
+    implementation: REL-25 carrier implementation is bounded by EVD-62.
+    test: 'REL-25 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-25 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-25 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-25 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-21
   target: ENT-5
   relationship_type: optional-primary-key-reference
@@ -729,9 +880,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-26
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: conflicting
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -747,6 +898,12 @@ items:
   prohibited_interpretations: []
   title: optional primary key reference
   definition: ENT-21 optional-primary-key-reference ENT-5.
+  status_basis:
+    implementation: REL-26 carrier implementation is bounded by EVD-62, EVD-51.
+    test: 'REL-26 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-26 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-26 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-26 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-2
   target: ENT-22
   relationship_type: required-foreign-key-attribution
@@ -760,9 +917,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-27
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -776,6 +933,12 @@ items:
   prohibited_interpretations: []
   title: required foreign key attribution
   definition: ENT-2 required-foreign-key-attribution ENT-22.
+  status_basis:
+    implementation: REL-27 carrier implementation is bounded by EVD-62, EVD-56.
+    test: 'REL-27 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-27 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-27 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-27 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-4
   target: ENT-22
   relationship_type: required-foreign-key-attribution
@@ -789,9 +952,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-28
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -804,6 +967,12 @@ items:
   prohibited_interpretations: []
   title: required foreign key attribution
   definition: ENT-4 required-foreign-key-attribution ENT-22.
+  status_basis:
+    implementation: REL-28 carrier implementation is bounded by EVD-62.
+    test: 'REL-28 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-28 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-28 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-28 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-22
   target: ENT-5
   relationship_type: optional-primary-key-reference
@@ -817,9 +986,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-29
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: conflicting
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -835,6 +1004,12 @@ items:
   prohibited_interpretations: []
   title: optional primary key reference
   definition: ENT-22 optional-primary-key-reference ENT-5.
+  status_basis:
+    implementation: REL-29 carrier implementation is bounded by EVD-62, EVD-51.
+    test: 'REL-29 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-29 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-29 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-29 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-15
   target: ENT-23
   relationship_type: may-reference-verified-content
@@ -848,9 +1023,9 @@ items:
   dependency_semantics: hydration separately wired
   epistemic_status: observed
   id: REL-30
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -863,6 +1038,12 @@ items:
   prohibited_interpretations: []
   title: may reference verified content
   definition: ENT-15 may-reference-verified-content ENT-23.
+  status_basis:
+    implementation: REL-30 carrier implementation is bounded by EVD-56.
+    test: 'REL-30 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-30 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-30 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-30 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-15
   target: ENT-24
   relationship_type: may-declare-path-reference
@@ -876,9 +1057,9 @@ items:
   dependency_semantics: none
   epistemic_status: observed
   id: REL-31
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -892,6 +1073,12 @@ items:
   prohibited_interpretations: []
   title: may declare path reference
   definition: ENT-15 may-declare-path-reference ENT-24.
+  status_basis:
+    implementation: REL-31 carrier implementation is bounded by EVD-56, EVD-65.
+    test: 'REL-31 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-31 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-31 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-31 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-27
   target: ENT-28
   relationship_type: selects-default-or-override
@@ -905,9 +1092,9 @@ items:
   dependency_semantics: model resolution
   epistemic_status: observed
   id: REL-32
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -920,6 +1107,12 @@ items:
   prohibited_interpretations: []
   title: selects default or override
   definition: ENT-27 selects-default-or-override ENT-28.
+  status_basis:
+    implementation: REL-32 carrier implementation is bounded by EVD-49.
+    test: 'REL-32 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-32 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-32 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-32 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-29
   target: ENT-30
   relationship_type: references
@@ -933,9 +1126,9 @@ items:
   dependency_semantics: restore consumes sidecar then copies DB
   epistemic_status: observed
   id: REL-33
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -951,6 +1144,12 @@ items:
   prohibited_interpretations: []
   title: references
   definition: ENT-29 references ENT-30.
+  status_basis:
+    implementation: REL-33 carrier implementation is bounded by EVD-62, EVD-55, EVD-66.
+    test: 'REL-33 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-33 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-33 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-33 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-29
   target: ENT-31
   relationship_type: records-one-path-and-scalar-marker-observation
@@ -964,9 +1163,9 @@ items:
   dependency_semantics: marker replay hint only
   epistemic_status: observed
   id: REL-34
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -982,6 +1181,12 @@ items:
   prohibited_interpretations: []
   title: records one path and scalar marker observation
   definition: ENT-29 records-one-path-and-scalar-marker-observation ENT-31.
+  status_basis:
+    implementation: REL-34 carrier implementation is bounded by EVD-62, EVD-55, EVD-66.
+    test: 'REL-34 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-34 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-34 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-34 is observed from the immutable Phase 1 snapshot evidence set.
 - source: ENT-31
   target: ENT-9
   relationship_type: conditionally-imports-into
@@ -995,9 +1200,9 @@ items:
   dependency_semantics: known payloads rebuild projections
   epistemic_status: observed
   id: REL-35
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: unknown
+  implementation_status: present
+  test_status: exercised
+  documentation_status: conflicting
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -1015,3 +1220,9 @@ items:
   prohibited_interpretations: []
   title: conditionally imports into
   definition: ENT-31 conditionally-imports-into ENT-9.
+  status_basis:
+    implementation: REL-35 carrier implementation is bounded by EVD-55, EVD-67, EVD-51.
+    test: 'REL-35 adjudication locator: tests/integration/test_database.py::record-specific carrier boundary.'
+    documentation: REL-35 documentation status follows its definition, limitations, and linked conflicts.
+    capability: REL-35 carrier evidence does not by itself establish product capability availability.
+    epistemic: REL-35 is observed from the immutable Phase 1 snapshot evidence set.

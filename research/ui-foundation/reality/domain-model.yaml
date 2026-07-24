@@ -645,32 +645,6 @@ items:
   - fulfillment
   prohibited_interpretations:
   - Expected does not prove produced.
-- title: Artifact carrier taxonomy
-  definition: Non-identity classification for distinct artifact carriers
-  identity: none
-  ownership: none
-  persistence: none
-  lifecycle: none
-  aliases: []
-  mode_boundary: taxonomy only
-  implementation_status: unknown
-  test_status: unknown
-  documentation_status: conflicting
-  epistemic_status: unknown
-  id: ENT-26
-  capability_status: unknown
-  confidence: medium
-  confidence_basis: Approved bounded-audit synthesis
-  evidence_ids:
-  - EVD-54
-  - EVD-65
-  conflict_ids:
-  - CON-1
-  question_ids: []
-  limitations:
-  - future supertype
-  prohibited_interpretations:
-  - Not an entity identity or alias.
 - title: Model profile
   definition: Cognitive-role configuration
   identity: ModelProfile enum in runner/profile mapping

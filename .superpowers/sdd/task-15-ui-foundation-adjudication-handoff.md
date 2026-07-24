@@ -2,11 +2,22 @@
 
 ## Status
 
-Task 15 remains **IN PROGRESS**. SV-001 through SV-006 are adjudicated; the
+Task 15 remains **IN PROGRESS** pending independent re-review. SV-001 through SV-008 are adjudicated; the
 immutable `research/ui-foundation/agent-reports/11-semantic-verification.md`
 was not modified.
 
 ## Accepted corrections
+
+- **SV-007:** `ENT-26` is removed from the active entity collection. Its allocation
+  remains permanently rejected with the reason and distributed-supersession note;
+  it cannot be reused. Artifact-carrier distinctions remain in `EVI-6`, the
+  `ENT-22` through `ENT-25` carriers, and `CON-5`.
+- **SV-008:** all 35 relationships, 72 active states, 71 actions, 9 evidence
+  inventory records, and `INV-2` through `INV-7` now have record-level
+  orthogonal statuses and dimension-specific bases. Exercised records name a
+  snapshot-resolvable test locator or approved test-index locator; unexercised
+  result/action boundaries remain conservative. Carrier existence does not
+  bulk-promote product capability status.
 
 - **SV-003:** `CON-1` and `Q-1` now target the actual attempt-reference
   relationships, `REL-26` (cost) and `REL-29` (interaction), with reciprocal
@@ -34,5 +45,6 @@ was not modified.
 
 Run Phase 2 validation, the report validator for this handoff if its heading
 contract is later adopted, focused foundation tests, Ruff, Pyright, and hooks
-before closing the task. Remaining semantic-verification findings require their
-own adjudication rather than changing the verifier report.
+before closing the task. The historical Task 15 status audit is noncanonical
+evidence only and is not a regeneration input. Independent re-review must assess
+this application without changing the immutable verifier report.

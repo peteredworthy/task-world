@@ -2,7 +2,7 @@
 
 Phase 2 is complete with 132 one-to-one scope-demand classifications and 132 projected claims.
 
-Task15 in progress: SV-001 through SV-006 adjudicated
+Task15 in progress: SV-001 through SV-008 adjudicated; independent re-review pending.
 
 - **current (1)**: `CAP-69`
 - **derived (0)**: none

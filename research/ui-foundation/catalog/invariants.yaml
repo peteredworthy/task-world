@@ -3,8 +3,8 @@ phase_status: complete
 completion_phase: 1
 items:
 - title: Graph patch validation rejects invalid topology before visible acceptance
-  definition: Graph patch validation rejects stale bases, role-disallowed or hidden commands, resource escalation, invalid
-    topology, and retirement of active nodes before accepted topology becomes visible.
+  definition: Graph patch validation rejects stale bases, role-disallowed or hidden commands, resource
+    escalation, invalid topology, and retirement of active nodes before accepted topology becomes visible.
   implementation_status: present
   test_status: exercised
   documentation_status: documented
@@ -24,13 +24,13 @@ items:
 - title: Final graph completion requires a passing deterministic final check
   definition: Final graph completion requires a passing deterministic final check
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   confidence: high
   confidence_basis: Approved test adjudication
   id: INV-2
   capability_status: unknown
-  epistemic_status: unknown
+  epistemic_status: observed
   evidence_ids:
   - EVD-97
   conflict_ids: []
@@ -39,16 +39,23 @@ items:
   - Applies only to represented tested paths.
   prohibited_interpretations:
   - Do not generalize beyond represented paths.
+  status_basis:
+    implementation: INV-2 carrier implementation is bounded by EVD-97.
+    test: 'INV-2 adjudication locator: tests/integration/test_graph_dynamic_e2e.py::record-specific carrier
+      boundary.'
+    documentation: INV-2 documentation status follows its definition, limitations, and linked conflicts.
+    capability: INV-2 carrier evidence does not by itself establish product capability availability.
+    epistemic: INV-2 is observed from the immutable Phase 1 snapshot evidence set.
 - title: Graph event append and read-model update share rollback behavior
   definition: Graph event append and read-model update share rollback behavior
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   confidence: high
   confidence_basis: Approved test adjudication
   id: INV-3
   capability_status: unknown
-  epistemic_status: unknown
+  epistemic_status: observed
   evidence_ids:
   - EVD-97
   conflict_ids: []
@@ -57,16 +64,23 @@ items:
   - Applies only to represented tested paths.
   prohibited_interpretations:
   - Do not generalize beyond represented paths.
+  status_basis:
+    implementation: INV-3 carrier implementation is bounded by EVD-97.
+    test: 'INV-3 adjudication locator: tests/integration/test_graph_dynamic_e2e.py::record-specific carrier
+      boundary.'
+    documentation: INV-3 documentation status follows its definition, limitations, and linked conflicts.
+    capability: INV-3 carrier evidence does not by itself establish product capability availability.
+    epistemic: INV-3 is observed from the immutable Phase 1 snapshot evidence set.
 - title: Accepted callbacks and usage records are idempotent for their represented keys
   definition: Accepted callbacks and usage records are idempotent for their represented keys
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   confidence: high
   confidence_basis: Approved test adjudication
   id: INV-4
   capability_status: unknown
-  epistemic_status: unknown
+  epistemic_status: observed
   evidence_ids:
   - EVD-97
   conflict_ids: []
@@ -75,16 +89,23 @@ items:
   - Applies only to represented tested paths.
   prohibited_interpretations:
   - Do not generalize beyond represented paths.
+  status_basis:
+    implementation: INV-4 carrier implementation is bounded by EVD-97.
+    test: 'INV-4 adjudication locator: tests/integration/test_graph_dynamic_e2e.py::record-specific carrier
+      boundary.'
+    documentation: INV-4 documentation status follows its definition, limitations, and linked conflicts.
+    capability: INV-4 carrier evidence does not by itself establish product capability availability.
+    epistemic: INV-4 is observed from the immutable Phase 1 snapshot evidence set.
 - title: Missing pricing is not converted into a priced cost fact
   definition: Missing pricing is not converted into a priced cost fact
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   confidence: high
   confidence_basis: Approved test adjudication
   id: INV-5
   capability_status: unknown
-  epistemic_status: unknown
+  epistemic_status: observed
   evidence_ids:
   - EVD-97
   conflict_ids: []
@@ -93,16 +114,23 @@ items:
   - Applies only to represented tested paths.
   prohibited_interpretations:
   - Do not generalize beyond represented paths.
+  status_basis:
+    implementation: INV-5 carrier implementation is bounded by EVD-97.
+    test: 'INV-5 adjudication locator: tests/integration/test_graph_dynamic_e2e.py::record-specific carrier
+      boundary.'
+    documentation: INV-5 documentation status follows its definition, limitations, and linked conflicts.
+    capability: INV-5 carrier evidence does not by itself establish product capability availability.
+    epistemic: INV-5 is observed from the immutable Phase 1 snapshot evidence set.
 - title: Clarification blocks submission until answered
   definition: Clarification blocks submission until answered
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   confidence: high
   confidence_basis: Approved test adjudication
   id: INV-6
   capability_status: unknown
-  epistemic_status: unknown
+  epistemic_status: observed
   evidence_ids:
   - EVD-97
   conflict_ids: []
@@ -111,16 +139,23 @@ items:
   - Applies only to represented tested paths.
   prohibited_interpretations:
   - Do not generalize beyond represented paths.
+  status_basis:
+    implementation: INV-6 carrier implementation is bounded by EVD-97.
+    test: 'INV-6 adjudication locator: tests/integration/test_graph_dynamic_e2e.py::record-specific carrier
+      boundary.'
+    documentation: INV-6 documentation status follows its definition, limitations, and linked conflicts.
+    capability: INV-6 carrier evidence does not by itself establish product capability availability.
+    epistemic: INV-6 is observed from the immutable Phase 1 snapshot evidence set.
 - title: Foundation facts do not equate proposed policy with authorization
   definition: Foundation facts do not equate proposed policy with authorization
   implementation_status: present
-  test_status: unexercised
+  test_status: exercised
   documentation_status: documented
   confidence: high
   confidence_basis: Approved test adjudication
   id: INV-7
   capability_status: unknown
-  epistemic_status: unknown
+  epistemic_status: observed
   evidence_ids:
   - EVD-97
   conflict_ids: []
@@ -129,8 +164,16 @@ items:
   - Applies only to represented tested paths.
   prohibited_interpretations:
   - Do not generalize beyond represented paths.
+  status_basis:
+    implementation: INV-7 carrier implementation is bounded by EVD-97.
+    test: 'INV-7 adjudication locator: tests/integration/test_graph_dynamic_e2e.py::record-specific carrier
+      boundary.'
+    documentation: INV-7 documentation status follows its definition, limitations, and linked conflicts.
+    capability: INV-7 carrier evidence does not by itself establish product capability availability.
+    epistemic: INV-7 is observed from the immutable Phase 1 snapshot evidence set.
 - title: Graph patch stale and rejected outcomes remain explicit
-  definition: Invalid or stale patch commands return explicit rejection/conflict outcomes and preserve prior topology.
+  definition: Invalid or stale patch commands return explicit rejection/conflict outcomes and preserve
+    prior topology.
   implementation_status: present
   test_status: exercised
   documentation_status: documented
@@ -146,8 +189,8 @@ items:
   limitations: *id001
   prohibited_interpretations: *id002
 - title: Graph replay rebuild preserves compact parity
-  definition: Graph event/read-model replay is idempotent and preserves compact/checkpoint lifecycle, task, and final-gate
-    parity while omitting heavy bodies.
+  definition: Graph event/read-model replay is idempotent and preserves compact/checkpoint lifecycle,
+    task, and final-gate parity while omitting heavy bodies.
   implementation_status: present
   test_status: exercised
   documentation_status: documented
@@ -163,8 +206,8 @@ items:
   limitations: *id001
   prohibited_interpretations: *id002
 - title: Qualifying actions create durable audit events
-  definition: Represented graph and workflow actions retain durable audit evidence rather than treating acceptance prose as
-    a result.
+  definition: Represented graph and workflow actions retain durable audit evidence rather than treating
+    acceptance prose as a result.
   implementation_status: present
   test_status: exercised
   documentation_status: documented
@@ -180,8 +223,8 @@ items:
   limitations: *id001
   prohibited_interpretations: *id002
 - title: Legacy lifecycle commands are idempotent or state-validated
-  definition: Represented legacy submit, verification completion, cancellation, agent resume changes, and backward transitions
-    are idempotent or state-validated.
+  definition: Represented legacy submit, verification completion, cancellation, agent resume changes,
+    and backward transitions are idempotent or state-validated.
   implementation_status: present
   test_status: exercised
   documentation_status: documented
