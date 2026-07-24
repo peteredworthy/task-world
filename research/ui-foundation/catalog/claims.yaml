@@ -23,7 +23,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.health-class.
-  evidence_ids: &id001
+  evidence_ids:
   - EVD-56
   - EVD-58
   - EVD-69
@@ -44,43 +44,47 @@ items:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id001
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id001
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id001
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: STA-2
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id001
+    evidence_ids:
+    - EVD-7
   - id: STA-9
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id001
+    evidence_ids:
+    - EVD-12
   - id: STA-18
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id001
+    evidence_ids:
+    - EVD-18
   - id: STA-31
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id001
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id001
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id001
+    evidence_ids:
+    - EVD-24
 - id: CAP-2
   title: Current constraint
-  definition: Current constraint cannot be established across the audited Phase 1
-    carrier boundaries.
+  definition: Current constraint is unresolved because legacy and graph constraints
+    have no typed precedence.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -88,7 +92,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.current-constraint.
-  evidence_ids: &id002
+  evidence_ids:
   - EVD-57
   - EVD-58
   - EVD-69
@@ -99,47 +103,50 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Current constraint has only carrier-specific inputs and no unified demand contract.
+  - Workflow pause, graph scheduling, and leases expose different constraints.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete current constraint.
+  - Do not choose the newest state as the universal constraint.
   scope_demand_key: jobs.J1.current-constraint
   implementation_carrier_bindings:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id002
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id002
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id002
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: STA-2
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id002
+    evidence_ids:
+    - EVD-7
   - id: STA-9
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id002
+    evidence_ids:
+    - EVD-12
   - id: STA-18
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id002
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id002
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id002
+    evidence_ids:
+    - EVD-18
 - id: CAP-3
   title: Human wait state
-  definition: Human wait state cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Human wait state is unresolved because clarification, approval, and
+    graph waits have no common lifecycle.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -147,7 +154,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.human-wait-state.
-  evidence_ids: &id003
+  evidence_ids:
   - EVD-13
   - EVD-27
   - EVD-57
@@ -157,31 +164,31 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Human wait state has only carrier-specific inputs and no unified demand contract.
+  - Each carrier retains its own wait request and return behavior.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete human wait state.
+  - Do not treat every pending or paused state as a human wait.
   scope_demand_key: jobs.J1.human-wait-state
   implementation_carrier_bindings:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id003
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: STA-11
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id003
+    evidence_ids:
+    - EVD-13
   - id: STA-36
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id003
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id003
+    evidence_ids:
+    - EVD-27
 - id: CAP-4
   title: Frontier activity
-  definition: Frontier activity cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Frontier activity is unresolved because ready graph work, leased work,
+    and legacy activity use different units.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -189,7 +196,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.frontier-activity.
-  evidence_ids: &id004
+  evidence_ids:
   - EVD-24
   - EVD-58
   - EVD-72
@@ -197,51 +204,63 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Frontier activity has only carrier-specific inputs and no unified demand contract.
+  - Topology and scheduler state lack a cross-mode frontier selector.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete frontier activity.
+  - Do not call all reachable or pending nodes the frontier.
   scope_demand_key: jobs.J1.frontier-activity
   implementation_carrier_bindings:
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-17
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-58
+    - EVD-57
   - id: ENT-18
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-60
+    - EVD-58
   - id: STA-28
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-24
   - id: STA-29
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-24
   - id: STA-30
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-24
+    - EVD-20
   - id: STA-31
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-24
   - id: STA-32
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id004
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id004
+    evidence_ids:
+    - EVD-20
+    - EVD-24
 - id: CAP-5
   title: Last-event age
   definition: Last-event age is a source demand with audited partial or absent Phase
@@ -253,7 +272,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.last-event-age.
-  evidence_ids: &id005
+  evidence_ids:
   - EVD-56
   - EVD-58
   - EVD-69
@@ -274,23 +293,23 @@ items:
   - id: ENT-9
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id005
+    evidence_ids:
+    - EVD-49
+    - EVD-56
+    - EVD-51
   - id: ENT-10
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id005
+    evidence_ids:
+    - EVD-56
+    - EVD-57
+    - EVD-51
   - id: ENT-11
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id005
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id005
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id005
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-6
   title: Budget pace
   definition: Budget pace is a source demand with audited partial or absent Phase
@@ -302,7 +321,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.budget-pace.
-  evidence_ids: &id006
+  evidence_ids:
   - EVD-56
   - EVD-64
   - EVD-92
@@ -322,11 +341,10 @@ items:
   - id: ENT-21
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id006
-  - id: EVI-9
-    role: usage-telemetry
-    semantic_type: UsageTelemetry
-    evidence_ids: *id006
+    evidence_ids:
+    - EVD-62
+    - EVD-56
+    - EVD-64
 - id: CAP-7
   title: Blast radius
   definition: Blast radius is a source demand with audited partial or absent Phase
@@ -338,7 +356,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.blast-radius.
-  evidence_ids: &id007
+  evidence_ids:
   - EVD-37
   - EVD-58
   - EVD-72
@@ -359,39 +377,40 @@ items:
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id007
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id007
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-14
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id007
+    evidence_ids:
+    - EVD-58
   - id: ENT-16
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id007
+    evidence_ids:
+    - EVD-58
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id007
+    evidence_ids:
+    - EVD-37
   - id: STA-54
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id007
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id007
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id007
+    evidence_ids:
+    - EVD-37
 - id: CAP-8
   title: Active nodes and steps
-  definition: Active nodes and steps cannot be established across the audited Phase
-    1 carrier boundaries.
+  definition: Active nodes and steps is unresolved because legacy steps/tasks and
+    graph nodes are non-equivalent execution units.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -399,7 +418,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.active-nodes-steps.
-  evidence_ids: &id008
+  evidence_ids:
   - EVD-49
   - EVD-52
   - EVD-53
@@ -407,56 +426,69 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Active nodes and steps has only carrier-specific inputs and no unified demand
-    contract.
+  - Activity is visible per mode without a membership aggregation.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete active nodes and steps.
+  - Do not total task rows and graph nodes as one active count.
   scope_demand_key: jobs.J2.active-nodes-steps
   implementation_carrier_bindings:
   - id: ENT-3
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-49
+    - EVD-52
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: STA-2
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-7
   - id: STA-8
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-12
   - id: STA-9
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-12
   - id: STA-18
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-18
   - id: STA-28
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-24
   - id: STA-29
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-24
   - id: STA-30
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-24
+    - EVD-20
   - id: STA-31
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id008
+    evidence_ids:
+    - EVD-24
 - id: CAP-9
   title: Dependency path
-  definition: Dependency path cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Dependency path is unresolved because graph edges and legacy dependencies
+    lack a shared path identity.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -464,28 +496,32 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.dependency-path.
-  evidence_ids: &id009
+  evidence_ids:
   - EVD-58
   conflict_ids: []
   question_ids: []
   limitations:
-  - Dependency path has only carrier-specific inputs and no unified demand contract.
+  - Local topology does not select a cross-mode explanation chain.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete dependency path.
+  - Do not present descendants or one edge as the requested path.
   scope_demand_key: jobs.J2.dependency-path
   implementation_carrier_bindings:
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id009
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: ENT-14
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id009
+    evidence_ids:
+    - EVD-58
   - id: ENT-16
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id009
+    evidence_ids:
+    - EVD-58
 - id: CAP-10
   title: Planner horizon
   definition: Planner horizon is a source demand with audited partial or absent Phase
@@ -497,7 +533,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.planner-horizon.
-  evidence_ids: &id010
+  evidence_ids:
   - EVD-58
   - EVD-72
   - EVD-73
@@ -517,39 +553,41 @@ items:
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id010
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id010
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-14
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id010
+    evidence_ids:
+    - EVD-58
   - id: STA-28
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id010
+    evidence_ids:
+    - EVD-24
   - id: STA-29
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id010
+    evidence_ids:
+    - EVD-24
   - id: STA-30
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id010
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id010
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id010
+    evidence_ids:
+    - EVD-24
+    - EVD-20
 - id: CAP-11
   title: Blocked reason
-  definition: Blocked reason cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Blocked reason is unresolved because lifecycle, scheduler, lease, and
+    approval blockers have no priority rule.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -557,7 +595,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.blocked-reason.
-  evidence_ids: &id011
+  evidence_ids:
   - EVD-8
   - EVD-13
   - EVD-23
@@ -567,43 +605,57 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Blocked reason has only carrier-specific inputs and no unified demand contract.
+  - Local state labels do not form one normalized reason.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete blocked reason.
+  - Do not substitute a state label for a canonical blocker.
   scope_demand_key: jobs.J2.blocked-reason
   implementation_carrier_bindings:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id011
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id011
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id011
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: STA-3
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id011
+    evidence_ids:
+    - EVD-8
   - id: STA-11
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id011
+    evidence_ids:
+    - EVD-13
   - id: STA-26
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id011
+    evidence_ids:
+    - EVD-23
   - id: STA-28
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id011
+    evidence_ids:
+    - EVD-24
   - id: STA-32
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id011
+    evidence_ids:
+    - EVD-20
+    - EVD-24
 - id: CAP-12
   title: Attempts left
   definition: Attempts left is a source demand with audited partial or absent Phase
@@ -615,7 +667,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.attempts-left.
-  evidence_ids: &id012
+  evidence_ids:
   - EVD-49
   - EVD-50
   - EVD-51
@@ -640,27 +692,32 @@ items:
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id012
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id012
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: STA-8
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id012
+    evidence_ids:
+    - EVD-12
   - id: STA-9
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id012
+    evidence_ids:
+    - EVD-12
   - id: STA-15
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id012
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id012
+    evidence_ids:
+    - EVD-16
 - id: CAP-13
   title: Final-invariant progress
   definition: Final-invariant progress is a source demand with audited partial or
@@ -672,7 +729,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.final-invariant-progress.
-  evidence_ids: &id013
+  evidence_ids:
   - EVD-49
   - EVD-52
   - EVD-55
@@ -693,31 +750,35 @@ items:
   - id: ENT-7
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id013
+    evidence_ids:
+    - EVD-49
   - id: ENT-8
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id013
+    evidence_ids:
+    - EVD-49
+    - EVD-52
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id013
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id013
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-16
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id013
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id013
+    evidence_ids:
+    - EVD-58
 - id: CAP-14
   title: Exact question
-  definition: Exact question cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Exact question is unresolved because clarification and graph decisions
+    do not share a question payload.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -725,7 +786,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.exact-question.
-  evidence_ids: &id014
+  evidence_ids:
   - EVD-13
   - EVD-27
   - EVD-61
@@ -735,30 +796,31 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Exact question has only carrier-specific inputs and no unified demand contract.
+  - Requests and decisions lack an active-question selection rule.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete exact question.
+  - Do not render rationale or stale text as the exact question.
   scope_demand_key: jobs.J3.exact-question
   implementation_carrier_bindings:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id014
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: STA-11
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id014
+    evidence_ids:
+    - EVD-13
   - id: STA-36
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id014
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id014
+    evidence_ids:
+    - EVD-27
 - id: CAP-15
   title: Why now
-  definition: Why now cannot be established across the audited Phase 1 carrier boundaries.
+  definition: Why now is unresolved because timestamps show order but not one triggering
+    cause.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -766,7 +828,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.why-now.
-  evidence_ids: &id015
+  evidence_ids:
   - EVD-57
   - EVD-63
   - EVD-69
@@ -779,34 +841,28 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Why now has only carrier-specific inputs and no unified demand contract.
+  - Carrier-local events do not establish urgency semantics.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete why now.
+  - Do not infer why-now from the latest event.
   scope_demand_key: jobs.J3.why-now
   implementation_carrier_bindings:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id015
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: ENT-20
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id015
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id015
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id015
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id015
+    evidence_ids:
+    - EVD-62
+    - EVD-61
+    - EVD-63
 - id: CAP-16
   title: Proposer
-  definition: Proposer cannot be established across the audited Phase 1 carrier boundaries.
+  definition: Proposer is unresolved because caller attribution, actor eligibility,
+    and authorization disagree.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -814,7 +870,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.proposer.
-  evidence_ids: &id016
+  evidence_ids:
   - EVD-49
   - EVD-61
   - EVD-63
@@ -825,23 +881,24 @@ items:
   question_ids:
   - Q-5
   limitations:
-  - Proposer has only carrier-specific inputs and no unified demand contract.
+  - No subject-bound proposer exists for every decision.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete proposer.
+  - Do not treat caller-supplied actor text as verified proposer identity.
   scope_demand_key: jobs.J3.proposer
   implementation_carrier_bindings:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id016
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: ENT-20
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id016
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id016
+    evidence_ids:
+    - EVD-62
+    - EVD-61
+    - EVD-63
 - id: CAP-17
   title: Affected scope
   definition: Affected scope is a source demand with audited partial or absent Phase
@@ -853,7 +910,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.affected-scope.
-  evidence_ids: &id017
+  evidence_ids:
   - EVD-37
   - EVD-58
   - EVD-63
@@ -872,31 +929,35 @@ items:
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id017
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-14
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id017
+    evidence_ids:
+    - EVD-58
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id017
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-16
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id017
+    evidence_ids:
+    - EVD-58
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id017
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id017
+    evidence_ids:
+    - EVD-37
 - id: CAP-18
   title: Decision evidence
-  definition: Decision evidence cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Decision evidence is unresolved because decision evidence lacks a typed
+    cross-carrier decision join.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -904,7 +965,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.evidence.
-  evidence_ids: &id018
+  evidence_ids:
   - EVD-56
   - EVD-63
   - EVD-90
@@ -912,19 +973,21 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Decision evidence has only carrier-specific inputs and no unified demand contract.
+  - Nearby activity and graph records are not a durable evidence set.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete decision evidence.
+  - Do not assemble nearby events as authoritative decision evidence.
   scope_demand_key: jobs.J3.evidence
   implementation_carrier_bindings:
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id018
+  - id: ENT-19
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-49
+    - EVD-61
 - id: CAP-19
   title: Alternatives
-  definition: Alternatives cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Alternatives is unresolved because commands do not enumerate decision-specific
+    feasible alternatives.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -932,7 +995,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.alternatives.
-  evidence_ids: &id019
+  evidence_ids:
   - EVD-27
   - EVD-61
   - EVD-63
@@ -941,31 +1004,32 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Alternatives has only carrier-specific inputs and no unified demand contract.
+  - Preconditions are local to each action contract.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete alternatives.
+  - Do not list every reachable command as an available alternative.
   scope_demand_key: jobs.J3.alternatives
   implementation_carrier_bindings:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id019
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: ACT-10
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id019
+    evidence_ids:
+    - EVD-27
   - id: ACT-11
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id019
+    evidence_ids:
+    - EVD-27
   - id: ACT-12
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id019
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id019
+    evidence_ids:
+    - EVD-27
 - id: CAP-20
   title: Downstream effect
   definition: Downstream effect is a source demand with audited partial or absent
@@ -977,7 +1041,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.downstream-effect.
-  evidence_ids: &id020
+  evidence_ids:
   - EVD-37
   - EVD-58
   - EVD-72
@@ -998,31 +1062,31 @@ items:
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id020
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id020
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-14
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id020
+    evidence_ids:
+    - EVD-58
   - id: ENT-16
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id020
+    evidence_ids:
+    - EVD-58
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id020
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id020
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id020
+    evidence_ids:
+    - EVD-37
 - id: CAP-21
   title: Reversibility
   definition: Reversibility is a source demand with audited partial or absent Phase
@@ -1034,7 +1098,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J3.reversibility.
-  evidence_ids: &id021
+  evidence_ids:
   - EVD-11
   - EVD-20
   - EVD-29
@@ -1058,67 +1122,95 @@ items:
   - id: ACT-13
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-37
   - id: ACT-18
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-7
+    - EVD-8
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-19
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-7
+    - EVD-19
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-20
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-21
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-23
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-12
   - id: ACT-24
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-12
   - id: ACT-26
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-16
   - id: ACT-29
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-13
   - id: ACT-31
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-14
   - id: ACT-52
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-29
   - id: ACT-53
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-29
   - id: ACT-55
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-29
   - id: ACT-56
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id021
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id021
+    evidence_ids:
+    - EVD-29
 - id: CAP-22
   title: Ordered events
-  definition: Ordered events cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Ordered events is unresolved because workflow and graph streams have
+    separate public ordering rules.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -1126,7 +1218,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.ordered-events.
-  evidence_ids: &id022
+  evidence_ids:
   - EVD-56
   - EVD-58
   - EVD-69
@@ -1138,31 +1230,28 @@ items:
   - CON-8
   question_ids: []
   limitations:
-  - Ordered events has only carrier-specific inputs and no unified demand contract.
+  - Each stream orders locally without a complete cross-stream chronology.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete ordered events.
+  - Do not merge timestamps or positions into an authoritative order.
   scope_demand_key: jobs.J4.ordered-events
   implementation_carrier_bindings:
   - id: ENT-9
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id022
+    evidence_ids:
+    - EVD-49
+    - EVD-56
+    - EVD-51
   - id: ENT-11
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id022
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id022
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id022
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-23
   title: Attempt lineage
-  definition: Attempt lineage cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Attempt lineage is unresolved because attempt, recovery, fan-out, and
+    graph-generation identities conflict.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1170,7 +1259,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.attempt-lineage.
-  evidence_ids: &id023
+  evidence_ids:
   - EVD-49
   - EVD-51
   - EVD-54
@@ -1182,23 +1271,25 @@ items:
   question_ids:
   - Q-1
   limitations:
-  - Attempt lineage has only carrier-specific inputs and no unified demand contract.
+  - Occurrences and limits do not define a common ancestor.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete attempt lineage.
+  - Do not use attempt number or retry command as lineage proof.
   scope_demand_key: jobs.J4.attempt-lineage
   implementation_carrier_bindings:
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id023
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id023
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id023
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
 - id: CAP-24
   title: Requirement-grade changes
   definition: Requirement-grade changes is a source demand with audited partial or
@@ -1210,7 +1301,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.requirement-grade-changes.
-  evidence_ids: &id024
+  evidence_ids:
   - EVD-55
   - EVD-56
   - EVD-58
@@ -1235,39 +1326,36 @@ items:
   - id: ENT-6
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id024
+    evidence_ids:
+    - EVD-55
   - id: ENT-7
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id024
+    evidence_ids:
+    - EVD-49
   - id: ENT-9
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id024
+    evidence_ids:
+    - EVD-49
+    - EVD-56
+    - EVD-51
   - id: ENT-11
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id024
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id024
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id024
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id024
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id024
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-25
   title: Patch provenance
-  definition: Patch provenance cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Patch provenance is unresolved because patch submission, validation,
+    and effects are not one provenance record.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1275,7 +1363,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.patch-provenance.
-  evidence_ids: &id025
+  evidence_ids:
   - EVD-37
   - EVD-58
   - EVD-72
@@ -1285,43 +1373,40 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Patch provenance has only carrier-specific inputs and no unified demand contract.
+  - Later repairs and bindings are not fully attributed to a patch.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete patch provenance.
+  - Do not attribute every later topology event to the nearest patch.
   scope_demand_key: jobs.J4.patch-provenance
   implementation_carrier_bindings:
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id025
+    evidence_ids:
+    - EVD-37
   - id: ACT-45
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id025
+    evidence_ids:
+    - EVD-37
   - id: STA-54
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id025
+    evidence_ids:
+    - EVD-37
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id025
+    evidence_ids:
+    - EVD-37
   - id: STA-64
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id025
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id025
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id025
+    evidence_ids:
+    - EVD-37
 - id: CAP-26
   title: State transitions
-  definition: State transitions cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: State transitions is unresolved because legacy and graph state machines
+    have distinct transition vocabularies.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1329,7 +1414,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.state-transitions.
-  evidence_ids: &id026
+  evidence_ids:
   - EVD-7
   - EVD-8
   - EVD-12
@@ -1342,75 +1427,80 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - State transitions has only carrier-specific inputs and no unified demand contract.
+  - Mode-local transition histories are not one timeline.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete state transitions.
+  - Do not concatenate histories into a single lifecycle sequence.
   scope_demand_key: jobs.J4.state-transitions
   implementation_carrier_bindings:
   - id: STA-1
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-7
   - id: STA-2
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-7
   - id: STA-3
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-8
   - id: STA-4
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-7
   - id: STA-8
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-12
   - id: STA-9
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-12
   - id: STA-10
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-12
   - id: STA-11
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-13
   - id: STA-16
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-17
   - id: STA-18
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-18
   - id: STA-20
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-17
   - id: STA-22
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-20
   - id: STA-23
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id026
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id026
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id026
+    evidence_ids:
+    - EVD-21
 - id: CAP-27
   title: Retries and rejections
-  definition: Retries and rejections cannot be established across the audited Phase
-    1 carrier boundaries.
+  definition: Retries and rejections is unresolved because revision, recovery, fan-out,
+    and patch rejection are distinct behaviors.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1418,7 +1508,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.retries-rejections.
-  evidence_ids: &id027
+  evidence_ids:
   - EVD-12
   - EVD-14
   - EVD-37
@@ -1430,56 +1520,52 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Retries and rejections has only carrier-specific inputs and no unified demand
-    contract.
+  - No taxonomy unifies their identities or counts.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete retries and rejections.
+  - Do not count every rejection or generation as the same retry.
   scope_demand_key: jobs.J4.retries-rejections
   implementation_carrier_bindings:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id027
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ACT-24
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id027
+    evidence_ids:
+    - EVD-12
   - id: ACT-25
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id027
+    evidence_ids:
+    - EVD-12
   - id: ACT-31
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id027
+    evidence_ids:
+    - EVD-14
   - id: ACT-34
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id027
+    evidence_ids:
+    - EVD-44
   - id: ACT-38
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id027
+    evidence_ids:
+    - EVD-45
   - id: ACT-45
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id027
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id027
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id027
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id027
+    evidence_ids:
+    - EVD-37
 - id: CAP-28
   title: Bound input records
-  definition: Bound input records cannot be established across the audited Phase 1
-    carrier boundaries.
+  definition: Bound input records is unresolved because bindings, verification, and
+    prompt metadata expose different inputs.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1487,7 +1573,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.bound-input-records.
-  evidence_ids: &id028
+  evidence_ids:
   - EVD-56
   - EVD-58
   - EVD-74
@@ -1499,31 +1585,26 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Bound input records has only carrier-specific inputs and no unified demand contract.
+  - No packet identity proves complete bound input by mode.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete bound input records.
+  - Do not call graph bindings a complete execution input record.
   scope_demand_key: jobs.J5.bound-input-records
   implementation_carrier_bindings:
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id028
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-16
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id028
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id028
-  - id: EVI-4
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id028
+    evidence_ids:
+    - EVD-58
 - id: CAP-29
   title: Omitted and referenced context
-  definition: Omitted and referenced context cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Omitted and referenced context is unresolved because no packet manifest
+    distinguishes omission from summary or absence.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1531,7 +1612,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.omitted-referenced-context.
-  evidence_ids: &id029
+  evidence_ids:
   - EVD-56
   - EVD-77
   - EVD-78
@@ -1539,16 +1620,17 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Omitted and referenced context has only carrier-specific inputs and no unified
-    demand contract.
+  - Retained text and graph summaries are incomplete context evidence.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete omitted and referenced context.
+  - Do not infer omission from a short summary or missing field.
   scope_demand_key: jobs.J5.omitted-referenced-context
   implementation_carrier_bindings:
-  - id: EVI-4
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id029
+  - id: ENT-22
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-62
+    - EVD-56
 - id: CAP-30
   title: Prompt size
   definition: Prompt size is a source demand with audited partial or absent Phase
@@ -1560,7 +1642,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.prompt-size.
-  evidence_ids: &id030
+  evidence_ids:
   - EVD-77
   - EVD-78
   - EVD-79
@@ -1577,15 +1659,13 @@ items:
   - id: ENT-22
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id030
-  - id: EVI-4
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id030
+    evidence_ids:
+    - EVD-62
+    - EVD-56
 - id: CAP-31
   title: Transcript
-  definition: Transcript cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Transcript is unresolved because legacy traces and graph output have
+    different retention boundaries.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1593,7 +1673,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.transcript.
-  evidence_ids: &id031
+  evidence_ids:
   - EVD-56
   - EVD-80
   - EVD-81
@@ -1601,23 +1681,21 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Transcript has only carrier-specific inputs and no unified demand contract.
+  - Carrier-local output lacks one transcript identity and coverage rule.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete transcript.
+  - Do not join fragments by time as a complete transcript.
   scope_demand_key: jobs.J5.transcript
   implementation_carrier_bindings:
   - id: ENT-22
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id031
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id031
+    evidence_ids:
+    - EVD-62
+    - EVD-56
 - id: CAP-32
   title: Tool activity
-  definition: Tool activity cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Tool activity is unresolved because traces, repetition windows, and
+    output lack durable common tool identity.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1625,7 +1703,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.tools.
-  evidence_ids: &id032
+  evidence_ids:
   - EVD-56
   - EVD-80
   - EVD-81
@@ -1633,22 +1711,21 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Tool activity has only carrier-specific inputs and no unified demand contract.
+  - Observable tool facts are carrier-specific.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete tool activity.
+  - Do not equate repeated text or tool names with durable activity.
   scope_demand_key: jobs.J5.tools
   implementation_carrier_bindings:
   - id: ENT-22
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id032
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id032
+    evidence_ids:
+    - EVD-62
+    - EVD-56
 - id: CAP-33
   title: Artifacts
-  definition: Artifacts cannot be established across the audited Phase 1 carrier boundaries.
+  definition: Artifacts is unresolved because commits, artifact references, and snapshots
+    define different artifacts.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1656,7 +1733,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.artifacts.
-  evidence_ids: &id033
+  evidence_ids:
   - EVD-49
   - EVD-54
   - EVD-56
@@ -1669,35 +1746,31 @@ items:
   - CON-5
   question_ids: []
   limitations:
-  - Artifacts has only carrier-specific inputs and no unified demand contract.
+  - Ownership and candidate completeness are not shared.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete artifacts.
+  - Do not treat commits and snapshots as interchangeable inventories.
   scope_demand_key: jobs.J5.artifacts
   implementation_carrier_bindings:
   - id: ENT-23
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id033
+    evidence_ids:
+    - EVD-56
   - id: ENT-24
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id033
+    evidence_ids:
+    - EVD-56
+    - EVD-65
   - id: ENT-25
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id033
-  - id: ENT-26
-    role: entity-input
-    semantic_type: EntityRecord
-    evidence_ids: *id033
-  - id: EVI-6
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id033
+    evidence_ids:
+    - EVD-49
 - id: CAP-34
   title: File delta
-  definition: File delta cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: File delta is unresolved because snapshots and commits lack candidate-scoped
+    before/after identity.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1705,7 +1778,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.file-delta.
-  evidence_ids: &id034
+  evidence_ids:
   - EVD-56
   - EVD-87
   - EVD-88
@@ -1713,19 +1786,26 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - File delta has only carrier-specific inputs and no unified demand contract.
+  - Whole-worktree change does not prove candidate ownership.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete file delta.
+  - Do not call any changed commit a candidate-exclusive delta.
   scope_demand_key: jobs.J5.file-delta
   implementation_carrier_bindings:
-  - id: EVI-7
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id034
+  - id: ENT-23
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-56
+  - id: ENT-24
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-56
+    - EVD-65
 - id: CAP-35
   title: Output records
-  definition: Output records cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Output records is unresolved because trace, verification, artifact,
+    and prompt outputs lack one schema.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1733,7 +1813,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.output-records.
-  evidence_ids: &id035
+  evidence_ids:
   - EVD-49
   - EVD-56
   - EVD-74
@@ -1749,42 +1829,38 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Output records has only carrier-specific inputs and no unified demand contract.
+  - Their identity, ordering, and coverage differ.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete output records.
+  - Do not collapse a grade, trace line, and artifact into one output type.
   scope_demand_key: jobs.J5.output-records
   implementation_carrier_bindings:
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id035
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-22
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id035
+    evidence_ids:
+    - EVD-62
+    - EVD-56
   - id: ENT-23
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id035
+    evidence_ids:
+    - EVD-56
   - id: ENT-24
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id035
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id035
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id035
-  - id: EVI-6
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id035
+    evidence_ids:
+    - EVD-56
+    - EVD-65
 - id: CAP-36
   title: Usage
-  definition: Usage cannot be established across the audited Phase 1 carrier boundaries.
+  definition: Usage is unresolved because returned telemetry omits exception and non-reporting
+    executions.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1792,7 +1868,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.usage.
-  evidence_ids: &id036
+  evidence_ids:
   - EVD-56
   - EVD-64
   - EVD-92
@@ -1803,23 +1879,22 @@ items:
   - CON-9
   question_ids: []
   limitations:
-  - Usage has only carrier-specific inputs and no unified demand contract.
+  - Known usage has an incomplete denominator.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete usage.
+  - Do not report returned rows as complete usage.
   scope_demand_key: jobs.J5.usage
   implementation_carrier_bindings:
   - id: ENT-21
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id036
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id036
+    evidence_ids:
+    - EVD-62
+    - EVD-56
+    - EVD-64
 - id: CAP-37
   title: Current failure
-  definition: Current failure cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Current failure is unresolved because failure states have no current-failure
+    selector.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1827,7 +1902,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.current-failure.
-  evidence_ids: &id037
+  evidence_ids:
   - EVD-10
   - EVD-16
   - EVD-22
@@ -1840,47 +1915,46 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Current failure has only carrier-specific inputs and no unified demand contract.
+  - Lifecycle, graph, outbox, and patch failures can coexist.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete current failure.
+  - Do not select the latest failure event as current failure.
   scope_demand_key: jobs.J6.current-failure
   implementation_carrier_bindings:
   - id: STA-6
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id037
+    evidence_ids:
+    - EVD-10
   - id: STA-15
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id037
+    evidence_ids:
+    - EVD-16
   - id: STA-24
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id037
+    evidence_ids:
+    - EVD-22
   - id: STA-26
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id037
+    evidence_ids:
+    - EVD-23
   - id: STA-34
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id037
+    evidence_ids:
+    - EVD-26
   - id: STA-41
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id037
+    evidence_ids:
+    - EVD-28
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id037
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id037
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id037
+    evidence_ids:
+    - EVD-37
 - id: CAP-38
   title: Retry information delta
   definition: Retry information delta is a source demand with audited partial or absent
@@ -1892,7 +1966,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.retry-information-delta.
-  evidence_ids: &id038
+  evidence_ids:
   - EVD-49
   - EVD-51
   - EVD-54
@@ -1923,31 +1997,19 @@ items:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id038
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-6
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id038
-  - id: EVI-4
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id038
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id038
-  - id: EVI-7
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id038
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id038
+    evidence_ids:
+    - EVD-55
 - id: CAP-39
   title: Intervention alternatives
-  definition: Intervention alternatives cannot be established across the audited Phase
-    1 carrier boundaries.
+  definition: Intervention alternatives is unresolved because action availability
+    has no condition-specific feasibility projection.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -1955,7 +2017,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.alternatives.
-  evidence_ids: &id039
+  evidence_ids:
   - EVD-11
   - EVD-14
   - EVD-20
@@ -1969,68 +2031,93 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Intervention alternatives has only carrier-specific inputs and no unified demand
-    contract.
+  - Mode, state, authority, and topology constrain each action differently.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete intervention alternatives.
+  - Do not offer all documented actions as safe alternatives.
   scope_demand_key: jobs.J6.alternatives
   implementation_carrier_bindings:
   - id: ACT-10
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-27
   - id: ACT-11
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-27
   - id: ACT-12
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-27
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-37
   - id: ACT-18
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-7
+    - EVD-8
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-19
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-7
+    - EVD-19
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-20
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-21
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-31
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-14
   - id: ACT-32
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-14
   - id: ACT-33
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-14
   - id: ACT-14
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id039
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id039
+    evidence_ids:
+    - EVD-23
 - id: CAP-40
   title: Expected effect
-  definition: Expected effect cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Expected effect is unresolved because local action effects do not yield
+    a complete consequence set.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -2038,7 +2125,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.expected-effect.
-  evidence_ids: &id040
+  evidence_ids:
   - EVD-11
   - EVD-20
   - EVD-23
@@ -2051,47 +2138,59 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Expected effect has only carrier-specific inputs and no unified demand contract.
+  - Workflow and graph consequences are conditional and split.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete expected effect.
+  - Do not infer expected effect from a past action or immediate transition.
   scope_demand_key: jobs.J6.expected-effect
   implementation_carrier_bindings:
   - id: ACT-10
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id040
+    evidence_ids:
+    - EVD-27
   - id: ACT-11
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id040
+    evidence_ids:
+    - EVD-27
   - id: ACT-12
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id040
+    evidence_ids:
+    - EVD-27
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id040
+    evidence_ids:
+    - EVD-37
   - id: ACT-14
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id040
+    evidence_ids:
+    - EVD-23
   - id: ACT-18
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id040
+    evidence_ids:
+    - EVD-7
+    - EVD-8
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-20
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id040
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id040
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
 - id: CAP-41
   title: Intervention scope
-  definition: Intervention scope cannot be established across the audited Phase 1
-    carrier boundaries.
+  definition: Intervention scope is unresolved because targets, topology, and workflow
+    records have untyped joins.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -2099,7 +2198,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.scope.
-  evidence_ids: &id041
+  evidence_ids:
   - EVD-23
   - EVD-27
   - EVD-37
@@ -2112,43 +2211,53 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Intervention scope has only carrier-specific inputs and no unified demand contract.
+  - One target id does not establish all affected objects.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete intervention scope.
+  - Do not assume consequences stop at the supplied target.
   scope_demand_key: jobs.J6.scope
   implementation_carrier_bindings:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id041
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id041
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id041
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-18
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id041
+    evidence_ids:
+    - EVD-60
+    - EVD-58
   - id: ACT-10
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id041
+    evidence_ids:
+    - EVD-27
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id041
+    evidence_ids:
+    - EVD-37
   - id: ACT-14
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id041
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id041
+    evidence_ids:
+    - EVD-23
 - id: CAP-42
   title: Authority
   definition: Authority is a source demand with audited partial or absent Phase 1
@@ -2160,7 +2269,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.authority.
-  evidence_ids: &id042
+  evidence_ids:
   - EVD-27
   - EVD-38
   - EVD-39
@@ -2187,39 +2296,40 @@ items:
   - id: ACT-10
     role: authority-action
     semantic_type: ActionContract
-    evidence_ids: *id042
+    evidence_ids:
+    - EVD-27
   - id: ACT-11
     role: authority-action
     semantic_type: ActionContract
-    evidence_ids: *id042
+    evidence_ids:
+    - EVD-27
   - id: ACT-12
     role: authority-action
     semantic_type: ActionContract
-    evidence_ids: *id042
+    evidence_ids:
+    - EVD-27
   - id: PER-1
     role: authority-policy
     semantic_type: PermissionContract
-    evidence_ids: *id042
-  - id: PER-2
-    role: authority-policy
-    semantic_type: PermissionContract
-    evidence_ids: *id042
+    evidence_ids:
+    - EVD-38
   - id: PER-3
     role: authority-policy
     semantic_type: PermissionContract
-    evidence_ids: *id042
+    evidence_ids:
+    - EVD-40
   - id: PER-4
     role: authority-policy
     semantic_type: PermissionContract
-    evidence_ids: *id042
+    evidence_ids:
+    - EVD-41
   - id: PER-5
     role: authority-policy
     semantic_type: PermissionContract
-    evidence_ids: *id042
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id042
+    evidence_ids:
+    - EVD-42
+  absence_contract_ids:
+  - PER-2
 - id: CAP-43
   title: Intervention budget
   definition: Intervention budget is a source demand with audited partial or absent
@@ -2249,10 +2359,9 @@ items:
   scope_demand_key: jobs.J6.budget
   absence_basis: The audit found no implemented carrier for the intervention budget
     demand.
-  disqualifying_input_ids:
-  - EVI-9
   implementation_carrier_ids: []
   absence_verified: true
+  disqualifying_evidence_ids: []
 - id: CAP-44
   title: Intervention reversibility
   definition: Intervention reversibility is a source demand with audited partial or
@@ -2264,7 +2373,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.reversibility.
-  evidence_ids: &id043
+  evidence_ids:
   - EVD-11
   - EVD-20
   - EVD-29
@@ -2287,59 +2396,85 @@ items:
   - id: ACT-13
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-37
   - id: ACT-18
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-7
+    - EVD-8
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-19
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-7
+    - EVD-19
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-20
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-21
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-31
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-14
   - id: ACT-32
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-14
   - id: ACT-33
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-14
   - id: ACT-52
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-29
   - id: ACT-53
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-29
   - id: ACT-55
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-29
   - id: ACT-56
     role: reversibility-action
     semantic_type: ActionContract
-    evidence_ids: *id043
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id043
+    evidence_ids:
+    - EVD-29
 - id: CAP-45
   title: Validation path
-  definition: Validation path cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Validation path is unresolved because request, graph, and result validation
+    are separate carriers.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -2347,7 +2482,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J6.validation-path.
-  evidence_ids: &id044
+  evidence_ids:
   - EVD-37
   - EVD-40
   - EVD-41
@@ -2356,51 +2491,66 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Validation path has only carrier-specific inputs and no unified demand contract.
+  - No ordered record preserves every applied rule.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete validation path.
+  - Do not use acceptance as evidence of every validation step.
   scope_demand_key: jobs.J6.validation-path
   implementation_carrier_bindings:
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-37
   - id: ACT-45
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-37
   - id: PER-3
     role: permission-contract
     semantic_type: PermissionContract
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-40
   - id: PER-4
     role: permission-contract
     semantic_type: PermissionContract
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-41
   - id: PER-6
     role: permission-contract
     semantic_type: PermissionContract
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-46
   - id: PER-7
     role: permission-contract
     semantic_type: PermissionContract
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-29
+    - EVD-31
+    - EVD-33
+    - EVD-34
+    - EVD-35
+    - EVD-47
+    - EVD-48
   - id: STA-54
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-37
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-37
   - id: STA-61
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id044
+    evidence_ids:
+    - EVD-46
 - id: CAP-46
   title: Spend and tokens by node kind
-  definition: Spend and tokens by node kind cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Spend and tokens by node kind is unresolved because node-kind rollups
+    exclude legacy, missing, and exception work.
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
@@ -2408,7 +2558,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.spend-tokens-by-node-kind.
-  evidence_ids: &id045
+  evidence_ids:
   - EVD-58
   - EVD-64
   - EVD-92
@@ -2419,24 +2569,25 @@ items:
   - CON-9
   question_ids: []
   limitations:
-  - Spend and tokens by node kind has only carrier-specific inputs and no unified
-    demand contract.
+  - Returned graph telemetry cannot establish complete attribution.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete spend and tokens by node kind.
+  - Do not extrapolate returned subtotals to all modes.
   scope_demand_key: jobs.J7.spend-tokens-by-node-kind
   implementation_carrier_bindings:
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id045
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-21
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id045
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id045
+    evidence_ids:
+    - EVD-62
+    - EVD-56
+    - EVD-64
 - id: CAP-47
   title: Unpriced share
   definition: Unpriced share is a source demand with audited partial or absent Phase
@@ -2448,7 +2599,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.unpriced-share.
-  evidence_ids: &id046
+  evidence_ids:
   - EVD-64
   - EVD-92
   - EVD-93
@@ -2468,11 +2619,10 @@ items:
   - id: ENT-21
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id046
-  - id: EVI-9
-    role: usage-telemetry
-    semantic_type: UsageTelemetry
-    evidence_ids: *id046
+    evidence_ids:
+    - EVD-62
+    - EVD-56
+    - EVD-64
 - id: CAP-48
   title: Prompt size
   definition: Prompt size is a source demand with audited partial or absent Phase
@@ -2484,7 +2634,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.prompt-size.
-  evidence_ids: &id047
+  evidence_ids:
   - EVD-77
   - EVD-78
   - EVD-79
@@ -2501,11 +2651,9 @@ items:
   - id: ENT-22
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id047
-  - id: EVI-4
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id047
+    evidence_ids:
+    - EVD-62
+    - EVD-56
 - id: CAP-49
   title: Retries without new information
   definition: Retries without new information is a source demand with audited partial
@@ -2517,7 +2665,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.retries-without-new-information.
-  evidence_ids: &id048
+  evidence_ids:
   - EVD-14
   - EVD-44
   - EVD-45
@@ -2548,39 +2696,30 @@ items:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id048
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-6
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id048
+    evidence_ids:
+    - EVD-55
   - id: ACT-31
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id048
+    evidence_ids:
+    - EVD-14
   - id: ACT-34
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id048
+    evidence_ids:
+    - EVD-44
   - id: ACT-38
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id048
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id048
-  - id: EVI-4
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id048
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id048
-  - id: EVI-7
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id048
+    evidence_ids:
+    - EVD-45
 - id: CAP-50
   title: Repeated tools and work
   definition: Repeated tools and work is a source demand with audited partial or absent
@@ -2592,7 +2731,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.repeated-work.
-  evidence_ids: &id049
+  evidence_ids:
   - EVD-56
   - EVD-69
   - EVD-70
@@ -2611,14 +2750,13 @@ items:
     detector result.
   scope_demand_key: jobs.J7.repeated-work
   implementation_carrier_bindings:
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id049
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id049
+  - id: ENT-5
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
 - id: CAP-51
   title: Verifier churn
   definition: Verifier churn is a source demand with audited partial or absent Phase
@@ -2630,7 +2768,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.verifier-churn.
-  evidence_ids: &id050
+  evidence_ids:
   - EVD-54
   - EVD-55
   - EVD-56
@@ -2656,31 +2794,26 @@ items:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id050
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-6
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id050
+    evidence_ids:
+    - EVD-55
   - id: ENT-7
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id050
+    evidence_ids:
+    - EVD-49
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id050
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id050
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id050
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id050
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-52
   title: Comparable cohort
   definition: Comparable cohort is a source demand with audited partial or absent
@@ -2692,7 +2825,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.comparable-cohort.
-  evidence_ids: &id051
+  evidence_ids:
   - EVD-49
   - EVD-56
   - EVD-68
@@ -2713,27 +2846,29 @@ items:
   - id: ENT-1
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id051
+    evidence_ids:
+    - EVD-49
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id051
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-27
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id051
+    evidence_ids:
+    - EVD-49
   - id: ENT-28
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id051
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id051
+    evidence_ids:
+    - EVD-56
 - id: CAP-53
   title: Routine SHA
-  definition: Routine SHA cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Routine SHA is unresolved because configuration identity does not persist
+    one executable source SHA.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -2741,28 +2876,32 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.routine-sha.
-  evidence_ids: &id052
+  evidence_ids:
   - EVD-49
   conflict_ids: []
   question_ids: []
   limitations:
-  - Routine SHA has only carrier-specific inputs and no unified demand contract.
+  - Relevant executions lack a comparable revision binding.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete routine sha.
+  - Do not use current HEAD or a routine name as its SHA.
   scope_demand_key: jobs.J8.routine-sha
   implementation_carrier_bindings:
   - id: ENT-1
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id052
+    evidence_ids:
+    - EVD-49
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id052
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
 - id: CAP-54
   title: Model and profile
-  definition: Model and profile cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Model and profile is unresolved because defaults, runner selection,
+    and telemetry can differ over time.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -2770,7 +2909,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.model-profile.
-  evidence_ids: &id053
+  evidence_ids:
   - EVD-49
   - EVD-56
   - EVD-92
@@ -2780,26 +2919,25 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Model and profile has only carrier-specific inputs and no unified demand contract.
+  - No immutable execution-level model/profile record exists.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete model and profile.
+  - Do not infer an executed model from today's default.
   scope_demand_key: jobs.J8.model-profile
   implementation_carrier_bindings:
   - id: ENT-27
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id053
+    evidence_ids:
+    - EVD-49
   - id: ENT-28
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id053
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id053
+    evidence_ids:
+    - EVD-56
 - id: CAP-55
   title: Duration
-  definition: Duration cannot be established across the audited Phase 1 carrier boundaries.
+  definition: Duration is unresolved because start, stop, pause, and failure timestamps
+    use different boundaries.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -2807,7 +2945,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.duration.
-  evidence_ids: &id054
+  evidence_ids:
   - EVD-54
   - EVD-56
   - EVD-64
@@ -2818,26 +2956,29 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Duration has only carrier-specific inputs and no unified demand contract.
+  - No duration policy spans normal, recovered, and exception work.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete duration.
+  - Do not subtract arbitrary timestamps as canonical duration.
   scope_demand_key: jobs.J8.duration
   implementation_carrier_bindings:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id054
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-21
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id054
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id054
+    evidence_ids:
+    - EVD-62
+    - EVD-56
+    - EVD-64
 - id: CAP-56
   title: Tokens
-  definition: Tokens cannot be established across the audited Phase 1 carrier boundaries.
+  definition: Tokens is unresolved because token categories and telemetry coverage
+    differ by runner and mode.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -2845,7 +2986,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.tokens.
-  evidence_ids: &id055
+  evidence_ids:
   - EVD-56
   - EVD-64
   - EVD-92
@@ -2856,19 +2997,18 @@ items:
   - CON-9
   question_ids: []
   limitations:
-  - Tokens has only carrier-specific inputs and no unified demand contract.
+  - Reported counts omit non-reporting and exception execution.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete tokens.
+  - Do not sum reported fields as complete run tokens.
   scope_demand_key: jobs.J8.tokens
   implementation_carrier_bindings:
   - id: ENT-21
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id055
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id055
+    evidence_ids:
+    - EVD-62
+    - EVD-56
+    - EVD-64
 - id: CAP-57
   title: Price coverage
   definition: Price coverage is a source demand with audited partial or absent Phase
@@ -2880,7 +3020,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.price-coverage.
-  evidence_ids: &id056
+  evidence_ids:
   - EVD-64
   - EVD-92
   - EVD-93
@@ -2900,11 +3040,10 @@ items:
   - id: ENT-21
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id056
-  - id: EVI-9
-    role: usage-telemetry
-    semantic_type: UsageTelemetry
-    evidence_ids: *id056
+    evidence_ids:
+    - EVD-62
+    - EVD-56
+    - EVD-64
 - id: CAP-58
   title: Patch count
   definition: Patch count is a source demand with audited partial or absent Phase
@@ -2916,7 +3055,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.patch-count.
-  evidence_ids: &id057
+  evidence_ids:
   - EVD-37
   - EVD-72
   - EVD-73
@@ -2935,31 +3074,28 @@ items:
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id057
+    evidence_ids:
+    - EVD-37
   - id: ACT-45
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id057
+    evidence_ids:
+    - EVD-37
   - id: STA-54
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id057
+    evidence_ids:
+    - EVD-37
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id057
+    evidence_ids:
+    - EVD-37
   - id: STA-64
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id057
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id057
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id057
+    evidence_ids:
+    - EVD-37
 - id: CAP-59
   title: Retry count
   definition: Retry count is a source demand with audited partial or absent Phase
@@ -2971,7 +3107,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.retries.
-  evidence_ids: &id058
+  evidence_ids:
   - EVD-14
   - EVD-44
   - EVD-45
@@ -3000,27 +3136,25 @@ items:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id058
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ACT-31
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id058
+    evidence_ids:
+    - EVD-14
   - id: ACT-34
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id058
+    evidence_ids:
+    - EVD-44
   - id: ACT-38
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id058
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id058
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id058
+    evidence_ids:
+    - EVD-45
 - id: CAP-60
   title: Grade churn
   definition: Grade churn is a source demand with audited partial or absent Phase
@@ -3032,7 +3166,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.grade-churn.
-  evidence_ids: &id059
+  evidence_ids:
   - EVD-55
   - EVD-56
   - EVD-58
@@ -3057,31 +3191,23 @@ items:
   - id: ENT-6
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id059
+    evidence_ids:
+    - EVD-55
   - id: ENT-7
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id059
+    evidence_ids:
+    - EVD-49
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id059
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id059
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id059
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id059
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-61
   title: Interventions
-  definition: Interventions cannot be established across the audited Phase 1 carrier
-    boundaries.
+  definition: Interventions is unresolved because patch, recovery, approval, merge,
+    and lifecycle actions lack a taxonomy.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -3089,7 +3215,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.interventions.
-  evidence_ids: &id060
+  evidence_ids:
   - EVD-11
   - EVD-14
   - EVD-20
@@ -3103,66 +3229,93 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Interventions has only carrier-specific inputs and no unified demand contract.
+  - No common intent, scope, or identity defines an intervention set.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete interventions.
+  - Do not count every state-changing command as an intervention.
   scope_demand_key: jobs.J8.interventions
   implementation_carrier_bindings:
   - id: ACT-10
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-27
   - id: ACT-11
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-27
   - id: ACT-12
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-27
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-37
   - id: ACT-14
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-23
   - id: ACT-18
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-7
+    - EVD-8
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-19
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-7
+    - EVD-19
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-20
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-21
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-31
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-14
   - id: ACT-32
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-14
   - id: ACT-33
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id060
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id060
+    evidence_ids:
+    - EVD-14
 - id: CAP-62
   title: Outcome
-  definition: Outcome cannot be established across the audited Phase 1 carrier boundaries.
+  definition: Outcome is unresolved because completion, verification, merge, and node
+    states have different finality.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -3170,7 +3323,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.outcome.
-  evidence_ids: &id061
+  evidence_ids:
   - EVD-9
   - EVD-10
   - EVD-11
@@ -3185,79 +3338,95 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Outcome has only carrier-specific inputs and no unified demand contract.
+  - No rule selects one cross-mode outcome.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete outcome.
+  - Do not reduce one grade, node state, or merge result to run outcome.
   scope_demand_key: jobs.J8.outcome
   implementation_carrier_bindings:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: STA-5
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-9
   - id: STA-6
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-10
   - id: STA-7
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-11
   - id: STA-14
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-12
+    - EVD-45
   - id: STA-15
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-16
   - id: STA-23
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-21
   - id: STA-24
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-22
   - id: STA-25
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-20
   - id: STA-33
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-25
   - id: STA-34
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-26
   - id: STA-35
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id061
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id061
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id061
+    evidence_ids:
+    - EVD-20
 - id: CAP-63
   title: Prompt pressure
   definition: Prompt pressure is a source demand with audited partial or absent Phase
@@ -3269,7 +3438,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.prompt-pressure.
-  evidence_ids: &id062
+  evidence_ids:
   - EVD-49
   - EVD-56
   - EVD-77
@@ -3292,19 +3461,13 @@ items:
   - id: ENT-27
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id062
+    evidence_ids:
+    - EVD-49
   - id: ENT-28
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id062
-  - id: EVI-4
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id062
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id062
+    evidence_ids:
+    - EVD-56
 - id: CAP-64
   title: Final-gate effect
   definition: Final-gate effect is a source demand with audited partial or absent
@@ -3316,7 +3479,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand design.initial-claims.final-gate-effect.
-  evidence_ids: &id063
+  evidence_ids:
   - EVD-27
   - EVD-58
   - EVD-63
@@ -3338,43 +3501,46 @@ items:
   - id: ENT-12
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id063
+    evidence_ids:
+    - EVD-58
+    - EVD-55
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id063
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-14
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id063
+    evidence_ids:
+    - EVD-58
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id063
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-16
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id063
+    evidence_ids:
+    - EVD-58
   - id: STA-36
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id063
+    evidence_ids:
+    - EVD-27
   - id: STA-37
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id063
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id063
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id063
+    evidence_ids:
+    - EVD-27
 - id: CAP-65
   title: Data freshness and connection state
-  definition: Data freshness and connection state cannot be established across the
-    audited Phase 1 carrier boundaries.
+  definition: Data freshness and connection state is unresolved because event freshness,
+    connection, and UI selection have separate boundaries.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -3382,7 +3548,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.A.freshness-and-connection.
-  evidence_ids: &id064
+  evidence_ids:
   - EVD-53
   - EVD-56
   - EVD-58
@@ -3395,28 +3561,24 @@ items:
   - CON-8
   question_ids: []
   limitations:
-  - Data freshness and connection state has only carrier-specific inputs and no unified
-    demand contract.
+  - No selection-bound freshness contract persists across views.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete data freshness and connection state.
+  - Do not treat a fresh event or route as proof all data is current.
   scope_demand_key: journeys.A.freshness-and-connection
   implementation_carrier_bindings:
   - id: ENT-9
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id064
+    evidence_ids:
+    - EVD-49
+    - EVD-56
+    - EVD-51
   - id: ENT-11
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id064
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id064
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id064
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-66
   title: Explicit empty needs-you state
   definition: Explicit empty needs-you state is a source demand with audited partial
@@ -3428,7 +3590,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.A.positive-empty-needs-you.
-  evidence_ids: &id065
+  evidence_ids:
   - EVD-13
   - EVD-27
   - EVD-53
@@ -3448,19 +3610,19 @@ items:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id065
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: STA-11
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id065
+    evidence_ids:
+    - EVD-13
   - id: STA-36
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id065
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id065
+    evidence_ids:
+    - EVD-27
 - id: CAP-67
   title: No runaway signal
   definition: No runaway signal is a source demand with audited partial or absent
@@ -3472,7 +3634,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.A.no-runaway-signal.
-  evidence_ids: &id066
+  evidence_ids:
   - EVD-56
   - EVD-69
   - EVD-70
@@ -3495,22 +3657,19 @@ items:
   - Do not treat the absence of a runaway event as evidence that the run is not runaway.
   scope_demand_key: journeys.A.no-runaway-signal
   implementation_carrier_bindings:
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id066
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id066
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id066
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id066
+  - id: ENT-5
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
+  - id: ENT-17
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-58
+    - EVD-57
 - id: CAP-68
   title: Decision wait age
   definition: Decision wait age is a source demand with audited partial or absent
@@ -3522,7 +3681,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.B.wait-age.
-  evidence_ids: &id067
+  evidence_ids:
   - EVD-13
   - EVD-27
   - EVD-63
@@ -3546,35 +3705,31 @@ items:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id067
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: ENT-20
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id067
+    evidence_ids:
+    - EVD-62
+    - EVD-61
+    - EVD-63
   - id: STA-11
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id067
+    evidence_ids:
+    - EVD-13
   - id: STA-36
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id067
+    evidence_ids:
+    - EVD-27
   - id: STA-37
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id067
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id067
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id067
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id067
+    evidence_ids:
+    - EVD-27
 - id: CAP-69
   title: Command validator result
   definition: The command validator result demand is current only for reachable graph
@@ -3602,10 +3757,18 @@ items:
   - Do not generalize this result to lifecycle, clarification, review, filesystem,
     or administrative commands.
   scope_demand_key: journeys.B.validator-result
+  output_contract:
+    semantic_type: PatchValidationResult
+    fields:
+    - accepted
+    - rejection_reason
+    - conflicting_events
+    - read_set_diff
+    role: graph-patch-validation
 - id: CAP-70
   title: Recorded decision identity and timestamp
-  definition: Recorded decision identity and timestamp cannot be established across
-    the audited Phase 1 carrier boundaries.
+  definition: Recorded decision identity and timestamp is unresolved because clarification,
+    approval, and graph decisions use different identities/clocks.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -3613,7 +3776,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.B.recorded-identity-timestamp.
-  evidence_ids: &id068
+  evidence_ids:
   - EVD-13
   - EVD-27
   - EVD-36
@@ -3626,36 +3789,39 @@ items:
   question_ids:
   - Q-5
   limitations:
-  - Recorded decision identity and timestamp has only carrier-specific inputs and
-    no unified demand contract.
+  - Local timestamps lack a typed comparable decision history.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete recorded decision identity and timestamp.
+  - Do not join decisions by text, actor, or adjacent time.
   scope_demand_key: journeys.B.recorded-identity-timestamp
   implementation_carrier_bindings:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id068
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: ENT-20
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id068
+    evidence_ids:
+    - EVD-62
+    - EVD-61
+    - EVD-63
   - id: STA-37
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id068
+    evidence_ids:
+    - EVD-27
   - id: STA-52
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id068
+    evidence_ids:
+    - EVD-13
   - id: STA-53
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id068
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id068
+    evidence_ids:
+    - EVD-36
 - id: CAP-71
   title: Cost of another attempt
   definition: Cost of another attempt is a source demand with audited partial or absent
@@ -3667,7 +3833,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.C.cost-of-another-attempt.
-  evidence_ids: &id069
+  evidence_ids:
   - EVD-49
   - EVD-54
   - EVD-56
@@ -3689,23 +3855,27 @@ items:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id069
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-21
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id069
+    evidence_ids:
+    - EVD-62
+    - EVD-56
+    - EVD-64
   - id: ENT-27
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id069
+    evidence_ids:
+    - EVD-49
   - id: ENT-28
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id069
-  - id: EVI-9
-    role: usage-telemetry
-    semantic_type: UsageTelemetry
-    evidence_ids: *id069
+    evidence_ids:
+    - EVD-56
 - id: CAP-72
   title: Candidate delta
   definition: Candidate delta is a source demand with audited partial or absent Phase
@@ -3717,7 +3887,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.C.candidate-delta.
-  evidence_ids: &id070
+  evidence_ids:
   - EVD-56
   - EVD-58
   - EVD-65
@@ -3745,27 +3915,20 @@ items:
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id070
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-23
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id070
+    evidence_ids:
+    - EVD-56
   - id: ENT-24
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id070
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id070
-  - id: EVI-6
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id070
-  - id: EVI-7
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id070
+    evidence_ids:
+    - EVD-56
+    - EVD-65
 - id: CAP-73
   title: Causal gap
   definition: Causal gap is a source demand with audited partial or absent Phase 1
@@ -3777,7 +3940,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.C.causal-gap.
-  evidence_ids: &id071
+  evidence_ids:
   - EVD-56
   - EVD-58
   - EVD-69
@@ -3807,30 +3970,19 @@ items:
     of causation.
   scope_demand_key: journeys.C.causal-gap
   implementation_carrier_bindings:
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id071
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id071
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id071
-  - id: EVI-4
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id071
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id071
-  - id: EVI-7
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id071
+  - id: ENT-12
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-58
+    - EVD-55
+  - id: ENT-13
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
 - id: CAP-74
   title: Directive binding
   definition: Directive binding is a source demand with audited partial or absent
@@ -3861,14 +4013,13 @@ items:
     demand.
   absence_contract_ids:
   - ACT-15
-  disqualifying_input_ids:
-  - EVI-4
   implementation_carrier_ids: []
   absence_verified: true
+  disqualifying_evidence_ids: []
 - id: CAP-75
   title: Exact execution-unit identity
-  definition: Exact execution-unit identity cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Exact execution-unit identity is unresolved because attempts, nodes,
+    executions, and usage rows are not one unit.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -3876,7 +4027,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.D.execution-unit-identity.
-  evidence_ids: &id072
+  evidence_ids:
   - EVD-49
   - EVD-51
   - EVD-54
@@ -3892,36 +4043,35 @@ items:
   - Q-1
   - Q-2
   limitations:
-  - Exact execution-unit identity has only carrier-specific inputs and no unified
-    demand contract.
+  - Local lookup ids do not safely cross mode boundaries.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete exact execution-unit identity.
+  - Do not equate task, attempt, node, and usage IDs.
   scope_demand_key: journeys.D.execution-unit-identity
   implementation_carrier_bindings:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id072
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id072
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-17
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id072
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id072
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id072
+    evidence_ids:
+    - EVD-58
+    - EVD-57
 - id: CAP-76
   title: Repository file-state boundary
-  definition: Repository file-state boundary cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Repository file-state boundary is unresolved because commits, worktrees,
+    and artifacts capture different repository moments.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -3929,7 +4079,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.D.file-state-boundary.
-  evidence_ids: &id073
+  evidence_ids:
   - EVD-56
   - EVD-87
   - EVD-88
@@ -3937,16 +4087,22 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Repository file-state boundary has only carrier-specific inputs and no unified
-    demand contract.
+  - No execution-bound before/after file-state contract exists.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete repository file-state boundary.
+  - Do not use the current worktree as an execution boundary.
   scope_demand_key: journeys.D.file-state-boundary
   implementation_carrier_bindings:
-  - id: EVI-7
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id073
+  - id: ENT-23
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-56
+  - id: ENT-24
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-56
+    - EVD-65
 - id: CAP-77
   title: Missing node attribution
   definition: Missing node attribution is a source demand with audited partial or
@@ -3958,7 +4114,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.E.missing-node-attribution.
-  evidence_ids: &id074
+  evidence_ids:
   - EVD-58
   - EVD-72
   - EVD-73
@@ -3979,19 +4135,16 @@ items:
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id074
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-17
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id074
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id074
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id074
+    evidence_ids:
+    - EVD-58
+    - EVD-57
 - id: CAP-78
   title: Detector drill-through evidence
   definition: Detector drill-through evidence is a source demand with audited partial
@@ -4003,7 +4156,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.E.detector-evidence.
-  evidence_ids: &id075
+  evidence_ids:
   - EVD-56
   - EVD-69
   - EVD-70
@@ -4031,30 +4184,23 @@ items:
     never produced.
   scope_demand_key: journeys.E.detector-evidence
   implementation_carrier_bindings:
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id075
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id075
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id075
-  - id: EVI-7
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id075
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id075
+  - id: ENT-5
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
+  - id: ENT-17
+    role: entity-input
+    semantic_type: EntityRecord
+    evidence_ids:
+    - EVD-58
+    - EVD-57
 - id: CAP-79
   title: Canonical selection identity across projections
-  definition: Canonical selection identity across projections cannot be established
-    across the audited Phase 1 carrier boundaries.
+  definition: Canonical selection identity across projections is unresolved because
+    route, UI, run, task, attempt, and graph IDs lack typed selection joins.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4062,7 +4208,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.continuity.canonical-selection.
-  evidence_ids: &id076
+  evidence_ids:
   - EVD-49
   - EVD-51
   - EVD-53
@@ -4074,41 +4220,55 @@ items:
   - Q-1
   - Q-2
   limitations:
-  - Canonical selection identity across projections has only carrier-specific inputs
-    and no unified demand contract.
+  - Some views retain an id without a portable selected object.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete canonical selection identity across
-    projections.
+  - Do not infer selection from matching strings across screens.
   scope_demand_key: journeys.continuity.canonical-selection
   implementation_carrier_bindings:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id076
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-3
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id076
+    evidence_ids:
+    - EVD-49
+    - EVD-52
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id076
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id076
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id076
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id076
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-80
   title: Preserve run selection time attempt and decision context
-  definition: Preserve run selection time attempt and decision context cannot be established
-    across the audited Phase 1 carrier boundaries.
+  definition: Preserve run selection time attempt and decision context is unresolved
+    because return state does not durably store full selection context.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4116,7 +4276,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.continuity.preserve-context.
-  evidence_ids: &id077
+  evidence_ids:
   - EVD-49
   - EVD-51
   - EVD-53
@@ -4131,37 +4291,45 @@ items:
   - Q-1
   - Q-2
   limitations:
-  - Preserve run selection time attempt and decision context has only carrier-specific
-    inputs and no unified demand contract.
+  - A route can retain a run while time, decision, filter, and scroll are local.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete preserve run selection time attempt
-    and decision context.
+  - Do not call route persistence complete context continuity.
   scope_demand_key: journeys.continuity.preserve-context
   implementation_carrier_bindings:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id077
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id077
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id077
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id077
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: ENT-20
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id077
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id077
+    evidence_ids:
+    - EVD-62
+    - EVD-61
+    - EVD-63
 - id: CAP-81
   title: Restore prior ranking filter and scroll position
   definition: Restore prior ranking filter and scroll position is a source demand
@@ -4187,9 +4355,9 @@ items:
   scope_demand_key: journeys.continuity.restore-return-state
   absence_basis: The audit found no implemented carrier for the restore prior ranking
     filter and scroll position demand.
-  disqualifying_input_ids: []
   implementation_carrier_ids: []
   absence_verified: true
+  disqualifying_evidence_ids: []
 - id: CAP-82
   title: Derived claims expose evidence and freshness
   definition: Derived claims expose evidence and freshness is a future product or
@@ -4286,9 +4454,9 @@ items:
     demand.
   absence_contract_ids:
   - ACT-17
-  disqualifying_input_ids: []
   implementation_carrier_ids: []
   absence_verified: true
+  disqualifying_evidence_ids: []
 - id: CAP-86
   title: Approve deny or defer a gate or patch
   definition: The approve, deny, or defer a gate or patch demand is current only as
@@ -4319,10 +4487,18 @@ items:
   - Do not merge graph decision, legacy approval, validator rejection, and patch application
     into one command.
   scope_demand_key: decisions.approve-gate-patch
+  output_contract:
+    semantic_type: RecordGraphDecisionResponse
+    fields:
+    - run_id
+    - graph_position
+    - events
+    - decision_view
+    role: graph-decision-result
 - id: CAP-87
   title: Answer a clarification
-  definition: Answer a clarification cannot be established across the audited Phase
-    1 carrier boundaries.
+  definition: Answer a clarification is unresolved because requests, answers, and
+    outcomes are not consistently bound.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4330,7 +4506,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand decisions.answer-clarification.
-  evidence_ids: &id078
+  evidence_ids:
   - EVD-13
   - EVD-61
   - EVD-62
@@ -4340,43 +4516,48 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Answer a clarification has only carrier-specific inputs and no unified demand
-    contract.
+  - Identity, authority, expiry, and consequences remain incomplete.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete answer a clarification.
+  - Do not treat any text submission as a complete answer.
   scope_demand_key: decisions.answer-clarification
   implementation_carrier_bindings:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id078
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: ENT-20
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id078
+    evidence_ids:
+    - EVD-62
+    - EVD-61
+    - EVD-63
   - id: ACT-29
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id078
+    evidence_ids:
+    - EVD-13
   - id: ACT-30
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id078
+    evidence_ids:
+    - EVD-13
   - id: STA-11
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id078
+    evidence_ids:
+    - EVD-13
   - id: STA-52
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id078
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id078
+    evidence_ids:
+    - EVD-13
 - id: CAP-88
   title: Retry
-  definition: Retry cannot be established across the audited Phase 1 carrier boundaries.
+  definition: Retry is unresolved because revision, recovery, fan-out, and regeneration
+    differ.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4384,7 +4565,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand decisions.retry.
-  evidence_ids: &id079
+  evidence_ids:
   - EVD-14
   - EVD-44
   - EVD-45
@@ -4395,39 +4576,40 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Retry has only carrier-specific inputs and no unified demand contract.
+  - No mode-independent retry identity or result exists.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete retry.
+  - Do not present every requeue or generation as the same retry.
   scope_demand_key: decisions.retry
   implementation_carrier_bindings:
   - id: ACT-31
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id079
+    evidence_ids:
+    - EVD-14
   - id: ACT-34
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id079
+    evidence_ids:
+    - EVD-44
   - id: ACT-38
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id079
+    evidence_ids:
+    - EVD-45
   - id: ACT-39
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id079
+    evidence_ids:
+    - EVD-45
   - id: ACT-40
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id079
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id079
+    evidence_ids:
+    - EVD-45
 - id: CAP-89
   title: Pause resume or cancel
-  definition: Pause resume or cancel cannot be established across the audited Phase
-    1 carrier boundaries.
+  definition: Pause resume or cancel is unresolved because lifecycle actions have
+    mode-specific reachability and contradictory preservation.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4435,7 +4617,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand decisions.lifecycle.
-  evidence_ids: &id080
+  evidence_ids:
   - EVD-7
   - EVD-8
   - EVD-11
@@ -4451,68 +4633,93 @@ items:
   - CON-7
   question_ids: []
   limitations:
-  - Pause resume or cancel has only carrier-specific inputs and no unified demand
-    contract.
+  - Rest and graph paths can change different carriers.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete pause resume or cancel.
+  - Do not assume one mode controls every active execution.
   scope_demand_key: decisions.lifecycle
   implementation_carrier_bindings:
   - id: ACT-18
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-7
+    - EVD-8
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-19
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-7
+    - EVD-19
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-20
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: ACT-21
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-7
+    - EVD-11
+    - EVD-20
+    - EVD-38
+    - EVD-39
+    - EVD-40
   - id: STA-2
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-7
   - id: STA-3
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-8
   - id: STA-4
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-7
   - id: STA-7
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-11
   - id: STA-18
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-18
   - id: STA-20
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-17
   - id: STA-22
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-20
   - id: STA-25
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id080
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id080
+    evidence_ids:
+    - EVD-20
 - id: CAP-90
   title: Retire or supersede a strand
-  definition: Retire or supersede a strand cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Retire or supersede a strand is unresolved because topology changes
+    and recovery lack a durable strand/successor relation.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4520,7 +4727,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand decisions.retire-supersede.
-  evidence_ids: &id081
+  evidence_ids:
   - EVD-37
   - EVD-41
   - EVD-61
@@ -4531,28 +4738,25 @@ items:
   question_ids:
   - Q-6
   limitations:
-  - Retire or supersede a strand has only carrier-specific inputs and no unified demand
-    contract.
+  - No action records a queryable retired-to-replacement mapping.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete retire or supersede a strand.
+  - Do not interpret cancellation or a later task as formal supersession.
   scope_demand_key: decisions.retire-supersede
   implementation_carrier_bindings:
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id081
+    evidence_ids:
+    - EVD-37
   - id: PER-4
     role: permission-contract
     semantic_type: PermissionContract
-    evidence_ids: *id081
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id081
+    evidence_ids:
+    - EVD-41
 - id: CAP-91
   title: Requeue failed outbox or work
-  definition: Requeue failed outbox or work cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Requeue failed outbox or work is unresolved because outbox requeue and
+    work recovery target different failure records.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4560,7 +4764,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand decisions.requeue.
-  evidence_ids: &id082
+  evidence_ids:
   - EVD-23
   - EVD-41
   - EVD-61
@@ -4570,36 +4774,37 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Requeue failed outbox or work has only carrier-specific inputs and no unified
-    demand contract.
+  - No typed relation proves the failed item was safely requeued.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete requeue failed outbox or work.
+  - Do not claim a requeue repaired work because it was accepted.
   scope_demand_key: decisions.requeue
   implementation_carrier_bindings:
   - id: ENT-18
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id082
+    evidence_ids:
+    - EVD-60
+    - EVD-58
   - id: ACT-14
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id082
+    evidence_ids:
+    - EVD-23
   - id: STA-26
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id082
+    evidence_ids:
+    - EVD-23
   - id: STA-27
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id082
+    evidence_ids:
+    - EVD-23
   - id: PER-4
     role: permission-contract
     semantic_type: PermissionContract
-    evidence_ids: *id082
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id082
+    evidence_ids:
+    - EVD-41
 - id: CAP-92
   title: Steer with new context
   definition: Steer with new context is a source demand with audited partial or absent
@@ -4626,9 +4831,9 @@ items:
     demand.
   absence_contract_ids:
   - ACT-15
-  disqualifying_input_ids: []
   implementation_carrier_ids: []
   absence_verified: true
+  disqualifying_evidence_ids: []
 - id: CAP-93
   title: Apply a steering patch
   definition: Apply a steering patch is a source demand with audited partial or absent
@@ -4640,7 +4845,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand decisions.apply-steering-patch.
-  evidence_ids: &id083
+  evidence_ids:
   - EVD-37
   - EVD-41
   - EVD-61
@@ -4661,35 +4866,34 @@ items:
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id083
-  - id: ACT-16
-    role: action-contract
-    semantic_type: ActionContract
-    evidence_ids: *id083
+    evidence_ids:
+    - EVD-37
   - id: STA-54
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id083
+    evidence_ids:
+    - EVD-37
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id083
+    evidence_ids:
+    - EVD-37
   - id: STA-64
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id083
+    evidence_ids:
+    - EVD-37
   - id: PER-4
     role: permission-contract
     semantic_type: PermissionContract
-    evidence_ids: *id083
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id083
+    evidence_ids:
+    - EVD-41
+  absence_contract_ids:
+  - ACT-16
 - id: CAP-94
   title: Change a routine prompt or policy
-  definition: Change a routine prompt or policy cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Change a routine prompt or policy is unresolved because source edits,
+    agent configuration, and packets are not durably bound.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4697,7 +4901,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand decisions.change-source.
-  evidence_ids: &id084
+  evidence_ids:
   - EVD-32
   - EVD-33
   - EVD-49
@@ -4705,68 +4909,87 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Change a routine prompt or policy has only carrier-specific inputs and no unified
-    demand contract.
+  - A saved edit does not prove future execution receipt.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete change a routine prompt or policy.
+  - Do not treat a source save as execution delivery evidence.
   scope_demand_key: decisions.change-source
   implementation_carrier_bindings:
   - id: ENT-1
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-49
   - id: ACT-66
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-32
   - id: ACT-67
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-32
   - id: ACT-68
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-33
   - id: ACT-69
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-33
   - id: ACT-70
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-33
   - id: ACT-71
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-33
   - id: STA-47
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-32
   - id: STA-48
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-32
   - id: STA-66
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-33
   - id: STA-67
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-33
   - id: STA-68
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-33
   - id: STA-69
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-33
   - id: PER-7
     role: permission-contract
     semantic_type: PermissionContract
-    evidence_ids: *id084
+    evidence_ids:
+    - EVD-29
+    - EVD-31
+    - EVD-33
+    - EVD-34
+    - EVD-35
+    - EVD-47
+    - EVD-48
 - id: CAP-95
   title: Show timestamp or age for live health inputs
   definition: Show timestamp or age for live health inputs is a future product or
@@ -4926,8 +5149,8 @@ items:
   scope_demand_key: honesty.directive-binding-proof
 - id: CAP-102
   title: Command accepted or rejected
-  definition: Command accepted or rejected cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Command accepted or rejected is unresolved because responses, graph
+    events, and durable records differ in identity/coverage.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4935,7 +5158,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand feedback.command-accepted-rejected.
-  evidence_ids: &id085
+  evidence_ids:
   - EVD-37
   - EVD-46
   - EVD-61
@@ -4945,32 +5168,30 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Command accepted or rejected has only carrier-specific inputs and no unified demand
-    contract.
+  - No universal command-result record spans all paths.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete command accepted or rejected.
+  - Do not equate transport success with durable acceptance.
   scope_demand_key: feedback.command-accepted-rejected
   implementation_carrier_bindings:
   - id: STA-54
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id085
+    evidence_ids:
+    - EVD-37
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id085
+    evidence_ids:
+    - EVD-37
   - id: STA-61
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id085
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id085
+    evidence_ids:
+    - EVD-46
 - id: CAP-103
   title: Validation result and reason
-  definition: Validation result and reason cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Validation result and reason is unresolved because validator families
+    lack one result/reason schema.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -4978,7 +5199,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand feedback.validation-result-reason.
-  evidence_ids: &id086
+  evidence_ids:
   - EVD-37
   - EVD-46
   - EVD-58
@@ -4988,44 +5209,45 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Validation result and reason has only carrier-specific inputs and no unified demand
-    contract.
+  - Their reasons are not one durable explanation identity.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete validation result and reason.
+  - Do not replace a detailed reason with a generic status code.
   scope_demand_key: feedback.validation-result-reason
   implementation_carrier_bindings:
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id086
+    evidence_ids:
+    - EVD-37
   - id: ACT-45
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id086
+    evidence_ids:
+    - EVD-37
   - id: ACT-65
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id086
+    evidence_ids:
+    - EVD-46
   - id: STA-54
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id086
+    evidence_ids:
+    - EVD-37
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id086
+    evidence_ids:
+    - EVD-37
   - id: STA-61
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id086
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id086
+    evidence_ids:
+    - EVD-46
 - id: CAP-104
   title: Durable event or record identity
-  definition: Durable event or record identity cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Durable event or record identity is unresolved because events, attempts,
+    and batches use different identity/order rules.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -5033,7 +5255,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand feedback.durable-identity.
-  evidence_ids: &id087
+  evidence_ids:
   - EVD-49
   - EVD-56
   - EVD-58
@@ -5049,40 +5271,34 @@ items:
   - CON-8
   question_ids: []
   limitations:
-  - Durable event or record identity has only carrier-specific inputs and no unified
-    demand contract.
+  - Local identifiers lack a typed global join.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete durable event or record identity.
+  - Do not construct durable identity by concatenating IDs or timestamps.
   scope_demand_key: feedback.durable-identity
   implementation_carrier_bindings:
   - id: ENT-9
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id087
+    evidence_ids:
+    - EVD-49
+    - EVD-56
+    - EVD-51
   - id: ENT-11
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id087
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id087
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id087
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id087
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id087
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-105
   title: Resulting lifecycle topology or decision state
-  definition: Resulting lifecycle topology or decision state cannot be established
-    across the audited Phase 1 carrier boundaries.
+  definition: Resulting lifecycle topology or decision state is unresolved because
+    actions independently update workflow, graph, and decisions.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -5090,7 +5306,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand feedback.resulting-state.
-  evidence_ids: &id088
+  evidence_ids:
   - EVD-7
   - EVD-8
   - EVD-11
@@ -5111,89 +5327,102 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Resulting lifecycle topology or decision state has only carrier-specific inputs
-    and no unified demand contract.
+  - Local results lack a complete cross-mode post-action projection.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete resulting lifecycle topology or decision
-    state.
+  - Do not infer global state from one emitted event.
   scope_demand_key: feedback.resulting-state
   implementation_carrier_bindings:
   - id: STA-2
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-7
   - id: STA-3
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-8
   - id: STA-4
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-7
   - id: STA-7
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-11
   - id: STA-9
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-12
   - id: STA-14
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-12
+    - EVD-45
   - id: STA-15
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-16
   - id: STA-18
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-18
   - id: STA-22
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-20
   - id: STA-23
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-21
   - id: STA-24
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-22
   - id: STA-25
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-20
   - id: STA-33
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-25
   - id: STA-34
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-26
   - id: STA-35
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-20
   - id: STA-37
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-27
   - id: STA-54
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-37
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id088
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id088
+    evidence_ids:
+    - EVD-37
 - id: CAP-106
   title: Next expected system activity
   definition: Next expected system activity is a source demand with audited partial
@@ -5205,7 +5434,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand feedback.next-activity.
-  evidence_ids: &id089
+  evidence_ids:
   - EVD-7
   - EVD-8
   - EVD-12
@@ -5232,47 +5461,43 @@ items:
   - id: STA-2
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id089
+    evidence_ids:
+    - EVD-7
   - id: STA-3
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id089
+    evidence_ids:
+    - EVD-8
   - id: STA-9
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id089
+    evidence_ids:
+    - EVD-12
   - id: STA-10
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id089
+    evidence_ids:
+    - EVD-12
   - id: STA-18
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id089
+    evidence_ids:
+    - EVD-18
   - id: STA-29
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id089
+    evidence_ids:
+    - EVD-24
   - id: STA-30
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id089
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id089
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id089
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id089
+    evidence_ids:
+    - EVD-24
+    - EVD-20
 - id: CAP-107
   title: Recovery path for failure or stale-state race
-  definition: Recovery path for failure or stale-state race cannot be established
-    across the audited Phase 1 carrier boundaries.
+  definition: Recovery path for failure or stale-state race is unresolved because
+    retry, requeue, correction, and conflict recovery have separate contracts.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -5280,7 +5505,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand feedback.failure-race-recovery.
-  evidence_ids: &id090
+  evidence_ids:
   - EVD-13
   - EVD-14
   - EVD-23
@@ -5294,41 +5519,41 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Recovery path for failure or stale-state race has only carrier-specific inputs
-    and no unified demand contract.
+  - No common path identity or resolution proof exists.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete recovery path for failure or stale-state
-    race.
+  - Do not treat accepted recovery as proof the condition resolved.
   scope_demand_key: feedback.failure-race-recovery
   implementation_carrier_bindings:
   - id: ACT-13
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id090
+    evidence_ids:
+    - EVD-37
   - id: ACT-14
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id090
+    evidence_ids:
+    - EVD-23
   - id: ACT-29
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id090
+    evidence_ids:
+    - EVD-13
   - id: ACT-31
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id090
+    evidence_ids:
+    - EVD-14
   - id: ACT-34
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id090
+    evidence_ids:
+    - EVD-44
   - id: ACT-38
     role: action-contract
     semantic_type: ActionContract
-    evidence_ids: *id090
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id090
+    evidence_ids:
+    - EVD-45
 - id: CAP-108
   title: Evidence convergence
   definition: Evidence convergence is a source demand with audited partial or absent
@@ -5340,7 +5565,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand ia.health.evidence-convergence.
-  evidence_ids: &id091
+  evidence_ids:
   - EVD-56
   - EVD-58
   - EVD-74
@@ -5360,23 +5585,23 @@ items:
   - id: ENT-7
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id091
+    evidence_ids:
+    - EVD-49
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id091
+    evidence_ids:
+    - EVD-58
+    - EVD-56
   - id: ENT-16
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id091
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id091
+    evidence_ids:
+    - EVD-58
 - id: CAP-109
   title: Needs-decision classification
-  definition: Needs-decision classification cannot be established across the audited
-    Phase 1 carrier boundaries.
+  definition: Needs-decision classification is unresolved because clarification and
+    graph wait states lack a common positive classifier.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -5384,7 +5609,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand ia.health.needs-decision.
-  evidence_ids: &id092
+  evidence_ids:
   - EVD-13
   - EVD-27
   - EVD-57
@@ -5394,28 +5619,27 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Needs-decision classification has only carrier-specific inputs and no unified
-    demand contract.
+  - Priority, ownership, and no-work boundaries are not normalized.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete needs-decision classification.
+  - Do not infer needs-decision from emptiness or one pending row.
   scope_demand_key: ia.health.needs-decision
   implementation_carrier_bindings:
   - id: ENT-19
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id092
+    evidence_ids:
+    - EVD-49
+    - EVD-61
   - id: STA-11
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id092
+    evidence_ids:
+    - EVD-13
   - id: STA-36
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id092
-  - id: EVI-8
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id092
+    evidence_ids:
+    - EVD-27
 - id: CAP-110
   title: Degraded classification
   definition: Degraded classification is a source demand with audited partial or absent
@@ -5427,7 +5651,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand ia.health.degraded.
-  evidence_ids: &id093
+  evidence_ids:
   - EVD-10
   - EVD-16
   - EVD-22
@@ -5448,39 +5672,40 @@ items:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id093
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-6
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id093
+    evidence_ids:
+    - EVD-55
   - id: STA-15
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id093
+    evidence_ids:
+    - EVD-16
   - id: STA-24
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id093
+    evidence_ids:
+    - EVD-22
   - id: STA-34
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id093
+    evidence_ids:
+    - EVD-26
   - id: STA-41
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id093
+    evidence_ids:
+    - EVD-28
   - id: STA-55
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id093
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id093
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id093
+    evidence_ids:
+    - EVD-37
 - id: CAP-111
   title: Stalled classification
   definition: Stalled classification is a source demand with audited partial or absent
@@ -5492,7 +5717,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand ia.health.stalled.
-  evidence_ids: &id094
+  evidence_ids:
   - EVD-20
   - EVD-23
   - EVD-24
@@ -5516,35 +5741,37 @@ items:
   - id: ENT-17
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id094
+    evidence_ids:
+    - EVD-58
+    - EVD-57
   - id: ENT-18
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id094
+    evidence_ids:
+    - EVD-60
+    - EVD-58
   - id: STA-26
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id094
+    evidence_ids:
+    - EVD-23
   - id: STA-30
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id094
+    evidence_ids:
+    - EVD-24
+    - EVD-20
   - id: STA-31
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id094
+    evidence_ids:
+    - EVD-24
   - id: STA-32
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id094
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id094
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id094
+    evidence_ids:
+    - EVD-20
+    - EVD-24
 - id: CAP-112
   title: Runaway classification
   definition: Runaway classification is a source demand with audited partial or absent
@@ -5556,7 +5783,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand ia.health.runaway.
-  evidence_ids: &id095
+  evidence_ids:
   - EVD-54
   - EVD-56
   - EVD-58
@@ -5579,19 +5806,16 @@ items:
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id095
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-17
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id095
-  - id: EVI-5
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id095
-  - id: EVI-9
-    role: evidence-inventory
-    semantic_type: UsageTelemetry
-    evidence_ids: *id095
+    evidence_ids:
+    - EVD-58
+    - EVD-57
 - id: CAP-113
   title: Steered classification
   definition: Steered classification is a source demand with audited partial or absent
@@ -5622,13 +5846,13 @@ items:
     demand.
   absence_contract_ids:
   - ACT-15
-  disqualifying_input_ids: []
   implementation_carrier_ids: []
   absence_verified: true
+  disqualifying_evidence_ids: []
 - id: CAP-114
   title: Settled classification
-  definition: Settled classification cannot be established across the audited Phase
-    1 carrier boundaries.
+  definition: Settled classification is unresolved because terminal states have different
+    finality rules.
   implementation_status: partial
   test_status: unknown
   documentation_status: documented
@@ -5636,7 +5860,7 @@ items:
   epistemic_status: unknown
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand ia.health.settled.
-  evidence_ids: &id096
+  evidence_ids:
   - EVD-9
   - EVD-12
   - EVD-21
@@ -5645,40 +5869,37 @@ items:
   conflict_ids: []
   question_ids: []
   limitations:
-  - Settled classification has only carrier-specific inputs and no unified demand
-    contract.
+  - No classifier combines lifecycle, verification, decisions, and topology.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete settled classification.
+  - Do not label a run settled from one terminal node or quiet stream.
   scope_demand_key: ia.health.settled
   implementation_carrier_bindings:
   - id: STA-5
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id096
+    evidence_ids:
+    - EVD-9
   - id: STA-14
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id096
+    evidence_ids:
+    - EVD-12
+    - EVD-45
   - id: STA-23
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id096
+    evidence_ids:
+    - EVD-21
   - id: STA-33
     role: state-input
     semantic_type: StateRecord
-    evidence_ids: *id096
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id096
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id096
+    evidence_ids:
+    - EVD-25
 - id: CAP-115
   title: Run region step node task attempt record event requirement identity chain
   definition: Run region step node task attempt record event requirement identity
-    chain cannot be established across the audited Phase 1 carrier boundaries.
+    chain is unresolved because run-step-task-attempt is enforced but region/graph-core
+    joins are untyped.
   implementation_status: partial
   test_status: unknown
   documentation_status: conflicting
@@ -5686,7 +5907,7 @@ items:
   epistemic_status: unknown
   confidence: low
   confidence_basis: Adjudication of evidence for the specific source demand ia.selection.identity-chain.
-  evidence_ids: &id097
+  evidence_ids:
   - EVD-49
   - EVD-51
   - EVD-58
@@ -5702,45 +5923,51 @@ items:
   - Q-1
   - Q-2
   limitations:
-  - Run region step node task attempt record event requirement identity chain has
-    only carrier-specific inputs and no unified demand contract.
+  - Component identities lack an integrated durable selection chain.
   prohibited_interpretations:
-  - Do not treat a partial carrier as complete run region step node task attempt record
-    event requirement identity chain.
+  - Do not infer joins from equal strings or claim a full chain.
   scope_demand_key: ia.selection.identity-chain
   implementation_carrier_bindings:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id097
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-3
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id097
+    evidence_ids:
+    - EVD-49
+    - EVD-52
   - id: ENT-4
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id097
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-53
   - id: ENT-5
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id097
+    evidence_ids:
+    - EVD-49
+    - EVD-51
+    - EVD-54
   - id: ENT-13
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id097
+    evidence_ids:
+    - EVD-58
+    - EVD-59
+    - EVD-53
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id097
-  - id: EVI-1
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id097
-  - id: EVI-2
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id097
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-116
   title: Active comparison target
   definition: Active comparison target is a source demand with audited partial or
@@ -5765,9 +5992,9 @@ items:
   scope_demand_key: ia.selection.comparison-target
   absence_basis: The audit found no implemented carrier for the active comparison
     target demand.
-  disqualifying_input_ids: []
   implementation_carrier_ids: []
   absence_verified: true
+  disqualifying_evidence_ids: []
 - id: CAP-117
   title: Freshness and capability annotations persist with selection
   definition: Freshness and capability annotations persist with selection is a source
@@ -5780,7 +6007,7 @@ items:
   epistemic_status: observed
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand ia.selection.freshness-annotations.
-  evidence_ids: &id098
+  evidence_ids:
   - EVD-53
   - EVD-56
   - EVD-58
@@ -5801,19 +6028,21 @@ items:
   - id: ENT-2
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id098
+    evidence_ids:
+    - EVD-49
+    - EVD-50
+    - EVD-51
   - id: ENT-7
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id098
+    evidence_ids:
+    - EVD-49
   - id: ENT-15
     role: entity-input
     semantic_type: EntityRecord
-    evidence_ids: *id098
-  - id: EVI-3
-    role: evidence-inventory
-    semantic_type: EvidenceInventory
-    evidence_ids: *id098
+    evidence_ids:
+    - EVD-58
+    - EVD-56
 - id: CAP-118
   title: Distinct semantic vocabulary remains stable across projections
   definition: Distinct semantic vocabulary remains stable across projections is a

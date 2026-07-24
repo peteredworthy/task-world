@@ -326,7 +326,7 @@ class CarrierBinding(BaseModel):
     id: str = Field(pattern=r"^(?:ENT|STA|EVI|ACT|PER)-[0-9]+$")
     role: str = Field(min_length=1)
     semantic_type: str = Field(min_length=1)
-    evidence_ids: list[str] = []
+    evidence_ids: list[str] = Field(min_length=1)
 
 
 class DerivationEvidenceBinding(BaseModel):
@@ -349,6 +349,7 @@ class EvidenceRecord(BaseModel):
     reachable: bool = False
     test_status: Literal["exercised", "unexercised", "contradicted", "unknown"] | None = None
     evidence_type: str | None = None
+    supported_semantic_types: list[str] = []
 
 
 class CommandDeclaration(BaseModel):
@@ -1097,6 +1098,23 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     for item in registry.items if registry else []:
         status = item.get("capability_status")
         implementation = item.get("implementation_status")
+        output_contract = item.get("output_contract")
+        output_semantic_type = (
+            output_contract.get("semantic_type") if isinstance(output_contract, dict) else None
+        )
+        if status in {"current", "derived"} and (
+            not isinstance(output_contract, dict)
+            or not isinstance(output_semantic_type, str)
+            or not output_semantic_type.strip()
+            or not _nonempty_string_list(output_contract.get("fields"))
+        ):
+            issues.append(
+                _issue(
+                    "CAPABILITY_OUTPUT_CONTRACT_INVALID",
+                    package.root / "capabilities/registry.yaml",
+                    item.get("id"),
+                )
+            )
         if status == "current":
             evidence_ids = item.get("evidence_ids")
             records = (
@@ -1173,6 +1191,20 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 if isinstance(evidence_ids, list)
                 else []
             )
+            if isinstance(output_semantic_type, str) and not any(
+                _is_direct_evidence(record)
+                and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
+                and record.get("reachable") is True
+                and output_semantic_type in _string_list(record.get("supported_semantic_types"))
+                for record in raw_records
+            ):
+                issues.append(
+                    _issue(
+                        "CURRENT_OUTPUT_SEMANTIC_EVIDENCE_MISSING",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
             if not any(
                 _is_direct_evidence(record)
                 and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
@@ -1405,28 +1437,11 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             )
         if not isinstance(implementation_evidence_ids, list):
             continue
-        input_evidence_ids: set[str] = set()
-        output_evidence_ids: set[str] = set()
-        for capability_ids, target in (
-            (inputs, input_evidence_ids),
-            (value.get("capability_ids"), output_evidence_ids),
-        ):
-            if not isinstance(capability_ids, list):
-                continue
-            for capability_id in capability_ids:
-                if not isinstance(capability_id, str):
-                    continue
-                evidence_ids = raw_capabilities.get(capability_id, {}).get("evidence_ids")
-                if isinstance(evidence_ids, list):
-                    target.update(
-                        evidence_id for evidence_id in evidence_ids if isinstance(evidence_id, str)
-                    )
-        chain_ids = input_evidence_ids | output_evidence_ids
         invalid_chain = not contract_valid or any(
             not isinstance(evidence_id, str)
-            or evidence_id not in chain_ids
             or evidence.get(evidence_id) is None
             or not evidence[evidence_id].reachable
+            or evidence[evidence_id].source_kind not in DIRECT_IMPLEMENTATION_SOURCE_KINDS
             for evidence_id in implementation_evidence_ids
         )
         if invalid_chain:
@@ -1504,6 +1519,22 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     value.get("id"),
                 )
             )
+        output_type = value.get("output_type")
+        semantic_unsupported = not isinstance(output_type, str) or any(
+            output_type
+            not in _string_list(
+                raw_evidence_by_id.get(binding.id, {}).get("supported_semantic_types")
+            )
+            for binding in implementation_bindings
+        )
+        if semantic_unsupported:
+            issues.append(
+                _issue(
+                    "DERIVATION_IMPLEMENTATION_SEMANTIC_UNSUPPORTED",
+                    package.root / relative,
+                    value.get("id"),
+                )
+            )
     for item in registry.items if registry else []:
         if item.get("capability_status") != "derived":
             continue
@@ -1574,27 +1605,17 @@ def _carrier_semantic_type(identifier: str) -> str:
 def _role_accepts_semantic_type(role: str, semantic_type: str) -> bool:
     """Check typed carrier roles without encoding capability-specific allowlists."""
     required = {
+        "entity-input": "EntityRecord",
+        "state-input": "StateRecord",
+        "action-contract": "ActionContract",
+        "permission-contract": "PermissionContract",
+        "evidence-inventory": "EvidenceInventory",
         "reversibility-action": "ActionContract",
         "authority-action": "ActionContract",
         "authority-policy": "PermissionContract",
         "usage-telemetry": "UsageTelemetry",
     }.get(role)
-    if required is not None:
-        return semantic_type == required
-    return role in {
-        "entity-input",
-        "state-input",
-        "action-contract",
-        "permission-contract",
-        "evidence-inventory",
-    } and semantic_type in {
-        "EntityRecord",
-        "StateRecord",
-        "ActionContract",
-        "PermissionContract",
-        "EvidenceInventory",
-        "UsageTelemetry",
-    }
+    return required == semantic_type
 
 
 def _carrier_records(package: FoundationPackage) -> dict[str, dict[str, JsonValue]]:
@@ -1616,6 +1637,21 @@ def _carrier_records(package: FoundationPackage) -> dict[str, dict[str, JsonValu
 
 def _string_list(value: JsonValue) -> list[str]:
     return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+
+def _nonempty_string_list(value: JsonValue) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, str) and bool(item.strip()) for item in value)
+    )
+
+
+def _carrier_is_executable(record: dict[str, JsonValue]) -> bool:
+    identifier = record.get("id")
+    if isinstance(identifier, str) and identifier.startswith("ACT-"):
+        return record.get("implementation_status") == "present" and record.get("executable") is True
+    return record.get("implementation_status") != "absent" and record.get("executable") is not False
 
 
 def _validate_phase_two_capability_coverage(
@@ -1641,6 +1677,9 @@ def _validate_phase_two_capability_coverage(
                     )
                 scope_keys.add(key)
     registry_items = registry.items if registry else []
+    capability_catalog_ids = {
+        identifier for item in registry_items if isinstance((identifier := item.get("id")), str)
+    }
     carrier_records = _carrier_records(package)
     carrier_catalog_ids = set(carrier_records)
     by_demand: dict[str, list[dict[str, JsonValue]]] = {}
@@ -1672,11 +1711,52 @@ def _validate_phase_two_capability_coverage(
                 )
             )
     for item in registry_items:
-        if item.get("capability_status") != "gap" or item.get("implementation_status") != "partial":
-            continue
         identifier = item.get("id")
         raw_bindings = item.get("implementation_carrier_bindings")
+        raw_absence_ids = item.get("absence_contract_ids")
+        absence_ids = set(_string_list(raw_absence_ids))
+        binding_ids = {
+            binding_id
+            for binding in (raw_bindings if isinstance(raw_bindings, list) else [])
+            if isinstance(binding, dict) and isinstance((binding_id := binding.get("id")), str)
+        }
+        if raw_absence_ids not in (None, []) and (
+            not isinstance(raw_absence_ids, list)
+            or not absence_ids
+            or any(
+                absence_id not in carrier_records
+                or _carrier_is_executable(carrier_records[absence_id])
+                for absence_id in absence_ids
+            )
+        ):
+            issues.append(
+                _issue(
+                    "GAP_PARTIAL_ABSENCE_CARRIER_INVALID",
+                    package.root / "capabilities/registry.yaml",
+                    identifier,
+                )
+            )
+        if absence_ids & binding_ids:
+            issues.append(
+                _issue(
+                    "GAP_PARTIAL_ABSENCE_CARRIER_OVERLAP",
+                    package.root / "capabilities/registry.yaml",
+                    identifier,
+                )
+            )
+        if (
+            item.get("capability_status") not in {"gap", "unknown"}
+            or item.get("implementation_status") != "partial"
+        ):
+            continue
         if not isinstance(raw_bindings, list) or not raw_bindings:
+            issues.append(
+                _issue(
+                    "GAP_PARTIAL_CARRIER_UNRESOLVED",
+                    package.root / "capabilities/registry.yaml",
+                    identifier,
+                )
+            )
             continue
         try:
             bindings = [CarrierBinding.model_validate(value) for value in raw_bindings]
@@ -1689,28 +1769,21 @@ def _validate_phase_two_capability_coverage(
                 )
             )
             continue
-        cited_evidence = set(_string_list(item.get("evidence_ids")))
         invalid_binding = any(
             binding.id not in carrier_catalog_ids
             or binding.semantic_type != _carrier_semantic_type(binding.id)
             or not _role_accepts_semantic_type(binding.role, binding.semantic_type)
             for binding in bindings
         )
+        non_executable_binding = any(
+            binding.id in carrier_records
+            and not _carrier_is_executable(carrier_records[binding.id])
+            for binding in bindings
+        )
         unsupported_binding = any(
-            not cited_evidence.intersection(set(binding.evidence_ids))
-            and not cited_evidence.intersection(
-                {
-                    value
-                    for value in _string_list(
-                        carrier_records.get(binding.id, {}).get("evidence_ids")
-                    )
-                }
-                | {
-                    value
-                    for value in _string_list(
-                        carrier_records.get(binding.id, {}).get("audit_evidence_ids")
-                    )
-                }
+            not set(binding.evidence_ids).issubset(
+                set(_string_list(carrier_records.get(binding.id, {}).get("evidence_ids")))
+                | set(_string_list(carrier_records.get(binding.id, {}).get("audit_evidence_ids")))
             )
             for binding in bindings
         )
@@ -1726,6 +1799,14 @@ def _validate_phase_two_capability_coverage(
             issues.append(
                 _issue(
                     "GAP_PARTIAL_CARRIER_EVIDENCE_UNSUPPORTED",
+                    package.root / "capabilities/registry.yaml",
+                    identifier,
+                )
+            )
+        if non_executable_binding:
+            issues.append(
+                _issue(
+                    "GAP_PARTIAL_CARRIER_NON_EXECUTABLE",
                     package.root / "capabilities/registry.yaml",
                     identifier,
                 )
@@ -1774,6 +1855,21 @@ def _validate_phase_two_capability_coverage(
                         identifier,
                     )
                 )
+            if (
+                item.get("capability_status") == "unknown"
+                and isinstance(definition, str)
+                and re.fullmatch(
+                    r".+ cannot be established across the audited Phase 1 carrier boundaries?\.?",
+                    " ".join(definition.split()),
+                )
+            ):
+                issues.append(
+                    _issue(
+                        "CAPABILITY_UNKNOWN_FALLBACK_GENERIC",
+                        package.root / "capabilities/registry.yaml",
+                        identifier,
+                    )
+                )
             if any(
                 item.get(field) in (None, "", [])
                 for field in (
@@ -1811,65 +1907,14 @@ def _validate_phase_two_capability_coverage(
                 carrier_ids = item.get("implementation_carrier_ids")
                 raw_bindings = item.get("implementation_carrier_bindings")
                 absence_basis = item.get("absence_basis")
-                if status == "gap" and implementation_status == "partial":
-                    if (
-                        not isinstance(raw_bindings, list)
-                        or not raw_bindings
-                        or absence_basis not in (None, "")
-                    ):
-                        issues.append(
-                            _issue(
-                                "GAP_PARTIAL_CARRIERS_INVALID",
-                                package.root / "capabilities/registry.yaml",
-                                identifier,
-                            )
+                if implementation_status == "partial" and absence_basis not in (None, ""):
+                    issues.append(
+                        _issue(
+                            "GAP_PARTIAL_CARRIERS_INVALID",
+                            package.root / "capabilities/registry.yaml",
+                            identifier,
                         )
-                    else:
-                        try:
-                            bindings = [
-                                CarrierBinding.model_validate(value) for value in raw_bindings
-                            ]
-                        except ValidationError:
-                            bindings = []
-                            issues.append(
-                                _issue(
-                                    "GAP_PARTIAL_CARRIER_UNRESOLVED",
-                                    package.root / "capabilities/registry.yaml",
-                                    identifier,
-                                )
-                            )
-                        cited_evidence = set(_string_list(evidence_ids))
-                        invalid_binding = any(
-                            binding.id not in carrier_catalog_ids
-                            or binding.semantic_type != _carrier_semantic_type(binding.id)
-                            or not _role_accepts_semantic_type(binding.role, binding.semantic_type)
-                            for binding in bindings
-                        )
-                        unsupported_binding = False
-                        if invalid_binding:
-                            issues.append(
-                                _issue(
-                                    "GAP_PARTIAL_CARRIER_ROLE_TYPE_INVALID",
-                                    package.root / "capabilities/registry.yaml",
-                                    identifier,
-                                )
-                            )
-                        if unsupported_binding:
-                            issues.append(
-                                _issue(
-                                    "GAP_PARTIAL_CARRIER_EVIDENCE_UNSUPPORTED",
-                                    package.root / "capabilities/registry.yaml",
-                                    identifier,
-                                )
-                            )
-                    if not isinstance(raw_bindings, list) or not raw_bindings:
-                        issues.append(
-                            _issue(
-                                "GAP_PARTIAL_CARRIER_UNRESOLVED",
-                                package.root / "capabilities/registry.yaml",
-                                identifier,
-                            )
-                        )
+                    )
                 if status == "gap" and implementation_status == "absent":
                     if (
                         carrier_ids not in (None, [])
@@ -1901,7 +1946,11 @@ def _validate_phase_two_capability_coverage(
                             identifier,
                         )
                     )
-                claims_conflict = "conflict" in basis_text
+                claims_conflict = bool(
+                    re.search(
+                        r"\b(?:unresolved )?conflict(?:ing| exists| remains| between|:)", basis_text
+                    )
+                )
                 claims_question = bool(
                     re.search(
                         r"(?:blocking|unresolved) question|question (?:blocks|remains)", basis_text
@@ -2013,6 +2062,26 @@ def _validate_phase_two_capability_coverage(
                     derivation_id,
                 )
             )
+        if allocation.get("status") == "superseded":
+            key = allocation.get("provisional_key")
+            title = allocation.get("title")
+            outputs = allocation.get("output_capability_ids")
+            if (
+                not isinstance(key, str)
+                or not key.strip()
+                or not isinstance(title, str)
+                or not title.strip()
+                or not isinstance(outputs, list)
+                or not outputs
+                or any(output not in capability_catalog_ids for output in outputs)
+            ):
+                issues.append(
+                    _issue(
+                        "DERIVATION_LEDGER_SUPERSEDED_INVALID",
+                        package.root / "catalog/ids.yaml",
+                        derivation_id,
+                    )
+                )
     issues.extend(_validate_phase_two_projections(package, registry_items))
     return issues
 

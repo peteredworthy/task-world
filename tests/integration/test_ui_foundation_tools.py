@@ -1193,6 +1193,7 @@ def test_partial_gap_rejects_non_action_reversibility_binding(tmp_path: Path) ->
                             "id": "EVI-1",
                             "role": "reversibility-action",
                             "semantic_type": "ActionContract",
+                            "evidence_ids": ["EVD-01"],
                         }
                     ],
                 )
@@ -1232,6 +1233,7 @@ def test_partial_gap_rejects_non_permission_authority_binding(tmp_path: Path) ->
                             "id": "EVI-1",
                             "role": "authority-policy",
                             "semantic_type": "PermissionContract",
+                            "evidence_ids": ["EVD-01"],
                         }
                     ],
                 )
@@ -1271,6 +1273,7 @@ def test_partial_gap_rejects_non_usage_telemetry_cost_binding(tmp_path: Path) ->
                             "id": "EVI-1",
                             "role": "usage-telemetry",
                             "semantic_type": "UsageTelemetry",
+                            "evidence_ids": ["EVD-01"],
                         }
                     ],
                 )
@@ -1310,6 +1313,7 @@ def test_partial_gap_rejects_binding_semantic_type_mismatch(tmp_path: Path) -> N
                             "id": "ACT-01",
                             "role": "reversibility-action",
                             "semantic_type": "UsageTelemetry",
+                            "evidence_ids": ["EVD-01"],
                         }
                     ],
                 )
@@ -1329,6 +1333,215 @@ def test_partial_gap_rejects_binding_semantic_type_mismatch(tmp_path: Path) -> N
     )
     result = run_validator(root)
     assert "GAP_PARTIAL_CARRIER_ROLE_TYPE_INVALID" in issue_codes(result)
+
+
+def test_partial_gap_rejects_typed_carrier_with_unrelated_binding_evidence(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-21",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-02"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "ENT-1",
+                            "role": "entity-input",
+                            "semantic_type": "EntityRecord",
+                            "evidence_ids": ["EVD-02"],
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {"schema_version": "1", "items": [semantic_item("ENT-1", evidence_ids=["EVD-01"])]},
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_CARRIER_EVIDENCE_UNSUPPORTED" in issue_codes(result)
+
+
+def test_partial_unknown_requires_typed_carrier_bindings(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-70",
+                    capability_status="unknown",
+                    implementation_status="partial",
+                    implementation_carrier_bindings=[],
+                )
+            ],
+        },
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_CARRIER_UNRESOLVED" in issue_codes(result)
+
+
+def test_partial_unknown_rejects_absent_carrier(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-70",
+                    capability_status="unknown",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-01"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "ENT-1",
+                            "role": "entity-input",
+                            "semantic_type": "EntityRecord",
+                            "evidence_ids": ["EVD-01"],
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item("ENT-1", implementation_status="absent", evidence_ids=["EVD-01"])
+            ],
+        },
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_CARRIER_NON_EXECUTABLE" in issue_codes(result)
+
+
+def test_partial_gap_rejects_capability_evidence_copied_into_binding(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-21",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-99"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "ENT-1",
+                            "role": "entity-input",
+                            "semantic_type": "EntityRecord",
+                            "evidence_ids": ["EVD-99"],
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/domain-model.yaml",
+        {"schema_version": "1", "items": [semantic_item("ENT-1", evidence_ids=[])]},
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_CARRIER_EVIDENCE_UNSUPPORTED" in issue_codes(result)
+
+
+def test_partial_gap_rejects_absence_contract_as_implementation_carrier(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    absent_action = semantic_item(
+        "ACT-15",
+        implementation_status="absent",
+        executable=False,
+        audit_evidence_ids=["EVD-01"],
+    )
+    write_yaml(root / "reality/actions/act-15.yaml", absent_action)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-21",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-01"],
+                    absence_contract_ids=["ACT-15"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "ACT-15",
+                            "role": "action-contract",
+                            "semantic_type": "ActionContract",
+                            "evidence_ids": ["EVD-01"],
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+    result = run_validator(root)
+    assert {
+        "GAP_PARTIAL_CARRIER_NON_EXECUTABLE",
+        "GAP_PARTIAL_ABSENCE_CARRIER_OVERLAP",
+    } <= set(issue_codes(result))
+
+
+def test_absent_gap_rejects_executable_absence_contract(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/actions/act-1.yaml",
+        semantic_item(
+            "ACT-1",
+            implementation_status="present",
+            executable=True,
+            audit_evidence_ids=["EVD-01"],
+        ),
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-43",
+                    capability_status="gap",
+                    implementation_status="absent",
+                    absence_basis="No implementation exists.",
+                    absence_contract_ids=["ACT-1"],
+                    implementation_carrier_ids=[],
+                )
+            ],
+        },
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_ABSENCE_CARRIER_INVALID" in issue_codes(result)
+
+
+def test_current_and_derived_capabilities_require_output_contracts(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item("CAP-1", capability_status="current"),
+                semantic_item("CAP-2", capability_status="derived"),
+            ],
+        },
+    )
+    result = run_validator(root)
+    assert issue_codes(result).count("CAPABILITY_OUTPUT_CONTRACT_INVALID") == 2
 
 
 def _admitted_derivation_fixture(
@@ -1440,6 +1653,77 @@ def test_derivation_rejects_output_evidence_without_derivation_binding(tmp_path:
     )
     result = run_validator(root)
     assert "DERIVATION_EVIDENCE_BINDING_MISSING" in issue_codes(result)
+
+
+def test_derivation_rejects_real_patch_validator_as_prompt_size_implementation(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    _admitted_derivation_fixture(
+        root,
+        output_contract={"semantic_type": "PromptSize", "fields": ["bytes"]},
+        bindings=[
+            {
+                "id": "EVD-105",
+                "role": "pure-projection-implementation",
+                "path": "src/orchestrator/graph/patch_validator.py",
+                "symbol": "validate_patch",
+                "semantic_type": "PromptSize",
+            }
+        ],
+    )
+    evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+    evidence["items"][2].update(
+        {
+            "id": "EVD-105",
+            "path": "src/orchestrator/graph/patch_validator.py",
+            "symbol": "validate_patch",
+            "supported_semantic_types": ["GraphPatchValidationResult"],
+        }
+    )
+    write_yaml(root / "catalog/evidence.yaml", evidence)
+    derivation = yaml.safe_load(
+        (root / "capabilities/derivations/DRV-01.yaml").read_text(encoding="utf-8")
+    )
+    derivation["implementation_evidence_ids"] = ["EVD-105"]
+    derivation["output_type"] = "PromptSize"
+    derivation["produced_fields"] = ["bytes"]
+    write_yaml(root / "capabilities/derivations/DRV-01.yaml", derivation)
+    registry = yaml.safe_load((root / "capabilities/registry.yaml").read_text(encoding="utf-8"))
+    registry["items"][1]["evidence_ids"] = ["EVD-105"]
+    write_yaml(root / "capabilities/registry.yaml", registry)
+    result = run_validator(root)
+    assert "DERIVATION_IMPLEMENTATION_SEMANTIC_UNSUPPORTED" in issue_codes(result)
+
+
+def test_derivation_rejects_evidence_copied_to_output_without_canonical_semantic_support(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    _admitted_derivation_fixture(
+        root,
+        output_contract={"semantic_type": "Output", "fields": ["result"]},
+        bindings=[
+            {
+                "id": "EVD-03",
+                "role": "pure-projection-implementation",
+                "path": "implementation.py",
+                "symbol": "project",
+                "semantic_type": "Output",
+            }
+        ],
+    )
+    evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+    evidence["items"][2].update(
+        {
+            "path": "implementation.py",
+            "symbol": "project",
+            "supported_semantic_types": ["DifferentOutput"],
+        }
+    )
+    write_yaml(root / "catalog/evidence.yaml", evidence)
+    result = run_validator(root)
+    assert "DERIVATION_IMPLEMENTATION_SEMANTIC_UNSUPPORTED" in issue_codes(result)
 
 
 def test_unresolved_conflict_requires_distinct_claims_evidence_and_affected_ids(
@@ -2244,6 +2528,23 @@ def test_committed_phase_two_registry_preserves_adjudicated_capability_boundarie
     assert claims["derivation_count"] == 0
 
 
+def test_phase_two_validates_superseded_derivation_ledger_bindings(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    append_yaml_item(
+        root / "catalog/ids.yaml",
+        {
+            "namespace": "DRV",
+            "canonical_id": "DRV-1",
+            "provisional_key": "historical-output",
+            "title": "Historical output",
+            "status": "superseded",
+            "output_capability_ids": ["CAP-404"],
+        },
+    )
+    result = run_validator(root)
+    assert "DERIVATION_LEDGER_SUPERSEDED_INVALID" in issue_codes(result)
+
+
 def phase_two_demand(key: str, label: str = "Demand-specific label") -> dict[str, object]:
     return {
         "key": key,
@@ -2358,6 +2659,26 @@ def test_phase_two_rejects_generic_or_incomplete_capability_adjudication(tmp_pat
 
     assert "CAPABILITY_ADJUDICATION_GENERIC" in issue_codes(result)
     assert "CAPABILITY_ORTHOGONAL_STATUS_MISSING" in issue_codes(result)
+
+
+def test_phase_two_rejects_known_generic_unknown_fallback_template(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {"schema_version": "1", "items": [phase_two_demand("claim.one")]},
+    )
+    item = classified_capability(
+        "CAP-1",
+        "claim.one",
+        capability_status="unknown",
+        implementation_status="partial",
+        definition=("Demand cannot be established across the audited Phase 1 carrier boundaries."),
+        implementation_carrier_bindings=[],
+    )
+    write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": [item]})
+    write_cap_allocation(root, "CAP-1", "claim.one")
+    result = run_validator(root)
+    assert "CAPABILITY_UNKNOWN_FALLBACK_GENERIC" in issue_codes(result)
 
 
 def test_phase_two_current_requires_direct_reachable_implementation_and_direct_exercised_test(

@@ -93,59 +93,59 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 
 ## Unknown (56)
 
-- `CAP-2` **Current constraint** — Current constraint cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-3` **Human wait state** — Human wait state cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-4` **Frontier activity** — Frontier activity cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-8` **Active nodes and steps** — Active nodes and steps cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-9` **Dependency path** — Dependency path cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-11` **Blocked reason** — Blocked reason cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-14` **Exact question** — Exact question cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-15` **Why now** — Why now cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-16` **Proposer** — Proposer cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-18` **Decision evidence** — Decision evidence cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-19` **Alternatives** — Alternatives cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-22` **Ordered events** — Ordered events cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-23` **Attempt lineage** — Attempt lineage cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-25` **Patch provenance** — Patch provenance cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-26` **State transitions** — State transitions cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-27` **Retries and rejections** — Retries and rejections cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-28` **Bound input records** — Bound input records cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-29` **Omitted and referenced context** — Omitted and referenced context cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-31` **Transcript** — Transcript cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-32` **Tool activity** — Tool activity cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-33` **Artifacts** — Artifacts cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-34` **File delta** — File delta cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-35` **Output records** — Output records cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-36` **Usage** — Usage cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-37` **Current failure** — Current failure cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-39` **Intervention alternatives** — Intervention alternatives cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-40` **Expected effect** — Expected effect cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-41` **Intervention scope** — Intervention scope cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-45` **Validation path** — Validation path cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-46` **Spend and tokens by node kind** — Spend and tokens by node kind cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-53` **Routine SHA** — Routine SHA cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-54` **Model and profile** — Model and profile cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-55` **Duration** — Duration cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-56` **Tokens** — Tokens cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-61` **Interventions** — Interventions cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-62` **Outcome** — Outcome cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-65` **Data freshness and connection state** — Data freshness and connection state cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-70` **Recorded decision identity and timestamp** — Recorded decision identity and timestamp cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-75` **Exact execution-unit identity** — Exact execution-unit identity cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-76` **Repository file-state boundary** — Repository file-state boundary cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-79` **Canonical selection identity across projections** — Canonical selection identity across projections cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-80` **Preserve run selection time attempt and decision context** — Preserve run selection time attempt and decision context cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-87` **Answer a clarification** — Answer a clarification cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-88` **Retry** — Retry cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-89` **Pause resume or cancel** — Pause resume or cancel cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-90` **Retire or supersede a strand** — Retire or supersede a strand cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-91` **Requeue failed outbox or work** — Requeue failed outbox or work cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-94` **Change a routine prompt or policy** — Change a routine prompt or policy cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-102` **Command accepted or rejected** — Command accepted or rejected cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-103` **Validation result and reason** — Validation result and reason cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-104` **Durable event or record identity** — Durable event or record identity cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-105` **Resulting lifecycle topology or decision state** — Resulting lifecycle topology or decision state cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-107` **Recovery path for failure or stale-state race** — Recovery path for failure or stale-state race cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-109` **Needs-decision classification** — Needs-decision classification cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-114` **Settled classification** — Settled classification cannot be established across the audited Phase 1 carrier boundaries.
-- `CAP-115` **Run region step node task attempt record event requirement identity chain** — Run region step node task attempt record event requirement identity chain cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-2` **Current constraint** — Current constraint is unresolved because legacy and graph constraints have no typed precedence.
+- `CAP-3` **Human wait state** — Human wait state is unresolved because clarification, approval, and graph waits have no common lifecycle.
+- `CAP-4` **Frontier activity** — Frontier activity is unresolved because ready graph work, leased work, and legacy activity use different units.
+- `CAP-8` **Active nodes and steps** — Active nodes and steps is unresolved because legacy steps/tasks and graph nodes are non-equivalent execution units.
+- `CAP-9` **Dependency path** — Dependency path is unresolved because graph edges and legacy dependencies lack a shared path identity.
+- `CAP-11` **Blocked reason** — Blocked reason is unresolved because lifecycle, scheduler, lease, and approval blockers have no priority rule.
+- `CAP-14` **Exact question** — Exact question is unresolved because clarification and graph decisions do not share a question payload.
+- `CAP-15` **Why now** — Why now is unresolved because timestamps show order but not one triggering cause.
+- `CAP-16` **Proposer** — Proposer is unresolved because caller attribution, actor eligibility, and authorization disagree.
+- `CAP-18` **Decision evidence** — Decision evidence is unresolved because decision evidence lacks a typed cross-carrier decision join.
+- `CAP-19` **Alternatives** — Alternatives is unresolved because commands do not enumerate decision-specific feasible alternatives.
+- `CAP-22` **Ordered events** — Ordered events is unresolved because workflow and graph streams have separate public ordering rules.
+- `CAP-23` **Attempt lineage** — Attempt lineage is unresolved because attempt, recovery, fan-out, and graph-generation identities conflict.
+- `CAP-25` **Patch provenance** — Patch provenance is unresolved because patch submission, validation, and effects are not one provenance record.
+- `CAP-26` **State transitions** — State transitions is unresolved because legacy and graph state machines have distinct transition vocabularies.
+- `CAP-27` **Retries and rejections** — Retries and rejections is unresolved because revision, recovery, fan-out, and patch rejection are distinct behaviors.
+- `CAP-28` **Bound input records** — Bound input records is unresolved because bindings, verification, and prompt metadata expose different inputs.
+- `CAP-29` **Omitted and referenced context** — Omitted and referenced context is unresolved because no packet manifest distinguishes omission from summary or absence.
+- `CAP-31` **Transcript** — Transcript is unresolved because legacy traces and graph output have different retention boundaries.
+- `CAP-32` **Tool activity** — Tool activity is unresolved because traces, repetition windows, and output lack durable common tool identity.
+- `CAP-33` **Artifacts** — Artifacts is unresolved because commits, artifact references, and snapshots define different artifacts.
+- `CAP-34` **File delta** — File delta is unresolved because snapshots and commits lack candidate-scoped before/after identity.
+- `CAP-35` **Output records** — Output records is unresolved because trace, verification, artifact, and prompt outputs lack one schema.
+- `CAP-36` **Usage** — Usage is unresolved because returned telemetry omits exception and non-reporting executions.
+- `CAP-37` **Current failure** — Current failure is unresolved because failure states have no current-failure selector.
+- `CAP-39` **Intervention alternatives** — Intervention alternatives is unresolved because action availability has no condition-specific feasibility projection.
+- `CAP-40` **Expected effect** — Expected effect is unresolved because local action effects do not yield a complete consequence set.
+- `CAP-41` **Intervention scope** — Intervention scope is unresolved because targets, topology, and workflow records have untyped joins.
+- `CAP-45` **Validation path** — Validation path is unresolved because request, graph, and result validation are separate carriers.
+- `CAP-46` **Spend and tokens by node kind** — Spend and tokens by node kind is unresolved because node-kind rollups exclude legacy, missing, and exception work.
+- `CAP-53` **Routine SHA** — Routine SHA is unresolved because configuration identity does not persist one executable source SHA.
+- `CAP-54` **Model and profile** — Model and profile is unresolved because defaults, runner selection, and telemetry can differ over time.
+- `CAP-55` **Duration** — Duration is unresolved because start, stop, pause, and failure timestamps use different boundaries.
+- `CAP-56` **Tokens** — Tokens is unresolved because token categories and telemetry coverage differ by runner and mode.
+- `CAP-61` **Interventions** — Interventions is unresolved because patch, recovery, approval, merge, and lifecycle actions lack a taxonomy.
+- `CAP-62` **Outcome** — Outcome is unresolved because completion, verification, merge, and node states have different finality.
+- `CAP-65` **Data freshness and connection state** — Data freshness and connection state is unresolved because event freshness, connection, and UI selection have separate boundaries.
+- `CAP-70` **Recorded decision identity and timestamp** — Recorded decision identity and timestamp is unresolved because clarification, approval, and graph decisions use different identities/clocks.
+- `CAP-75` **Exact execution-unit identity** — Exact execution-unit identity is unresolved because attempts, nodes, executions, and usage rows are not one unit.
+- `CAP-76` **Repository file-state boundary** — Repository file-state boundary is unresolved because commits, worktrees, and artifacts capture different repository moments.
+- `CAP-79` **Canonical selection identity across projections** — Canonical selection identity across projections is unresolved because route, UI, run, task, attempt, and graph IDs lack typed selection joins.
+- `CAP-80` **Preserve run selection time attempt and decision context** — Preserve run selection time attempt and decision context is unresolved because return state does not durably store full selection context.
+- `CAP-87` **Answer a clarification** — Answer a clarification is unresolved because requests, answers, and outcomes are not consistently bound.
+- `CAP-88` **Retry** — Retry is unresolved because revision, recovery, fan-out, and regeneration differ.
+- `CAP-89` **Pause resume or cancel** — Pause resume or cancel is unresolved because lifecycle actions have mode-specific reachability and contradictory preservation.
+- `CAP-90` **Retire or supersede a strand** — Retire or supersede a strand is unresolved because topology changes and recovery lack a durable strand/successor relation.
+- `CAP-91` **Requeue failed outbox or work** — Requeue failed outbox or work is unresolved because outbox requeue and work recovery target different failure records.
+- `CAP-94` **Change a routine prompt or policy** — Change a routine prompt or policy is unresolved because source edits, agent configuration, and packets are not durably bound.
+- `CAP-102` **Command accepted or rejected** — Command accepted or rejected is unresolved because responses, graph events, and durable records differ in identity/coverage.
+- `CAP-103` **Validation result and reason** — Validation result and reason is unresolved because validator families lack one result/reason schema.
+- `CAP-104` **Durable event or record identity** — Durable event or record identity is unresolved because events, attempts, and batches use different identity/order rules.
+- `CAP-105` **Resulting lifecycle topology or decision state** — Resulting lifecycle topology or decision state is unresolved because actions independently update workflow, graph, and decisions.
+- `CAP-107` **Recovery path for failure or stale-state race** — Recovery path for failure or stale-state race is unresolved because retry, requeue, correction, and conflict recovery have separate contracts.
+- `CAP-109` **Needs-decision classification** — Needs-decision classification is unresolved because clarification and graph wait states lack a common positive classifier.
+- `CAP-114` **Settled classification** — Settled classification is unresolved because terminal states have different finality rules.
+- `CAP-115` **Run region step node task attempt record event requirement identity chain** — Run region step node task attempt record event requirement identity chain is unresolved because run-step-task-attempt is enforced but region/graph-core joins are untyped.

@@ -1,6 +1,8 @@
-# Task 14 gap carrier audit
+# Task 14 gap carrier audit (historical report)
 
-## Scope and rules
+> **Canonical authority:** `research/ui-foundation/capabilities/registry.yaml` is the sole Task 14 source. This report is historical context only and does not regenerate or alter canonical records.
+
+## Historical scope and rules
 
 This is a read-only falsification of all 49 `gap` and 56 `unknown` capability
 records against the completed Phase 1 canonical entity, state, evidence-carrier,
@@ -13,10 +15,11 @@ claim, continuity behavior, or derivation.
 
 The seven expected absent gaps withstand challenge: `CAP-43`, `CAP-74`,
 `CAP-81`, `CAP-85`, `CAP-92`, `CAP-113`, and `CAP-116`. The remaining 42 gaps
-must be `partial`. All 56 unknowns remain `partial`; uncertainty, carrier splits,
-or unresolved identity/coverage boundaries prevent a stronger classification.
+were historically assessed as `partial`. All 56 unknowns were historically
+recorded as `partial`; uncertainty, carrier splits, or unresolved identity/coverage
+boundaries prevented a stronger classification.
 
-## Gap findings (49/49)
+## Historical gap findings (49/49)
 
 ### CAP-1 - Health class
 - **Required status:** `gap`; `implementation_status: partial`; `epistemic_status: observed`.
@@ -388,10 +391,10 @@ relevant to any of them; it proves only raw graph patch validation.
 | `CAP-59` | `gap` / `partial` | `observed` | `EVD-14`, `EVD-44`, `EVD-45`, `EVD-49`, `EVD-51`, `EVD-54`, `EVD-57`, `EVD-69`-`EVD-73`; `CON-1`, `Q-1` | Several retry and attempt carriers exist, but identity and taxonomy prevent a canonical retry count. |
 | `CAP-68` | `gap` / `partial` | `observed` | `EVD-13`, `EVD-27`, `EVD-63`, `EVD-69`-`EVD-73`, `EVD-90`, `EVD-91`; no conflict or question | Decision timestamps are inputs, but no wait-start, clock, or age projection implements decision wait age. |
 
-## Machine-consumable audit index
+## Historical audit index
 
-The YAML block covers every current `gap` and `unknown` record. Carrier lists are
-demand-specific decisive canonical IDs, not claims that each carrier implements
+The YAML block is historical audit output only; the canonical registry is authoritative. Carrier lists are
+demand-specific decisive canonical IDs; it does not prescribe registry carrier assignments or claim that each carrier implements
 the whole capability. Empty carriers on absent records are intentional except
 where an explicit absent `ACT` contract records the absence.
 
