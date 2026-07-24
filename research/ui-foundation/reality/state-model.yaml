@@ -63,6 +63,13 @@ items:
   - {id: STA-959, title: "Routine YAML validation result", definition: "The non-mutating routine validation endpoint returned a valid or invalid YAML/schema result with feedback.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "routines validate route audit", evidence_ids: [EVI-939], conflict_ids: [], question_ids: [], limitations: ["Result is response-local and does not persist routine source or metadata"], prohibited_interpretations: ["Routine archived or saved"]}
   - {id: STA-960, title: "Repository absent", definition: "No registered repository metadata/filesystem target is present before add or after removal.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "repository administration route audit", evidence_ids: [EVI-928], conflict_ids: [], question_ids: [], limitations: ["Filesystem and metadata boundaries are route-specific"], prohibited_interpretations: ["Repository authorization state"]}
   - {id: STA-961, title: "Prune preview returned", definition: "The non-mutating prune-preview route returned a computed resulting diff and selection counts for the current worktree view.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "review prune preview route audit", evidence_ids: [EVI-921], conflict_ids: [], question_ids: [], limitations: ["A preview is not a persisted git effect and can be stale before apply"], prohibited_interpretations: ["Git merge applied"]}
+  - {id: STA-962, title: "Graph patch submitted", definition: "Graph patch-attempt carrier records a submitted REST or execution-bound MCP patch before validator acceptance or rejection.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "04-api-actions-authority.md#action-graph-patch and patch validator tests", evidence_ids: [EVI-930], conflict_ids: [], question_ids: [], limitations: ["Budget rejection can additionally create a ready gate on a separate graph-node carrier"], prohibited_interpretations: ["Graph run state or universal command receipt"]}
+  - {id: STA-963, title: "Agent configuration absent", definition: "No agent configuration row exists for the requested agent identity before creation or after deletion.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "04-api-actions-authority.md#action-agent-policy", evidence_ids: [EVI-926], conflict_ids: [], question_ids: [], limitations: ["Absence has no configuration-row payload"], prohibited_interpretations: ["Agent runner unavailable"]}
+  - {id: STA-964, title: "Agent configuration created", definition: "Agent create route returned a newly persisted configuration row.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "agents.py::create_agent route inspection", evidence_ids: [EVI-926], conflict_ids: [], question_ids: [], limitations: ["Creation identity differs from later update/reset effects"], prohibited_interpretations: ["Live run configuration changed"]}
+  - {id: STA-965, title: "Agent configuration updated", definition: "Agent update route returned a persisted configuration-row update.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "agents.py::update_agent route inspection", evidence_ids: [EVI-926], conflict_ids: [], question_ids: [], limitations: ["No expected-version guard or history is established"], prohibited_interpretations: ["Prompt delivery to an active run"]}
+  - {id: STA-966, title: "Agent configuration deleted", definition: "Agent delete route completed removal of its configuration row.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "agents.py::delete_agent route inspection", evidence_ids: [EVI-926], conflict_ids: [], question_ids: [], limitations: ["No restore or undo endpoint is established"], prohibited_interpretations: ["Agent configuration persisted"]}
+  - {id: STA-967, title: "Agent prompt reset", definition: "Agent reset-prompt route restored system_prompt from default_prompt and returned the configuration row.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "agents.py::reset_prompt route inspection", evidence_ids: [EVI-926], conflict_ids: [], question_ids: [], limitations: ["The former custom prompt is not retained by this action"], prohibited_interpretations: ["Generic update or live steering"]}
+  - {id: STA-968, title: "Legacy run paused startup orphan", definition: "Paused legacy row satisfies the route's narrow startup-orphan predicate and is therefore eligible for deletion.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "runs.py::_is_deletable_startup_orphan and delete_run route inspection", evidence_ids: [EVI-936], conflict_ids: [], question_ids: [], limitations: ["Not every paused row is deletable"], prohibited_interpretations: ["Ordinary paused run state"]}
 transitions:
   - {from_state_id: STA-900, to_state_id: STA-900}
   - {from_state_id: STA-954, to_state_id: STA-955}
@@ -72,6 +79,8 @@ transitions:
   - {from_state_id: STA-904, to_state_id: STA-956}
   - {from_state_id: STA-905, to_state_id: STA-956}
   - {from_state_id: STA-906, to_state_id: STA-956}
+  - {from_state_id: STA-903, to_state_id: STA-968}
+  - {from_state_id: STA-968, to_state_id: STA-956}
   - {from_state_id: STA-956, to_state_id: STA-954}
   - {from_state_id: STA-900, to_state_id: STA-901}
   - {from_state_id: STA-901, to_state_id: STA-902}
@@ -117,7 +126,6 @@ transitions:
   - {from_state_id: STA-923, to_state_id: STA-920}
   - {from_state_id: STA-917, to_state_id: STA-921}
   - {from_state_id: STA-919, to_state_id: STA-921}
-  - {from_state_id: STA-921, to_state_id: STA-931}
   - {from_state_id: STA-921, to_state_id: STA-953}
   - {from_state_id: STA-917, to_state_id: STA-922}
   - {from_state_id: STA-917, to_state_id: STA-923}
@@ -125,8 +133,8 @@ transitions:
   - {from_state_id: STA-926, to_state_id: STA-930}
   - {from_state_id: STA-926, to_state_id: STA-931}
   - {from_state_id: STA-932, to_state_id: STA-933}
-  - {from_state_id: STA-933, to_state_id: STA-929}
-  - {from_state_id: STA-933, to_state_id: STA-930}
+  - {from_state_id: STA-962, to_state_id: STA-951}
+  - {from_state_id: STA-962, to_state_id: STA-952}
   - {from_state_id: STA-924, to_state_id: STA-925}
   - {from_state_id: STA-934, to_state_id: STA-935}
   - {from_state_id: STA-935, to_state_id: STA-936}
@@ -147,6 +155,13 @@ transitions:
   - {from_state_id: STA-943, to_state_id: STA-943}
   - {from_state_id: STA-944, to_state_id: STA-944}
   - {from_state_id: STA-945, to_state_id: STA-945}
+  - {from_state_id: STA-963, to_state_id: STA-964}
+  - {from_state_id: STA-964, to_state_id: STA-965}
+  - {from_state_id: STA-965, to_state_id: STA-965}
+  - {from_state_id: STA-965, to_state_id: STA-967}
+  - {from_state_id: STA-967, to_state_id: STA-965}
+  - {from_state_id: STA-965, to_state_id: STA-966}
+  - {from_state_id: STA-966, to_state_id: STA-963}
   - {from_state_id: STA-946, to_state_id: STA-946}
   - {from_state_id: STA-960, to_state_id: STA-947}
   - {from_state_id: STA-947, to_state_id: STA-947}
@@ -163,7 +178,6 @@ transitions:
   - {from_state_id: STA-951, to_state_id: STA-951}
   - {from_state_id: STA-952, to_state_id: STA-952}
   - {from_state_id: STA-924, to_state_id: STA-924}
-  - {from_state_id: STA-939, to_state_id: STA-939}
   - {from_state_id: STA-950, to_state_id: STA-950}
 command_declarations:
   - {id: CMD-900, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/runs; create_run; synchronous row/event creation"}
@@ -173,34 +187,40 @@ command_declarations:
   - {id: CMD-904, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/runs/{id}/resume; resume_run; 202 signal accepted before consumer application"}
   - {id: CMD-905, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/runs/{id}/cancel; cancel_run; 202 signal accepted before row application"}
   - {id: CMD-906, source_kind: command, implementation_status: present, reachable: true, label: "REST DELETE /api/runs/{id}; delete_run; synchronous row deletion"}
-  - {id: CMD-907, source_kind: command, implementation_status: present, reachable: true, label: "Legacy task approve/reject/force-accept/step-skip routes; synchronous workflow decision application"}
   - {id: CMD-908, source_kind: command, implementation_status: present, reachable: true, label: "REST clarification response; respond_to_clarification; synchronous response plus eligible resumption"}
   - {id: CMD-909, source_kind: command, implementation_status: present, reachable: true, label: "REST/MCP complete-recovery; complete_recovery; synchronous task outcome application"}
   - {id: CMD-910, source_kind: command, implementation_status: present, reachable: true, label: "REST retry fan-out child; retry_fanout_child; synchronous targeted task reset"}
-  - {id: CMD-911, source_kind: command, implementation_status: present, reachable: true, label: "REST run transition/recover; transition_run or recover_run; synchronous legacy rewind/recovery"}
-  - {id: CMD-912, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /graph/decisions approval; RecordDecisionCommand; synchronous graph append/projection"}
-  - {id: CMD-913, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /graph/decisions authority denial; RecordDecisionCommand; synchronous graph append/projection"}
-  - {id: CMD-914, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /graph/decisions oversight; RecordDecisionCommand; synchronous graph append/projection"}
+  - {id: CMD-912, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /graph/decisions; RecordDecisionCommand with discriminated approval, authority, or oversight type/value; synchronous graph append/projection"}
   - {id: CMD-915, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /graph/patch; SubmitGraphPatchCommand; synchronous accepted/rejected patch attempt"}
   - {id: CMD-916, source_kind: command, implementation_status: present, reachable: true, label: "Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand; synchronous graph append/projection"}
   - {id: CMD-917, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /graph/outbox/requeue/{event_id}; requeue_outbox; transactional pending reset plus event"}
   - {id: CMD-918, source_kind: command, implementation_status: present, reachable: true, label: "REST/CLI back-merge; back_merge; synchronous git mutation or conflict"}
   - {id: CMD-919, source_kind: command, implementation_status: present, reachable: true, label: "REST/CLI merge-back; merge_back; synchronous git mutation or conflict"}
   - {id: CMD-920, source_kind: command, implementation_status: present, reachable: true, label: "REST review revert-back-merge; revert_back_merge; synchronous git mutation or conflict"}
-  - {id: CMD-921, source_kind: command, implementation_status: present, reachable: true, label: "REST review test or agent-fix; review dispatcher; asynchronous job accepted before result"}
   - {id: CMD-922, source_kind: command, implementation_status: present, reachable: true, label: "REST review conflict resolution; resolve_conflict; synchronous staged conflict effect"}
   - {id: CMD-923, source_kind: command, implementation_status: present, reachable: true, label: "REST review prune preview; preview_prune; synchronous non-mutating preview"}
   - {id: CMD-924, source_kind: command, implementation_status: present, reachable: true, label: "REST review prune apply; apply_prune; synchronous filesystem/git mutation"}
   - {id: CMD-925, source_kind: command, implementation_status: present, reachable: true, label: "REST managed env revert; revert_env_files; synchronous filesystem write"}
   - {id: CMD-926, source_kind: command, implementation_status: present, reachable: true, label: "REST environment snapshot copy; copy_env_snapshot; synchronous filesystem write"}
-  - {id: CMD-927, source_kind: command, implementation_status: present, reachable: true, label: "REST routine archive/unarchive; routine visibility service; synchronous metadata update"}
-  - {id: CMD-928, source_kind: command, implementation_status: present, reachable: true, label: "REST agent create/update/delete/reset; agent service; synchronous configuration-row mutation"}
   - {id: CMD-929, source_kind: command, implementation_status: present, reachable: true, label: "REST runner model-profile defaults PUT; runner defaults service; synchronous configuration-row replacement"}
   - {id: CMD-930, source_kind: command, implementation_status: present, reachable: true, label: "REST repository add; repository service; synchronous clone/symlink/metadata mutation"}
   - {id: CMD-931, source_kind: command, implementation_status: present, reachable: true, label: "REST repository remove; repository service; synchronous destructive filesystem/metadata mutation"}
   - {id: CMD-932, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/routines/validate; validate_routine; synchronous non-mutating YAML/schema response"}
   - {id: CMD-933, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/runs/{run_id}/review/test; start_test_run; 202 asynchronous test-job start before result"}
   - {id: CMD-934, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/runs/{run_id}/review/conflicts/agent-resolve; agent_resolve_conflicts; synchronous dispatch acceptance before agent result"}
+  - {id: CMD-935, source_kind: command, implementation_status: present, reachable: true, label: "REST task approve endpoint; approve_task; synchronous legacy task decision"}
+  - {id: CMD-936, source_kind: command, implementation_status: present, reachable: true, label: "REST task reject endpoint; reject_task; synchronous building-or-failed legacy task outcome"}
+  - {id: CMD-937, source_kind: command, implementation_status: present, reachable: true, label: "REST task force-accept endpoint; force_accept_task; synchronous qualified task completion"}
+  - {id: CMD-938, source_kind: command, implementation_status: present, reachable: true, label: "REST step approve endpoint; approve_step; synchronous approval record/progression"}
+  - {id: CMD-939, source_kind: command, implementation_status: present, reachable: true, label: "REST step skip endpoint; skip_step; synchronous step skip/progression"}
+  - {id: CMD-940, source_kind: command, implementation_status: present, reachable: true, label: "REST backward-transition endpoint; backward_transition; synchronous legacy step/task rewind"}
+  - {id: CMD-941, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/runs/{run_id}/recover; recover_run; synchronous compensating recovery to paused"}
+  - {id: CMD-942, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/routines/{routine_id}/archive; archive_routine; synchronous routine metadata update"}
+  - {id: CMD-943, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/routines/{routine_id}/unarchive; unarchive_routine; synchronous routine metadata update"}
+  - {id: CMD-944, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/agents; create_agent; synchronous configuration-row creation"}
+  - {id: CMD-945, source_kind: command, implementation_status: present, reachable: true, label: "REST PUT /api/agents/{agent_id}; update_agent; synchronous configuration-row update"}
+  - {id: CMD-946, source_kind: command, implementation_status: present, reachable: true, label: "REST DELETE /api/agents/{agent_id}; delete_agent; synchronous configuration-row deletion"}
+  - {id: CMD-947, source_kind: command, implementation_status: present, reachable: true, label: "REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous default-prompt restoration"}
 evidence_records:
   - {id: EVI-900, source_kind: implementation, reachable: true, test_status: exercised, label: "03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions"}
   - {id: EVI-901, source_kind: test, reachable: true, test_status: exercised, label: "tests/unit/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused"}
@@ -239,16 +259,18 @@ evidence_records:
   - {id: EVI-934, source_kind: implementation, reachable: true, test_status: exercised, label: "02-graph-runtime.md#record_decision and #submit_patch domain validation"}
   - {id: EVI-935, source_kind: test, reachable: true, test_status: exercised, label: "tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py closure scope"}
   - {id: EVI-936, source_kind: api, reachable: true, test_status: exercised, label: "src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous row creation/deletion routes"}
-  - {id: EVI-937, source_kind: implementation, reachable: true, test_status: exercised, label: ".superpowers/sdd/task-11-legacy-actions-report.md#fan-out-retry child pending and parent fan-out-running effects"}
-  - {id: EVI-938, source_kind: implementation, reachable: true, test_status: exercised, label: ".superpowers/sdd/task-11-legacy-actions-report.md#transition-back-and-run-recover multi-carrier reset effects"}
+  - {id: EVI-937, source_kind: implementation, reachable: true, test_status: exercised, label: "04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges fan-out carrier behavior"}
+  - {id: EVI-938, source_kind: implementation, reachable: true, test_status: exercised, label: "04-api-actions-authority.md#action-transition-back and #action-run-recover; tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run"}
   - {id: EVI-939, source_kind: api, reachable: true, test_status: unexercised, label: "src/orchestrator/api/routers/routines.py::validate_routine YAML parse and RoutineConfig validation response"}
   - {id: EVI-940, source_kind: api, reachable: true, test_status: unexercised, label: "src/orchestrator/api/routers/review.py::start_test_run 202 test-job start and completion callback"}
   - {id: EVI-941, source_kind: api, reachable: true, test_status: unexercised, label: "src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch and AgentFixStarted"}
 carrier_synchronization:
   - "REST lifecycle acceptance is command evidence and commonly source-preserving; the signal consumer later applies the row transition."
-  - "Graph cancellation transitions graph run and node carriers to graph-local cancelled states before the consumer separately applies legacy row cancellation. No graph-to-row transition is declared."
+  - "Graph cancellation transitions graph-run cancelling to graph-run cancelled; affected graph nodes separately transition from their own pending carrier to cancelled before the consumer separately applies legacy row cancellation. No cross-carrier transition is declared."
   - "Graph completion and failure, legacy row completion and failure, graph node outcomes, and decision records are separately observed carriers, not aliases."
   - "Carrier-local result states document the durable or projected result of the routed family; they do not form a universal applied/rejected receipt."
   - "Fan-out retry changes the failed child to legacy task pending and separately preserves the parent fan-out-running carrier; no one resulting state represents both rows."
   - "Transition-back preserves its eligible legacy run row while separately resetting affected non-completed tasks to pending. Run recovery separately moves failed or paused rows to paused, targets a task for building, and resets downstream tasks to pending."
   - "The REST lifecycle routes inspected reject STOPPING for pause, resume, cancel, and recover. No stopping-to-stopping acceptance transition is declared."
+  - "Graph decision pending-to-recorded, graph node pending-to-outcome, and graph run cancellation are separate carrier-local transitions. Decision recording does not transition a graph node."
+  - "Graph patch submission preserves graph active on the separate graph-run carrier. Submitted patches transition to accepted or rejected patch-attempt carriers; budget rejection can separately create a ready gate."

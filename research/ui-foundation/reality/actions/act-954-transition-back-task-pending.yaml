@@ -4,7 +4,7 @@ definition: Transition-back resets each affected non-completed legacy task to pe
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-911
+command_id: CMD-940
 actor: caller
 permission_requirements: [PER-902]
 preconditions: ["task belongs to a step from the earlier target through the former current step", "task is non-completed"]

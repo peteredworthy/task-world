@@ -1,19 +1,19 @@
 id: ACT-904
 title: Delete run
-definition: Synchronously delete an eligible legacy run, return the deleted-response carrier, and leave later row absence separately observable.
+definition: Synchronously delete an ordinary eligible legacy run, return the deleted-response carrier, and leave later row absence separately observable.
 implementation_status: present
 capability_status: current
 executable: true
 command_id: CMD-906
 actor: caller
 permission_requirements: [PER-900, PER-901, PER-902]
-preconditions: ["run is not active or paused except narrow orphan case"]
+preconditions: ["legacy run is draft, stopping, completed, failed, or cancelled"]
 expected_source_version: "None"
 required_input: {run_id: required}
 validation: ["status-limited deletion"]
 durable_effect: "Deletes the eligible run row and owned records; the synchronous response confirms deletion, while later readback observes absence."
 resulting_state_id: STA-956
-failure_modes: ["404 missing", "409 active or paused"]
+failure_modes: ["404 missing", "409 active or paused", "409 paused startup orphan requires ACT-934 qualification"]
 stale_state_behavior: "Concurrent start/pause can make deletion conflict."
 idempotency: "Repeat after deletion returns missing."
 retry_behavior: "Refresh status; do not retry destructive request blindly."
@@ -23,5 +23,5 @@ transition: {from_state_ids: [STA-900, STA-902, STA-904, STA-905, STA-906], to_s
 later_absence_transition: {from_state_id: STA-956, to_state_id: STA-954, evidence_ids: [EVI-936]}
 enforced_authentication: "Optional global valid-bearer gate; disabled by default."
 enforced_authorization: absent
-domain_eligibility: "State-model-covered sources are draft, stopping, completed, failed, or cancelled; the route also has a narrow paused startup-orphan exception that lacks a declared deleted-response edge."
+domain_eligibility: "Ordinary route eligibility is draft, stopping, completed, failed, or cancelled. This contract does not delete an ordinary paused row; the qualified paused startup-orphan path is ACT-934."
 proposed_role_policy: null

@@ -21,7 +21,8 @@ idempotency: "Patch ID is not established as universal idempotency. Retry behavi
 retry_behavior: "Read diagnostics, current graph position, and topology, then submit a new valid corrective patch rather than replaying an assumed-safe request."
 reversibility: "No patch rollback command exists; a later validated corrective patch is a new graph effect, not undo."
 audit_evidence_ids: [EVI-930]
-transition: {from_state_id: STA-951, to_state_id: STA-951}
+transition: {from_state_id: STA-962, to_state_id: STA-951}
+carrier_relationship: {kind: separate graph-run preservation, graph_run_self_loop: {from_state_id: STA-917, to_state_id: STA-917}, caveat: "An accepted patch need not change the graph-run active projection; this separate carrier self-loop is not the patch result transition."}
 enforced_authentication: "PER-900 optional global valid-bearer gate."
 enforced_authorization: absent
 domain_eligibility: "PER-903 SubmitGraphPatchCommand and patch-validator role, run, topology, resource, and stale-read-set rules."

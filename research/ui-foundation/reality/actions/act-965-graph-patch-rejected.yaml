@@ -17,7 +17,8 @@ idempotency: "Patch ID is not universal idempotency; rejected requests remain di
 retry_behavior: "Read the rejection diagnostics and current projection, then submit a newly valid corrective patch if appropriate."
 reversibility: "The rejected attempt preserves its source graph; no rollback is needed or implied."
 audit_evidence_ids: [EVI-930]
-transition: {from_state_id: STA-952, to_state_id: STA-952}
+transition: {from_state_id: STA-962, to_state_id: STA-952}
+carrier_relationship: {kind: separate graph-run preservation, graph_run_self_loop: {from_state_id: STA-917, to_state_id: STA-917}, caveat: "A rejected patch preserves the graph-run active projection when it was active; a budget rejection may additionally create a ready gate on a separate graph-node carrier."}
 enforced_authentication: "PER-900 optional global valid-bearer gate."
 enforced_authorization: absent
 domain_eligibility: "PER-903 SubmitGraphPatchCommand and patch-validator rejection conditions."

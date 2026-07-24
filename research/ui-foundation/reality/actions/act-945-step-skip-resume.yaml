@@ -4,7 +4,7 @@ definition: Skips the current manual-gate step and performs the immediate paused
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-907
+command_id: CMD-939
 actor: caller
 permission_requirements: [PER-902]
 preconditions: ["legacy run is paused with pause reason manual_gate", "target is the current actionable step"]

@@ -4,7 +4,7 @@ definition: Approves one legacy task in pending-user-action approval state and c
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-907
+command_id: CMD-935
 actor: "fixed or injected user"
 permission_requirements: [PER-902]
 preconditions: ["legacy task is pending user action for approval"]

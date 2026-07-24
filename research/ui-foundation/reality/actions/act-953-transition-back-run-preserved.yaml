@@ -4,7 +4,7 @@ definition: Transition-back preserves the legacy run row carrier while it rewind
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-911
+command_id: CMD-940
 actor: caller
 permission_requirements: [PER-902]
 preconditions: ["target step index is earlier than the current legacy step index"]

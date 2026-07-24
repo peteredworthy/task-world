@@ -4,7 +4,7 @@ definition: Rejects one approval-pending legacy task when no revision attempt re
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-907
+command_id: CMD-936
 actor: "fixed or injected user"
 permission_requirements: [PER-902]
 preconditions: ["legacy task is pending user action for approval", "current attempt has reached the attempt limit"]

@@ -4,7 +4,7 @@ definition: Run recovery resets each affected non-completed downstream legacy ta
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-911
+command_id: CMD-941
 actor: caller
 permission_requirements: [PER-902]
 preconditions: ["legacy run is failed or paused", "task is downstream of the selected recovery target", "task is non-completed"]

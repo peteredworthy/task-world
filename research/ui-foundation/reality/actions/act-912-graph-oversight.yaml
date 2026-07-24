@@ -2,7 +2,7 @@ id: ACT-912
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-914
+command_id: CMD-912
 actor: "Caller-supplied decider; the value is persisted as attribution and is not authenticated-subject authorization."
 permission_requirements: [PER-900, PER-901, PER-903]
 preconditions:
@@ -10,6 +10,7 @@ preconditions:
   - "The target is an eligible nonterminal oversight decision target."
 expected_source_version: "The REST request has no client graph position; the controller supplies the current position and rejects a concurrent append conflict."
 required_input: {decision_type: oversight, value: required, target_node_id: required, decider: required, scope: optional, expiry: optional, reason: optional, record_id: optional}
+command_variant: {discriminator: decision_type, decision_type: oversight, value: required}
 validation:
   - "RecordDecisionCommand strictly validates the oversight decision payload and target eligibility."
   - "PER-903 validates graph state, target terminality, and actor/context shape."
@@ -22,6 +23,7 @@ retry_behavior: "Refresh the oversight decision projection and retry only while 
 reversibility: "No oversight-decision reversal command exists."
 audit_evidence_ids: [EVI-920]
 transition: {from_state_id: STA-932, to_state_id: STA-933}
+carrier_relationship: {kind: decision-projection-only, output_record: none, ordering: "CMD-912 records only the oversight decision projection; it has no paired node-outcome contract or invented output record."}
 enforced_authentication: "PER-900 optional global valid-bearer gate."
 enforced_authorization: absent
 domain_eligibility: "PER-903 oversight target, graph-state, and actor/context validation."

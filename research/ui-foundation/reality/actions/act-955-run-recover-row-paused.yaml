@@ -4,7 +4,7 @@ definition: Run recovery moves a failed row to paused and preserves an already p
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-911
+command_id: CMD-941
 actor: caller
 permission_requirements: [PER-902]
 preconditions: ["legacy run is failed or paused", "target task exists"]
@@ -19,8 +19,8 @@ idempotency: "No idempotency key; recovery rewrites target/downstream state and 
 retry_behavior: "Refresh run, target task, and worktree state before retrying."
 reversibility: "Recovery rewind does not restore files or external effects."
 audit_evidence_ids: [EVI-938]
-transition: {from_state_id: STA-905, to_state_id: STA-903}
-carrier_relationship: {command_group: run_recover, source_preserving_state_ids: [STA-903], paired_effect_action_ids: [ACT-957, ACT-958], affected_carrier: "legacy run row"}
+transition: {from_state_ids: [STA-905, STA-903], to_state_id: STA-903}
+carrier_relationship: {command_group: run_recover, paired_effect_action_ids: [ACT-957, ACT-958], affected_carrier: "legacy run row"}
 enforced_authentication: "Optional global valid-bearer gate"
 enforced_authorization: absent
 domain_eligibility: "Failed or paused legacy run with an existing target task."

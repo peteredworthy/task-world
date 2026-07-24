@@ -17,7 +17,8 @@ idempotency: "No separate idempotency key exists for this data-dependent command
 retry_behavior: "Inspect the decision and node projections; do not independently replay the node outcome."
 reversibility: "No decision reversal or node-completion undo is established."
 audit_evidence_ids: [EVI-920]
-transition: {from_state_id: STA-933, to_state_id: STA-929}
+transition: {from_state_id: STA-926, to_state_id: STA-929}
+carrier_relationship: {kind: same-command node consequence, paired_decision_action_id: ACT-910, decision_transition: {from_state_id: STA-932, to_state_id: STA-933}, command_id: CMD-912, ordering: "The node was pending before the command; decision recording and node completion are parallel carrier-local effects of one discriminated command, not a cross-carrier transition."}
 enforced_authentication: "PER-900 optional global valid-bearer gate."
 enforced_authorization: absent
 domain_eligibility: "PER-903 accepted approval-decision and target-node eligibility."

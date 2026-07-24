@@ -4,7 +4,7 @@ definition: Bypasses grade evaluation and completes one legacy task from its qua
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-907
+command_id: CMD-937
 actor: "fixed or injected user"
 permission_requirements: [PER-902]
 preconditions: ["legacy task is failed, building, or verifying"]

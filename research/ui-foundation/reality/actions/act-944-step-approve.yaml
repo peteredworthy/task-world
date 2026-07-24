@@ -4,7 +4,7 @@ definition: Records approval for the current legacy step's human-approval gate.
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-907
+command_id: CMD-938
 actor: "caller-supplied approver"
 permission_requirements: [PER-902]
 preconditions: ["target is the current actionable step", "step has a human-approval gate"]

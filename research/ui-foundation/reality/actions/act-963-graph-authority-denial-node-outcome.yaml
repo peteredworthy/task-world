@@ -2,12 +2,13 @@ id: ACT-963
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-913
+command_id: CMD-912
 actor: "Caller-supplied decider recorded by ACT-911; no authenticated-subject authorization is enforced."
 permission_requirements: [PER-900, PER-901, PER-903]
 preconditions: ["ACT-911's eligible authority denial has been recorded.", "The authority_request target remains eligible for the command's accepted completion effect."]
 expected_source_version: "This is a node-projection consequence of the current-position authority decision command; no client graph position exists."
 required_input: {decision_type: authority, value: denied, target_node_id: required}
+command_variant: {discriminator: decision_type, decision_type: authority, value: denied}
 validation: ["The preceding RecordDecisionCommand authority target/value validation succeeds.", "PER-903 applies authority-request target and state eligibility."]
 durable_effect: "The accepted AuthorityDecisionRecord is bound where applicable, its scoped lease is released where present, and the authority_request graph node is projected completed."
 resulting_state_id: STA-929
@@ -17,7 +18,8 @@ idempotency: "No separate idempotency key exists for this data-dependent command
 retry_behavior: "Refresh authority decision and node projections before retrying the decision command."
 reversibility: "No authority-decision or node-completion reversal command exists."
 audit_evidence_ids: [EVI-920]
-transition: {from_state_id: STA-933, to_state_id: STA-929}
+transition: {from_state_id: STA-926, to_state_id: STA-929}
+carrier_relationship: {kind: same-command node consequence, paired_decision_action_id: ACT-911, decision_transition: {from_state_id: STA-932, to_state_id: STA-933}, command_id: CMD-912, deferred_downstream_node_state_id: STA-926, ordering: "The authority request was pending before the command; the authority decision and request-node completion are separate carrier-local effects of one discriminated command."}
 enforced_authentication: "PER-900 optional global valid-bearer gate."
 enforced_authorization: absent
 domain_eligibility: "PER-903 accepted authority-request decision eligibility."

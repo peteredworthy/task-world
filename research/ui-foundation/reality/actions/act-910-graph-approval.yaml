@@ -11,6 +11,7 @@ preconditions:
   - "The request value is approved."
 expected_source_version: "The REST request has no client graph position; the controller reads the current position and its transaction/append checks detect a concurrent advance."
 required_input: {decision_type: approval, value: approved, target_node_id: required, decider: required, scope: optional, expiry: optional, reason: optional, record_id: optional}
+command_variant: {discriminator: decision_type, decision_type: approval, value: approved}
 validation:
   - "RecordDecisionCommand strictly validates decision type/value and the approval target kind."
   - "PER-903 graph command domain eligibility validates graph state, target terminality, and actor/context shape."
@@ -23,6 +24,7 @@ retry_behavior: "Refresh the graph decision and node projections, then submit on
 reversibility: "No decision-reversal command exists. A later valid graph command may create a new effect but is not an undo of this decision."
 audit_evidence_ids: [EVI-920]
 transition: {from_state_id: STA-932, to_state_id: STA-933}
+carrier_relationship: {kind: same-command decision carrier, paired_node_outcome_action_id: ACT-960, node_transition: {from_state_id: STA-926, to_state_id: STA-929}, ordering: "One CMD-912 command records the decision and separately projects the node outcome; this is not a STA-933-to-node edge."}
 enforced_authentication: "PER-900 optional global valid-bearer gate."
 enforced_authorization: absent
 domain_eligibility: "PER-903 graph decision target, state, actor/context, and value validation."

@@ -4,7 +4,7 @@ definition: Run recovery moves its target task to building with a new attempt an
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-911
+command_id: CMD-941
 actor: caller
 permission_requirements: [PER-902]
 preconditions: ["legacy run is failed or paused", "target task is selected for recovery"]
