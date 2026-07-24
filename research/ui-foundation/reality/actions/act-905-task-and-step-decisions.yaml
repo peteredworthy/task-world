@@ -1,0 +1,26 @@
+id: ACT-905
+title: Legacy task approval rejection force-accept and step skip
+definition: Routed legacy task/step decision mutation family; rejection has retry and failure result branches.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-901
+actor: fixed or injected user
+permission_requirements: [PER-901]
+preconditions: ["approval pending for approve/reject", "building verifying or failed for force accept", "manual-gate paused current step for skip"]
+expected_source_version: "None"
+required_input: {task_or_step_id: required, operation: "approve|reject|force_accept|skip", comment_or_reason: optional}
+validation: ["task/step transition validation", "attempt limit evaluation"]
+durable_effect: "ApprovalDecision or StepSkipped events; approve/force accept completes; reject returns building with attempts or fails at limit; skip progresses step."
+resulting_state_id: STA-913
+failure_modes: ["404 identity", "409 wrong state", "attempt-limit rejection result is task failed"]
+stale_state_behavior: "Advanced task/step rejects; repeated step approval is last-write-wins."
+idempotency: "No decision id/version; result-state guards vary by operation."
+retry_behavior: "Refresh task/step; rejected-at-limit is STA-914 rather than retryable building."
+reversibility: "Force accept and skip have no exact undo; transition-back is not an exact inverse."
+audit_evidence_ids: [EVI-900]
+transition: {from_state_ids: [STA-908, STA-909, STA-910, STA-914], to_state_ids: [STA-908, STA-913, STA-914]}
+enforced_authentication: "Optional global JWT"
+enforced_authorization: absent
+domain_eligibility: "State-specific workflow checks"
+proposed_role_policy: null

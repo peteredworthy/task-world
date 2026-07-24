@@ -1,0 +1,26 @@
+id: ACT-904
+title: Delete run
+definition: Delete a non-active non-paused run.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-900
+actor: caller
+permission_requirements: [PER-900]
+preconditions: ["run is not active or paused except narrow orphan case"]
+expected_source_version: "None"
+required_input: {run_id: required}
+validation: ["status-limited deletion"]
+durable_effect: "Deletes run row and owned records."
+resulting_state_id: STA-927
+failure_modes: ["404 missing", "409 active or paused"]
+stale_state_behavior: "Concurrent start/pause can make deletion conflict."
+idempotency: "Repeat after deletion returns missing."
+retry_behavior: "Refresh status; do not retry destructive request blindly."
+reversibility: "Irreversible."
+audit_evidence_ids: [EVI-903]
+transition: {from_state_id: STA-927, to_state_id: STA-927}
+enforced_authentication: "Optional global JWT"
+enforced_authorization: absent
+domain_eligibility: "status-limited"
+proposed_role_policy: null

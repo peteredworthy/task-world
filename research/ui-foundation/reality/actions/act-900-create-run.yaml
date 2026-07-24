@@ -1,0 +1,26 @@
+id: ACT-900
+title: Create run
+definition: Create a draft run from a selected routine and runner.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-900
+actor: caller
+permission_requirements: [PER-900]
+preconditions: ["Exactly one routine source", "selectable runner and valid configuration"]
+expected_source_version: "None"
+required_input: {routine_source: required, runner: required}
+validation: ["CreateRunRequest schema", "runner selection validation"]
+durable_effect: "Creates run row and creation events."
+resulting_state_id: STA-900
+failure_modes: ["422 malformed request", "404 routine", "runner unavailable"]
+stale_state_behavior: "No source version; duplicate creation creates distinct runs."
+idempotency: "No idempotency key."
+retry_behavior: "Retry after unknown response can create another run."
+reversibility: "Delete is separate and status-limited."
+audit_evidence_ids: [EVI-900]
+transition: {from_state_id: STA-927, to_state_id: STA-900}
+enforced_authentication: "Optional global JWT"
+enforced_authorization: absent
+domain_eligibility: "Schema and runner checks"
+proposed_role_policy: null

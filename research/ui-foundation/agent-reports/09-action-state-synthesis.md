@@ -23,8 +23,11 @@ executable commands.
 - Lifecycle contracts preserve acceptance versus application: REST start,
   pause, resume, and cancel can enqueue a signal before their applied state is
   visible. Pause uniquely exposes `stopping` immediately.
-- Implemented contracts are limited to routed UI-relevant lifecycle, human
-  decision, graph decision/patch, and failed-outbox requeue commands. Each lists
+- Implemented contracts use the routed UI-mutation selection rule from the UI
+  audit: controls mounted by `App.tsx` that issue a write request, plus its
+  explicitly distinct CLI direct-start path. Contracts cover lifecycle/run,
+  task/step/clarification/recovery/fan-out, graph decision type/value families,
+  patch/requeue, merge/review, environment, and administrative mutations. Each lists
   actor/auth boundary, domain eligibility, source-version reality, input,
   validation, durable effects, result carrier, rejection/race behavior,
   idempotency/retry, reversibility, and durable evidence.

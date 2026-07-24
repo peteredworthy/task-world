@@ -32,7 +32,9 @@ they intentionally do not allocate `EVD-*` identifiers.
    transcripts, artifacts, file-state, decisions, and usage each have
    carrier-specific persistence and query guarantees. The inventory records their
    missing behavior and prohibited inferences rather than deriving a unified
-   trace.
+   trace. Every availability statement is qualified as approved-audit reporting:
+   inspected tests were reviewed by that audit, implementation/test sources are
+   not hash-guarded, and this synthesis asserts no fresh test result.
 4. Cost evidence is honest only when `rate_missing`, returned-execution coverage,
    and graph-only rollup scope remain visible. Absent usage and numeric zero are
    not equivalent.

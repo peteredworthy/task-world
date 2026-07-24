@@ -1,55 +1,93 @@
 schema_version: "1"
 phase_status: synthesized-provisional
 completion_phase: 1
-key_namespace: provisional
-scope: "Mode-qualified command states only; graph nodes, legacy tasks, run rows, and outbox rows are distinct carriers."
+key_namespace: "provisional Task-11 numeric range; not catalog allocation"
 items:
-  - {key: state-run-draft, carrier: legacy-run-row, value: draft, mode: legacy, terminal: false, status: implemented}
-  - {key: state-run-active, carrier: run-row, value: active, mode: [legacy, graph], terminal: false, status: implemented}
-  - {key: state-run-stopping, carrier: legacy-run-row, value: stopping, mode: legacy, terminal: false, status: implemented}
-  - {key: state-run-paused, carrier: run-row, value: paused, mode: [legacy, graph], terminal: false, status: implemented}
-  - {key: state-run-completed, carrier: run-row, value: completed, mode: [legacy, graph], terminal: true, status: implemented}
-  - {key: state-run-failed, carrier: run-row, value: failed, mode: [legacy, graph], terminal: conditional, status: implemented, note: "Graph supports a qualified failed reopen; legacy lifecycle resume does not."}
-  - {key: state-run-cancelled, carrier: run-row, value: cancelled, mode: [legacy, graph], terminal: true, status: implemented}
-  - {key: state-task-building, carrier: legacy-task, value: building, mode: legacy, terminal: false, status: implemented}
-  - {key: state-task-pending-user, carrier: legacy-task, value: pending_user_action, mode: legacy, terminal: false, status: implemented}
-  - {key: state-task-verifying, carrier: legacy-task, value: verifying, mode: legacy, terminal: false, status: implemented}
-  - {key: state-task-recovering, carrier: legacy-task, value: recovering, mode: legacy, terminal: false, status: implemented}
-  - {key: state-task-completed, carrier: legacy-task, value: completed, mode: legacy, terminal: true, status: implemented}
-  - {key: state-task-failed, carrier: legacy-task, value: failed, mode: legacy, terminal: true, status: implemented}
-  - {key: state-step-awaiting-approval, carrier: legacy-step-approval, value: pending_human_approval, mode: legacy, terminal: false, status: implemented}
-  - {key: state-step-approved, carrier: legacy-step-approval, value: approved, mode: legacy, terminal: false, status: implemented}
-  - {key: state-graph-queued, carrier: graph-run, value: queued, mode: graph, terminal: false, status: implemented}
-  - {key: state-graph-active, carrier: graph-run, value: active, mode: graph, terminal: false, status: implemented}
-  - {key: state-graph-pausing, carrier: graph-run, value: pausing, mode: graph, terminal: false, status: implemented}
-  - {key: state-graph-paused, carrier: graph-run, value: paused, mode: graph, terminal: false, status: implemented}
-  - {key: state-graph-failed, carrier: graph-run, value: failed, mode: graph, terminal: conditional, status: implemented}
-  - {key: state-graph-node-waiting-decision, carrier: graph-node, value: human_or_authority_gate_pending, mode: graph, terminal: false, status: implemented}
-  - {key: state-graph-node-completed, carrier: graph-node, value: completed, mode: graph, terminal: true, status: implemented}
-  - {key: state-graph-node-failed, carrier: graph-node, value: failed, mode: graph, terminal: true, status: implemented}
-  - {key: state-outbox-failed, carrier: graph-outbox-row, value: failed, mode: graph, terminal: false, status: implemented}
-  - {key: state-outbox-pending, carrier: graph-outbox-row, value: pending, mode: graph, terminal: false, status: implemented}
+  - {id: STA-900, title: "Legacy run draft", definition: "Persisted legacy run before start.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "RunStatus and signal tests", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: ["Not graph draft"]}
+  - {id: STA-901, title: "Run active", definition: "Shared row-level active control state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "Workflow state audit", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: ["Does not alias graph topology"], prohibited_interpretations: ["Not task state"]}
+  - {id: STA-902, title: "Legacy run stopping", definition: "Visible pause-request intermediate.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "pause signal test", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-903, title: "Run paused", definition: "Row-level paused state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "workflow", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-904, title: "Run completed", definition: "Terminal row status.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "engine", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-905, title: "Run failed", definition: "Failed row status.", implementation_status: present, test_status: exercised, documentation_status: conflicting, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "mode audit", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: ["Graph may qualified-reopen"], prohibited_interpretations: ["Universally terminal"]}
+  - {id: STA-906, title: "Run cancelled", definition: "Cancelled terminal row status.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "engine", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-907, title: "Task pending", definition: "Legacy task not started.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "TaskStatus", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: ["Not graph node"]}
+  - {id: STA-908, title: "Task building", definition: "Legacy builder state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "transitions", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-909, title: "Task verifying", definition: "Legacy verifier state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "transitions", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-910, title: "Task pending user action", definition: "Legacy clarification or approval wait.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "transitions", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: ["Wait subtype is separate data"], prohibited_interpretations: []}
+  - {id: STA-911, title: "Task recovering", definition: "Legacy recovery outcome wait.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "workflow", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-912, title: "Task fan-out running", definition: "Legacy fan-out parent state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "workflow", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-913, title: "Task completed", definition: "Terminal legacy task state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "engine", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-914, title: "Task failed", definition: "Terminal legacy task state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "engine", evidence_ids: [EVI-900], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-915, title: "Graph draft", definition: "Graph-local initial state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "COMMAND_SPECS", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: ["Not RunStatus draft"]}
+  - {id: STA-916, title: "Graph queued", definition: "Graph-local accepted pre-start state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "COMMAND_SPECS", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-917, title: "Graph active", definition: "Graph scheduler-enabled state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "COMMAND_SPECS", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: ["Not row active alias"]}
+  - {id: STA-918, title: "Graph pausing", definition: "Graph-local pause intermediate.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "COMMAND_SPECS", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-919, title: "Graph paused", definition: "Graph-local paused state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "COMMAND_SPECS", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-920, title: "Graph resuming", definition: "Graph-local failed/paused reopen intermediate.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "workflow/graph audit", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-921, title: "Graph cancelling", definition: "Graph-local cancellation intermediate.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "COMMAND_SPECS", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-922, title: "Graph completed", definition: "Graph-local terminal completion.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "final gate tests", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: ["Not automatically row completed"]}
+  - {id: STA-923, title: "Graph failed", definition: "Graph-local failed state.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "COMMAND_SPECS", evidence_ids: [EVI-901], conflict_ids: [], question_ids: [], limitations: ["May transition through resuming"], prohibited_interpretations: []}
+  - {id: STA-924, title: "Outbox failed", definition: "Failed graph side-effect row.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "requeue test", evidence_ids: [EVI-902], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-925, title: "Outbox pending", definition: "Requeued graph side-effect row.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "requeue test", evidence_ids: [EVI-902], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-926, title: "Review job queued", definition: "Review async job accepted.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "UI/API audit", evidence_ids: [EVI-903], conflict_ids: [], question_ids: [], limitations: [], prohibited_interpretations: []}
+  - {id: STA-927, title: "Administrative mutation applied", definition: "No shared lifecycle; durable row/file/git effect completed.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "API audit", evidence_ids: [EVI-903], conflict_ids: [], question_ids: [], limitations: ["Carrier-specific state omitted"], prohibited_interpretations: ["Universal action receipt"]}
+  - {id: STA-928, title: "Command rejected", definition: "Observed rejection result family where command emits/reports a rejection.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "graph/action tests", evidence_ids: [EVI-902], conflict_ids: [], question_ids: [], limitations: ["Not a persisted universal state"], prohibited_interpretations: ["Source carrier changed"]}
 transitions:
-  - {key: transition-legacy-start, from: state-run-draft, to: state-run-active, trigger: RUN_START signal consumption, rejection: "Any non-draft source is rejected by the domain transition."}
-  - {key: transition-legacy-pause-request, from: state-run-active, to: state-run-stopping, trigger: pause request acceptance, rejection: "STOPPING is rejected; other invalid lifecycle sources are rejected."}
-  - {key: transition-legacy-pause-applied, from: state-run-stopping, to: state-run-paused, trigger: PAUSE signal consumption, rejection: "Stale or invalid queued signal is discarded/acknowledged rather than applied."}
-  - {key: transition-legacy-resume, from: state-run-paused, to: state-run-active, trigger: RESUME signal consumption, rejection: "Failed legacy runs are not lifecycle-resumable."}
-  - {key: transition-legacy-cancel, from: [state-run-active, state-run-stopping, state-run-paused], to: state-run-cancelled, trigger: CANCEL signal consumption, rejection: "Illegal/terminal sources reject; acceptance is not application."}
-  - {key: transition-legacy-clarification-answer, from: state-task-pending-user, to: state-task-building, trigger: accepted clarification response, rejection: "Stale response conflicts and must not reopen an advanced task."}
-  - {key: transition-legacy-approve-task, from: state-task-pending-user, to: state-task-completed, trigger: accepted task approval, rejection: "Only an approval-pending task is eligible."}
-  - {key: transition-legacy-reject-task, from: state-task-pending-user, to: state-task-building, trigger: accepted task rejection with attempts remaining, rejection: "At attempt limit the result is task-failed, not this edge."}
-  - {key: transition-legacy-recovery-retry, from: state-task-recovering, to: state-task-building, trigger: accepted recovery outcome retry, rejection: "Only recovering tasks accept recovery outcomes."}
-  - {key: transition-legacy-step-approve, from: state-step-awaiting-approval, to: state-step-approved, trigger: recorded step approval, rejection: "Only the current actionable gated step is eligible."}
-  - {key: transition-graph-start, from: state-graph-queued, to: state-graph-active, trigger: graph start command, rejection: "Only queued graph runs start."}
-  - {key: transition-graph-pause-begin, from: state-graph-active, to: state-graph-pausing, trigger: graph pause command, rejection: "Only active graph runs begin pausing."}
-  - {key: transition-graph-pause-complete, from: state-graph-pausing, to: state-graph-paused, trigger: graph pause command, rejection: "Only pausing graph runs complete pause."}
-  - {key: transition-graph-resume, from: [state-graph-paused, state-graph-failed], to: state-graph-active, trigger: qualified graph resume, rejection: "Failed reopen requires graph human/operator domain eligibility."}
-  - {key: transition-graph-decision-approve, from: state-graph-node-waiting-decision, to: state-graph-node-completed, trigger: accepted approval/authority decision, rejection: "Invalid target/type/value, stale projection, or actor/domain rule rejects."}
-  - {key: transition-graph-decision-reject, from: state-graph-node-waiting-decision, to: state-graph-node-failed, trigger: rejected required approval, rejection: "Invalid target/type/value, stale projection, or actor/domain rule rejects."}
-  - {key: transition-graph-patch, from: state-graph-active, to: state-graph-active, trigger: accepted topology patch, rejection: "Validator rejection or stale conflicting read set leaves topology unchanged."}
-  - {key: transition-outbox-requeue, from: state-outbox-failed, to: state-outbox-pending, trigger: accepted outbox requeue, rejection: "Missing, cross-run, or non-failed row rejects."}
-invariants:
-  - "Run-row state does not establish graph topology or legacy task state."
-  - "Queued lifecycle acceptance and applied resulting state are separate observations."
-  - "A graph node is not a legacy task; no transition aliases their state vocabularies."
-  - "A rejection preserves the source carrier state unless its cited command explicitly emits a different rejection outcome."
+  - {from_state_id: STA-927, to_state_id: STA-900}
+  - {from_state_id: STA-900, to_state_id: STA-900}
+  - {from_state_id: STA-900, to_state_id: STA-901}
+  - {from_state_id: STA-901, to_state_id: STA-902}
+  - {from_state_id: STA-902, to_state_id: STA-903}
+  - {from_state_id: STA-903, to_state_id: STA-901}
+  - {from_state_id: STA-901, to_state_id: STA-904}
+  - {from_state_id: STA-901, to_state_id: STA-905}
+  - {from_state_id: STA-901, to_state_id: STA-906}
+  - {from_state_id: STA-903, to_state_id: STA-906}
+  - {from_state_id: STA-907, to_state_id: STA-908}
+  - {from_state_id: STA-908, to_state_id: STA-909}
+  - {from_state_id: STA-908, to_state_id: STA-910}
+  - {from_state_id: STA-909, to_state_id: STA-910}
+  - {from_state_id: STA-910, to_state_id: STA-908}
+  - {from_state_id: STA-910, to_state_id: STA-913}
+  - {from_state_id: STA-910, to_state_id: STA-914}
+  - {from_state_id: STA-909, to_state_id: STA-911}
+  - {from_state_id: STA-911, to_state_id: STA-908}
+  - {from_state_id: STA-911, to_state_id: STA-913}
+  - {from_state_id: STA-911, to_state_id: STA-914}
+  - {from_state_id: STA-907, to_state_id: STA-912}
+  - {from_state_id: STA-912, to_state_id: STA-909}
+  - {from_state_id: STA-912, to_state_id: STA-913}
+  - {from_state_id: STA-912, to_state_id: STA-914}
+  - {from_state_id: STA-908, to_state_id: STA-913}
+  - {from_state_id: STA-909, to_state_id: STA-913}
+  - {from_state_id: STA-914, to_state_id: STA-913}
+  - {from_state_id: STA-914, to_state_id: STA-908}
+  - {from_state_id: STA-915, to_state_id: STA-916}
+  - {from_state_id: STA-916, to_state_id: STA-917}
+  - {from_state_id: STA-917, to_state_id: STA-918}
+  - {from_state_id: STA-917, to_state_id: STA-917}
+  - {from_state_id: STA-918, to_state_id: STA-919}
+  - {from_state_id: STA-919, to_state_id: STA-920}
+  - {from_state_id: STA-920, to_state_id: STA-917}
+  - {from_state_id: STA-923, to_state_id: STA-920}
+  - {from_state_id: STA-917, to_state_id: STA-921}
+  - {from_state_id: STA-921, to_state_id: STA-906}
+  - {from_state_id: STA-917, to_state_id: STA-922}
+  - {from_state_id: STA-917, to_state_id: STA-923}
+  - {from_state_id: STA-924, to_state_id: STA-925}
+  - {from_state_id: STA-905, to_state_id: STA-903}
+  - {from_state_id: STA-927, to_state_id: STA-927}
+  - {from_state_id: STA-926, to_state_id: STA-927}
+command_declarations:
+  - {id: CMD-900, source_kind: command, implementation_status: present, reachable: true, label: "Routed run lifecycle and creation commands"}
+  - {id: CMD-901, source_kind: command, implementation_status: present, reachable: true, label: "Routed legacy task and clarification commands"}
+  - {id: CMD-902, source_kind: command, implementation_status: present, reachable: true, label: "Routed graph decision patch and requeue commands"}
+  - {id: CMD-903, source_kind: command, implementation_status: present, reachable: true, label: "Routed review environment and administration commands"}
+evidence_records:
+  - {id: EVI-900, source_kind: implementation, reachable: true, test_status: exercised, label: "Workflow/action audit evidence"}
+  - {id: EVI-901, source_kind: implementation, reachable: true, test_status: exercised, label: "Graph runtime audit evidence"}
+  - {id: EVI-902, source_kind: test, reachable: true, test_status: exercised, label: "Graph action and race tests"}
+  - {id: EVI-903, source_kind: api, reachable: true, test_status: unexercised, label: "Routed UI mutation audit evidence"}
+carrier_synchronization:
+  - "Graph completion/failure/cancellation and row completion/failure/cancellation are separately observed control transitions; they are not state aliases."
+  - "REST lifecycle acceptance is command evidence; consumer application is the later transition evidence."

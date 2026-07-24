@@ -1,0 +1,26 @@
+id: ACT-902
+title: Start run through CLI direct path
+definition: Apply legacy start synchronously through the divergent CLI path.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-900
+actor: local CLI operator
+permission_requirements: [PER-901]
+preconditions: ["legacy run is draft"]
+expected_source_version: "None"
+required_input: {run_id: required}
+validation: ["workflow transition validation"]
+durable_effect: "Directly invokes apply_start_run and persists lifecycle state."
+resulting_state_id: STA-901
+failure_modes: ["illegal transition", "local database failure"]
+stale_state_behavior: "Not REST signal acceptance; timing is intentionally distinct."
+idempotency: "State-validated; no request key."
+retry_behavior: "Read resulting row before retry."
+reversibility: "Pause or cancel are separate actions."
+audit_evidence_ids: [EVI-900]
+transition: {from_state_id: STA-900, to_state_id: STA-901}
+enforced_authentication: "Bypasses REST auth"
+enforced_authorization: absent
+domain_eligibility: "draft only"
+proposed_role_policy: null

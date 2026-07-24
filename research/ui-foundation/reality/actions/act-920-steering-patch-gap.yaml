@@ -1,0 +1,9 @@
+id: ACT-920
+implementation_status: absent
+capability_status: gap
+executable: false
+required_outcome: "Represent a human steering proposal with provenance and validated effect."
+source_demand_ids: [decisions.apply-steering-patch]
+implementation_constraints: "Raw patch and agent macro do not form a typed human steering contract."
+required_evidence: "Future proposal, decision, topology, validation, and delivery-binding evidence."
+unresolved_command_decisions: "All executable semantics require separately approved design."

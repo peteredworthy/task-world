@@ -1,0 +1,26 @@
+id: ACT-903
+title: Pause resume or cancel run through REST
+definition: Routed lifecycle command family with acceptance separated from consumer application.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-900
+actor: caller
+permission_requirements: [PER-900]
+preconditions: ["pause active", "resume paused", "cancel active paused or stopping"]
+expected_source_version: "None"
+required_input: {run_id: required, operation: "pause|resume|cancel"}
+validation: ["lifecycle state validation", "resume runner/strategy validation"]
+durable_effect: "Pause immediately writes stopping then queues PAUSE; resume/cancel enqueue signals; graph cancellation also drives graph terminal work."
+resulting_state_id: STA-902
+failure_modes: ["409 stopping or invalid transition", "runner unavailable"]
+stale_state_behavior: "Accepted resume/cancel may retain source row until consumer; stale signals are acknowledged/discarded."
+idempotency: "State-validated without request key."
+retry_behavior: "Refresh run/activity; reset_worktree is not retry-safe restoration."
+reversibility: "Resume compensates pause; cancel is irreversible."
+audit_evidence_ids: [EVI-900]
+transition: {from_state_ids: [STA-901, STA-903], to_state_ids: [STA-902, STA-901, STA-906]}
+enforced_authentication: "Optional global JWT"
+enforced_authorization: absent
+domain_eligibility: "operation-specific run state"
+proposed_role_policy: null

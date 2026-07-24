@@ -26,7 +26,7 @@ items:
     freshness: "Position is durable database order; timestamp is producer time. JSONL freshness is reconciled after committed SQL positions."
     consistency: "Projection updates share the SQL append transaction; activity merges workflow events with only selected graph event families."
     missing_behavior: "No workflow event UUID; no public complete cross-stream chronology; position alone supplies no causal mechanism."
-    current_availability: "implemented and tested for storage, projection, dual-output recovery, and activity readback."
+    current_availability: "Reported by the approved bounded audit as implemented and covered by inspected tests for SQL storage, projections, dual-output recovery, and activity readback; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Activity remains selected/paginated rather than complete cross-stream coverage."
     epistemic_limits: "An event establishes an emitted fact and its typed payload, not that every related external effect occurred or that adjacent events are causal."
     prohibited_interpretations: ["Do not equate position with graph event_id, record_id, execution_id, or attempt_id.", "Do not call activity a complete evidence ledger.", "Do not infer causality from order alone."]
     sources: ["agent-reports/01-domain-persistence.md#DP-ENT-event", "agent-reports/03-workflow-state.md#Durable authority projection and recovery", "agent-reports/05-evidence-telemetry.md#ET-01"]
@@ -40,7 +40,7 @@ items:
     freshness: "Graph position and event timestamp describe append order/time; rebuilt projections are current only through their applied position."
     consistency: "Event append and graph read models roll back together; activity is an intentionally incomplete cross-stream projection."
     missing_behavior: "No endpoint returns the complete joined workflow-plus-graph chronology; callback observed_graph_position is not outcome validation evidence."
-    current_availability: "implemented and tested for append, typed payloads, replay, compact/full readback, and transaction rollback."
+    current_availability: "Reported by the approved bounded audit as implemented and covered by inspected tests for append, typed payloads, replay, compact/full readback, and transaction rollback; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Projection detail and combined-stream availability remain partial."
     epistemic_limits: "Actor/correlation fields aid tracing but do not prove a business-causal relation; a projection can omit heavy payload detail."
     prohibited_interpretations: ["Do not equate graph event_id with SQL position or workflow event identity.", "Do not treat a disposable projection as immutable history.", "Do not label temporal adjacency as causation."]
     sources: ["agent-reports/02-graph-runtime.md#Events and projections", "agent-reports/05-evidence-telemetry.md#ET-02"]
@@ -54,7 +54,7 @@ items:
     freshness: "A record is a boundary snapshot at its graph position and is not automatically current after later graph or repository changes."
     consistency: "Acceptance and bindings are reduced from events; record IDs in input ports represent binding references, not entity equivalence."
     missing_behavior: "No universal record store, complete relational joins, or proof that task_region_id identifies a core task/region."
-    current_availability: "implemented and tested for typed acceptance, provenance fields, bindings, and node-detail replay."
+    current_availability: "Reported by the approved bounded audit as implemented and covered by inspected tests for typed acceptance, provenance fields, bindings, and node-detail replay; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Heavy values and core-entity joins remain partial or unknown."
     epistemic_limits: "Record payload meaning is type-specific; summary omission and optional references constrain what can be concluded."
     prohibited_interpretations: ["Do not equate a record with an event, requirement, artifact, task, or graph node.", "Do not infer a typed core-task join from matching strings.", "Do not treat retained summary fields as the full original record."]
     sources: ["agent-reports/01-domain-persistence.md#DP-ENT-record", "agent-reports/02-graph-runtime.md#Typed graph-record inventory", "agent-reports/05-evidence-telemetry.md#ET-03"]
@@ -68,7 +68,7 @@ items:
     freshness: "Prompt evidence is fixed at the attempted start boundary; graph summary shares start position/timestamp but cannot replay exact prompt bytes."
     consistency: "Legacy prompt writes can fail silently; graph summary records assembly metadata, not delivery acknowledgement, ingestion, or full truncation accounting."
     missing_behavior: "No packet hash, content size, directive binding, complete graph prompt, or model receipt exists."
-    current_availability: "legacy full prompt is partial current evidence; graph compact metadata is implemented/tested partial evidence."
+    current_availability: "The approved bounded audit reports legacy full prompts as partial current evidence and graph compact metadata as implemented with inspected-test coverage; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Full graph prompt retention/delivery coverage remains unknown."
     epistemic_limits: "Stored or summarized content proves an assembly/persistence boundary only to its carrier-specific extent."
     prohibited_interpretations: ["Do not equate legacy full prompt with graph prompt summary.", "Do not infer byte-for-byte delivery, model reading, prompt size, or directive binding.", "Do not treat usage input tokens as packet size."]
     sources: ["agent-reports/05-evidence-telemetry.md#ET-04", "agent-reports/05-evidence-telemetry.md#ET-05", "agent-reports/05-evidence-telemetry.md#Prompt transcript tool and file boundaries"]
@@ -82,7 +82,7 @@ items:
     freshness: "Final flush is wired, but no canonical stream-complete marker establishes a complete transcript."
     consistency: "Carrier formatting differs; compact activity pagination and omitted graph action logs prevent a uniform trace contract."
     missing_behavior: "No complete transcript marker, graph structured action log, graph tool arguments/results, or all-run tool coverage."
-    current_availability: "implemented and tested partial evidence, explicitly carrier- and execution-mode-dependent."
+    current_availability: "Reported by the approved bounded audit as implemented with inspected-test coverage for persisted output and legacy parsed traces; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Graph structured action-log and complete-transcript coverage remain partial/unknown."
     epistemic_limits: "A persisted line or parsed entry proves only retained adapter output; it cannot prove complete runner/model/tool activity."
     prohibited_interpretations: ["Do not call streamed output a complete transcript.", "Do not equate output lines, action-log entries, and tool executions.", "Do not infer graph tool activity from legacy trace availability."]
     sources: ["agent-reports/05-evidence-telemetry.md#ET-06", "agent-reports/05-evidence-telemetry.md#ET-07", "agent-reports/06-ui-projections.md#UIP-16"]
@@ -96,7 +96,7 @@ items:
     freshness: "CAS integrity is checked on read; a path declaration has no existence/content freshness guarantee; interaction rows are mutable."
     consistency: "CAS publication/GC are coordinated, but generic declarations and legacy interaction logs do not share the CAS integrity contract."
     missing_behavior: "Generic artifact references are not verified/downloadable CAS blobs; no shared artifact ID or unified inventory exists."
-    current_availability: "CAS check artifacts implemented/tested; declarations and interaction logs implemented with materially weaker, distinct guarantees."
+    current_availability: "The approved bounded audit reports CAS check artifacts as implemented with inspected-test coverage; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Declared references and interaction logs have distinct, weaker partial coverage and no unified artifact contract."
     epistemic_limits: "The word artifact denotes several carriers with different identity, authority, and retention boundaries."
     prohibited_interpretations: ["Do not equate an artifact path declaration with a CAS blob.", "Do not infer file existence or agent access from an artifact reference.", "Do not equate interaction-log rows, expected paths, and graph records."]
     sources: ["agent-reports/01-domain-persistence.md#DP-ENT-artifact", "agent-reports/05-evidence-telemetry.md#ET-09", "agent-reports/05-evidence-telemetry.md#ET-10", "agent-reports/05-evidence-telemetry.md#ET-11"]
@@ -110,7 +110,7 @@ items:
     freshness: "Fresh only at the captured callback boundary; later worktree state can differ."
     consistency: "Capture is a whole-worktree observation; concurrent/cumulative writes mean node attribution is observer attribution, not exclusive authorship."
     missing_behavior: "Normal producer does not emit diffstat or content hashes for ordinary tracked/untracked files; no node-only causal delta is established."
-    current_availability: "implemented and tested for capture, classification, snapshot, rejection, cleanup, and report readback."
+    current_availability: "Reported by the approved bounded audit as implemented and covered by inspected tests for capture, classification, snapshot, rejection, cleanup, and report readback; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Diff/content and node-exclusive causality coverage remain absent."
     epistemic_limits: "Snapshot/file classification supports a repository boundary observation, not a proof of which node caused each change."
     prohibited_interpretations: ["Do not call file-state a node-caused delta.", "Do not infer diff content or diffstat from the normal record.", "Do not equate a snapshot ID with an event, artifact, or candidate ID."]
     sources: ["agent-reports/05-evidence-telemetry.md#ET-08", "agent-reports/05-evidence-telemetry.md#File-state producer attribution", "agent-reports/06-ui-projections.md#UIP-15"]
@@ -124,7 +124,7 @@ items:
     freshness: "Decision read models are current through their event/projection position; queued acceptance is not proof that an eventual result has occurred."
     consistency: "Transport result contracts diverge: REST/MCP/CLI can differ in acceptance timing, response shape, and signal-queue behavior."
     missing_behavior: "No universal durable action-result identity, consistently authenticated actor attribution, or complete acceptance/rejection/result/next-activity bundle."
-    current_availability: "implemented for specific graph and workflow decision carriers; cross-carrier evidence is partial."
+    current_availability: "The approved bounded audit reports specific graph and workflow decision carriers as implemented, with inspected-test coverage where cited; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Cross-carrier receipts, actor binding, and result-state coverage remain partial/unknown."
     epistemic_limits: "Recorded actor text or a successful acceptance response does not prove authorization, resulting state, or causal downstream effect."
     prohibited_interpretations: ["Do not equate approval, clarification, graph decision, patch proposal, patch command, and applied topology change.", "Do not call recorded identity authenticated identity.", "Do not treat accepted queued command evidence as completed result evidence."]
     sources: ["agent-reports/04-api-actions-authority.md#Authority model", "agent-reports/04-api-actions-authority.md#Race idempotency and action feedback", "agent-reports/05-evidence-telemetry.md#jobs.J3.evidence"]
@@ -138,7 +138,7 @@ items:
     freshness: "Graph UTC day derives from event time; facts are immutable per execution key. Pricing resolution details are not persisted, and cost-row writes can fail."
     consistency: "Rollup counts latency/actions once per run/execution and exposes rate_missing, but excludes legacy records and unreported/exception-terminated executions."
     missing_behavior: "No fact for exact-zero versus absent usage, runner exceptions after provider use, complete rate cards, fleet-wide denominator, budget pace, price-coverage field, or cost-of-next-attempt algorithm."
-    current_availability: "graph returned-execution usage and graph-only rollup are implemented/tested; legacy and exception coverage remain partial/unknown."
+    current_availability: "The approved bounded audit reports graph returned-execution usage and the graph-only rollup as implemented with inspected-test coverage; implementation/test source freshness is not hash-guarded and no fresh test result is asserted. Legacy, exact-zero/absent, and exception-terminated coverage remain partial/unknown."
     epistemic_limits: "Numeric zero may mean legitimate explicit-zero pricing or unavailable numeric cost; absent usage is not evidence of zero consumption."
     prohibited_interpretations: ["Do not equate unpriced with free or zero cost.", "Do not call graph-only rollup fleet-wide coverage.", "Do not infer no provider usage from an absent usage fact.", "Do not treat rate_missing false as a complete rate card."]
     sources: ["agent-reports/05-evidence-telemetry.md#ET-12", "agent-reports/05-evidence-telemetry.md#ET-13", "agent-reports/05-evidence-telemetry.md#ET-14", "agent-reports/06-ui-projections.md#UIP-18"]
