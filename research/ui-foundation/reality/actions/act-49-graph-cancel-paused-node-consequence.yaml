@@ -10,28 +10,29 @@ permission_requirements:
 - PER-3
 - PER-4
 preconditions:
-- ACT-51 has transitioned the graph run to cancelling and ACT-48 is applying its terminal graph-run consequence for ACT-21's
-  accepted REST cancel.
+- ACT-51 has transitioned the graph run to cancelling and ACT-48 is applying its terminal graph-run consequence
+  for ACT-21's accepted REST cancel.
 - The affected graph node is leased, running, or suspended with an active/suspended lease.
-expected_source_version: No client graph version is accepted; node cancellation is emitted during the same graph cancellation
-  application.
+expected_source_version: No client graph version is accepted; node cancellation is emitted during the
+  same graph cancellation application.
 required_input:
   run_id: required
   affected_node_id: required
 validation:
 - CMD-6 cancellation accepts the routed legacy lifecycle state
 - PER-4 graph lease/node cancellation validation
-durable_effect: Graph cancellation revokes the affected lease and transitions the affected graph-node carrier to cancelled
-  without changing a legacy task or row carrier.
+durable_effect: Graph cancellation revokes the affected lease and transitions the affected graph-node
+  carrier to cancelled without changing a legacy task or row carrier.
 resulting_state_id: STA-35
 failure_modes:
 - 404 missing run/graph/node
 - 409 illegal or already-applied cancellation state
 - executor cancellation failure
-stale_state_behavior: A later or duplicate cancellation observes the current graph node/lease state; it does not invent a
-  cross-carrier recovery transition.
+stale_state_behavior: A later or duplicate cancellation observes the current graph node/lease state; it
+  does not invent a cross-carrier recovery transition.
 idempotency: No key; node and lease state make repeated cancellation application domain-dependent.
-retry_behavior: Refresh graph node, lease, and graph-run projections; do not replay this consequence independently of cancellation.
+retry_behavior: Refresh graph node, lease, and graph-run projections; do not replay this consequence independently
+  of cancellation.
 reversibility: No direct node uncancel exists; any recovery path is separate graph work.
 audit_evidence_ids:
 - EVD-20
@@ -53,8 +54,9 @@ carrier_relationship:
   excluded_source_state_ids:
   - STA-71
   - STA-72
-  ordering: Only leased, running, or suspended nodes are directly cancelled by CMD-6 evidence. The graph node transitions
-    on its own carrier while ACT-51/ACT-48 transition the graph run; neither action transitions to the legacy row.
+  ordering: Only leased, running, or suspended nodes are directly cancelled by CMD-6 evidence. The graph
+    node transitions on its own carrier while ACT-51/ACT-48 transition the graph run; neither action transitions
+    to the legacy row.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-3 REST cancellation eligibility and PER-4 graph node/lease cancellation rules.
@@ -62,3 +64,14 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-49-graph-cancel-paused-node-consequence.yaml::durable_effect.
+    Implementation locator: src/orchestrator/graph/commands/lifecycle.py::handle_cancel. ACT-49 declares
+    suspended-lease node cancellation.'
+  test: The suspended-lease cancellation test uses an already failed node and explicitly preserves failed,
+    so it does not prove this proposition.
+  documentation: ACT-49 paused-node consequence is documented separately.
+  capability: Source presence does not prove this node outcome path.
+  epistemic: ACT-49 implementation is observed by EVD-20/EVD-38-40.

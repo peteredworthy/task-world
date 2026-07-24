@@ -12,8 +12,8 @@ preconditions:
 - A graph exists and its run is not cancelled or failed.
 - The target is an eligible nonterminal authority_request node.
 - The request value is denied.
-expected_source_version: The REST request has no client graph position; the controller reads the current position and guards
-  its transaction and append against races.
+expected_source_version: The REST request has no client graph position; the controller reads the current
+  position and guards its transaction and append against races.
 required_input:
   decision_type: authority
   value: denied
@@ -28,23 +28,26 @@ command_variant:
   decision_type: authority
   value: denied
 validation:
-- RecordDecisionCommand strictly validates authority decision type/value and authority_request target kind.
+- RecordDecisionCommand strictly validates authority decision type/value and authority_request target
+  kind.
 - PER-4 validates graph state, target terminality, and graph actor/context shape.
-durable_effect: Appends authority_decision_recorded and projects an AuthorityDecisionRecord; the accepted denial is bound
-   to the authority request, completes that graph node, and leaves a downstream node that requires the denied input planned
-   with a separately projected deferred reason. No row carrier or invented deferred state is used.
+durable_effect: Appends authority_decision_recorded and projects an AuthorityDecisionRecord; the accepted
+  denial is bound to the authority request, completes that graph node, and leaves a downstream node that
+  requires the denied input planned with a separately projected deferred reason. No row carrier or invented
+  deferred state is used.
 resulting_state_id: STA-37
 failure_modes:
 - 404 when no graph exists
 - 409 for stale append or command rejection
 - 422 for malformed or ineligible authority decision input
-stale_state_behavior: No client position is accepted. Controller/append races return 409 and leave no invented rejected-decision
-  carrier.
-idempotency: No REST idempotency key is established; decision-record identity and duplicate handling remain command/state
-  dependent.
-retry_behavior: Read the authority decision and node projections before retrying; retry only if the authority request remains
-  eligible.
-reversibility: No authority-decision reversal command exists; a later permitted graph action is not an undo.
+stale_state_behavior: No client position is accepted. Controller/append races return 409 and leave no
+  invented rejected-decision carrier.
+idempotency: No REST idempotency key is established; decision-record identity and duplicate handling remain
+  command/state dependent.
+retry_behavior: Read the authority decision and node projections before retrying; retry only if the authority
+  request remains eligible.
+reversibility: No authority-decision reversal command exists; a later permitted graph action is not an
+  undo.
 audit_evidence_ids:
 - EVD-27
 transition:
@@ -54,15 +57,32 @@ carrier_relationship:
   kind: same-command decision carrier
   paired_node_outcome_action_id: ACT-44
   node_transition:
-    from_state_ids: [STA-71, STA-72, STA-29, STA-30, STA-31, STA-32]
+    from_state_ids:
+    - STA-71
+    - STA-72
+    - STA-29
+    - STA-30
+    - STA-31
+    - STA-32
     to_state_id: STA-33
   deferred_downstream_node_state_id: STA-71
-  ordering: One discriminated CMD-11 command records the authority decision and separately projects authority-request completion;
-    a dependent node can remain planned with a deferred reason.
+  ordering: One discriminated CMD-11 command records the authority decision and separately projects authority-request
+    completion; a dependent node can remain planned with a deferred reason.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-4 authority target, decision value, graph-state, and actor/context validation.
 proposed_role_policy: null
 conflict_ids: []
-question_ids: [Q-5]
+question_ids:
+- Q-5
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-11-graph-authority-denial.yaml::durable_effect.
+    Implementation locator: src/orchestrator/api/routers/graph.py::record_graph_decision. ACT-11 records
+    authority denial, binds it, completes authority node, and defers downstream work.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-11 denial boundaries are documented.
+  capability: Supplied actor text is not enforced authorization.
+  epistemic: ACT-11 is directly observed by EVD-27.

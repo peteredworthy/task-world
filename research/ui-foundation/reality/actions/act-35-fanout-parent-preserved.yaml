@@ -1,6 +1,7 @@
 id: ACT-35
 title: Preserve fan-out parent running state on child retry
-definition: Fan-out retry separately preserves the parent task's fan-out-running carrier while its failed child is reset.
+definition: Fan-out retry separately preserves the parent task's fan-out-running carrier while its failed
+  child is reset.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -45,3 +46,13 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-35-fanout-parent-preserved.yaml::durable_effect.
+    Implementation locator: src/orchestrator/workflow/service.py::WorkflowService.retry_fan_out_child.
+    ACT-35 preserves fan-out-running parent during child reset.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-35 parent preservation is documented as paired, not transitional.
+  capability: One child retry does not prove all fan-out recovery.
+  epistemic: ACT-35 is observed by EVD-44.

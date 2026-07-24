@@ -37,5 +37,16 @@ enforced_authorization: absent
 domain_eligibility: PER-7 agent-create prerequisites
 proposed_role_policy: null
 conflict_ids: []
-question_ids: [Q-5]
+question_ids:
+- Q-5
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-68-agent-create.yaml::durable_effect.
+    Implementation locator: src/orchestrator/api/routers/agents.py::create_agent. ACT-68 synchronously
+    creates an agent configuration row.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-68 agent create is documented.
+  capability: Configuration creation does not prove runner execution.
+  epistemic: ACT-68 is observed by EVD-33.

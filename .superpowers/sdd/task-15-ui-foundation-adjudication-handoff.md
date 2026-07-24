@@ -1,9 +1,45 @@
 # Task 15 UI foundation adjudication handoff
 
+## Purpose
+
+Record the canonical SV-008 adjudication correction while preserving Phase 1 immutability.
+
+## Scope inspected
+
+The 35 REL, 72 active STA, 71 ACT, 9 EVI, and INV-2 through INV-7 records.
+
+## Key findings
+
+Exact AST-resolved active-snapshot test locators replace fabricated generic locator text.
+
+## Important uncertainties
+
+Task 15 remains pending independent re-review; unexercised boundaries remain conservative.
+
+## Conflicts found
+
+Existing canonical documentation conflicts remain recorded on their affected records.
+
+## Decisions required
+
+No new product decision is required; independent re-review is required before closure.
+
+## Artifact paths
+
+`research/ui-foundation/catalog/evidence.yaml` and canonical reality/catalog records contain the adjudication.
+
+## Evidence pointers
+
+See each record's `status_basis`, its exact locator, and the active Task 15 snapshot.
+
+## Recommended next delegation
+
+Independently re-review canonical statuses and validator enforcement without editing the immutable verifier report.
+
 ## Status
 
-Task 15 remains **IN PROGRESS** pending independent re-review. Structural findings SV-001 through SV-006 are
-being corrected in this pass; SV-008 status locators are intentionally out of scope. The
+Task 15 remains **IN PROGRESS** pending independent re-review. Structural findings SV-001 through SV-008 are
+corrected in this pass; SV-008 canonical status locators were re-adjudicated against current source. The
 immutable `research/ui-foundation/agent-reports/11-semantic-verification.md`
 was not modified.
 
@@ -15,8 +51,9 @@ was not modified.
   `ENT-22` through `ENT-25` carriers, and `CON-5`.
 - **SV-008:** all 35 relationships, 72 active states, 71 actions, 9 evidence
   inventory records, and `INV-2` through `INV-7` now have record-level
-  orthogonal statuses and dimension-specific bases. Exercised records name a
-  snapshot-resolvable test locator or approved test-index locator; unexercised
+  orthogonal statuses and dimension-specific bases. Exercised records name an
+  exact active-snapshot pytest AST symbol; arbitrary suffixes, missing methods,
+  stale hashes, and generic carrier boundaries are rejected. Unexercised
   result/action boundaries remain conservative. Carrier existence does not
   bulk-promote product capability status.
 
@@ -49,8 +86,8 @@ was not modified.
 
 ## Verification handoff
 
-Run Phase 2 validation, the report validator for this handoff if its heading
-contract is later adopted, focused foundation tests, Ruff, Pyright, and hooks
-before closing the task. The historical Task 15 status audit is noncanonical
-evidence only and is not a regeneration input. Independent re-review must assess
-this application without changing the immutable verifier report.
+Phase 2 validation and focused foundation tests have passed. Run Ruff, Pyright,
+and hooks before closing the task. The historical Task 15 status audit is
+noncanonical reviewed evidence only and is not parsed by shipped tools or used
+as a regeneration input. Independent re-review must assess this application
+without changing the immutable verifier report.

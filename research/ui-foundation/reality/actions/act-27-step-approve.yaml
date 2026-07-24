@@ -20,7 +20,8 @@ required_input:
 validation:
 - current actionable-step validation
 - human-approval-gate validation
-durable_effect: Records StepHumanApprovalRecorded on the step-approval carrier; an eligible paused run may separately resume.
+durable_effect: Records StepHumanApprovalRecorded on the step-approval carrier; an eligible paused run
+  may separately resume.
 resulting_state_id: STA-53
 failure_modes:
 - 404 run or step identity
@@ -41,3 +42,13 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: conflicting
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-27-step-approve.yaml::durable_effect.
+    Implementation locator: src/orchestrator/api/routers/runs.py::approve_step. ACT-27 records step approval
+    and may separately permit resume.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-27 conflicts on incomplete summary/comment guarantees.
+  capability: The test does not prove enforced human authorization.
+  epistemic: ACT-27 is observed by EVD-36.

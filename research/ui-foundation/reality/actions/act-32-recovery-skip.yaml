@@ -18,7 +18,8 @@ required_input:
 validation:
 - complete-recovery outcome skip
 - recovering-task state validation
-durable_effect: Records skipped outcome and notes, completes the task, and may separately resume or progress the run.
+durable_effect: Records skipped outcome and notes, completes the task, and may separately resume or progress
+  the run.
 resulting_state_id: STA-14
 failure_modes:
 - 404 run or task identity
@@ -40,3 +41,13 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-32-recovery-skip.yaml::durable_effect.
+    Implementation locator: src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_skip.
+    ACT-32 records skipped recovery, completes task, and progresses/resumes.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-32 recovery skip is documented.
+  capability: One recovery path is not a complete recovery capability.
+  epistemic: ACT-32 is observed by EVD-14.

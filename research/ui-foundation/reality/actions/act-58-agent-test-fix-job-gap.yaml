@@ -12,7 +12,16 @@ required_evidence:
 - job lifecycle evidence
 - endpoint test
 unresolved_command_decisions:
-- Authority, authorization, and domain eligibility remain unresolved until a concrete backend command is designed and implemented.
+- Authority, authorization, and domain eligibility remain unresolved until a concrete backend command
+  is designed and implemented.
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: ACT-58 is an explicit absent agent-test-fix job contract.
+  test: No backend command exists to exercise.
+  documentation: ACT-58 records the UI/backend gap.
+  capability: Agent test-fix dispatch is a confirmed gap.
+  epistemic: Absence is observed by approved action/UI audits.

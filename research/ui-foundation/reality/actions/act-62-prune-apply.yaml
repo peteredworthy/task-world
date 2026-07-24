@@ -17,7 +17,8 @@ required_input:
 validation:
 - selection
 - base SHA
-durable_effect: Synchronously creates prune commit effects and emits PruneApplied; returned UUID is not durable event identity.
+durable_effect: Synchronously creates prune commit effects and emits PruneApplied; returned UUID is not
+  durable event identity.
 resulting_state_id: STA-42
 failure_modes:
 - 400 empty selection
@@ -38,3 +39,13 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-62-prune-apply.yaml::durable_effect.
+    Implementation locator: src/orchestrator/git/ops/prune_ops.py::apply_prune. ACT-62 applies selected
+    prune effects and creates commit evidence.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-62 apply contract is documented.
+  capability: One apply mode does not prove all prune safety.
+  epistemic: ACT-62 is observed by EVD-28.

@@ -33,7 +33,7 @@ items:
   - EVD-71
   id: EVI-1
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
@@ -55,12 +55,13 @@ items:
   definition: events_v2 global position; (aggregate_id, version) is aggregate-local retry/order identity;
     no workflow event_id exists.
   status_basis:
-    implementation: EVI-1 carrier implementation is bounded by EVD-69, EVD-70, EVD-71.
-    test: 'EVI-1 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-1 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-1 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-1 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/db/orm/models.py::EventV2Model. Implementation
+      locator: src/orchestrator/db/access/event_store_v2.py::SqliteEventStore.append. EVI-1 implements
+      workflow position plus aggregate/version event identity and payload persistence.'
+    test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+    documentation: EVI-1 conflicts on SQL/JSONL authority and combined chronology.
+    capability: A workflow-event carrier is not a complete evidence-access capability.
+    epistemic: EVI-1's bounded semantics are observed by EVD-69-71.
 - kind: graph-event
   identity: Graph EventEnvelope event_id plus graph-local position; durable SQL aggregate identity is
     (graph:<run_id>, version).
@@ -89,7 +90,7 @@ items:
   - EVD-73
   id: EVI-2
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
@@ -110,12 +111,13 @@ items:
   definition: Graph EventEnvelope event_id plus graph-local position; durable SQL aggregate identity is
     (graph:<run_id>, version).
   status_basis:
-    implementation: EVI-2 carrier implementation is bounded by EVD-72, EVD-73.
-    test: 'EVI-2 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-2 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-2 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-2 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/graph/models.py::EventEnvelope. Implementation
+      locator: src/orchestrator/graph_runtime/store.py::GraphEventStore.append_events. EVI-2 implements
+      graph event_id, graph-local position, and aggregate/version persistence.'
+    test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+    documentation: EVI-2 conflicts on combined-stream completeness.
+    capability: A graph-event carrier is not a complete evidence-access capability.
+    epistemic: EVI-2's bounded semantics are observed by EVD-72/73.
 - kind: accepted-graph-record
   identity: record_id, record_type, producer_node_id, producer_port, run_id, graph_position, schema version,
     and typed payload.
@@ -145,7 +147,7 @@ items:
   - EVD-76
   id: EVI-3
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -166,12 +168,13 @@ items:
   definition: record_id, record_type, producer_node_id, producer_port, run_id, graph_position, schema
     version, and typed payload.
   status_basis:
-    implementation: EVI-3 carrier implementation is bounded by EVD-74, EVD-75, EVD-76.
-    test: 'EVI-3 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-3 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-3 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-3 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/graph/models.py::AcceptedOutputRecordPayload.
+      Implementation locator: src/orchestrator/graph_runtime/store.py::GraphEventStore.append_events.
+      EVI-3 implements accepted record identity, producer/port/run/position/schema provenance.'
+    test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+    documentation: EVI-3 documents summary and core-join limits.
+    capability: Accepted records alone do not provide a universal evidence store.
+    epistemic: EVI-3's bounded semantics are observed by EVD-74-76.
 - kind: prompt-packet
   identity: 'Legacy: run/task/attempt/phase and stored text, with no prompt hash or packet ID. Graph:
     node/lease/generation/execution/base snapshot compact summary, with no independent packet ID.'
@@ -200,7 +203,7 @@ items:
   - EVD-79
   id: EVI-4
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -221,12 +224,14 @@ items:
   definition: 'Legacy: run/task/attempt/phase and stored text, with no prompt hash or packet ID. Graph:
     node/lease/generation/execution/base snapshot compact summary, with no independent packet ID.'
   status_basis:
-    implementation: EVI-4 carrier implementation is bounded by EVD-77, EVD-78, EVD-79.
-    test: 'EVI-4 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-4 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-4 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-4 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/runners/execution/attempt_store.py::AttemptStore.
+      Implementation locator: src/orchestrator/graph_runtime/prompts.py::_prompt_for_node. EVI-4 has legacy
+      full-text and graph compact-summary prompt carriers but no common packet identity or receipt.'
+    test: The bounded FR-09 test proves graph packet construction only, not the combined legacy/graph
+      proposition or delivery.
+    documentation: EVI-4's missing hash/size/delivery semantics are documented.
+    capability: Partial prompt evidence does not establish prompt delivery or comprehension.
+    epistemic: EVI-4's partial carrier split is observed by EVD-77-79.
 - kind: transcript-and-tool-trace
   identity: Output events use workflow global position and line_offset; legacy action logs have sequenced
     parsed entries and tool IDs where supplied.
@@ -254,7 +259,7 @@ items:
   - EVD-82
   id: EVI-5
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -275,12 +280,14 @@ items:
   definition: Output events use workflow global position and line_offset; legacy action logs have sequenced
     parsed entries and tool IDs where supplied.
   status_basis:
-    implementation: EVI-5 carrier implementation is bounded by EVD-80, EVD-81, EVD-82.
-    test: 'EVI-5 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-5 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-5 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-5 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/runners/execution/output_batcher.py::OutputBatcher.
+      Implementation locator: src/orchestrator/db/orm/models.py::InteractionLogArtifactModel.action_log_json.
+      EVI-5 has workflow output ordering and legacy structured log carriers, without complete graph/live-runner
+      trace semantics.'
+    test: Separate tests prove each narrow carrier, not a complete transcript/tool-trace proposition.
+    documentation: EVI-5 transcript incompleteness is documented.
+    capability: Partial traces do not establish complete drill-through evidence.
+    epistemic: EVI-5's carrier split is observed by EVD-80-82.
 - kind: artifact-reference
   identity: CAS artifact identity is content SHA-256 plus size/media metadata; declared graph artifact
     references have record identity/type/path URI; legacy interaction logs have execution-tuple row identity.
@@ -311,7 +318,7 @@ items:
   - EVD-86
   id: EVI-6
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
@@ -334,12 +341,15 @@ items:
   definition: CAS artifact identity is content SHA-256 plus size/media metadata; declared graph artifact
     references have record identity/type/path URI; legacy interaction logs have execution-tuple row identity.
   status_basis:
-    implementation: EVI-6 carrier implementation is bounded by EVD-83, EVD-84, EVD-85, EVD-86.
-    test: 'EVI-6 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-6 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-6 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-6 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/graph/models.py::StoredArtifactRef. Implementation
+      locator: src/orchestrator/graph/models.py::ArtifactReferenceRecord. Implementation locator: src/orchestrator/db/orm/models.py::InteractionLogArtifactModel.
+      EVI-6 spans verified CAS, declared graph references, and interaction rows with no universal integrity
+      identity.'
+    test: The bounded tests prove CAS and declaration carriers separately, not the complete three-carrier
+      proposition.
+    documentation: EVI-6 conflicts because artifact names hide different integrity contracts.
+    capability: Partial artifact references do not establish universal artifact access.
+    epistemic: EVI-6's heterogeneous carriers are observed by EVD-83-86.
 - kind: file-state-boundary
   identity: file-state-<execution_id>, base/captured snapshot IDs, git commit/tree/ref, classified path
     sets, residue, rejection, and cleanup lineage.
@@ -366,7 +376,7 @@ items:
   - EVD-89
   id: EVI-7
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
@@ -387,12 +397,14 @@ items:
   definition: file-state-<execution_id>, base/captured snapshot IDs, git commit/tree/ref, classified path
     sets, residue, rejection, and cleanup lineage.
   status_basis:
-    implementation: EVI-7 carrier implementation is bounded by EVD-87, EVD-88, EVD-89.
-    test: 'EVI-7 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-7 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-7 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-7 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/graph_runtime/file_state.py::FileStateBoundaryResult.
+      Implementation locator: src/orchestrator/graph/file_state.py::FileStateClassification. EVI-7 implements
+      snapshots, classified paths, residue, rejection, and cleanup lineage at a callback boundary.'
+    test: Accepted and rejected boundary tests are exact but do not establish node-exclusive causal delta
+      semantics for the whole inventory proposition.
+    documentation: EVI-7 explicitly documents observational rather than causal attribution.
+    capability: File-state observation does not establish causality or complete candidate delta.
+    epistemic: EVI-7's boundary behavior is observed by EVD-87-89.
 - kind: decision-evidence
   identity: 'Carrier-specific: graph decision event/record IDs, clarification request/response IDs, approval
     records, patch attempt/event IDs, or workflow event position.'
@@ -422,7 +434,7 @@ items:
   - EVD-91
   id: EVI-8
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
@@ -445,12 +457,14 @@ items:
   definition: 'Carrier-specific: graph decision event/record IDs, clarification request/response IDs,
     approval records, patch attempt/event IDs, or workflow event position.'
   status_basis:
-    implementation: EVI-8 carrier implementation is bounded by EVD-63, EVD-90, EVD-91.
-    test: 'EVI-8 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-8 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-8 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-8 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/api/routers/graph.py::record_graph_decision.
+      Implementation locator: src/orchestrator/db/orm/models.py::ClarificationResponseModel. Implementation
+      locator: src/orchestrator/db/orm/models.py::StepModel.human_approval. EVI-8 implements carrier-specific
+      decision, clarification, approval, patch, and event identities without a universal receipt.'
+    test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+    documentation: EVI-8 conflicts on attribution/authentication and universal receipt semantics.
+    capability: Carrier-specific evidence does not establish product authorization or complete feedback.
+    epistemic: EVI-8's represented variants are observed by EVD-63/EVD-90/91.
 - kind: cost-and-usage-fact
   identity: 'Graph usage: execution_id:usage_index; legacy: run/task/attempt/runner/phase cost-row tuple
     plus per-model attempt/run usage.'
@@ -482,7 +496,7 @@ items:
   - EVD-95
   id: EVI-9
   implementation_status: partial
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   capability_status: unknown
   epistemic_status: observed
@@ -506,9 +520,11 @@ items:
   definition: 'Graph usage: execution_id:usage_index; legacy: run/task/attempt/runner/phase cost-row tuple
     plus per-model attempt/run usage.'
   status_basis:
-    implementation: EVI-9 carrier implementation is bounded by EVD-92, EVD-93, EVD-94, EVD-95.
-    test: 'EVI-9 adjudication locator: tests/integration/test_graph_read_models.py::record-specific carrier
-      boundary.'
-    documentation: EVI-9 documentation status follows its definition, limitations, and linked conflicts.
-    capability: EVI-9 carrier evidence does not by itself establish product capability availability.
-    epistemic: EVI-9 is observed from the immutable Phase 1 snapshot evidence set.
+    implementation: 'Implementation locator: src/orchestrator/graph/models.py::NodeUsageRecordedPayload.
+      Implementation locator: src/orchestrator/db/orm/models.py::CostRecordModel. Implementation locator:
+      src/orchestrator/db/orm/models.py::InteractionLogArtifactModel. EVI-9 implements graph usage identity
+      and legacy execution-tuple cost facts, with incomplete producer/exception coverage.'
+    test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+    documentation: EVI-9 conflicts on denominator, missing-rate, and subtotal-as-total semantics.
+    capability: Partial usage facts do not establish budget pace or complete cost coverage.
+    epistemic: EVI-9's bounded carriers are observed by EVD-92-95.

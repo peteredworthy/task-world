@@ -12,26 +12,26 @@ permission_requirements:
 preconditions:
 - ACT-20 accepted REST cancellation from an active legacy row.
 - The run is graph mode and its graph run is cancelling.
-expected_source_version: The REST cancel request has no client run or graph version; its acceptance is source-preserving on
-  the legacy row while graph cancellation applies separately.
+expected_source_version: The REST cancel request has no client run or graph version; its acceptance is
+  source-preserving on the legacy row while graph cancellation applies separately.
 required_input:
   run_id: required
 validation:
 - CMD-6 legacy cancel state validation and signal enqueue
 - PER-4 graph cancellation lifecycle validation
-durable_effect: The graph cancellation consequence transitions the graph-run carrier from cancelling to cancelled before the
-  later legacy-row consumer application.
+durable_effect: The graph cancellation consequence transitions the graph-run carrier from cancelling to
+  cancelled before the later legacy-row consumer application.
 resulting_state_id: STA-25
 failure_modes:
 - 404 missing run/graph
 - 409 stopping or illegal cancellation state
 - executor cancellation failure
-stale_state_behavior: REST acceptance can be redelivered or encounter an already-applied lifecycle state; it does not cross
-  from graph run to legacy row state.
-idempotency: No idempotency key; lifecycle/domain state makes a repeat after cancellation ineligible or a no-op at its consumer
-  boundary.
-retry_behavior: Read graph run and legacy activity projections; do not infer graph completion from the REST 202 acceptance
-  alone.
+stale_state_behavior: REST acceptance can be redelivered or encounter an already-applied lifecycle state;
+  it does not cross from graph run to legacy row state.
+idempotency: No idempotency key; lifecycle/domain state makes a repeat after cancellation ineligible or
+  a no-op at its consumer boundary.
+retry_behavior: Read graph run and legacy activity projections; do not infer graph completion from the
+  REST 202 acceptance alone.
 reversibility: No direct uncancel; recovery is separate and does not undo graph cancellation.
 audit_evidence_ids:
 - EVD-11
@@ -53,12 +53,24 @@ carrier_relationship:
   rest_eventual_application_transition:
     from_state_id: STA-2
     to_state_id: STA-7
-  ordering: ACT-50 first transitions the graph run active-to-cancelling; this CMD-6 consequence then transitions cancelling-to-cancelled,
-    while ACT-47 separately cancels leased/running/suspended nodes before later row application.
+  ordering: ACT-50 first transitions the graph run active-to-cancelling; this CMD-6 consequence then transitions
+    cancelling-to-cancelled, while ACT-47 separately cancels leased/running/suspended nodes before later
+    row application.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
-domain_eligibility: PER-3 validates active legacy-row cancellation; PER-4 validates the graph cancellation consequence.
+domain_eligibility: PER-3 validates active legacy-row cancellation; PER-4 validates the graph cancellation
+  consequence.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-46-graph-cancel-active-run-consequence.yaml::durable_effect.
+    Implementation locator: src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS. ACT-46 applies
+    graph cancelling-to-cancelled consequence.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-46 graph-run consequence is separated from row cancellation.
+  capability: A pure command path does not prove external execution cancellation.
+  epistemic: ACT-46 is observed by EVD-11/EVD-20/EVD-38-40.

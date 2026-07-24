@@ -11,8 +11,8 @@ permission_requirements:
 preconditions:
 - The exact graph outbox event ID belongs to the addressed graph run.
 - The addressed graph outbox row is failed.
-expected_source_version: No client outbox-row version; the helper appends its audit event at the current graph position inside
-  the row-update transaction.
+expected_source_version: No client outbox-row version; the helper appends its audit event at the current
+  graph position inside the row-update transaction.
 required_input:
   run_id: required
   event_id: required
@@ -20,18 +20,20 @@ validation:
 - Constrained path identifiers
 - failed-row ownership/status checks
 - PER-4 graph outbox requeue domain checks
-durable_effect: In one transaction, resets the failed graph outbox row to pending, clears its retry/error/backoff fields as
-  implemented, and appends outbox_requeued audit evidence.
+durable_effect: In one transaction, resets the failed graph outbox row to pending, clears its retry/error/backoff
+  fields as implemented, and appends outbox_requeued audit evidence.
 resulting_state_id: STA-27
 failure_modes:
 - 404 for missing graph or outbox row
 - 409 for nonfailed row or stale audit append
 - 422 for invalid path input
-stale_state_behavior: A stale audit append is translated to 409; the enclosing transaction is expected to roll back the pending
-  reset. Full endpoint race rollback is inferred rather than directly injected by a test.
-idempotency: No idempotency key. Requeue is repeatable only after the row fails again; dispatch remains at-least-once and
-  downstream duplicate side effects remain possible.
-retry_behavior: After another failure, requeue the specific failed row; the dispatcher may execute the side effect again.
+stale_state_behavior: A stale audit append is translated to 409; the enclosing transaction is expected
+  to roll back the pending reset. Full endpoint race rollback is inferred rather than directly injected
+  by a test.
+idempotency: No idempotency key. Requeue is repeatable only after the row fails again; dispatch remains
+  at-least-once and downstream duplicate side effects remain possible.
+retry_behavior: After another failure, requeue the specific failed row; the dispatcher may execute the
+  side effect again.
 reversibility: No undo restores the prior failed row or its retry metadata.
 audit_evidence_ids:
 - EVD-23
@@ -43,5 +45,16 @@ enforced_authorization: absent
 domain_eligibility: PER-4 exact graph outbox ownership and failed-status validation.
 proposed_role_policy: null
 conflict_ids: []
-question_ids: [Q-5]
+question_ids:
+- Q-5
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-14-outbox-requeue.yaml::durable_effect.
+    Implementation locator: src/orchestrator/api/routers/graph.py::requeue_failed_outbox_row. ACT-14 resets
+    failed outbox fields and appends requeue audit in one transaction.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-14 requeue boundary is documented.
+  capability: Recording executor does not prove external side-effect idempotency.
+  epistemic: ACT-14 is directly observed by EVD-23.

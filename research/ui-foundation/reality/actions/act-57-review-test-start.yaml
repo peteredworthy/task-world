@@ -17,7 +17,8 @@ required_input:
 validation:
 - configured commands
 - single running test
-durable_effect: Accepts asynchronous test start, returns running test_run_id, and emits start/completion evidence.
+durable_effect: Accepts asynchronous test start, returns running test_run_id, and emits start/completion
+  evidence.
 resulting_state_id: STA-39
 failure_modes:
 - 422 no commands
@@ -39,3 +40,13 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-57-review-test-start.yaml::durable_effect.
+    Implementation locator: src/orchestrator/api/routers/review.py::start_test_run. ACT-57 accepts async
+    test start and emits completion evidence.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-57 review-test action is documented.
+  capability: One local command run does not prove all configured test environments.
+  epistemic: ACT-57 is observed by EVD-47.

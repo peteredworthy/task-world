@@ -1,7 +1,7 @@
 id: ACT-40
 title: Reset run-recovery downstream task to pending
-definition: Run recovery resets each affected downstream legacy task, including a completed task, to pending as compensating
-  recovery rather than ordinary progression.
+definition: Run recovery resets each affected downstream legacy task, including a completed task, to pending
+  as compensating recovery rather than ordinary progression.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -25,9 +25,9 @@ validation:
 - failed-or-paused run validation
 - target task validation
 - additional attempt and reset strategy validation
-durable_effect: Clears downstream attempts and pending markers, resets checklist fields according to preserve_checklist, and
-  sets the affected task to pending; a completed downstream task is intentionally reopened only by this compensating run-recovery
-  route.
+durable_effect: Clears downstream attempts and pending markers, resets checklist fields according to preserve_checklist,
+  and sets the affected task to pending; a completed downstream task is intentionally reopened only by
+  this compensating run-recovery route.
 resulting_state_id: STA-8
 failure_modes:
 - 404 run or target task identity
@@ -36,9 +36,11 @@ failure_modes:
 stale_state_behavior: No expected version; concurrent run or task changes can alter the downstream set.
 idempotency: No idempotency key; recovery clears downstream attempts and state.
 retry_behavior: Refresh run, target task, downstream tasks, and worktree state before retrying.
-reversibility: Recovery rewind does not restore downstream attempts, checklist values, files, or external effects.
+reversibility: Recovery rewind does not restore downstream attempts, checklist values, files, or external
+  effects.
 limitations:
-- This qualified completed-to-pending reset is a run-recovery compensating effect, not ordinary task or step progression.
+- This qualified completed-to-pending reset is a run-recovery compensating effect, not ordinary task or
+  step progression.
 - The contract does not imply that completed tasks generally transition back to pending.
 audit_evidence_ids:
 - EVD-45
@@ -60,9 +62,19 @@ carrier_relationship:
   affected_carrier: downstream legacy task
 enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
-domain_eligibility: Downstream task explicitly selected by compensating run recovery in a failed or paused legacy run; includes
-  the qualified completed-task reset.
+domain_eligibility: Downstream task explicitly selected by compensating run recovery in a failed or paused
+  legacy run; includes the qualified completed-task reset.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-40-run-recover-downstream-pending.yaml::durable_effect.
+    Implementation locator: src/orchestrator/workflow/service.py::WorkflowService.recover_run. ACT-40
+    clears downstream attempts/markers/checklist and sets pending.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-40 qualified completed-task reopen is documented.
+  capability: One compensation path is not a complete recovery capability.
+  epistemic: ACT-40 is observed by EVD-45.

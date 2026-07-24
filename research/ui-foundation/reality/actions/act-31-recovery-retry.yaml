@@ -1,6 +1,7 @@
 id: ACT-31
 title: Retry legacy recovering task
-definition: Completes recovery with retry, creates the next attempt, and returns the recovering task to building.
+definition: Completes recovery with retry, creates the next attempt, and returns the recovering task to
+  building.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -18,8 +19,8 @@ required_input:
 validation:
 - complete-recovery outcome retry
 - recovering-task state validation
-durable_effect: Records recovery notes, creates an attempt, changes the task to building, and may separately resume a paused
-  run.
+durable_effect: Records recovery notes, creates an attempt, changes the task to building, and may separately
+  resume a paused run.
 resulting_state_id: STA-9
 failure_modes:
 - 404 run or task identity
@@ -41,3 +42,13 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-31-recovery-retry.yaml::durable_effect.
+    Implementation locator: src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_retry.
+    ACT-31 records recovery notes, creates attempt, builds, and may resume.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-31 recovery retry is documented.
+  capability: One retry path does not define canonical retry count/delta.
+  epistemic: ACT-31 is observed by EVD-14.

@@ -42,3 +42,13 @@ conflict_ids:
 question_ids:
 - Q-5
 test_status: unexercised
+documentation_status: conflicting
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-7-start-rest.yaml::durable_effect.
+    Implementation locator: src/orchestrator/api/routers/runs.py::start_run. ACT-7 enqueues RUN_START
+    and consumer later applies active.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-7 conflicts with queue/direct historical wording.
+  capability: The in-memory drain does not prove production runner availability.
+  epistemic: ACT-7 is observed by EVD-7/EVD-38-40.

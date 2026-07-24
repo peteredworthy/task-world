@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from dataclasses import dataclass
 import hashlib
 from html.parser import HTMLParser
@@ -872,6 +873,23 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         for item in raw_evidence_items
         if isinstance((identifier := item.get("id")), str)
     }
+    phase_one_snapshot = (
+        raw_evidence_document.get("snapshot") if isinstance(raw_evidence_document, dict) else None
+    )
+    active_snapshot = _active_snapshot(raw_evidence_document)
+    phase_one_files = (
+        phase_one_snapshot.get("files", []) if isinstance(phase_one_snapshot, dict) else []
+    )
+    active_snapshot_files = (
+        active_snapshot.get("files", []) if isinstance(active_snapshot, dict) else []
+    )
+    active_snapshot_hashes = {
+        path: sha256
+        for record in [*phase_one_files, *active_snapshot_files]
+        if isinstance(record, dict)
+        and isinstance((path := record.get("path")), str)
+        and isinstance((sha256 := record.get("sha256")), str)
+    }
     for index, item in enumerate(raw_evidence_items):
         identifier = item.get("id")
         if not isinstance(identifier, str):
@@ -929,9 +947,6 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         for source in package.source_loads
         if source.content is not None
     }
-    phase_one_snapshot = (
-        raw_evidence_document.get("snapshot") if isinstance(raw_evidence_document, dict) else None
-    )
     phase_one_files = (
         phase_one_snapshot.get("files") if isinstance(phase_one_snapshot, dict) else []
     )
@@ -963,11 +978,17 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             declarations,
             raw_evidence_by_id,
             snapshot_paths,
+            active_snapshot_hashes,
         )
     )
     issues.extend(
         _validate_status_adjudication(
-            package, semantic_items, declarations, raw_evidence_by_id, snapshot_paths
+            package,
+            semantic_items,
+            declarations,
+            raw_evidence_by_id,
+            snapshot_paths,
+            active_snapshot_hashes,
         )
     )
     issues.extend(_validate_entity_allocations(package, semantic_items, raw_allocations))
@@ -2726,10 +2747,101 @@ GENERIC_STATUS_BASES = {"evidence", "carrier exists", "unknown", "n/a", "not ass
 
 
 def _basis_test_locator_is_snapshot_resolvable(
-    basis: str, snapshot_paths: dict[str, set[str]]
+    basis: str,
+    snapshot_paths: dict[str, set[str]],
+    repository_root: Path,
+    active_snapshot_hashes: dict[str, str],
 ) -> bool:
-    paths = set().union(*snapshot_paths.values()) if snapshot_paths else set()
-    return any(path in paths for path in re.findall(r"tests/[\w/.-]+\.py", basis))
+    """Resolve only exact pytest symbols whose active-snapshot bytes remain current."""
+    locator_pattern = re.compile(r"(tests/[\w/.-]+\.py)::([A-Za-z_]\w*)(?:::(test_[A-Za-z_]\w*))?")
+    locators = locator_pattern.findall(basis)
+    if not locators:
+        return False
+    active_paths = set(active_snapshot_hashes)
+    for path, first, method in locators:
+        if path not in active_paths or path not in set().union(*snapshot_paths.values()):
+            return False
+        candidate = repository_root / path
+        try:
+            content = candidate.read_bytes()
+            tree = ast.parse(content, filename=path)
+        except (OSError, SyntaxError):
+            return False
+        if hashlib.sha256(content).hexdigest() != active_snapshot_hashes[path]:
+            return False
+        if not method:
+            if not any(
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == first
+                for node in tree.body
+            ):
+                return False
+        else:
+            matching_class = next(
+                (
+                    node
+                    for node in tree.body
+                    if isinstance(node, ast.ClassDef) and node.name == first
+                ),
+                None,
+            )
+            if matching_class is None or not any(
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == method
+                for node in matching_class.body
+            ):
+                return False
+    return True
+
+
+def _basis_implementation_locator_is_snapshot_resolvable(
+    basis: str, repository_root: Path, active_snapshot_hashes: dict[str, str]
+) -> bool:
+    """Reject invented implementation locators while allowing fields carried by classes."""
+    locators = re.findall(
+        r"((?:src|research)/[\w/.-]+\.py)::([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)", basis
+    )
+    if not locators:
+        return False
+    for path, symbol in locators:
+        expected_hash = active_snapshot_hashes.get(path)
+        candidate = repository_root / path
+        try:
+            content = candidate.read_bytes()
+            tree = ast.parse(content, filename=path)
+        except (OSError, SyntaxError):
+            continue
+        if expected_hash != hashlib.sha256(content).hexdigest():
+            continue
+        parent, _, member = symbol.partition(".")
+        top_level = next(
+            (
+                node
+                for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                and node.name == parent
+            ),
+            None,
+        )
+        if top_level is None:
+            continue
+        if not member:
+            return True
+        if isinstance(top_level, ast.ClassDef) and any(
+            (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == member)
+            or (
+                isinstance(node, ast.AnnAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == member
+            )
+            or (
+                isinstance(node, ast.Assign)
+                and any(
+                    isinstance(target, ast.Name) and target.id == member for target in node.targets
+                )
+            )
+            for node in top_level.body
+        ):
+            return True
+    return False
 
 
 def _validate_status_adjudication(
@@ -2738,6 +2850,7 @@ def _validate_status_adjudication(
     declarations: dict[str, str],
     evidence: dict[str, dict[str, JsonValue]],
     snapshot_paths: dict[str, set[str]],
+    active_snapshot_hashes: dict[str, str],
 ) -> list[ValidationIssue]:
     """Require record-level, snapshot-resolvable reasons for adjudicated statuses."""
     issues: list[ValidationIssue] = []
@@ -2776,8 +2889,15 @@ def _validate_status_adjudication(
             for record in records
         ):
             issues.append(_issue("PRESENT_IMPLEMENTATION_EVIDENCE_MISSING", location, identifier))
+        if semantic.implementation_status in {
+            "present",
+            "partial",
+        } and not _basis_implementation_locator_is_snapshot_resolvable(
+            str(basis["implementation"]), package.root.parents[1], active_snapshot_hashes
+        ):
+            issues.append(_issue("IMPLEMENTATION_BASIS_UNRESOLVED", location, identifier))
         if semantic.test_status == "exercised" and not _basis_test_locator_is_snapshot_resolvable(
-            str(basis["test"]), snapshot_paths
+            str(basis["test"]), snapshot_paths, package.root.parents[1], active_snapshot_hashes
         ):
             issues.append(_issue("EXERCISED_TEST_BASIS_UNRESOLVED", location, identifier))
     for family, items in family_items.items():
@@ -2853,6 +2973,7 @@ def _validate_semantic_evidence_admission(
     declarations: dict[str, str],
     evidence: dict[str, dict[str, JsonValue]],
     snapshot_paths: dict[str, set[str]],
+    active_snapshot_hashes: dict[str, str],
 ) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     for identifier, semantic in semantic_items.items():
@@ -2866,7 +2987,12 @@ def _validate_semantic_evidence_admission(
         approved_test_index = (
             isinstance(status_basis, dict)
             and isinstance(status_basis.get("test"), str)
-            and _basis_test_locator_is_snapshot_resolvable(status_basis["test"], snapshot_paths)
+            and _basis_test_locator_is_snapshot_resolvable(
+                status_basis["test"],
+                snapshot_paths,
+                package.root.parents[1],
+                active_snapshot_hashes,
+            )
         )
         if semantic.test_status == "exercised" and not (
             any(

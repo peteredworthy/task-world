@@ -23,19 +23,19 @@ validation:
 - legacy lifecycle state validation
 - resume runner/config validation
 - resume strategy validation
-durable_effect: Appends resume signal acceptance evidence and queues RESUME while the row remains paused; the consumer later
-  applies paused to active.
+durable_effect: Appends resume signal acceptance evidence and queues RESUME while the row remains paused;
+  the consumer later applies paused to active.
 resulting_state_id: STA-4
 failure_modes:
 - 404 missing run
 - 409 stopping or illegal transition
 - 422 invalid resume request
 - 503 runner unavailable
-stale_state_behavior: Accepted RESUME preserves paused until consumer application; a stale or already-applied redelivery is
-  acknowledged or discarded without a typed result receipt.
+stale_state_behavior: Accepted RESUME preserves paused until consumer application; a stale or already-applied
+  redelivery is acknowledged or discarded without a typed result receipt.
 idempotency: State-validated; no idempotency key. A repeated request after application is no longer eligible.
-retry_behavior: Poll row status and activity before retrying; reset_worktree can discard file state and is not retry-safe
-  restoration.
+retry_behavior: Poll row status and activity before retrying; reset_worktree can discard file state and
+  is not retry-safe restoration.
 reversibility: Pause is a separate later action; reset_worktree effects are not undone by resume.
 audit_evidence_ids:
 - EVD-7
@@ -58,3 +58,13 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-19-resume-rest.yaml::durable_effect.
+    Implementation locator: src/orchestrator/api/routers/runs.py::resume_run. ACT-19 enqueues RESUME while
+    paused and consumer later applies active.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-19 acceptance/application timing is documented.
+  capability: In-memory queue exercise does not prove replacement runner success.
+  epistemic: ACT-19 is observed by EVD-7/EVD-19/EVD-38-40.

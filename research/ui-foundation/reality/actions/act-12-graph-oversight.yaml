@@ -3,7 +3,8 @@ implementation_status: present
 capability_status: unknown
 executable: true
 command_id: CMD-11
-actor: Caller-supplied decider; the value is persisted as attribution and is not authenticated-subject authorization.
+actor: Caller-supplied decider; the value is persisted as attribution and is not authenticated-subject
+  authorization.
 permission_requirements:
 - PER-1
 - PER-2
@@ -11,8 +12,8 @@ permission_requirements:
 preconditions:
 - A graph exists and its run is not cancelled or failed.
 - The target is an eligible nonterminal oversight decision target.
-expected_source_version: The REST request has no client graph position; the controller supplies the current position and rejects
-  a concurrent append conflict.
+expected_source_version: The REST request has no client graph position; the controller supplies the current
+  position and rejects a concurrent append conflict.
 required_input:
   decision_type: oversight
   value: required
@@ -29,17 +30,17 @@ command_variant:
 validation:
 - RecordDecisionCommand strictly validates the oversight decision payload and target eligibility.
 - PER-4 validates graph state, target terminality, and actor/context shape.
-durable_effect: Appends oversight_decision_recorded and updates the oversight decision projection. Oversight creates no DecisionRecord
-  or AuthorityDecisionRecord output record.
+durable_effect: Appends oversight_decision_recorded and updates the oversight decision projection. Oversight
+  creates no DecisionRecord or AuthorityDecisionRecord output record.
 resulting_state_id: STA-37
 failure_modes:
 - 404 when no graph exists
 - 409 for stale append or command rejection
 - 422 for malformed or ineligible oversight input
-stale_state_behavior: A controller/append race returns 409. No source-version field exists on the request and no generic rejected
-  state is projected.
-idempotency: No REST idempotency key is established; callers must use the returned decision projection rather than infer exactly-once
-  behavior.
+stale_state_behavior: A controller/append race returns 409. No source-version field exists on the request
+  and no generic rejected state is projected.
+idempotency: No REST idempotency key is established; callers must use the returned decision projection
+  rather than infer exactly-once behavior.
 retry_behavior: Refresh the oversight decision projection and retry only while the target remains eligible.
 reversibility: No oversight-decision reversal command exists.
 audit_evidence_ids:
@@ -50,12 +51,23 @@ transition:
 carrier_relationship:
   kind: decision-projection-only
   output_record: none
-  ordering: CMD-11 records only the oversight decision projection; it has no paired node-outcome contract or invented output
-    record.
+  ordering: CMD-11 records only the oversight decision projection; it has no paired node-outcome contract
+    or invented output record.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-4 oversight target, graph-state, and actor/context validation.
 proposed_role_policy: null
 conflict_ids: []
-question_ids: [Q-5]
+question_ids:
+- Q-5
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-12-graph-oversight.yaml::durable_effect.
+    Implementation locator: src/orchestrator/api/routers/graph.py::record_graph_decision. ACT-12 records
+    an oversight decision projection without output DecisionRecord.'
+  test: Synthetic oversight events and appeal requests do not execute this routed oversight action.
+  documentation: ACT-12 oversight/no-output boundary is documented.
+  capability: Source presence does not establish routed availability or authorization.
+  epistemic: ACT-12 is observed by EVD-27.

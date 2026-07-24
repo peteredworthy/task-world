@@ -11,8 +11,8 @@ permission_requirements:
 preconditions:
 - ACT-42's rejected required approval has been recorded.
 - The required approval target remains eligible for the command's failure effect.
-expected_source_version: This is the node-projection consequence of the same current-position decision command; no client
-  graph position exists.
+expected_source_version: This is the node-projection consequence of the same current-position decision
+  command; no client graph position exists.
 required_input:
   decision_type: approval
   value: rejected
@@ -20,22 +20,29 @@ required_input:
 validation:
 - The preceding RecordDecisionCommand approval validation succeeds.
 - PER-4 applies the required-input target and state eligibility checks.
-durable_effect: A rejected required approval dead-ends required input, releases its scoped lease where present, and projects
-  the target graph node failed.
+durable_effect: A rejected required approval dead-ends required input, releases its scoped lease where
+  present, and projects the target graph node failed.
 resulting_state_id: STA-34
 failure_modes:
 - 409 when the decision command is rejected or loses its append race
 - 422 when the underlying approval input is invalid
-stale_state_behavior: A decision-command race prevents the node failure consequence; no legacy task or row state is changed.
+stale_state_behavior: A decision-command race prevents the node failure consequence; no legacy task or
+  row state is changed.
 idempotency: No separate idempotency key exists for this data-dependent command consequence.
-retry_behavior: Read decision/node projections and follow the graph's separately validated recovery or topology path; do not
-  replay a presumed failed decision.
+retry_behavior: Read decision/node projections and follow the graph's separately validated recovery or
+  topology path; do not replay a presumed failed decision.
 reversibility: No approval reversal exists; recovery or repair is a separate graph command.
 audit_evidence_ids:
 - EVD-26
 - EVD-27
 transition:
-  from_state_ids: [STA-71, STA-72, STA-29, STA-30, STA-31, STA-32]
+  from_state_ids:
+  - STA-71
+  - STA-72
+  - STA-29
+  - STA-30
+  - STA-31
+  - STA-32
   to_state_id: STA-34
 carrier_relationship:
   kind: same-command node consequence
@@ -44,8 +51,8 @@ carrier_relationship:
     from_state_id: STA-36
     to_state_id: STA-37
   command_id: CMD-11
-  ordering: RecordDecisionCommand accepts any nonterminal target; rejected decision recording and node failure are parallel carrier-local
-    effects of one discriminated command.
+  ordering: RecordDecisionCommand accepts any nonterminal target; rejected decision recording and node
+    failure are parallel carrier-local effects of one discriminated command.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-4 rejected required-approval target and graph-state eligibility.
@@ -53,3 +60,13 @@ proposed_role_policy: null
 conflict_ids: []
 question_ids: []
 test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'Implementation locator: research/ui-foundation/reality/actions/act-43-graph-rejected-required-approval-node-outcome.yaml::durable_effect.
+    Implementation locator: src/orchestrator/graph/_commands.py::_apply_record_decision. ACT-43 dead-ends
+    required input, releases lease, and fails approval node.'
+  test: No exact active-snapshot pytest symbol establishes this record's bounded proposition.
+  documentation: ACT-43 node consequence is documented separately.
+  capability: Node failure is not enforced authorization.
+  epistemic: ACT-43 is observed by EVD-26/EVD-27.

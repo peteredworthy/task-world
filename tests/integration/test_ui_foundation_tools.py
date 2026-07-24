@@ -1,4 +1,5 @@
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -241,6 +242,69 @@ def test_status_adjudication_rejects_exercised_without_resolvable_test_locator(
     result = run_validator(root)
 
     assert "EXERCISED_DIRECT_TEST_EVIDENCE_MISSING" in issue_codes(result)
+
+
+def test_status_locator_requires_exact_ast_test_symbol_and_current_snapshot_hash(
+    tmp_path: Path,
+) -> None:
+    validator = load_validator()
+    test_path = tmp_path / "tests/test_locator.py"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text(
+        "import pytest\n\n"
+        "@pytest.mark.parametrize('value', [1])\n"
+        "def test_parametrized(value):\n"
+        "    assert value == 1\n\n"
+        "class TestLocator:\n"
+        "    def test_method(self):\n"
+        "        assert True\n",
+        encoding="utf-8",
+    )
+    relative = "tests/test_locator.py"
+    snapshot_paths = {"snapshot": {relative}}
+    snapshot_hashes = {relative: hashlib.sha256(test_path.read_bytes()).hexdigest()}
+
+    assert validator._basis_test_locator_is_snapshot_resolvable(
+        f"Exact test: {relative}::test_parametrized.", snapshot_paths, tmp_path, snapshot_hashes
+    )
+    assert validator._basis_test_locator_is_snapshot_resolvable(
+        f"Exact method: {relative}::TestLocator::test_method.",
+        snapshot_paths,
+        tmp_path,
+        snapshot_hashes,
+    )
+    assert not validator._basis_test_locator_is_snapshot_resolvable(
+        f"Invented suffix: {relative}::record-specific carrier boundary.",
+        snapshot_paths,
+        tmp_path,
+        snapshot_hashes,
+    )
+    assert not validator._basis_test_locator_is_snapshot_resolvable(
+        f"Missing method: {relative}::TestLocator::test_missing.",
+        snapshot_paths,
+        tmp_path,
+        snapshot_hashes,
+    )
+    assert not validator._basis_test_locator_is_snapshot_resolvable(
+        f"Missing class: {relative}::Missing::test_method.",
+        snapshot_paths,
+        tmp_path,
+        snapshot_hashes,
+    )
+
+
+def test_status_locator_rejects_stale_active_snapshot_hash(tmp_path: Path) -> None:
+    validator = load_validator()
+    test_path = tmp_path / "tests/test_locator.py"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text("def test_locator():\n    assert True\n", encoding="utf-8")
+
+    assert not validator._basis_test_locator_is_snapshot_resolvable(
+        "Exact test: tests/test_locator.py::test_locator.",
+        {"snapshot": {"tests/test_locator.py"}},
+        tmp_path,
+        {"tests/test_locator.py": "stale"},
+    )
 
 
 def test_entity_namespace_rejects_non_entity_and_requires_retired_allocation_history(
