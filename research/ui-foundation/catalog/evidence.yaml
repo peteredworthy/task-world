@@ -58,7 +58,7 @@ snapshot: &id001
     sha256: 1b71ba76d088fa2894572200f848613f0127483972b4250a75b2d79ba0d81675
     audited_at: '2026-07-24T03:00:00Z'
   - path: research/ui-foundation/tools/validate.py
-    sha256: 2298af9335290e13b66e5e3bb5f7f4aa68c51e0d921e25ffb88afa29a3cfca5a
+    sha256: b3f87eddb5875f89afe385e655c53aa263dda8f03cd864b0092487ef4ebdb82c
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/__init__.py
     sha256: b1f14eb507ed5cae44a23dc96212731b2560b970310ef4037e303d90c5271bf4
@@ -646,7 +646,7 @@ snapshot: &id001
     sha256: a9e8b06a4134ce2f3c5d5532c3652b40f3744e1c22b1a3e1f285e2cf0046c9cd
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/graph/projections.py
-    sha256: 4f19142ba038e6abb426409dbf1d3833bfb2b429f050b4482b2abb66f013de1d
+    sha256: 443d34f8887a5f869de8daa71b48f9a2f8d17d5ce0891a83c3ff62bbe7e66610
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/graph/scenario.py
     sha256: 964cdf0b5f09e82256e21f88012c7280a3113d007ce36e59e1dfecf28ad98b1c
@@ -664,7 +664,7 @@ snapshot: &id001
     sha256: 69adee7cfa35283c32b6a65bd0b2152dfef915c0bd2d9d2ae01532b0c8c286f4
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/graph_runtime/dispatch.py
-    sha256: 92b609b35410ea8914ad945252315123df11224c7bff6c9eb19988ce1cc23338
+    sha256: b54d37fb70848152f73167c714fe6142e70caa87fa92e6397a5befcb2263e53a
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/graph_runtime/errors.py
     sha256: 631a1ed4edc8a05200776c8682f7715e4f41686e3c78ff38f6defc7751a44b85
@@ -1009,7 +1009,7 @@ snapshot: &id001
     sha256: 13689644eb0c1d1e0c4102552837fb1c8b05af9b27182bd39b88cf80e9f8a9a0
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/workflow/graph_driver.py
-    sha256: c1b0eb58b4d491e5f16f5cd089acbc6af48da7fab1ebe7b6c8ccc7253d39c056
+    sha256: d60b7bb2dee1327405fd95cdf1beaa31101f8f5111072ecf5ea61003bb548bfa
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/workflow/graph_recovery.py
     sha256: cfcbbce41a57669f3d6048c1e06d2569f6319cfb5db362587b5f09932c81622f
@@ -1357,7 +1357,7 @@ snapshot: &id001
     sha256: ed4eaa60ded974d38e87be5027a93dbe77e9e016bd11013a41d92cac31ad02b8
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_graph_run_driver.py
-    sha256: 24b0fbc0a9c3413356fdbfb9e2471d5500354551259d9708443c2a62892360ff
+    sha256: 0af76569d53dd59c2b541595dec53700c1bf9a8d7d21a67f80697fc0ef8d89f8
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_graph_run_start_routing.py
     sha256: 7943f0283b51e661b6c02c33c6a6a82f15bde5e80583b8deffd99a3b037000b7
@@ -1489,7 +1489,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: 226e0913e60a2d9b9c4e40caf3d2307d725903243a5b8449350d727d111bf9d4
+    sha256: 720e973d964ee18e1986ccbe253b1f366b7b650fffa17c342f8d0e45a8ddb9cb
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236
@@ -4255,6 +4255,8 @@ items:
   provenance_role: direct
   supported_semantic_types:
   - PatchValidationResult
+  supported_command_identities:
+  - graph.patch-validator
 - id: EVD-106
   source_kind: test
   path: tests/integration/test_graph_fr08_acceptance.py
@@ -4266,6 +4268,10 @@ items:
   provenance_role: direct
   supported_semantic_types:
   - PatchValidationResult
+  - GraphPatchAttemptsResponse
+  supported_command_identities:
+  - graph.patch-validator
+  - graph.patch-attempt-readback
 - id: EVD-107
   source_kind: implementation
   path: src/orchestrator/db/access/event_store_v2.py
@@ -4314,7 +4320,7 @@ items:
 - id: EVD-111
   source_kind: implementation
   path: src/orchestrator/api/routers/graph.py
-  symbol: record_decision, submit_patch, and graph_patch_attempts routes
+  symbol: record_graph_decision and submit_operator_graph_patch routes
   reachable: true
   test_status: exercised
   snapshot_id: snapshot-2026-07-24-phase-1
@@ -4323,7 +4329,9 @@ items:
   supported_semantic_types:
   - RecordGraphDecisionResponse
   - SubmitGraphPatchResponse
-  - GraphPatchAttemptsResponse
+  supported_command_identities:
+  - graph.record-decision
+  - graph.patch-application
 - id: EVD-112
   source_kind: test
   path: tests/integration/test_graph_fr08_acceptance.py
@@ -4335,7 +4343,8 @@ items:
   provenance_role: direct
   supported_semantic_types:
   - RecordGraphDecisionResponse
-  - GraphPatchAttemptsResponse
+  supported_command_identities:
+  - graph.record-decision
 - id: EVD-113
   source_kind: snapshot-coverage-attestation
   coverage_exception: true

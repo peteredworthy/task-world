@@ -427,9 +427,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
         payload = item.payload
         node_id = str(payload["node_id"])
         async with self._session_factory() as session:
-            events = await GraphEventStore(session).read_run(item.run_id)
+            store = GraphEventStore(session)
+            projection, _, _ = await store.load_projection_with_tail(item.run_id)
+            events = await store.read_run(item.run_id)
 
-        projection = rebuild_projection(events)
         _guard_no_pending_compromised_file_state_bindings(projection, node_id)
         node_payload = _node_payload(events, node_id)
         node_kind = str(node_payload.get("kind", "worker"))

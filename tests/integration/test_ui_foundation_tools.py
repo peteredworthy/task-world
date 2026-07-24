@@ -2664,11 +2664,11 @@ def test_committed_phase_two_registry_preserves_adjudicated_capability_boundarie
         (REPO_ROOT / "research/ui-foundation/catalog/claims.yaml").read_text(encoding="utf-8")
     )
     assert claims["classification_counts"] == {
-        "current": 2,
+        "current": 1,
         "derived": 0,
         "proposed": 25,
         "gap": 49,
-        "unknown": 56,
+        "unknown": 57,
     }
     assert claims["derivation_count"] == 0
 
@@ -2681,6 +2681,7 @@ def test_current_variant_contract_rejects_missing_evidence_for_one_asserted_bran
     registry_path = root / "capabilities/registry.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    cap69["current_command_identities"] = ["graph.patch-validator"]
     cap69["evidence_ids"].remove("EVD-106")
     write_yaml(registry_path, registry)
 
@@ -2697,16 +2698,131 @@ def test_current_variant_contract_rejects_broad_definition_with_narrow_output_co
     registry_path = root / "capabilities/registry.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     cap86 = next(item for item in registry["items"] if item["id"] == "CAP-86")
-    cap86["output_contract"] = {
-        "semantic_type": "RecordGraphDecisionResponse",
-        "fields": ["run_id", "events", "decision_view"],
-        "role": "graph-decision-result",
-    }
+    cap86.update(
+        {
+            "implementation_status": "present",
+            "test_status": "exercised",
+            "capability_status": "current",
+            "current_command_identities": ["graph.record-decision"],
+            "output_contract": {
+                "semantic_type": "RecordGraphDecisionResponse",
+                "fields": ["run_id", "events", "decision_view"],
+                "role": "graph-decision-result",
+                "command_identity": "graph.record-decision",
+            },
+            "asserted_output_variant_types": [
+                "RecordGraphDecisionResponse",
+                "PatchValidationResult",
+            ],
+        }
+    )
     write_yaml(registry_path, registry)
 
     result = run_validator(root, phase=2)
 
     assert "CAPABILITY_OUTPUT_VARIANT_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_current_validator_result_rejects_decision_and_attempt_variants(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    cap69["current_command_identities"] = ["graph.patch-validator"]
+    cap69["evidence_ids"] += ["EVD-111", "EVD-112"]
+    cap69["asserted_output_variant_types"] += [
+        "RecordGraphDecisionResponse",
+        "GraphPatchAttemptsResponse",
+    ]
+    cap69["output_contract"]["variants"] += [
+        {
+            "semantic_type": "RecordGraphDecisionResponse",
+            "fields": ["run_id", "graph_position", "events", "decision_view"],
+            "role": "graph-decision-response",
+            "command_identity": "graph.record-decision",
+        },
+        {
+            "semantic_type": "GraphPatchAttemptsResponse",
+            "fields": ["run_id", "graph_position", "attempts"],
+            "role": "graph-patch-attempt-readback",
+            "command_identity": "graph.patch-attempt-readback",
+        },
+    ]
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CURRENT_OUTPUT_VARIANT_DEMAND_MISMATCH" in issue_codes(result)
+
+
+def test_current_rejects_unrelated_command_evidence_for_a_variant(tmp_path: Path) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    cap69["current_command_identities"] = ["graph.record-decision"]
+    cap69["output_contract"]["variants"][0]["command_identity"] = "graph.record-decision"
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CURRENT_OUTPUT_VARIANT_COMMAND_EVIDENCE_MISSING" in issue_codes(result)
+
+
+def test_current_rejects_copied_output_contract_for_a_distinct_demand(tmp_path: Path) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap69 = next(item for item in registry["items"] if item["id"] == "CAP-69")
+    cap86 = next(item for item in registry["items"] if item["id"] == "CAP-86")
+    cap86.update(
+        {
+            "implementation_status": "present",
+            "test_status": "exercised",
+            "capability_status": "current",
+            "output_contract": cap69["output_contract"],
+            "asserted_output_variant_types": cap69["asserted_output_variant_types"],
+        }
+    )
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CURRENT_OUTPUT_CONTRACT_COPIED_CROSS_DEMAND" in issue_codes(result)
+
+
+def test_current_approve_gate_patch_requires_human_patch_approval_and_defer_commands(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "research/ui-foundation"
+    shutil.copytree(REPO_ROOT / "research/ui-foundation", root)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    cap86 = next(item for item in registry["items"] if item["id"] == "CAP-86")
+    cap86.update(
+        {
+            "implementation_status": "present",
+            "test_status": "exercised",
+            "capability_status": "current",
+            "output_contract": {
+                "semantic_type": "RecordGraphDecisionResponse",
+                "fields": ["run_id", "graph_position", "events", "decision_view"],
+                "role": "graph-decision-response",
+                "command_identity": "graph.record-decision",
+            },
+            "asserted_output_variant_types": ["RecordGraphDecisionResponse"],
+        }
+    )
+    write_yaml(registry_path, registry)
+
+    result = run_validator(root, phase=2)
+
+    assert "CURRENT_REQUIRED_COMMAND_EVIDENCE_MISSING" in issue_codes(result)
 
 
 def test_current_variant_contract_requires_asserted_variants_for_narrow_cap69(
@@ -2734,8 +2850,21 @@ def test_current_variant_contract_requires_asserted_variants_for_narrow_cap86(
     registry_path = root / "capabilities/registry.yaml"
     registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
     cap86 = next(item for item in registry["items"] if item["id"] == "CAP-86")
-    cap86.pop("asserted_output_variant_types")
-    cap86["output_contract"]["variants"] = cap86["output_contract"]["variants"][:1]
+    cap86.update(
+        {
+            "implementation_status": "present",
+            "test_status": "exercised",
+            "capability_status": "current",
+            "current_command_identities": ["graph.record-decision"],
+            "output_contract": {
+                "semantic_type": "RecordGraphDecisionResponse",
+                "fields": ["run_id", "graph_position", "events", "decision_view"],
+                "role": "graph-decision-response",
+                "command_identity": "graph.record-decision",
+            },
+        }
+    )
+    cap86.pop("asserted_output_variant_types", None)
     write_yaml(registry_path, registry)
 
     result = run_validator(root, phase=2)

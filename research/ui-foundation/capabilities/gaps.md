@@ -2,10 +2,9 @@
 
 Generated from `capabilities/registry.yaml`; do not edit by hand.
 
-## Current (2)
+## Current (1)
 
-- `CAP-69` **Command validator result** — The command validator result demand is current only for reachable graph patch and decision validation paths that return accepted or rejected diagnostics.
-- `CAP-86` **Approve deny or defer a gate or patch** — The approve, deny, or defer a gate or patch demand is current only as split graph approval or denial and patch-validation paths; no unified defer command exists.
+- `CAP-69` **Command validator result** — The command validator result demand is current only for the graph patch validator's accepted or rejected PatchValidationResult diagnostics.
 
 ## Derived (0)
 
@@ -91,7 +90,7 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 - `CAP-116` **Active comparison target** — Active comparison target has no persisted second-run identity across projections.
 - `CAP-117` **Freshness and capability annotations persist with selection** — Freshness and capability annotations have no selection-bound persistence contract.
 
-## Unknown (56)
+## Unknown (57)
 
 - `CAP-2` **Current constraint** — Current constraint is unresolved because legacy and graph constraints have no typed precedence.
 - `CAP-3` **Human wait state** — Human wait state is unresolved because clarification, approval, and graph waits have no common lifecycle.
@@ -135,6 +134,7 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 - `CAP-76` **Repository file-state boundary** — Repository file-state boundary is unresolved because commits, worktrees, and artifacts capture different repository moments.
 - `CAP-79` **Canonical selection identity across projections** — Canonical selection identity across projections is unresolved because route, UI, run, task, attempt, and graph IDs lack typed selection joins.
 - `CAP-80` **Preserve run selection time attempt and decision context** — Preserve run selection time attempt and decision context is unresolved because return state does not durably store full selection context.
+- `CAP-86` **Approve deny or defer a gate or patch** — Approve, deny, or defer a gate or patch is unknown and partial; graph decision fragments can allow or deny eligible graph targets, raw patch application separately validates and applies a patch, and patch-attempt readback is separate; no human patch approval, patch defer, or unified gate-or-patch command exists.
 - `CAP-87` **Answer a clarification** — Answer a clarification is unresolved because requests, answers, and outcomes are not consistently bound.
 - `CAP-88` **Retry** — Retry is unresolved because revision, recovery, fan-out, and regeneration differ.
 - `CAP-89` **Pause resume or cancel** — Pause resume or cancel is unresolved because lifecycle actions have mode-specific reachability and contradictory preservation.

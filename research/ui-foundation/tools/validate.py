@@ -1097,6 +1097,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 evidence,
             )
         )
+    current_contracts: list[tuple[str, str, tuple[str, ...], str]] = []
     for item in registry.items if registry else []:
         status = item.get("capability_status")
         implementation = item.get("implementation_status")
@@ -1211,9 +1212,63 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 if isinstance(evidence_ids, list)
                 else []
             )
+            current_command_identities = _string_list(item.get("current_command_identities"))
+            if not _nonempty_string_list(item.get("current_command_identities")) or len(
+                current_command_identities
+            ) != len(set(current_command_identities)):
+                issues.append(
+                    _issue(
+                        "CURRENT_COMMAND_IDENTITIES_INVALID",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            required_command_identities = _string_list(
+                item.get("required_current_command_identities")
+            )
+            for command_identity in required_command_identities:
+                has_implementation = any(
+                    _is_direct_evidence(record)
+                    and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
+                    and record.get("reachable") is True
+                    and _has_valid_direct_locator(record, snapshot_paths)
+                    and command_identity in _string_list(record.get("supported_command_identities"))
+                    for record in raw_records
+                )
+                has_test = any(
+                    _is_direct_evidence(record)
+                    and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
+                    and record.get("reachable") is True
+                    and record.get("test_status") == "exercised"
+                    and _has_valid_direct_locator(record, snapshot_paths)
+                    and command_identity in _string_list(record.get("supported_command_identities"))
+                    for record in raw_records
+                )
+                if not has_implementation or not has_test:
+                    issues.append(
+                        _issue(
+                            "CURRENT_REQUIRED_COMMAND_EVIDENCE_MISSING",
+                            package.root / "capabilities/registry.yaml",
+                            f"{item.get('id')}:{command_identity}",
+                        )
+                    )
             for variant in output_variants:
                 variant_type = variant.get("semantic_type")
                 if not isinstance(variant_type, str):
+                    continue
+                command_identity = variant.get("command_identity")
+                if (
+                    not isinstance(command_identity, str)
+                    or not command_identity.strip()
+                    or command_identity not in current_command_identities
+                ):
+                    issues.append(
+                        _issue(
+                            "CURRENT_OUTPUT_VARIANT_DEMAND_MISMATCH",
+                            package.root / "capabilities/registry.yaml",
+                            f"{item.get('id')}:{variant_type}",
+                        )
+                    )
                     continue
                 has_implementation = any(
                     _is_direct_evidence(record)
@@ -1221,6 +1276,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     and record.get("reachable") is True
                     and _has_valid_direct_locator(record, snapshot_paths)
                     and variant_type in _string_list(record.get("supported_semantic_types"))
+                    and command_identity in _string_list(record.get("supported_command_identities"))
                     for record in raw_records
                 )
                 has_test = any(
@@ -1230,6 +1286,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     and record.get("test_status") == "exercised"
                     and _has_valid_direct_locator(record, snapshot_paths)
                     and variant_type in _string_list(record.get("supported_semantic_types"))
+                    and command_identity in _string_list(record.get("supported_command_identities"))
                     for record in raw_records
                 )
                 if not has_implementation or not has_test:
@@ -1238,6 +1295,14 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                             "CURRENT_OUTPUT_VARIANT_EVIDENCE_MISSING",
                             package.root / "capabilities/registry.yaml",
                             f"{item.get('id')}:{variant_type}",
+                        )
+                    )
+                if not has_implementation or not has_test:
+                    issues.append(
+                        _issue(
+                            "CURRENT_OUTPUT_VARIANT_COMMAND_EVIDENCE_MISSING",
+                            package.root / "capabilities/registry.yaml",
+                            f"{item.get('id')}:{variant_type}:{command_identity}",
                         )
                     )
             if not any(
@@ -1287,6 +1352,34 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                         "CURRENT_QUESTION_UNRESOLVED",
                         package.root / "capabilities/registry.yaml",
                         item.get("id"),
+                    )
+                )
+            contract_signature = json.dumps(output_variants, sort_keys=True)
+            definition = item.get("definition")
+            if isinstance(definition, str):
+                for (
+                    previous_id,
+                    previous_definition,
+                    previous_identities,
+                    previous_signature,
+                ) in current_contracts:
+                    if previous_signature == contract_signature and (
+                        previous_definition != definition
+                        or previous_identities != tuple(sorted(current_command_identities))
+                    ):
+                        issues.append(
+                            _issue(
+                                "CURRENT_OUTPUT_CONTRACT_COPIED_CROSS_DEMAND",
+                                package.root / "capabilities/registry.yaml",
+                                f"{previous_id}:{item.get('id')}",
+                            )
+                        )
+                current_contracts.append(
+                    (
+                        str(item.get("id")),
+                        definition,
+                        tuple(sorted(current_command_identities)),
+                        contract_signature,
                     )
                 )
         if status in {"proposed", "gap"} and implementation == "present":
@@ -2345,7 +2438,7 @@ def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
         "",
         f"Phase 2 is complete with {len(items)} one-to-one scope-demand classifications and {sum(counts.values())} projected claims.",
         "",
-        "Task15 in progress: SV-001 adjudicated",
+        "Task15 in progress: SV-001 and SV-002 adjudicated",
         "",
     ]
     for status in CAPABILITY_STATUSES:

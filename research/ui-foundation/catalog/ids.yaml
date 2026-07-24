@@ -2747,7 +2747,7 @@ items:
 - namespace: EVD
   canonical_id: EVD-111
   provisional_key: EVD-111
-  title: record_decision and submit_patch routes
+  title: record_graph_decision and submit_operator_graph_patch routes
   status: active
 - namespace: EVD
   canonical_id: EVD-112

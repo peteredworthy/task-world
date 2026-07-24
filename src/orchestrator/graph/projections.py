@@ -3951,9 +3951,18 @@ def build_projection(events: list[EventEnvelope]) -> GraphProjection:
     return _project(events)
 
 
-def project_graph_projection_snapshot(events: list[EventEnvelope]) -> GraphProjectionSnapshot:
-    """Build the pure policy view consumed by graph-run drivers."""
-    projection = build_projection(events)
+def project_graph_projection_snapshot(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> GraphProjectionSnapshot:
+    """Build the pure policy view consumed by graph-run drivers.
+
+    ``projection`` may be a transactional materialization of an event prefix.
+    Callers still provide the complete event sequence when event-only reason
+    fields are needed, but avoid folding that sequence again.
+    """
+    projection = projection if projection is not None else build_projection(events)
     leases = project_leases(events, projection=projection)
     node_states = project_node_states(events, projection=projection)
     active_leases = {

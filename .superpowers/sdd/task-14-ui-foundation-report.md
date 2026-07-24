@@ -16,14 +16,16 @@ claims/status/gaps projections, and focused integration tests.
 
 - `CAP-1` through `CAP-132` map one-to-one to unique immutable scope-demand
   keys and matching order-independent `ids.yaml` allocations.
-- The corrected classifications are **2 current, 0 derived, 25 proposed, 49
-  gap, and 56 unknown**.
+- The corrected classifications are **1 current, 0 derived, 25 proposed, 49
+  gap, and 57 unknown** after Task 15 adjudicated SV-002 rather than preserving
+  an invalid current status count.
 - No derivation is active. The eleven historical `DRV` ledger allocations are
   retained as superseded semantic records, rather than using unrelated
   CAP-69/EVD-105 evidence to manufacture derived capability claims.
-- `CAP-69` and `CAP-86` are current only within their explicit evidence and
-  limitation boundaries. Both have direct reachable implementation evidence,
-  direct exercised test evidence, present implementation, and exercised tests.
+- `CAP-69` is current only for the directly implemented and exercised graph
+  patch validator result. `CAP-86` is unknown/partial: graph decision, raw
+  patch application, and attempt-readback fragments do not implement a human
+  patch approval/defer command or its integrated semantics.
 - Typed steering (`CAP-92`) and steering patch (`CAP-93`) are not current.
 - `capabilities/registry.yaml` is the sole canonical source for all 49 gap and
   56 unknown adjudications. The persisted `task-14-gap-carrier-audit.md` is a
@@ -94,17 +96,19 @@ duplicate prose and known generic unknown fallback text.
 The final Task 14 review correction tightens non-action carrier executability
 to present or partial status, binds unpriced share to the graph usage rollup
 and repeated work to the structured tool trace, and records both EVI carriers
-as partially implemented with bounded coverage. CAP-69 and CAP-86 now declare
-all supported graph decision, patch-validation, and patch-route response
-variants; each variant has direct implementation and exercised-test evidence.
-All 49 gap definitions state their concrete carrier boundary or absent contract
-and are projected verbatim from the registry.
+as partially implemented with bounded coverage. Task 15 subsequently removed
+the copied cross-command variants: CAP-69 declares only PatchValidationResult,
+while CAP-86 has no current output contract. All 49 gap definitions state their
+concrete carrier boundary or absent contract and are projected verbatim from the
+registry.
 
 The remaining review correction requires every current or derived capability to
 declare a nonempty, duplicate-free asserted variant list whose values exactly
 match the duplicate-free contract variant semantic types. Contract variants
-also reject duplicate fields. CAP-69 and CAP-86 retain their existing variant
-sets unchanged.
+also reject duplicate fields. Task 15 additionally requires every current
+variant to name a demand-specific command identity with direct implementation
+and exercised-test evidence; identical current contracts cannot be copied
+across distinct definitions or command identities.
 
 ## Commands and output
 

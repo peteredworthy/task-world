@@ -367,6 +367,39 @@ async def _run_status(
 
 
 @pytest.mark.asyncio
+async def test_driver_snapshot_projection_matches_full_recovery_projection(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A persisted projection must be sufficient for driver readback semantics."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-snapshot-readback"
+    _init_repo(repo)
+    run_id = "graph-driver-snapshot-readback"
+    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("C")},
+        dispatch_order=[],
+    )
+
+    await driver.run(run_id)
+    events = await _events(session_factory, run_id)
+    async with session_factory() as session:
+        persisted_projection, tail, _ = await GraphEventStore(session).load_projection_with_tail(
+            run_id
+        )
+
+    full_snapshot = project_graph_projection_snapshot(events)
+    snapshot_backed = project_graph_projection_snapshot(events, projection=persisted_projection)
+
+    assert tail == []
+    assert snapshot_backed == full_snapshot
+    assert await driver._read_projection(run_id) == full_snapshot
+
+
+@pytest.mark.asyncio
 async def test_driver_runs_single_worker_verifier_to_accepted(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,

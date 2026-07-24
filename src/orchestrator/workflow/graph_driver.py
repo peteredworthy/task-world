@@ -765,8 +765,11 @@ class GraphRunDriver:
         return True
 
     async def _read_projection(self, run_id: str) -> GraphProjectionSnapshot:
-        events = await self._read_events(run_id)
-        return project_graph_projection_snapshot(events)
+        async with self._session_factory() as session:
+            store = GraphEventStore(session)
+            projection, _, _ = await store.load_projection_with_tail(run_id)
+            events = await store.read_run(run_id)
+        return project_graph_projection_snapshot(events, projection=projection)
 
     async def _read_events(self, run_id: str) -> list[EventEnvelope]:
         async with self._session_factory() as session:

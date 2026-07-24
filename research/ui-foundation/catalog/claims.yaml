@@ -5,11 +5,11 @@ registry: capabilities/registry.yaml
 registry_status: complete
 scope_demand_count: 132
 classification_counts:
-  current: 2
+  current: 1
   derived: 0
   proposed: 25
   gap: 49
-  unknown: 56
+  unknown: 57
 derivation_count: 0
 items:
 - id: CAP-1
@@ -3744,8 +3744,8 @@ items:
     - EVD-27
 - id: CAP-69
   title: Command validator result
-  definition: The command validator result demand is current only for reachable graph
-    patch and decision validation paths that return accepted or rejected diagnostics.
+  definition: The command validator result demand is current only for the graph patch
+    validator's accepted or rejected PatchValidationResult diagnostics.
   implementation_status: present
   test_status: exercised
   documentation_status: documented
@@ -3756,23 +3756,22 @@ items:
   evidence_ids:
   - EVD-105
   - EVD-106
-  - EVD-111
-  - EVD-112
   - EVD-58
-  - EVD-61
-  - EVD-68
   conflict_ids: []
   question_ids: []
   limitations:
-  - Current only for represented graph patch and decision validation.
+  - Current only for the directly implemented and exercised graph patch validator
+    result, not an operator command response.
   prohibited_interpretations:
+  - Do not treat graph decision recording, patch-attempt readback, or patch application
+    as a validator result.
   - Do not generalize this result to lifecycle, clarification, review, filesystem,
     or administrative commands.
   scope_demand_key: journeys.B.validator-result
+  current_command_identities:
+  - graph.patch-validator
   asserted_output_variant_types:
   - PatchValidationResult
-  - RecordGraphDecisionResponse
-  - GraphPatchAttemptsResponse
   output_contract:
     variants:
     - semantic_type: PatchValidationResult
@@ -3782,19 +3781,7 @@ items:
       - conflicting_events
       - read_set_diff
       role: graph-patch-validation
-    - semantic_type: RecordGraphDecisionResponse
-      fields:
-      - run_id
-      - graph_position
-      - events
-      - decision_view
-      role: graph-decision-response
-    - semantic_type: GraphPatchAttemptsResponse
-      fields:
-      - run_id
-      - graph_position
-      - attempts
-      role: graph-patch-route-diagnostics
+      command_identity: graph.patch-validator
 - id: CAP-70
   title: Recorded decision identity and timestamp
   definition: Recorded decision identity and timestamp is unresolved because clarification,
@@ -4488,15 +4475,16 @@ items:
   disqualifying_evidence_ids: []
 - id: CAP-86
   title: Approve deny or defer a gate or patch
-  definition: The approve, deny, or defer a gate or patch demand is current only as
-    split graph approval or denial and patch-validation paths; no unified defer command
-    exists.
-  implementation_status: present
-  test_status: exercised
+  definition: Approve, deny, or defer a gate or patch is unknown and partial; graph
+    decision fragments can allow or deny eligible graph targets, raw patch application
+    separately validates and applies a patch, and patch-attempt readback is separate;
+    no human patch approval, patch defer, or unified gate-or-patch command exists.
+  implementation_status: partial
+  test_status: unknown
   documentation_status: documented
-  capability_status: current
-  epistemic_status: observed
-  confidence: high
+  capability_status: unknown
+  epistemic_status: unknown
+  confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand decisions.approve-gate-patch.
   evidence_ids:
   - EVD-105
@@ -4510,38 +4498,33 @@ items:
   question_ids:
   - Q-5
   limitations:
-  - Approval or denial and patch validation are separate graph paths; legacy defer
-    or denial is absent.
+  - Graph decision allow or deny, patch validation, patch-attempt readback, and patch
+    application are distinct commands or readbacks with incomplete integrated semantics.
+  - Q-5 leaves caller-supplied graph attribution distinct from enforced product-role
+    authority.
   prohibited_interpretations:
-  - Do not merge graph decision, legacy approval, validator rejection, and patch application
-    into one command.
+  - Do not call raw patch application approval, or treat graph decision, validator
+    rejection, patch-attempt readback, and patch application as one human command.
   scope_demand_key: decisions.approve-gate-patch
-  asserted_output_variant_types:
-  - PatchValidationResult
-  - RecordGraphDecisionResponse
-  - GraphPatchAttemptsResponse
-  output_contract:
-    variants:
-    - semantic_type: RecordGraphDecisionResponse
-      fields:
-      - run_id
-      - graph_position
-      - events
-      - decision_view
-      role: graph-decision-response
-    - semantic_type: PatchValidationResult
-      fields:
-      - accepted
-      - rejection_reason
-      - conflicting_events
-      - read_set_diff
-      role: graph-patch-validation
-    - semantic_type: GraphPatchAttemptsResponse
-      fields:
-      - run_id
-      - graph_position
-      - attempts
-      role: graph-patch-response
+  required_current_command_identities:
+  - human.patch-approval
+  - human.patch-defer
+  implementation_carrier_bindings:
+  - id: ACT-10
+    role: action-contract
+    semantic_type: ActionContract
+    evidence_ids:
+    - EVD-27
+  - id: ACT-11
+    role: action-contract
+    semantic_type: ActionContract
+    evidence_ids:
+    - EVD-27
+  - id: ACT-13
+    role: action-contract
+    semantic_type: ActionContract
+    evidence_ids:
+    - EVD-37
 - id: CAP-87
   title: Answer a clarification
   definition: Answer a clarification is unresolved because requests, answers, and
