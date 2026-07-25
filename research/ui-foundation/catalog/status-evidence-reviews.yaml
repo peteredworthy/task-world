@@ -1,7 +1,7 @@
 metadata:
   schema_version: '1'
   scope_manifest_digest: sha256:5d638836d3c7e7fa61af9dd7397eab1744cafc7a35a313e55dca650c1ca6307a
-  active_snapshot_id: snapshot-2026-07-24-task15-semantic-review
+  active_snapshot_id: snapshot-2026-07-24-task15-lineage-fix
   reviewer_model: openai/gpt-5.6-sol
   reviewer_role: independent-semantic-evidence-reviewer
   reviewed_at: '2026-07-24T22:51:46Z'

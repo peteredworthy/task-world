@@ -7,56 +7,62 @@ entries:
   status: historical
   lineage_entry_digest: 2570439cdf59857568e786b1babe8024df0626565d11d9313c8afae97539f0f7
 - snapshot_id: snapshot-2026-07-23-phase-0
-  parent_snapshot_id: snapshot-2026-07-24-phase-1
+  parent_snapshot_id: null
   snapshot_digest: 547616535225639a633b010651fdbf334fa9182c3f63f94e8186586063305c44
   predecessor_lineage_digest: 2570439cdf59857568e786b1babe8024df0626565d11d9313c8afae97539f0f7
   status: historical
-  lineage_entry_digest: 5ee9feb285212fff72cc255598288d8c96129a3a4b89c0589d660a434fcee3c5
+  lineage_entry_digest: 240fb135420eb609013f78d6bf16ccd92daef719be4f4f9f630e881ec47f533c
 - snapshot_id: snapshot-2026-07-24-task-15-adjudication
   parent_snapshot_id: snapshot-2026-07-24-phase-1
   snapshot_digest: cd9162c8c8b0c6db482ffd642fbe3e0cbc80172934c7b8cabcb179e025c7a91f
-  predecessor_lineage_digest: 5ee9feb285212fff72cc255598288d8c96129a3a4b89c0589d660a434fcee3c5
+  predecessor_lineage_digest: 240fb135420eb609013f78d6bf16ccd92daef719be4f4f9f630e881ec47f533c
   status: historical
-  lineage_entry_digest: 3185aee5e6e35c233c612b1d7daea3802e09a35611467aaf16b0f6113939ea8b
+  lineage_entry_digest: 4e5236dc6cf9955b542766ea689313d3a456a10555e28a54682cbfd442823cf7
 - snapshot_id: snapshot-2026-07-24-snapshot-lineage
   parent_snapshot_id: snapshot-2026-07-24-task-15-adjudication
   snapshot_digest: 61ff65ec0d39fea70f554108392d955164755e1a1782d28d9a1174db0e4ee22f
-  predecessor_lineage_digest: 3185aee5e6e35c233c612b1d7daea3802e09a35611467aaf16b0f6113939ea8b
+  predecessor_lineage_digest: 4e5236dc6cf9955b542766ea689313d3a456a10555e28a54682cbfd442823cf7
   status: historical
-  lineage_entry_digest: b604ce52b64085a1cd6ca5fc845bc8c28aa753773c9b646f1e9c121cca622b65
+  lineage_entry_digest: 135d0cc989f604e3173f81e8810ca64b1b7ea18e43318b6f1f5920d18405398e
 - snapshot_id: snapshot-2026-07-24-snapshot-lineage-refresh
   parent_snapshot_id: snapshot-2026-07-24-snapshot-lineage
   snapshot_digest: e302592be26b56e9d5c8c2faad4e1fbe1828a8d9da141dfa1450cc49ab47eec9
-  predecessor_lineage_digest: b604ce52b64085a1cd6ca5fc845bc8c28aa753773c9b646f1e9c121cca622b65
+  predecessor_lineage_digest: 135d0cc989f604e3173f81e8810ca64b1b7ea18e43318b6f1f5920d18405398e
   status: historical
-  lineage_entry_digest: 71dcf1e6e894d8397cf23f48f095186894735cd8895193d6fbe5d59ea517a64f
+  lineage_entry_digest: 572059fe20fcfedf2b1b057d14fe5634f8c812f5c9b20d1392034d5140009573
 - snapshot_id: snapshot-2026-07-24-snapshot-lineage-final
   parent_snapshot_id: snapshot-2026-07-24-snapshot-lineage-refresh
   snapshot_digest: 77cc3e4644cafe6f0a123979f1bc1a80eb59df501fa29123f21a7353dc942f4c
-  predecessor_lineage_digest: 71dcf1e6e894d8397cf23f48f095186894735cd8895193d6fbe5d59ea517a64f
+  predecessor_lineage_digest: 572059fe20fcfedf2b1b057d14fe5634f8c812f5c9b20d1392034d5140009573
   status: historical
-  lineage_entry_digest: 1b03571bef86789ad7912c26daeea01b85a8b359a265e37283941eeef7d823b7
+  lineage_entry_digest: 5ae498ae0cb05d738fb0756d69fedc0825ad8b34bae6bd771674e9ee23427f06
 - snapshot_id: snapshot-2026-07-24-snapshot-lineage-formatted
   parent_snapshot_id: snapshot-2026-07-24-snapshot-lineage-final
   snapshot_digest: e8c7d9549e2692e95435991e155a7e83505562a95038b858934706692881b0aa
-  predecessor_lineage_digest: 1b03571bef86789ad7912c26daeea01b85a8b359a265e37283941eeef7d823b7
+  predecessor_lineage_digest: 5ae498ae0cb05d738fb0756d69fedc0825ad8b34bae6bd771674e9ee23427f06
   status: historical
-  lineage_entry_digest: 52250470b998985d3d2ab58f9b9439fab24a0893a919f0f986082345734d74db
+  lineage_entry_digest: 31adbf9e9d05834c28252d6858e908d8fc83ab268e0501e32ea24c9617396f89
 - snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
   parent_snapshot_id: snapshot-2026-07-24-snapshot-lineage-formatted
   snapshot_digest: 22f45e41661321bb8d82181439e32f1a609907b7ae53d9b445100cca61d20b02
-  predecessor_lineage_digest: 52250470b998985d3d2ab58f9b9439fab24a0893a919f0f986082345734d74db
+  predecessor_lineage_digest: 31adbf9e9d05834c28252d6858e908d8fc83ab268e0501e32ea24c9617396f89
   status: historical
-  lineage_entry_digest: 88496954aa2b1f40b3a9b4b5b27c4e5515067023a993f681d45da309f20d8b71
+  lineage_entry_digest: c91913b9231266eab4ef22989e51d3547acf55416189295f91c84bb19cbd7106
 - snapshot_id: snapshot-2026-07-24-main-structural-sharing
   parent_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
   snapshot_digest: a73722c615018aff38b3e4dcbf6d4ec9020b5b8669a132b5dc36c499735c5e2b
-  predecessor_lineage_digest: 88496954aa2b1f40b3a9b4b5b27c4e5515067023a993f681d45da309f20d8b71
+  predecessor_lineage_digest: c91913b9231266eab4ef22989e51d3547acf55416189295f91c84bb19cbd7106
   status: historical
-  lineage_entry_digest: bb9f2d468895f7898aff5146408d3270adcc782d6ae3dcf8473559e2bb7ed147
+  lineage_entry_digest: dea06114e3f819ca802d055cd0f77a6c2bf88ea9c6810a9f98f4fbf128c80a94
 - snapshot_id: snapshot-2026-07-24-task15-semantic-review
   parent_snapshot_id: snapshot-2026-07-24-main-structural-sharing
   snapshot_digest: 9dff1d7b74b4a2773745d981a36b0595022eba3671f60cc851d314075f6b4ade
-  predecessor_lineage_digest: bb9f2d468895f7898aff5146408d3270adcc782d6ae3dcf8473559e2bb7ed147
+  predecessor_lineage_digest: dea06114e3f819ca802d055cd0f77a6c2bf88ea9c6810a9f98f4fbf128c80a94
+  status: historical
+  lineage_entry_digest: 9d1b7bddac9657906742689785c0a2b2124fa5f232e0a4496c1a8c271c367e4a
+- snapshot_id: snapshot-2026-07-24-task15-lineage-fix
+  parent_snapshot_id: snapshot-2026-07-24-task15-semantic-review
+  snapshot_digest: a08dddaf65841c36c1fc88315e6e8a5def9f6b55babfdfe7f6923645a4a95e95
+  predecessor_lineage_digest: 9d1b7bddac9657906742689785c0a2b2124fa5f232e0a4496c1a8c271c367e4a
   status: active
-  lineage_entry_digest: 06b6a8987095c0b39ba3b34e4b6d721a2c09ee294e2504011d904f9c00916661
+  lineage_entry_digest: 2c4cc987507fa0ef1373dd39150bcfe1dffadc7fef9b2cfcfda10fb040c47f84

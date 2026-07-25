@@ -48,6 +48,10 @@ corrected in this pass; SV-008 canonical status locators were re-adjudicated aga
 immutable `research/ui-foundation/agent-reports/11-semantic-verification.md`
 was not modified.
 
+Snapshot-lineage follow-up remains in progress: `snapshot-2026-07-23-phase-0` is a detached historical root,
+the active adjudication chain must root at `snapshot-2026-07-24-phase-1`, and the only supported bounded delta
+recorder is `research/ui-foundation/tools/record_snapshot_lineage.py`.
+
 ## Accepted corrections
 
 - **SV-007:** `ENT-26` is removed from the active entity collection. Its allocation

@@ -1037,6 +1037,69 @@ def test_snapshot_lineage_rejects_unknown_parent(tmp_path: Path) -> None:
     assert "SNAPSHOT_LINEAGE_PARENT_UNKNOWN" in issue_codes(run_validator(root))
 
 
+def test_snapshot_lineage_rejects_invented_parent_for_canonical_root(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    phase_zero = next(
+        entry
+        for entry in lineage["entries"]
+        if entry["snapshot_id"] == "snapshot-2026-07-23-phase-0"
+    )
+    phase_zero["parent_snapshot_id"] = "snapshot-2026-07-24-phase-1"
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_REPARENTED" in issue_codes(run_validator(root))
+
+
+def test_snapshot_lineage_rejects_null_parent_for_canonical_child(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    child = next(
+        entry
+        for entry in lineage["entries"]
+        if entry["snapshot_id"] == "snapshot-2026-07-24-task-15-adjudication"
+    )
+    child["parent_snapshot_id"] = None
+    write_yaml(lineage_path, lineage)
+
+    assert "SNAPSHOT_LINEAGE_REPARENTED" in issue_codes(run_validator(root))
+
+
+def test_effective_snapshot_does_not_inherit_detached_historical_root() -> None:
+    validator = load_validator()
+    evidence = {
+        "snapshot": {
+            "id": "snapshot-2026-07-24-phase-1",
+            "files": [{"path": "phase1.py", "sha256": "1" * 64, "audited_at": "now"}],
+        },
+        "snapshots": [
+            {
+                "id": "snapshot-2026-07-23-phase-0",
+                "parent_snapshot_id": None,
+                "files": [{"path": "phase0.py", "sha256": "0" * 64, "audited_at": "now"}],
+            },
+            {
+                "id": "active",
+                "parent_snapshot_id": "snapshot-2026-07-24-phase-1",
+                "files": [{"path": "active.py", "sha256": "a" * 64, "audited_at": "now"}],
+            },
+        ],
+        "active_snapshot_id": "active",
+    }
+
+    active = validator._active_snapshot(evidence)
+
+    assert active is not None
+    assert {item["path"] for item in active["files"]} == {"phase1.py", "active.py"}
+
+
+def test_only_research_snapshot_recorder_path_exists() -> None:
+    assert SNAPSHOT_RECORDER.is_file()
+    assert not (REPO_ROOT / "tools/record_snapshot_lineage.py").exists()
+
+
 def test_snapshot_lineage_rejects_cycle(tmp_path: Path) -> None:
     root = copy_foundation_with_source(tmp_path)
     lineage_path = root / "catalog/snapshot-lineage.yaml"
@@ -1200,9 +1263,13 @@ def test_snapshot_recorder_appends_one_deterministic_delta_and_refuses_noop(tmp_
 
     assert result.returncode == 0, result.stderr
     evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+    lineage = snapshot_lineage(root)
     assert evidence["active_snapshot_id"] == "child"
     assert evidence["snapshots"][-1]["parent_snapshot_id"] == "snapshot-test"
     assert [item["path"] for item in evidence["snapshots"][-1]["files"]] == ["source.txt"]
+    assert lineage["entries"][-1]["snapshot_id"] == "child"
+    assert lineage["entries"][-1]["parent_snapshot_id"] == "snapshot-test"
+    assert lineage["entries"][-1]["status"] == "active"
     repeat = subprocess.run(
         [
             sys.executable,

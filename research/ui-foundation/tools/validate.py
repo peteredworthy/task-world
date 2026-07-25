@@ -4217,8 +4217,9 @@ def _validate_snapshot_lineage(
             issues.append(_issue("SNAPSHOT_LINEAGE_ENTRY_INVALID", entry_location, "status"))
         if entry.get("snapshot_digest") != _snapshot_digest(evidence_by_id.get(identifier, {})):
             issues.append(_issue("SNAPSHOT_LINEAGE_SNAPSHOT_MISMATCH", entry_location, identifier))
-        snapshot_parent = evidence_by_id.get(identifier, {}).get("parent_snapshot_id")
-        if snapshot_parent is not None and entry.get("parent_snapshot_id") != snapshot_parent:
+        if identifier in evidence_by_id and entry.get("parent_snapshot_id") != evidence_by_id[
+            identifier
+        ].get("parent_snapshot_id"):
             issues.append(_issue("SNAPSHOT_LINEAGE_REPARENTED", entry_location, identifier))
         if entry.get("lineage_entry_digest") != _lineage_entry_digest(entry):
             issues.append(
@@ -4235,13 +4236,29 @@ def _validate_snapshot_lineage(
         )
     phase_one = evidence_value.get("snapshot")
     phase_one_id = phase_one.get("id") if isinstance(phase_one, dict) else None
-    roots = [entry for entry in entries if entry.get("parent_snapshot_id") is None]
-    if (
-        len(roots) != 1
-        or not isinstance(phase_one_id, str)
-        or roots[0].get("snapshot_id") != phase_one_id
-    ):
-        issues.append(_issue("SNAPSHOT_LINEAGE_ROOT_INVALID", location, "Phase 1 root"))
+
+    def lineage_root(identifier: str) -> str | None:
+        seen: set[str] = set()
+        current = identifier
+        while current in entry_by_id:
+            if current in seen:
+                return None
+            seen.add(current)
+            parent = entry_by_id[current].get("parent_snapshot_id")
+            if not isinstance(parent, str):
+                return current
+            current = parent
+        return None
+
+    active_entries = [entry for entry in entries if entry.get("status") == "active"]
+    active_identifier = active_entries[0].get("snapshot_id") if len(active_entries) == 1 else None
+    active_root = (
+        lineage_root(active_identifier)
+        if isinstance(active_identifier, str) and active_identifier in entry_by_id
+        else None
+    )
+    if not isinstance(phase_one_id, str) or active_root != phase_one_id:
+        issues.append(_issue("SNAPSHOT_LINEAGE_ROOT_INVALID", location, "active chain root"))
     for index, entry in enumerate(entries):
         identifier = entry.get("snapshot_id")
         parent = entry.get("parent_snapshot_id")
@@ -4280,7 +4297,7 @@ def _validate_snapshot_lineage(
     children = {
         parent for entry in entries if isinstance((parent := entry.get("parent_snapshot_id")), str)
     }
-    active = [entry for entry in entries if entry.get("status") == "active"]
+    active = active_entries
     if len(active) != 1:
         issues.append(_issue("SNAPSHOT_LINEAGE_ACTIVE_INVALID", location, "exactly one active"))
     elif active[0].get("snapshot_id") in children:

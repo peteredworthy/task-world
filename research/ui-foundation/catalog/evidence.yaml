@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-24-task15-semantic-review
+active_snapshot_id: snapshot-2026-07-24-task15-lineage-fix
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -15896,3 +15896,12 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: 2de577c43435fb0c06d0ab20fc0c4778ce72734d247f721c20b043d5dd8c111d
     audited_at: '2026-07-25T00:10:00Z'
+- id: snapshot-2026-07-24-task15-lineage-fix
+  parent_snapshot_id: snapshot-2026-07-24-task15-semantic-review
+  files:
+  - path: research/ui-foundation/tools/validate.py
+    sha256: f17ecea0c5ba9384bd9a6e9fdc346a9abc0aef9fa08e8e323894f9cb53151f10
+    audited_at: '2026-07-24T22:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: d20d8346e81cf4a0acb1ebaf873bc52106711f46afcf708247aee96fcd54f1fb
+    audited_at: '2026-07-24T22:00:00Z'
