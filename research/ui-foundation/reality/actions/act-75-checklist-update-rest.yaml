@@ -18,11 +18,11 @@ retry_behavior: Re-read checklist item before retrying.
 reversibility: A later eligible checklist update may supersede the value.
 audit_evidence_ids: [EVD-119, EVD-120, EVD-137]
 transition_variants:
-- {carrier: task, from_state_id: STA-8, to_state_id: STA-8, eligibility_precondition: 'active run and task status is exactly PENDING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
-- {carrier: task, from_state_id: STA-9, to_state_id: STA-9, eligibility_precondition: 'active run and task status is exactly BUILDING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
-- {carrier: task, from_state_id: STA-11, to_state_id: STA-11, eligibility_precondition: 'active run and task status is exactly PENDING_USER_ACTION', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
-- {carrier: task, from_state_id: STA-12, to_state_id: STA-12, eligibility_precondition: 'active run and task status is exactly RECOVERING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
-- {carrier: task, from_state_id: STA-13, to_state_id: STA-13, eligibility_precondition: 'active run and task status is exactly FAN_OUT_RUNNING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {authority_clause_id: act-75-checklist-update-sta-8-self-loop, carrier: task, from_state_id: STA-8, to_state_id: STA-8, eligibility_precondition: 'active run and task status is exactly PENDING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {authority_clause_id: act-75-checklist-update-sta-9-self-loop, carrier: task, from_state_id: STA-9, to_state_id: STA-9, eligibility_precondition: 'active run and task status is exactly BUILDING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {authority_clause_id: act-75-checklist-update-sta-11-self-loop, carrier: task, from_state_id: STA-11, to_state_id: STA-11, eligibility_precondition: 'active run and task status is exactly PENDING_USER_ACTION', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {authority_clause_id: act-75-checklist-update-sta-12-self-loop, carrier: task, from_state_id: STA-12, to_state_id: STA-12, eligibility_precondition: 'active run and task status is exactly RECOVERING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {authority_clause_id: act-75-checklist-update-sta-13-self-loop, carrier: task, from_state_id: STA-13, to_state_id: STA-13, eligibility_precondition: 'active run and task status is exactly FAN_OUT_RUNNING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
 carrier_relationship:
   affected_carrier: checklist item status and note while the representative BUILDING task status is preserved
   caveat: This is a field-mutation carrier self-loop, not a task lifecycle transition.
@@ -42,8 +42,9 @@ status_basis:
   test: 'ACT-75 test status exercised: ACT-75 Updates checklist status and note through the workflow service.
     is exercised because admitted SER rows SER-0485 contain direct assertions at tests/integration/test_api_tasks.py::test_full_task_lifecycle;
     no active rejected locator defeats that proof.'
-  documentation: 'ACT-75 documentation status documented: ACT-75 Updates checklist status and note through
-    the workflow service. is documented at reality/actions/act-75-checklist-update-rest.yaml and by EVD-119, EVD-120, EVD-137;
+  documentation: 'ACT-75 documentation status documented: reality/actions/act-75-checklist-update-rest.yaml
+    records checklist-update REST authority from EVD-119, its EVD-120 lifecycle exercise, and EVD-137 exact
+    self-loop variants for STA-8, STA-9, STA-11, STA-12, and STA-13 with STA-10, STA-14, and STA-15 rejected;
     any listed question (Q-5 (open: Define product-role authorization before treating actor text as authority))
     is explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
   capability: 'ACT-75 capability status unknown: ACT-75 Updates checklist status and note through the

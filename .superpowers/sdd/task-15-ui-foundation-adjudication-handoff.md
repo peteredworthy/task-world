@@ -8,12 +8,12 @@ Record the canonical SV-008 adjudication correction while preserving Phase 1 imm
 
 The current, superseding Task 15 projection covers exactly **210** records: 35 REL,
 74 STA, 86 ACT, 9 EVI, and 6 INV. It has 513 SER locator reviews, 1,050 SDR
-dimension reviews, and 455/50/8 admitted/bounded/rejected SER rows. The exact and
-bounded canonical test-locator counts are 139 and 49; the regenerated collected
-manifest contains 118 bases and concrete nodes. Test distributions are REL 13/22,
-STA 57/17, ACT 57/29, EVI 2/7, and INV 6/0 exercised/unexercised. 62 actions retain
-the Q-5 boundary. The active snapshot is
-`snapshot-2026-07-25-task-15-semantic-clauses`.
+dimension reviews, and 454/51/8 admitted/bounded/rejected SER rows. The exact and
+bounded canonical test-locator counts are 138 and 50; the regenerated collected
+manifest contains 119 bases and concrete nodes. Test distributions are REL 13/22,
+STA 57/17, ACT 56/30, EVI 2/7, and INV 6/0 exercised/unexercised. 62 actions retain
+the Q-5 boundary. The final bounded post-Phase1 snapshot is
+`snapshot-2026-07-25-task-15-authority-closure-final6`.
 
 The validator now rejects duplicate or incomplete partial-clause compositions,
 bounded evidence promoted as exercise, question-only documentation contradictions,
@@ -64,8 +64,9 @@ Independently re-review canonical statuses and validator enforcement without edi
 In progress: ACT-75/76/80/81/82 now use typed carrier-specific transition variants,
 including exact accepted/rejected TaskStatus partitions and ACT-81's PAUSED run-carrier
 accepted no-op without task mutation. EVD-116 remains engine-only; REST and MCP
-escalation registration/handler/test evidence has distinct direct IDs. Broad projection
-text cleanup remains deferred to the final pass; this handoff does not claim closure.
+escalation registration/handler/test evidence has distinct direct IDs. Snapshot
+`snapshot-2026-07-25-task-15-authority-closure-final6` records the final source boundary;
+this handoff remains pending independent closure review.
 
 ## Status
 

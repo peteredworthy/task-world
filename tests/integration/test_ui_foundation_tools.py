@@ -7,6 +7,7 @@ import subprocess
 import sys
 from types import ModuleType
 
+import pytest
 import yaml
 
 
@@ -134,8 +135,77 @@ def write_status_review_catalog(root: Path, value: dict[str, object]) -> None:
     write_yaml(root / "catalog/status-evidence-reviews.yaml", value)
 
 
+def documentation_summary(
+    catalog: dict[str, object], record_id: str = "REL-1"
+) -> dict[str, object]:
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    return next(
+        value
+        for value in summaries
+        if value["record_id"] == record_id and value["dimension"] == "documentation"
+    )
+
+
+def capability_summary(catalog: dict[str, object], record_id: str = "REL-1") -> dict[str, object]:
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    return next(
+        value
+        for value in summaries
+        if value["record_id"] == record_id and value["dimension"] == "capability"
+    )
+
+
+def epistemic_summary(catalog: dict[str, object], record_id: str = "REL-1") -> dict[str, object]:
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    return next(
+        value
+        for value in summaries
+        if value["record_id"] == record_id and value["dimension"] == "epistemic"
+    )
+
+
+def canonical_status_record(root: Path, record_id: str) -> tuple[Path, dict[str, object]]:
+    scope = yaml.safe_load((root / "catalog/status-scope.yaml").read_text(encoding="utf-8"))
+    relative = next(item["path"] for item in scope["items"] if item["id"] == record_id)
+    path = root / relative
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    record = (
+        document
+        if document.get("id") == record_id
+        else next(item for item in document["items"] if item["id"] == record_id)
+    )
+    return path, record
+
+
+def set_canonical_epistemic_status(root: Path, record_id: str, status: str) -> None:
+    path, record = canonical_status_record(root, record_id)
+    record["epistemic_status"] = status
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if document.get("id") == record_id:
+        document = record
+    else:
+        next(item for item in document["items"] if item["id"] == record_id)["epistemic_status"] = (
+            status
+        )
+    write_yaml(path, document)
+
+
 def load_validator() -> ModuleType:
     spec = importlib.util.spec_from_file_location("ui_foundation_validate", VALIDATOR)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_snapshot_recorder() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "ui_foundation_snapshot_recorder", SNAPSHOT_RECORDER
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -151,6 +221,28 @@ def copy_foundation_with_source(tmp_path: Path) -> Path:
     (repository / "src").symlink_to(REPO_ROOT / "src", target_is_directory=True)
     (repository / "tests").symlink_to(REPO_ROOT / "tests", target_is_directory=True)
     return root
+
+
+SELF_SNAPSHOT_PATHS = (
+    "research/ui-foundation/catalog/evidence.yaml",
+    "research/ui-foundation/catalog/snapshot-lineage.yaml",
+)
+
+
+def add_legacy_self_snapshot_records(root: Path) -> None:
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    repository = root.parents[1]
+    for relative in SELF_SNAPSHOT_PATHS:
+        path = repository / relative
+        evidence["snapshot"]["files"].append(
+            {
+                "path": relative,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "audited_at": "2026-07-24T00:00:00Z",
+            }
+        )
+    write_yaml(evidence_path, evidence)
 
 
 def status_scope_items(root: Path) -> list[dict[str, str]]:
@@ -280,6 +372,32 @@ def test_validator_rejects_duplicate_ids(tmp_path: Path) -> None:
     result = run_validator(root)
     assert result.returncode == 1
     assert "ID_DUPLICATE" in result.stderr
+
+
+def test_phase_one_ignores_exact_capability_claims_projection_for_duplicate_ids(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    item = semantic_item("CAP-01")
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "phase_status": "complete",
+            "completion_phase": 2,
+            "items": [item],
+        },
+    )
+    validator = load_validator()
+    package = validator.load_foundation(root)
+    write_yaml(
+        root / "catalog/claims.yaml",
+        validator._phase_two_claims_projection(package, [item]),
+    )
+
+    result = run_validator(root, phase=1)
+
+    assert "ID_DUPLICATE" not in issue_codes(result)
 
 
 def test_status_adjudication_requires_dimension_specific_basis_and_direct_implementation(
@@ -553,6 +671,149 @@ def test_status_evidence_reviews_rejects_each_dimension_status_mutation(tmp_path
     assert "STATUS_EVIDENCE_DIMENSION_CANONICAL_MISMATCH" in codes
 
 
+def test_capability_unknown_requires_unresolved_boundary(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    capability_summary(catalog)["unresolved_boundary"] = ""
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_capability_unknown_rejects_global_cap_substitution(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = capability_summary(catalog)
+    summary["authority_ids"] = ["CAP-1"]
+    summary["capability_authority_bindings"] = [
+        {"authority_id": "CAP-1", "relation": "gap-contract"}
+    ]
+    summary["gap_contract_ids"] = ["CAP-1"]
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_capability_gap_rejects_unrelated_gap_cap(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = capability_summary(catalog, "ACT-15")
+    summary["gap_contract_ids"] = ["CAP-85"]
+    summary["capability_authority_bindings"] = [
+        {"authority_id": "CAP-85", "relation": "gap-contract"}
+    ]
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_capability_gap_requires_reciprocal_action(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    capability = next(item for item in registry["items"] if item["id"] == "CAP-92")
+    capability["gap_action_ids"] = []
+    write_yaml(registry_path, registry)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_capability_gap_requires_gap_contract_relation(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    capability_summary(catalog, "ACT-15")["capability_authority_bindings"][0]["relation"] = (
+        "implementation-carrier"
+    )
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_capability_gap_requires_exact_action_proposition(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    capability_summary(catalog, "ACT-15")["record_proposition"] = (
+        "ACT-15 user-capability proposition: An unrelated future action."
+    )
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_capability_current_requires_typed_authority(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = capability_summary(catalog, "ACT-15")
+    summary["compatible_status"] = "current"
+    summary["combined_verdict"] = "proves"
+    summary["authority_ids"] = ["CAP-92"]
+    summary["gap_contract_ids"] = []
+    summary["capability_authority_bindings"] = []
+    action_path = root / "reality/actions/act-15-steer-context-gap.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["capability_status"] = "current"
+    write_yaml(action_path, action)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    capability = next(item for item in registry["items"] if item["id"] == "CAP-92")
+    capability["capability_status"] = "current"
+    capability["implementation_carrier_bindings"] = [{"id": "ACT-15"}]
+    write_yaml(registry_path, registry)
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_capability_derived_requires_typed_cap_and_derivation_authority(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = capability_summary(catalog, "ACT-15")
+    summary["compatible_status"] = "derived"
+    summary["combined_verdict"] = "proves"
+    summary["authority_ids"] = ["CAP-92"]
+    summary["derivation_contract_ids"] = ["DRV-1"]
+    summary["gap_contract_ids"] = []
+    summary["capability_authority_bindings"] = []
+    action_path = root / "reality/actions/act-15-steer-context-gap.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["capability_status"] = "derived"
+    write_yaml(action_path, action)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    capability = next(item for item in registry["items"] if item["id"] == "CAP-92")
+    capability["capability_status"] = "derived"
+    capability["derivation_contract_ids"] = ["DRV-1"]
+    capability["implementation_carrier_bindings"] = [{"id": "ACT-15"}]
+    write_yaml(registry_path, registry)
+    write_yaml(root / "capabilities/derivations/drv-1.yaml", {"id": "DRV-1"})
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_capability_proposed_requires_typed_source_demand_authority(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = capability_summary(catalog, "ACT-15")
+    summary["compatible_status"] = "proposed"
+    summary["combined_verdict"] = "proposed"
+    summary["authority_ids"] = ["CAP-92"]
+    summary["gap_contract_ids"] = []
+    summary["capability_authority_bindings"] = []
+    action_path = root / "reality/actions/act-15-steer-context-gap.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["capability_status"] = "proposed"
+    write_yaml(action_path, action)
+    registry_path = root / "capabilities/registry.yaml"
+    registry = yaml.safe_load(registry_path.read_text(encoding="utf-8"))
+    capability = next(item for item in registry["items"] if item["id"] == "CAP-92")
+    capability["capability_status"] = "proposed"
+    write_yaml(registry_path, registry)
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in validate_status_reviews(root)
+
+
 def test_status_evidence_reviews_rejects_false_conflict_promotion_and_epistemic_evidence_removal(
     tmp_path: Path,
 ) -> None:
@@ -676,7 +937,214 @@ def test_status_evidence_reviews_rejects_open_question_as_documentation_contradi
 
     codes = validate_status_reviews(root)
 
-    assert "STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID" in codes
+    assert "STATUS_EVIDENCE_DOCUMENTATION_CONTRADICTION_INVALID" in codes
+
+
+def test_status_evidence_reviews_require_typed_documentation_authority(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    documentation_summary(catalog).pop("documentation_authority")
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_AUTHORITY_REQUIRED" in codes
+
+
+def test_status_evidence_reviews_reject_wrong_documentation_declaration_path(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    authority = documentation_summary(catalog)["documentation_authority"]
+    authority["canonical_declaration"]["path"] = "reality/state-model.yaml"
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_INVALID" in codes
+
+
+def test_status_evidence_reviews_reject_wrong_documentation_declaration_id(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    authority = documentation_summary(catalog)["documentation_authority"]
+    authority["canonical_declaration"]["id"] = "REL-2"
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_INVALID" in codes
+
+
+def test_status_evidence_reviews_reject_wrong_documentation_declaration_hash(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    authority = documentation_summary(catalog)["documentation_authority"]
+    authority["canonical_declaration"]["current_sha256"] = f"sha256:{'0' * 64}"
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_HASH_MISMATCH" in codes
+
+
+def test_status_evidence_reviews_reject_globally_valid_unrelated_documentation_evidence(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = documentation_summary(catalog)
+    evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+    unrelated = next(item for item in evidence["items"] if item["id"] == "EVD-50")
+    summary["evidence_ids"] = ["EVD-50"]
+    summary["documentation_evidence_ids"] = ["EVD-50"]
+    summary["documentation_authority"]["evidence_bindings"] = [
+        {
+            "evidence_id": "EVD-50",
+            "expected_source_kind": unrelated["source_kind"],
+            "expected_provenance_role": unrelated["provenance_role"],
+            "path": unrelated["path"],
+            "symbol_or_heading": unrelated["symbol"],
+            "proposition_role": "audit-synthesis-record-trace",
+        }
+    ]
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_BINDING_INVALID" in codes
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("expected_source_kind", "source-code"),
+        ("expected_provenance_role", "direct"),
+        ("path", "research/ui-foundation/agent-reports/03-workflow-state.md#key-findings"),
+        ("symbol_or_heading", "unrelated-heading"),
+    ),
+)
+def test_status_evidence_reviews_reject_inexact_documentation_evidence_bindings(
+    tmp_path: Path, field: str, replacement: str
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    binding = documentation_summary(catalog)["documentation_authority"]["evidence_bindings"][0]
+    binding[field] = replacement
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_BINDING_INVALID" in codes, field
+
+
+def test_status_evidence_reviews_reject_literal_current_with_stale_declaration_hash(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    relationships_path = root / "reality/relationships.yaml"
+    relationships = yaml.safe_load(relationships_path.read_text(encoding="utf-8"))
+    record = next(item for item in relationships["items"] if item["id"] == "REL-1")
+    record["definition"] = "Changed after the documentation review."
+    write_yaml(relationships_path, relationships)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_HASH_MISMATCH" in codes
+
+
+def test_status_evidence_reviews_reject_declaration_path_absent_from_active_snapshot_chain(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    for snapshot in [evidence["snapshot"], *evidence["snapshots"]]:
+        snapshot["files"] = [
+            item
+            for item in snapshot["files"]
+            if item["path"] != "research/ui-foundation/reality/relationships.yaml"
+        ]
+    write_yaml(evidence_path, evidence)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_PATH_NOT_ACTIVE" in codes
+
+
+def test_status_evidence_reviews_reject_declaration_path_only_in_unrelated_historical_snapshot(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    for snapshot in [evidence["snapshot"], *evidence["snapshots"]]:
+        snapshot["files"] = [
+            item
+            for item in snapshot["files"]
+            if item["path"] != "research/ui-foundation/reality/relationships.yaml"
+        ]
+    evidence["snapshots"].append(
+        {
+            "id": "unrelated-historical-snapshot",
+            "parent_snapshot_id": None,
+            "files": [
+                {
+                    "path": "research/ui-foundation/reality/relationships.yaml",
+                    "sha256": "0" * 64,
+                    "audited_at": "2026-07-25T00:00:00Z",
+                }
+            ],
+        }
+    )
+    write_yaml(evidence_path, evidence)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_PATH_NOT_ACTIVE" in codes
+
+
+def test_status_evidence_reviews_reject_stale_full_file_hash_for_current_declaration(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    relationships_path = root / "reality/relationships.yaml"
+    relationships = yaml.safe_load(relationships_path.read_text(encoding="utf-8"))
+    relationships["schema_version"] = "changed-after-review"
+    write_yaml(relationships_path, relationships)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_FILE_HASH_MISMATCH" in codes
+
+
+def test_status_evidence_reviews_reject_fake_documentation_contradiction_claim(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = documentation_summary(catalog, "REL-4")
+    summary["compatible_status"] = "conflicting"
+    summary["combined_verdict"] = "contradicts"
+    summary["contradiction_clauses"] = {
+        "CON-1#claim-0": "A fabricated claim that is not canonical.",
+        "CON-1#claim-1": "Another fabricated competing claim.",
+    }
+    relationships_path = root / "reality/relationships.yaml"
+    relationships = yaml.safe_load(relationships_path.read_text(encoding="utf-8"))
+    record = next(item for item in relationships["items"] if item["id"] == "REL-4")
+    record["documentation_status"] = "conflicting"
+    write_yaml(relationships_path, relationships)
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_CONTRADICTION_INVALID" in codes
 
 
 def test_status_evidence_reviews_rejects_documented_without_current_evidence(
@@ -791,30 +1259,244 @@ def test_status_evidence_reviews_rejects_observed_without_observation_evidence(
     assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in codes
 
 
-def test_status_evidence_reviews_rejects_derived_inferred_and_operator_statuses_without_proof(
-    tmp_path: Path,
+def test_epistemic_binding_must_belong_to_summary_and_canonical_record(tmp_path: Path) -> None:
+    for case in ("summary", "record"):
+        root = copy_foundation_with_source(tmp_path / case)
+        catalog = status_review_catalog(root)
+        summary = epistemic_summary(catalog)
+        evidence_id = summary["epistemic_authority_bindings"][0]["evidence_id"]
+        if case == "summary":
+            summary["evidence_ids"].remove(evidence_id)
+        else:
+            record_path, record = canonical_status_record(root, summary["record_id"])
+            record["evidence_ids"].remove(evidence_id)
+            document = yaml.safe_load(record_path.read_text(encoding="utf-8"))
+            if document.get("id") == summary["record_id"]:
+                document = record
+            else:
+                next(item for item in document["items"] if item["id"] == summary["record_id"])[
+                    "evidence_ids"
+                ].remove(evidence_id)
+            write_yaml(record_path, document)
+            assert (
+                evidence_id
+                not in canonical_status_record(root, summary["record_id"])[1]["evidence_ids"]
+            )
+        write_status_review_catalog(root, catalog)
+
+        assert "STATUS_EVIDENCE_EPISTEMIC_BINDING_INVALID" in validate_status_reviews(root)
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    (
+        ("expected_source_kind", "implementation"),
+        ("expected_provenance_role", "direct"),
+        ("path", "src/orchestrator/config/enums.py"),
+        ("symbol_or_heading", "unrelated_symbol"),
+    ),
+)
+def test_epistemic_binding_rejects_inexact_evidence_metadata(
+    tmp_path: Path, field: str, replacement: str
 ) -> None:
-    for status, verdict in (
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    epistemic_summary(catalog)["epistemic_authority_bindings"][0][field] = replacement
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_BINDING_INVALID" in validate_status_reviews(root), field
+
+
+def test_epistemic_observation_rejects_globally_valid_unrelated_evidence(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = epistemic_summary(catalog)
+    evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+    unrelated = next(item for item in evidence["items"] if item["id"] == "EVD-50")
+    summary["evidence_ids"] = [unrelated["id"]]
+    summary["observation_evidence_ids"] = [unrelated["id"]]
+    summary["epistemic_authority_bindings"] = [
+        {
+            "evidence_id": unrelated["id"],
+            "expected_source_kind": unrelated["source_kind"],
+            "expected_provenance_role": unrelated["provenance_role"],
+            "path": unrelated["path"],
+            "symbol_or_heading": unrelated["symbol"],
+            "proposition_role": "observation of REL-1",
+        }
+    ]
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_BINDING_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_observed_requires_typed_observation_binding(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    epistemic_summary(catalog)["epistemic_authority_bindings"] = []
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_direct_evidence_rejects_falsely_copied_missing_symbol(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence_by_id = {item["id"]: item for item in evidence["items"]}
+    summary = next(
+        item
+        for item in catalog["dimension_reviews"]
+        if item["dimension"] == "epistemic"
+        and any(
+            evidence_by_id[binding["evidence_id"]].get("provenance_role") == "direct"
+            for binding in item["epistemic_authority_bindings"]
+        )
+    )
+    binding = next(
+        binding
+        for binding in summary["epistemic_authority_bindings"]
+        if evidence_by_id[binding["evidence_id"]].get("provenance_role") == "direct"
+    )
+    binding["symbol_or_heading"] = "symbol_that_does_not_exist"
+    evidence_by_id[binding["evidence_id"]]["symbol"] = "symbol_that_does_not_exist"
+    write_yaml(evidence_path, evidence)
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_BINDING_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_synthesis_evidence_requires_resolvable_heading(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = epistemic_summary(catalog)
+    binding = summary["epistemic_authority_bindings"][0]
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    record = next(item for item in evidence["items"] if item["id"] == binding["evidence_id"])
+    report_path = record["path"].partition("#")[0]
+    record["path"] = f"{report_path}#heading-that-does-not-exist"
+    binding["path"] = record["path"]
+    write_yaml(evidence_path, evidence)
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_BINDING_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_derived_requires_active_reciprocal_derivation(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = epistemic_summary(catalog)
+    summary["compatible_status"] = "deterministically-derived"
+    summary["derivation_contract_ids"] = ["DRV-999"]
+    set_canonical_epistemic_status(root, summary["record_id"], "deterministically-derived")
+    write_yaml(root / "capabilities/derivations/drv-999.yaml", {"id": "DRV-999"})
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_proposed_rejects_untyped_global_evidence_authority(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = epistemic_summary(catalog)
+    summary["compatible_status"] = "proposed"
+    summary["combined_verdict"] = "proposed"
+    summary["proposal_authority_ids"] = list(summary["evidence_ids"])
+    set_canonical_epistemic_status(root, summary["record_id"], "proposed")
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_inferred_rejects_untyped_rule_with_global_evidence(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = epistemic_summary(catalog)
+    summary["compatible_status"] = "inferred"
+    summary["combined_verdict"] = "partially-proves"
+    summary["inference_rule"] = "A free-form string is not a typed inference rule."
+    summary["inference_evidence_ids"] = list(summary["evidence_ids"])
+    set_canonical_epistemic_status(root, summary["record_id"], "inferred")
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_operator_assertion_requires_operator_identity(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = epistemic_summary(catalog)
+    binding = summary["epistemic_authority_bindings"][0]
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    record = next(item for item in evidence["items"] if item["id"] == binding["evidence_id"])
+    record["source_kind"] = "operator-assertion"
+    binding["expected_source_kind"] = "operator-assertion"
+    binding["proposition_role"] = "operator assertion"
+    summary["compatible_status"] = "operator-asserted"
+    summary["assertion_evidence_ids"] = list(summary["evidence_ids"])
+    set_canonical_epistemic_status(root, summary["record_id"], "operator-asserted")
+    write_yaml(evidence_path, evidence)
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_unknown_rejects_proving_observation_binding(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = epistemic_summary(catalog)
+    summary["compatible_status"] = "unknown"
+    summary["combined_verdict"] = "unknown"
+    summary["unresolved_boundary"] = "REL-1 remains explicitly unresolved."
+    set_canonical_epistemic_status(root, summary["record_id"], "unknown")
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in validate_status_reviews(root)
+
+
+def test_epistemic_narrative_must_identify_the_record(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = epistemic_summary(catalog)
+    summary["record_proposition"] = "A sufficiently long but generic proposition."
+    summary["observed_fact"] = "A sufficiently long but generic observed fact."
+    summary["boundary"] = "A sufficiently long but generic evidence boundary."
+    summary["rationale"] = "A sufficiently long but generic review rationale."
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_NARRATIVE_GENERIC" in validate_status_reviews(root)
+
+
+@pytest.mark.parametrize(
+    ("status", "verdict"),
+    (
         ("deterministically-derived", "proves"),
         ("inferred", "partially-proves"),
         ("operator-asserted", "proves"),
-    ):
-        root = copy_foundation_with_source(tmp_path / status)
-        catalog = status_review_catalog(root)
-        summaries = catalog["dimension_reviews"]
-        assert isinstance(summaries, list)
-        summary = next(value for value in summaries if value["dimension"] == "epistemic")
-        summary["compatible_status"] = status
-        summary["combined_verdict"] = verdict
-        summary["derivation_contract_ids"] = []
-        summary["inference_rule"] = ""
-        summary["inference_evidence_ids"] = []
-        summary["assertion_evidence_ids"] = []
-        write_status_review_catalog(root, catalog)
+    ),
+)
+def test_status_evidence_reviews_rejects_derived_inferred_and_operator_statuses_without_proof(
+    tmp_path: Path, status: str, verdict: str
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(value for value in summaries if value["dimension"] == "epistemic")
+    summary["compatible_status"] = status
+    summary["combined_verdict"] = verdict
+    summary["derivation_contract_ids"] = []
+    summary["inference_rule"] = ""
+    summary["inference_evidence_ids"] = []
+    summary["assertion_evidence_ids"] = []
+    write_status_review_catalog(root, catalog)
 
-        codes = validate_status_reviews(root)
+    codes = validate_status_reviews(root)
 
-        assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in codes
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in codes
 
 
 def test_absent_unknown_action_does_not_require_unallocated_gap_demand(tmp_path: Path) -> None:
@@ -1079,7 +1761,7 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
     expected_test_statuses = {
         "REL": {"exercised": 13, "unexercised": 22},
         "STA": {"exercised": 57, "unexercised": 17},
-        "ACT": {"exercised": 57, "unexercised": 29},
+        "ACT": {"exercised": 56, "unexercised": 30},
         "EVI": {"exercised": 2, "unexercised": 7},
         "INV": {"exercised": 6},
     }
@@ -1119,7 +1801,7 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
         for field in ("test_locators", "bounded_test_locators")
         for locator in records[identifier].get(field, [])
     }
-    assert len(exact_locators) == 118
+    assert len(exact_locators) == 119
 
 
 def test_exercised_status_rejects_empty_exact_test_locators(tmp_path: Path) -> None:
@@ -1590,6 +2272,66 @@ def test_effective_snapshot_rejects_unknown_parent_and_cycle(tmp_path: Path) -> 
     assert validator._active_snapshot(cycle) is None
 
 
+@pytest.mark.parametrize("operation", ("path", "remove"))
+@pytest.mark.parametrize("self_path", SELF_SNAPSHOT_PATHS)
+def test_snapshot_recorder_rejects_self_reference_before_mutation(
+    tmp_path: Path, self_path: str, operation: str
+) -> None:
+    root = write_minimal_foundation(tmp_path)
+    before_evidence = (root / "catalog/evidence.yaml").read_bytes()
+    before_lineage = (root / "catalog/snapshot-lineage.yaml").read_bytes()
+    recorder = load_snapshot_recorder()
+
+    with pytest.raises(ValueError, match="SNAPSHOT_SELF_REFERENCE"):
+        recorder.record(
+            root,
+            "child",
+            "2026-07-24T01:00:00Z",
+            [self_path] if operation == "path" else [],
+            [self_path] if operation == "remove" else [],
+        )
+
+    assert (root / "catalog/evidence.yaml").read_bytes() == before_evidence
+    assert (root / "catalog/snapshot-lineage.yaml").read_bytes() == before_lineage
+
+
+def test_validator_ignores_only_legacy_self_records_and_keeps_ordinary_files_strict(
+    tmp_path: Path,
+) -> None:
+    root = write_minimal_foundation(tmp_path)
+    add_legacy_self_snapshot_records(root)
+    validator = load_validator()
+    evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+
+    active = validator._active_snapshot(evidence)
+
+    assert active is not None
+    assert {item["path"] for item in active["files"]} == {"source.txt"}
+
+    (tmp_path / "source.txt").write_text("ordinary drift\n", encoding="utf-8")
+    package = validator.load_foundation(root)
+    issues = validator.validate_source_hashes(package, phase=2)
+    stale_paths = {issue.path for issue in issues if issue.code == "SOURCE_HASH_STALE"}
+
+    assert stale_paths == {str(tmp_path / "source.txt")}
+
+
+def test_snapshot_recorder_appends_child_without_legacy_self_records(tmp_path: Path) -> None:
+    root = write_minimal_foundation(tmp_path)
+    add_legacy_self_snapshot_records(root)
+    source = tmp_path / "source.txt"
+    source.write_text("changed\n", encoding="utf-8")
+    recorder = load_snapshot_recorder()
+
+    recorder.record(root, "child", "2026-07-24T01:00:00Z", ["source.txt"], [])
+
+    evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+    active = load_validator()._active_snapshot(evidence)
+    assert active is not None
+    assert {item["path"] for item in active["files"]} == {"source.txt"}
+    assert [item["path"] for item in evidence["snapshots"][-1]["files"]] == ["source.txt"]
+
+
 def test_snapshot_recorder_appends_one_deterministic_delta_and_refuses_noop(tmp_path: Path) -> None:
     root = write_minimal_foundation(tmp_path)
     source = tmp_path / "source.txt"
@@ -1640,6 +2382,92 @@ def test_snapshot_recorder_appends_one_deterministic_delta_and_refuses_noop(tmp_
     )
     assert repeat.returncode == 1
     assert "NO_OP_DELTA" in repeat.stderr
+
+
+def test_snapshot_recorder_hashes_generated_status_manifests_from_final_bytes(
+    tmp_path: Path,
+) -> None:
+    root = write_minimal_foundation(tmp_path)
+    dependent_paths = {
+        "research/ui-foundation/catalog/status-test-nodes.yaml": {
+            "schema_version": "1",
+            "active_snapshot_id": "snapshot-test",
+            "entries": [{"active_snapshot_id": "snapshot-test"}],
+        },
+        "research/ui-foundation/catalog/status-evidence-reviews.yaml": {
+            "metadata": {"active_snapshot_id": "snapshot-test"},
+            "reviews": [],
+        },
+    }
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    for relative, value in dependent_paths.items():
+        path = tmp_path / relative
+        write_yaml(path, value)
+        evidence["snapshot"]["files"].append(
+            {
+                "path": relative,
+                "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "audited_at": "2026-07-24T00:00:00Z",
+            }
+        )
+    snapshot_digest = hashlib.sha256(
+        json.dumps(evidence["snapshot"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    evidence_path.write_text(yaml.safe_dump(evidence, sort_keys=False), encoding="utf-8")
+    (root / "catalog/phase-1-snapshot.sha256").write_text(f"{snapshot_digest}\n", encoding="utf-8")
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"][0]["snapshot_digest"] = snapshot_digest
+    lineage["entries"][0]["lineage_entry_digest"] = hashlib.sha256(
+        json.dumps(
+            {
+                key: value
+                for key, value in lineage["entries"][0].items()
+                if key != "lineage_entry_digest"
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    write_yaml(lineage_path, lineage)
+
+    (tmp_path / "source.txt").write_text("changed\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SNAPSHOT_RECORDER),
+            "--root",
+            str(root),
+            "--snapshot-id",
+            "child",
+            "--audited-at",
+            "2026-07-24T01:00:00Z",
+            "--path",
+            "source.txt",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    active = load_validator()._active_snapshot(evidence)
+    assert active is not None
+    effective_hashes = {item["path"]: item["sha256"] for item in active["files"]}
+    for relative in dependent_paths:
+        assert (
+            effective_hashes[relative]
+            == hashlib.sha256((tmp_path / relative).read_bytes()).hexdigest()
+        )
+    child_files = evidence["snapshots"][-1]["files"]
+    assert {item["path"] for item in child_files} == {
+        "source.txt",
+        *dependent_paths,
+    }
+    assert len(evidence["snapshots"]) == 1
+    assert len(snapshot_lineage(root)["entries"]) == 2
 
 
 def test_q5_backlinks_cover_every_externally_callable_unauthorized_mutation(
@@ -2232,6 +3060,7 @@ def test_task15_action_variants_encode_exact_eligibility_and_paused_no_op() -> N
         assert {
             (value["carrier"], value["from_state_id"], value["to_state_id"], value["effect_kind"])
             for value in values
+            if value["carrier"] == "task"
         } == {
             ("task", state, state, "self-loop-field-mutation")
             for state in ("STA-10", "STA-14", "STA-15")
@@ -2239,6 +3068,12 @@ def test_task15_action_variants_encode_exact_eligibility_and_paused_no_op() -> N
         assert not {"STA-8", "STA-9", "STA-11", "STA-12", "STA-13"} & {
             value["from_state_id"] for value in values
         }
+    act82 = variants(82, "grade-update-mcp")
+    assert {
+        (value["carrier"], value["from_state_id"], value["to_state_id"], value["effect_kind"])
+        for value in act82
+        if value["carrier"] == "run"
+    } == {("run", "STA-4", "STA-4", "accepted-no-op")}
 
     submit = variants(81, "task-submit-mcp")
     assert {
@@ -2254,6 +3089,23 @@ def test_task15_action_variants_encode_exact_eligibility_and_paused_no_op() -> N
         "run status is exactly PAUSED and pause_reason is exactly "
         "awaiting_clarification; task is not mutated",
     }
+
+
+def test_task15_variant_authority_rejects_missing_paused_noop_clause(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    authority_path = root / "catalog/action-variant-authority.yaml"
+    authority = yaml.safe_load(authority_path.read_text(encoding="utf-8"))
+    row = next(item for item in authority["reviewed_rows"] if item["action_id"] == "ACT-82")
+    row["required_variants"] = [
+        clause
+        for clause in row["required_variants"]
+        if clause["clause_id"] != "act-82-paused-requirement-escalated-noop"
+    ]
+    write_yaml(authority_path, authority)
+
+    result = run_validator(root)
+
+    assert "ACTION_VARIANT_AUTHORITY_PARITY" in issue_codes(result)
 
 
 def test_task15_escalation_evidence_separates_transports_from_engine() -> None:
@@ -5098,3 +5950,58 @@ def test_phase_two_rejects_stale_completion_metadata_and_generated_projections(
         "PHASE_TWO_GAPS_PROJECTION_STALE",
         "PHASE_TWO_STATUS_PROJECTION_STALE",
     } <= set(issue_codes(result))
+
+
+def test_task15_status_projection_derives_canonical_inputs_and_rejects_stale_status(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    validator = load_validator()
+    baseline = validator._phase_two_status_projection(validator.load_foundation(root))
+    assert "210 records (35 REL, 74 STA, 86 ACT, 9 EVI, 6 INV)" in baseline
+
+    scope_path = root / "catalog/status-scope.yaml"
+    scope = yaml.safe_load(scope_path.read_text(encoding="utf-8"))
+    scope["items"] = [item for item in scope["items"] if item["id"] != "REL-1"]
+    write_yaml(scope_path, scope)
+
+    action_path = root / "reality/actions/act-1-runner-model-profile-defaults-save.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["test_status"] = "unexercised"
+    action["test_locators"] = []
+    write_yaml(action_path, action)
+
+    manifest_path = root / "catalog/status-test-nodes.yaml"
+    manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8"))
+    manifest["entries"].append(
+        {
+            "base_locator": "tests/new_status.py::test_new_status",
+            "concrete_node_ids": ["tests/new_status.py::test_new_status"],
+        }
+    )
+    write_yaml(manifest_path, manifest)
+
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["active_snapshot_id"] = "snapshot-mutated"
+    write_yaml(evidence_path, evidence)
+
+    questions_path = root / "catalog/questions.yaml"
+    questions = yaml.safe_load(questions_path.read_text(encoding="utf-8"))
+    q5 = next(item for item in questions["items"] if item["id"] == "Q-5")
+    q5["affected_ids"].append("ACT-999")
+    write_yaml(questions_path, questions)
+
+    projection = validator._phase_two_status_projection(validator.load_foundation(root))
+    assert "projection covers 209 records (34 REL, 74 STA, 86 ACT, 9 EVI, 6 INV)" in projection
+    assert "137 exact and 50 bounded test locators" in projection
+    assert "120-base/120-concrete-node collected manifest under `snapshot-mutated`" in projection
+    assert (
+        "Test distributions are REL 13/21, STA 57/17, ACT 55/31, EVI 2/7, and INV 6/0" in projection
+    )
+    assert "63 actions retain Q-5" in projection
+
+    (root / "status.md").write_text(baseline, encoding="utf-8")
+    result = run_validator(root)
+
+    assert "PHASE_TWO_STATUS_PROJECTION_STALE" in issue_codes(result)

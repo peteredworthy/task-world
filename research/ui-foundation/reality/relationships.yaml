@@ -46,7 +46,7 @@ items:
       no CAP implementation_carrier_binding; EVD-49 establishes the record carrier but no relevant CAP authority
       classifies this record as current or derived.'
     epistemic: 'REL-1 epistemic status observed: REL-1 template lineage is observed from direct/audit authority
-      EVD-49 (EVD-49 (audit-report: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings)),
+      EVD-49 (EVD-49 (audit-report: research/ui-foundation/agent-reports/01-domain-persistence.md#entity-and-identity-inventory row DP-ENT-run)),
       with no canonical conflict/question qualification; only the bounded record proposition is observed.'
   implementation_locators:
   - src/orchestrator/db/orm/models.py::RunModel.routine_id
@@ -1291,7 +1291,7 @@ items:
   id: REL-26
   implementation_status: present
   test_status: unexercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -1313,10 +1313,9 @@ items:
       the record proposition under EVD-62, EVD-51.'
     test: 'REL-26 test status unexercised: REL-26 optional primary key reference remains unexercised because
       no admitted exact test locator asserts its complete record proposition under EVD-62, EVD-51.'
-    documentation: 'REL-26 documentation status conflicting: CON-1 supplies opposing persisted attempt-identity
-      claims that directly affect which primary key this optional reference denotes, supported by EVD-62
-      and EVD-51. Q-1 remains an open settlement question and qualifies the unresolved migration boundary;
-      it is not itself a contradiction.'
+    documentation: 'REL-26 documentation status documented: the optional attempts.id foreign-key proposition
+      is documented at reality/relationships.yaml and by EVD-62, EVD-51. CON-1 and Q-1 qualify canonical
+      attempt identity and migration, but do not negate this bounded optional-primary-key-reference proposition.'
     capability: 'REL-26 capability status unknown: REL-26 optional primary key reference remains unknown
       as a user capability: no CAP implementation_carrier_binding; EVD-62, EVD-51 establishes the record
       carrier but no relevant CAP authority classifies this record as current or derived.'
@@ -1441,7 +1440,7 @@ items:
   id: REL-29
   implementation_status: present
   test_status: unexercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -1463,10 +1462,9 @@ items:
       and establish the record proposition under EVD-62, EVD-51.'
     test: 'REL-29 test status unexercised: REL-29 optional primary key reference remains unexercised because
       no admitted exact test locator asserts its complete record proposition under EVD-62, EVD-51.'
-    documentation: 'REL-29 documentation status conflicting: CON-1 supplies opposing persisted attempt-identity
-      claims that directly affect which primary key this optional reference denotes, supported by EVD-62
-      and EVD-51. Q-1 remains an open settlement question and qualifies the unresolved migration boundary;
-      it is not itself a contradiction.'
+    documentation: 'REL-29 documentation status documented: the optional attempts.id foreign-key proposition
+      is documented at reality/relationships.yaml and by EVD-62, EVD-51. CON-1 and Q-1 qualify canonical
+      attempt identity and migration, but do not negate this bounded optional-primary-key-reference proposition.'
     capability: 'REL-29 capability status unknown: REL-29 optional primary key reference remains unknown
       as a user capability: no CAP implementation_carrier_binding; EVD-62, EVD-51 establishes the record
       carrier but no relevant CAP authority classifies this record as current or derived.'
@@ -1621,7 +1619,7 @@ items:
       a user capability: no CAP implementation_carrier_binding; EVD-49 establishes the record carrier but
       no relevant CAP authority classifies this record as current or derived.'
     epistemic: 'REL-32 epistemic status observed: REL-32 selects default or override is observed from direct/audit
-      authority EVD-49 (EVD-49 (audit-report: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings)),
+      authority EVD-49 (EVD-49 (audit-report: research/ui-foundation/agent-reports/01-domain-persistence.md#entity-and-identity-inventory row DP-ENT-run)),
       with no canonical conflict/question qualification; only the bounded record proposition is observed.'
   implementation_locators:
   - src/orchestrator/db/orm/models.py::AgentRunnerModelProfileDefaultModel
@@ -1758,7 +1756,7 @@ items:
   id: REL-35
   implementation_status: present
   test_status: exercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -1783,10 +1781,9 @@ items:
     test: 'REL-35 test status exercised: REL-35 conditionally imports into is exercised because admitted
       SER rows SER-0248 contain direct assertions at tests/integration/test_jsonl_rotation_recovery.py::test_bootstrap_replays_archives_and_active_in_global_position_order;
       no active rejected locator defeats that proof.'
-    documentation: 'REL-35 documentation status conflicting: CON-2 supplies opposing SQL-first and JSONL-first
-      normal-write authority claims that directly affect the conditional import proposition, supported by
-      EVD-55, EVD-67, and EVD-51. Q-3 and Q-4 remain open settlement questions that qualify authority reconciliation
-      and live-WAL-safe replay; they are not themselves contradictions.'
+    documentation: 'REL-35 documentation status documented: conditional empty-events_v2 JSONL import is documented
+      at reality/relationships.yaml and by EVD-55, EVD-67, EVD-51. CON-2, Q-3, and Q-4 qualify normal-write
+      authority and recovery safety, but do not negate this bounded conditional-import proposition.'
     capability: 'REL-35 capability status unknown: REL-35 conditionally imports into remains unknown as
       a user capability: no CAP implementation_carrier_binding; EVD-55, EVD-67, EVD-51 establishes the record
       carrier but no relevant CAP authority classifies this record as current or derived.'

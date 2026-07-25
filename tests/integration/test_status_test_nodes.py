@@ -117,6 +117,99 @@ def test_collector_writes_sorted_top_level_class_and_parametrized_nodes(tmp_path
     assert repository.exists()
 
 
+def test_collector_refreshes_hash_for_referenced_test_drift(tmp_path: Path) -> None:
+    repository, root = write_status_repository(
+        tmp_path,
+        "def test_refreshable():\n    assert True\n",
+        "tests/test_refreshable.py::test_refreshable",
+    )
+    test_path = repository / "tests/test_refreshable.py"
+    test_path.write_text("def test_refreshable():\n    assert 1 == 1\n", encoding="utf-8")
+
+    result = collect(root)
+
+    assert result.returncode == 0, result.stderr
+    entry = manifest(root)["entries"][0]
+    assert entry["source_sha256"] == hashlib.sha256(test_path.read_bytes()).hexdigest()
+
+
+def test_collector_rejects_drift_for_unreferenced_active_file(tmp_path: Path) -> None:
+    repository, root = write_status_repository(
+        tmp_path,
+        "def test_stable():\n    assert True\n",
+        "tests/test_stable.py::test_stable",
+    )
+    unrelated_path = repository / "tests/test_unrelated.py"
+    unrelated_path.write_text("def test_unrelated():\n    assert True\n", encoding="utf-8")
+    evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+    evidence["snapshot"]["files"].append(
+        {
+            "path": "tests/test_unrelated.py",
+            "sha256": hashlib.sha256(unrelated_path.read_bytes()).hexdigest(),
+            "audited_at": "2026-07-24T00:00:00Z",
+        }
+    )
+    write_yaml(root / "catalog/evidence.yaml", evidence)
+    unrelated_path.write_text("def test_unrelated():\n    assert False\n", encoding="utf-8")
+
+    result = collect(root)
+
+    assert result.returncode == 1
+    assert "STALE_ACTIVE_HASH:tests/test_unrelated.py" in result.stderr
+
+
+def test_collector_ignores_legacy_self_records_but_not_ordinary_files(tmp_path: Path) -> None:
+    repository, root = write_status_repository(
+        tmp_path,
+        "def test_stable():\n    assert True\n",
+        "tests/test_stable.py::test_stable",
+    )
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    for relative in (
+        "research/ui-foundation/catalog/evidence.yaml",
+        "research/ui-foundation/catalog/snapshot-lineage.yaml",
+    ):
+        self_path = repository / relative
+        self_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self_path.exists():
+            self_path.write_text("entries: []\n", encoding="utf-8")
+        evidence["snapshot"]["files"].append(
+            {
+                "path": relative,
+                "sha256": hashlib.sha256(self_path.read_bytes()).hexdigest(),
+                "audited_at": "2026-07-24T00:00:00Z",
+            }
+        )
+    write_yaml(evidence_path, evidence)
+
+    result = collect(root)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_collector_emits_new_referenced_test_for_snapshot_addition(tmp_path: Path) -> None:
+    repository, root = write_status_repository(
+        tmp_path,
+        "def test_existing():\n    assert True\n",
+        "tests/test_existing.py::test_existing",
+    )
+    new_locator = "tests/test_new.py::test_new"
+    new_path = repository / "tests/test_new.py"
+    new_path.write_text("def test_new():\n    assert True\n", encoding="utf-8")
+    state = yaml.safe_load((root / "reality/state-model.yaml").read_text(encoding="utf-8"))
+    state["items"][0]["test_locators"].append(new_locator)
+    write_yaml(root / "reality/state-model.yaml", state)
+
+    result = collect(root)
+
+    assert result.returncode == 0, result.stderr
+    entries = {entry["base_locator"]: entry for entry in manifest(root)["entries"]}
+    assert (
+        entries[new_locator]["source_sha256"] == hashlib.sha256(new_path.read_bytes()).hexdigest()
+    )
+
+
 def test_collector_rejects_ast_visible_noncollectable_and_collection_errors(tmp_path: Path) -> None:
     _, disabled_root = write_status_repository(
         tmp_path / "disabled",

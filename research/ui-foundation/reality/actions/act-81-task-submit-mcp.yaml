@@ -18,9 +18,9 @@ retry_behavior: Correct gates then re-invoke if exposed.
 reversibility: No direct undo of accepted submission.
 audit_evidence_ids: [EVD-134, EVD-135, EVD-136]
 transition_variants:
-- {carrier: task, from_state_id: STA-9, to_state_id: STA-10, eligibility_precondition: 'task status is exactly BUILDING and submission gates pass', effect_kind: state-change, evidence_ids: [EVD-134, EVD-135]}
-- {carrier: run, from_state_id: STA-4, to_state_id: STA-4, eligibility_precondition: 'run status is exactly PAUSED and pause_reason is exactly requirement_escalated; task is not mutated', effect_kind: accepted-no-op, evidence_ids: [EVD-134, EVD-136]}
-- {carrier: run, from_state_id: STA-4, to_state_id: STA-4, eligibility_precondition: 'run status is exactly PAUSED and pause_reason is exactly awaiting_clarification; task is not mutated', effect_kind: accepted-no-op, evidence_ids: [EVD-134]}
+- {authority_clause_id: act-81-passing-gates-transition, carrier: task, from_state_id: STA-9, to_state_id: STA-10, eligibility_precondition: 'task status is exactly BUILDING and submission gates pass', effect_kind: state-change, evidence_ids: [EVD-134, EVD-135]}
+- {authority_clause_id: act-81-paused-requirement-escalated-noop, carrier: run, from_state_id: STA-4, to_state_id: STA-4, eligibility_precondition: 'run status is exactly PAUSED and pause_reason is exactly requirement_escalated; task is not mutated', effect_kind: accepted-no-op, evidence_ids: [EVD-134, EVD-136]}
+- {authority_clause_id: act-81-paused-awaiting-clarification-noop, carrier: run, from_state_id: STA-4, to_state_id: STA-4, eligibility_precondition: 'run status is exactly PAUSED and pause_reason is exactly awaiting_clarification; task is not mutated', effect_kind: accepted-no-op, evidence_ids: [EVD-134]}
 enforced_authentication: optional JWT
 enforced_authorization: absent
 domain_eligibility: PER-5 scoped exposure plus PER-3 task eligibility

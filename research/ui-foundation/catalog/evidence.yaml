@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-hookfix
+active_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final6
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -3305,7 +3305,7 @@ items:
   question_ids:
   - Q-5
   test_evidence_ids:
-  - EVD-110
+  - EVD-146
   test_status: exercised
 - id: CMD-45
   source_kind: command
@@ -3364,11 +3364,12 @@ items:
   snapshot_id: snapshot-2026-07-24-phase-1
   snapshot_path: src/orchestrator/api/routers/clarifications.py
   evidence_ids:
-  - EVD-13
+  - EVD-139
   question_ids:
   - Q-5
-  test_evidence_ids: []
-  test_status: unexercised
+  test_evidence_ids:
+  - EVD-140
+  test_status: exercised
 - id: CMD-48
   source_kind: command
   implementation_status: present
@@ -3501,10 +3502,12 @@ items:
   registration_path: src/orchestrator/api/mcp/server.py
   registration_symbol: OrchestratorMCPServer._register_tools
   evidence_ids:
-  - EVD-13
+  - EVD-141
+  - EVD-142
   question_ids:
   - Q-5
-  test_evidence_ids: []
+  test_evidence_ids:
+  - EVD-143
   test_status: unexercised
 - id: CMD-54
   source_kind: command
@@ -4017,9 +4020,9 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  path: research/ui-foundation/agent-reports/01-domain-persistence.md#key-findings
-  symbol: synthesis claim EVD-7
-  source_label: 01-domain-persistence.md#key-findings
+  path: research/ui-foundation/agent-reports/01-domain-persistence.md#entity-and-identity-inventory
+  symbol: DP-ENT-run
+  source_label: 01-domain-persistence.md#entity-and-identity-inventory row DP-ENT-run
   snapshot_path: research/ui-foundation/agent-reports/01-domain-persistence.md
   snapshot_id: snapshot-2026-07-24-phase-1
   provenance_role: synthesis
@@ -4637,15 +4640,17 @@ items:
 - id: EVD-110
   source_kind: test
   path: tests/integration/test_idempotency.py
-  symbol: legacy submit verification completion and cancellation idempotency
+  symbol: test_submit_twice
   reachable: true
   test_status: exercised
   snapshot_id: snapshot-2026-07-24-phase-1
   snapshot_path: tests/integration/test_idempotency.py
   provenance_role: direct
   supported_semantic_types:
-  - Run
   - TransitionResult
+  - legacy task submit idempotency
+  supported_command_identities:
+  - rest.task-submit
 - id: EVD-111
   source_kind: implementation
   path: src/orchestrator/api/routers/graph.py
@@ -5037,6 +5042,121 @@ items:
   - exact grade update TaskStatus eligibility
   supported_command_identities:
   - task.grade-update
+- id: EVD-139
+  source_kind: implementation
+  path: src/orchestrator/api/routers/clarifications.py
+  symbol: create_clarification
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/api/routers/clarifications.py
+  provenance_role: direct
+  supported_semantic_types:
+  - REST clarification request creation and task transition
+  supported_command_identities:
+  - rest.clarification-create
+- id: EVD-140
+  source_kind: test
+  path: tests/integration/test_api_clarifications.py
+  symbol: test_create_clarification
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: tests/integration/test_api_clarifications.py
+  provenance_role: direct
+  supported_semantic_types:
+  - REST clarification request creation and pending-user-action transition
+  supported_command_identities:
+  - rest.clarification-create
+- id: EVD-141
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/server.py
+  symbol: OrchestratorMCPServer._register_tools.orchestrator_request_clarification
+  reachable: true
+  test_status: unexercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/api/mcp/server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP clarification registration
+  supported_command_identities:
+  - mcp.clarification-create
+- id: EVD-142
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._request_clarification
+  reachable: true
+  test_status: unexercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP clarification validation, creation, and result
+  supported_command_identities:
+  - mcp.clarification-create
+- id: EVD-143
+  source_kind: test
+  path: tests/integration/test_mcp_server.py
+  symbol: test_tool_names
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: tests/integration/test_mcp_server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP clarification registration
+  supported_command_identities:
+  - mcp.clarification-create
+- id: EVD-144
+  source_kind: implementation
+  path: research/ui-foundation/tools/validate.py
+  symbol: validate_foundation
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: research/ui-foundation/tools/validate.py
+  provenance_role: direct
+  supported_semantic_types:
+  - Foundation authority rule validation
+- id: EVD-145
+  source_kind: test
+  path: tests/integration/test_ui_foundation_tools.py
+  symbol: test_current_action_cannot_substitute_proposed_role_for_enforced_authority
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: tests/integration/test_ui_foundation_tools.py
+  provenance_role: direct
+  supported_semantic_types:
+  - Foundation authority rule validation
+- id: EVD-146
+  source_kind: test
+  path: tests/integration/test_idempotency.py
+  symbol: test_verify_twice
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: tests/integration/test_idempotency.py
+  provenance_role: direct
+  supported_semantic_types:
+  - TransitionResult
+  - legacy verification completion idempotency
+  supported_command_identities:
+  - rest.task-complete-verification
+- id: EVD-147
+  source_kind: test
+  path: tests/integration/test_idempotency.py
+  symbol: test_cancel_twice
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: tests/integration/test_idempotency.py
+  provenance_role: direct
+  supported_semantic_types:
+  - Run
+  - legacy run cancellation idempotency
+  supported_command_identities:
+  - rest.run-cancel
 snapshots:
 - id: snapshot-2026-07-23-phase-0
   immutable: true
@@ -16686,3 +16806,573 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: 12a4d831303656e4f7e2c83b435307a35f3a4d41a0b738c2c7709e864689c718
     audited_at: '2026-07-25T13:45:00Z'
+- id: snapshot-2026-07-25-task-15-final-authority
+  parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-hookfix
+  files:
+  - path: research/ui-foundation/capabilities/registry.yaml
+    sha256: b7016aa3fcc0fc4090ad515893ac3f263548e0cc1a5bff4e6952b348a234bea2
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/catalog/action-authority-surfaces.yaml
+    sha256: 9119e128619cdcfd806dd487293b736b6935b9294c17ab4f8d644eb9a8774070
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/catalog/action-variant-authority.yaml
+    sha256: 28ecf6ee864552fceaf3482cb7934a1b1c3c09d3a39fa72617697a5d4b95ef1d
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/catalog/ids.yaml
+    sha256: 4d814389619c8e0217b4904cf6c55536d28b074f041438d35fa4651704933b1a
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/catalog/invariants.yaml
+    sha256: 9ca841b104d4f9b0a5823f6a173da865046a7b30847f426a4aec35c3896282af
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: ffcc085fe3d92e932e6a735cf83e50077329ddf5611f52e8385c8a1a5d52ce96
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: f4dba88f9d1aed829edc228c51471c0de71b9d0b441c7e54d09dcdebdd502ea9
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-1-runner-model-profile-defaults-save.yaml
+    sha256: e8cf15a6b25007518fe42df4a867bba3fcb1f1b986917dfa2eb437409967a6b7
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-10-graph-approval.yaml
+    sha256: 1ae71ea2b8dd650fc3d1b74fc99d73fa76da76d58a75fe71a39d9e026d62ee44
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-11-graph-authority-denial.yaml
+    sha256: 58727f0d894a5ab78fbae49df9fa63020ee45f9ef0356ddab3535e9ba58c24d4
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-12-graph-oversight.yaml
+    sha256: cd2c01b3116e7c5e2127a77d6ec5876bdf5c367ffb7a5a2110ca628a967485c9
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-13-graph-patch.yaml
+    sha256: c7515c26eb75136a31cbea02e613ff42d6c43b5954544d1758af2aef5c7ef7ab
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-14-outbox-requeue.yaml
+    sha256: b3dd7c3b952790103af9fbe4b4c49c91744de5bc82af527b16b37da454edef1a
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-15-steer-context-gap.yaml
+    sha256: 4e06a4a0ac20ddfdf4a119a49c94b6263924620f183e92a648d5a34adb5d6d3f
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-16-steering-patch-gap.yaml
+    sha256: e1bd43b5fee4c7b3e81bdd1a7b405697fdbcaa9a26cb9b7d8257648312e13b49
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-17-watch-gap.yaml
+    sha256: 301bfc588e9a40b6dfd5f2bfd73662032e8e621104ca716423ff46313771109a
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-18-pause-rest.yaml
+    sha256: c6b3504f6f8bbd05a3aecccc90b7bfd08cafb1fbfb9fa632ccacadc3ccb4948c
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-19-resume-rest.yaml
+    sha256: 3dc974b68cb3f5ad0d21e21b4422deb7520f5ead353426b537891bc9e3d9612e
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-2-repository-add.yaml
+    sha256: f49399f85deacc337803d36350eafc31479266af95ca832394cac83a2ffa3c2c
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-20-cancel-active-rest.yaml
+    sha256: aea36183ae49dcf18865ca527d1eb3e6a7e7bbeaf631f98872df1abbb06257c3
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-21-cancel-paused-rest.yaml
+    sha256: 195f3bcead23cac528188c9d6e1b3c1eea5adce7586019919cb34ee80407e02a
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-22-delete-paused-startup-orphan.yaml
+    sha256: bced73d31c4119bdd06b08844addc5a97fbe3d6629a3125c605b2eba812533bf
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-23-task-approve.yaml
+    sha256: 151d49ba2f7f8a32eea514c365b4abaff7889c75d99732072797c356a4b62f4b
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-24-task-reject-revision.yaml
+    sha256: 720a1f2fca27ffed6575b26c1b13101e4dcd0fefa96866fd32578f9bd50c2df0
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-25-task-reject-attempt-limit.yaml
+    sha256: a03f99a6a5a90f608c3de095ad88d84daf27dc890c8610e88dbf77770ddd246e
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-26-task-force-accept.yaml
+    sha256: e25541df4a9641d32eb80fe2753751297e717c2f5fc347c3f4d0c211e441051c
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-27-step-approve.yaml
+    sha256: 35febb74b2bef7b5fb618ac1f629dd6c9d7e0bc3aaceffdd3b21a958bb5db0f1
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-28-step-skip-resume.yaml
+    sha256: 61c8cb5092f11b123ea75f9bd5e14201546d1726242ced213ab81a8cda805444
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-29-clarification-answer.yaml
+    sha256: 2617c52776da8ce646e71b810f322b6047f56afbf3d52341b9102764a5e0c80f
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-3-repository-remove.yaml
+    sha256: 8c12533cbfcecc0d8bde2278fa342f83a8caff727a86a21e2ad8ecc0771f3995
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-30-clarification-skip.yaml
+    sha256: 59a662639d3c8142c6d50e5ceaf634831b109436a929a3282b0a696ac079a79d
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-31-recovery-retry.yaml
+    sha256: cf3a37311c35c188fd615789f589545d5e36cbc92864c6e62cf80812bef8f11d
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-32-recovery-skip.yaml
+    sha256: 88a6a214385341ddb63cd287f7ddc30a167c9b7b890f9064082ffc43cfc0281d
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-33-recovery-abandon.yaml
+    sha256: fa709d47993af430b6c0b88a9ea467253673e97d357b51aa87983e6cc6d589c6
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-34-fanout-child-pending.yaml
+    sha256: ce64163ff93d7b5c4e01918f879af76d18e6a7878a9253b1806921f473bb6f3a
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-35-fanout-parent-preserved.yaml
+    sha256: 82c38bf9f0ed2ec640392386c145b6029be770d34d697b7856cce5804251b353
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-36-transition-back-run-preserved.yaml
+    sha256: 9927dbc9a360c71849d2677ea548d79a73bc4f883676e489d3c40bf81166e98e
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-37-transition-back-task-pending.yaml
+    sha256: 9b081f7f9e21bf8a63d5eb4d345429cd14b9000e28197a7fc9b9aa0879cb9587
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-38-run-recover-row-paused.yaml
+    sha256: 2df311032ab8e06e66f1b055d166f41a7f3df9701b751459b00f6144d6079b0c
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-39-run-recover-target-building.yaml
+    sha256: 6eaef3f2c7bd28c68a6773d9e347a78a47f82feab188de4b52fe390ae1464af6
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-4-detail-pull-upstream-conflict.yaml
+    sha256: 315d8b08928c69d92d9bd384886c1bfa0da681692d8231ba056d768c2c663777
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-40-run-recover-downstream-pending.yaml
+    sha256: 015294260eb617321f7ea5106189aca8e3e539f3417fc4fd168608763b760fb2
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-41-graph-approved-approval-node-outcome.yaml
+    sha256: fc9eb3c97681edc7f7dcf218ae941f669ac800d9423bbcdd14c7f54befd6bdaf
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-42-graph-rejected-required-approval-decision.yaml
+    sha256: ea45c5dd8ef75d187dacd77f058a1e7d5bcfcd7540fc5f970c827448a64d6926
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-43-graph-rejected-required-approval-node-outcome.yaml
+    sha256: 51ae0e718353c033265ee7ae30982628161f8112a7edabab3841d233e04e7bd7
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-44-graph-authority-denial-node-outcome.yaml
+    sha256: 97101909c55f01f957a19ff72cc4882a57cc4489fd28fd710444e49dbcd12554
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-45-graph-patch-rejected.yaml
+    sha256: 2b0523647001248bdd408d8ce521120e2a13e54ef8831d9af880412ed9a204d0
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-46-graph-cancel-active-run-consequence.yaml
+    sha256: c0d6c23825ffda9bb4c97bf68948b573e8e182ec656ad79e4ec1940f3e0c7657
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-47-graph-cancel-active-node-consequence.yaml
+    sha256: 71483f5afd5b487fddbd22af61910fa715360085852ff41f09ac8c3326fab9f6
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-48-graph-cancel-paused-run-consequence.yaml
+    sha256: d0c182b65a6b058cef5912422edcdf5bc913f65d51260d425272f8500374a44f
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-49-graph-cancel-paused-node-consequence.yaml
+    sha256: acbdeb95e75f45fbce9d69934469faab8c441b040fd9deac6ef55b90208b3de1
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-5-review-back-merge-conflict.yaml
+    sha256: b4e641a9d3405cb156db527cf4393164ebb350f87668c178d4bee2e80a083b58
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-50-graph-cancel-active-run-entry.yaml
+    sha256: bd96873ee3be0cad9e7c4134e815a039dac69dbb9a5fdb47b70791a379655ee4
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-51-graph-cancel-paused-run-entry.yaml
+    sha256: a7d10a67ddf1527c3de82d55bda4227e2a52bdf72903af65bf45c883e041376c
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-52-detail-pull-upstream.yaml
+    sha256: 046ed94868ce80a1961614baa86102900611096153eb3886dc721ab849f127f0
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-53-run-detail-final-merge-back.yaml
+    sha256: a2f3f2a08faf966571b6c840d1ee8ef261e361fcfbe19698f9e3252407be3d29
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-54-review-back-merge.yaml
+    sha256: be3d7199d0b351d584f19694d189106917bb5ed9935dcf5f1bb939a0bd7f64c4
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-55-review-undo-back-merge.yaml
+    sha256: 6f1ed50e491acf5c56e5353476141fd6c6c107e41602851d3be6ab3870c68e1c
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-56-review-final-merge.yaml
+    sha256: c7a32f93e3324a82b65414a0b4458c77554559c045091869141611a47be95ac3
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-57-review-test-start.yaml
+    sha256: 9064a6920f8fea861741f213d2da8edb52423ba822d6fafd01caad75a5b4cec6
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-58-agent-test-fix-job-gap.yaml
+    sha256: 6889b1a418dcfbaee0e263a8c58ca5ea28788fcfe8adaad659bff092447cecb9
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-59-agent-conflict-resolution-job.yaml
+    sha256: ae478b0d1eb72b89213a936e2ababe9d223935a3166512e2549b8aacb35a0ef7
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-6-create-run.yaml
+    sha256: 95c93ebc82e78091d2b9a6b9ff388f50a253c83c7c8ed9616f997b9c6978d56b
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-60-direct-conflict-resolution.yaml
+    sha256: 4d75981a65887a8d39fb14de4399153768476e4c3445970602c0bfa6c2fc1251
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-61-prune-preview.yaml
+    sha256: 8c5fdf1f7d4e82e048e9fd9be3666af167ab69a1b3f598710326ebf4b8fd4c06
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-62-prune-apply.yaml
+    sha256: aa60fe604654be015367f1bcbf58bdb14215d2610a77ebc949fb5c305c5dfb73
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-63-env-snapshot-revert.yaml
+    sha256: 35ba625ad95568c4d60234d47fd580661a3bcc6b7295342ba3e86a5600f69acd
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-64-env-snapshot-copy-back.yaml
+    sha256: 0b2553955af9cc57abec533d80044a1c5b354cc0a92284ab5266d9e27201c4d8
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-65-routine-yaml-validate.yaml
+    sha256: 683d278cb7e326f0a68498b5be4f3efec4641225110bbbf985bf9f5a3741b754
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-66-routine-archive.yaml
+    sha256: e7be12ca50d13cb6f32a591c9f0606b92081bb25527fc8b75111c1bac09e5aeb
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-67-routine-unarchive.yaml
+    sha256: 895d4fc9a1ddee6f53d6703b4e5bed63e9617d59579d80b1e829fac2138b09ea
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-68-agent-create.yaml
+    sha256: 947d46db843219fee1939a7cd0d34cd45e7ca2188607b604d4215a166057aa47
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-69-agent-update.yaml
+    sha256: 980ccb6df2311d4e05579afed72e24b4613b19b07f9b945c742b180cd12e4fe3
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-7-start-rest.yaml
+    sha256: 77afea511adfae1419339f804c3fb376da842d6accc76e76076403a77d10085b
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-70-agent-delete.yaml
+    sha256: 4cb87d05f4a0d1bfdb1daf16ef9d486625b7cd0435248c3b113b4893f8a580f0
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-71-agent-reset-prompt.yaml
+    sha256: 77c2a7b095afc58ce99117da0028ef03c9645414ca8e88edced9b58459d93541
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-72-task-start-rest.yaml
+    sha256: e0366c02bfd16b0c7deaab82dd8ce8a4fa2a3b89008d33c71709aa8bb6d76ab0
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-73-task-submit-rest.yaml
+    sha256: a901272b52fe34ab36cb0c6eed8a7138465f62ca1e638275e26ea593f599cc86
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-74-complete-verification-rest.yaml
+    sha256: d53480e216514ba8ace6b89927d26c2354cbb2503e433517e277f25b48af7e78
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-75-checklist-update-rest.yaml
+    sha256: d0e391a5d844b80812b43848ab8bb1037d8209eb57e0ff919cc1a2f55a41a0ce
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-76-grade-update-rest.yaml
+    sha256: 8a582588dd038e20d85af8cccef7b06ab8e36195564ee9af3a319062f7797902
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-77-clarification-create-rest.yaml
+    sha256: 43f1ba3542a71392e914fc26264fb67a0724ba12c846292db5528b45e8d3ad64
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-78-requirement-escalate-rest.yaml
+    sha256: f84b1dc053b04428f58ffc44b5130949e557aa8a02852404c739a0506cb162b0
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-79-review-file-revert-rest.yaml
+    sha256: 45bc8ec0efdb928ae7d947d8d485b238649a0967442b350f7a2bd207aa335711
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-8-start-cli-direct.yaml
+    sha256: ddfdaeef2f890cfb740cd3e6ec4c7c14951382125ffc6c0b4544681683fef5e9
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-80-checklist-update-mcp.yaml
+    sha256: e9d691eb8a0ac85b69adf537ce4f80137bdc3dca2effaadace026d4fa2caf132
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-81-task-submit-mcp.yaml
+    sha256: e49cc508d446a9d5c5ac867b00380ed8b2894e2e162e7c162051661402a0813a
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-82-grade-update-mcp.yaml
+    sha256: 203a9b34b2e34e2358002428291130424595a09a40d51d9c28cc0fe3772c7af7
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-83-clarification-create-mcp.yaml
+    sha256: c90036d6f2b36410c12db2c8046de7b14c370b6684bfaf8582490e37f404a82e
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-84-requirement-escalate-mcp.yaml
+    sha256: 4ba4aca4b582537ea36252b508b64c3e5d0abc19e483b7cbf1a3f1d38d0b6310
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-85-db-restore-backup-cli.yaml
+    sha256: d5516ffee6311988aa09251a801073b055f09f8fc36590c0ef29d8e6b296df57
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-86-db-rebuild-projections-cli.yaml
+    sha256: ea3873806bcb89cc7cc94a165e80fd35b79f20f7f3f1c092d326f5500d59e0a9
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-9-delete-run.yaml
+    sha256: 830122822b141722198d2ef66b4791e17339db00fc7963b80e44c8b704387963
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/reality/relationships.yaml
+    sha256: 9af8e1649a026dccde646d7e064779ac1e06d6fe9a406a7e09a66255ad568861
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: 91a1180731bf7bdb6ea212f341d8e518a392f66ec20463b9223167326eb51f0d
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 0498693c7b7d12414a463d06d62e48e6b83985248558cea913ccc0424366022e
+    audited_at: '2026-07-25T14:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 65e89e903c259c9aa225d2009445260e4a60f4aa85c223c87a987cb8da405363
+    audited_at: '2026-07-25T14:00:00Z'
+- id: snapshot-2026-07-25-task-15-authority-closure
+  parent_snapshot_id: snapshot-2026-07-25-task-15-final-authority
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: 6e5117964feb3dd63681e8c8637fcfe20c592a53b8e633e039afbacc163b2a33
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 73d4e888e84e35555160db7ed3ab0f271bb39424fc39a926b76d1a2e5136ecdb
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: bab0b0af4256a71c309ccc61d36e63a98edb4f3e89c487895170f26ac052bbcc
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/catalog/action-authority-surfaces.yaml
+    sha256: 4b3eb7ac533de1ae6e192ff5720fc3a53179dbbef59d65798fc1e833036e7e00
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/catalog/ids.yaml
+    sha256: 1314c60593ce0f42e8618bd445b1041c1cfa8d723ea5c6ec61a068f79117b9a7
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/catalog/invariants.yaml
+    sha256: 4a5a9cd1ef04469b02b28d769430a1cfb2d6c0f7537d89d971c6eaada4e50ecb
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 424436b06005ec61cd8e27e978951955faa35a0b418d94fec3a61b30703be468
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: df2c36a2e73dc67cdac77cb5201bb5cacb9ddc3b915ed95e20162d7f04cded6a
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: be227fb2c0b5e2fdff0a8f4c8af871dcac0e48501450195f8d031831c558d07a
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-73-task-submit-rest.yaml
+    sha256: c004f6777cedc1d65e2137745a0c88c65de59879fd1431b820ad924cebc22f99
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-74-complete-verification-rest.yaml
+    sha256: 4445e4d01bdf12ae915382b8219cc4f1139904cf9b70852b4bc8c72d98801e1d
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-75-checklist-update-rest.yaml
+    sha256: fd8c8ca5cefc8868d6055872ed9d64053cf17ba6d0c6a4de784b3df85aca9236
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-76-grade-update-rest.yaml
+    sha256: 943a302c81f81a5f50ddb32465a5aab18aa2bdfc6ad28a1cd16b70ec7ee289c5
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-80-checklist-update-mcp.yaml
+    sha256: 7942a2bbecc5cf7d8eaffcfdc3999db199fb739cbe5586f0582a89f37583c3f7
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-82-grade-update-mcp.yaml
+    sha256: 5630e8d3d8685a2e9e7623cb90cd9945b706e779d2b752e5b23b9bb34c02c1ca
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: c528bdbe6df8c84fcadb64ffda1a3617499b6ee406cc6802d74620c194d5e3ac
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/tools/record_snapshot_lineage.py
+    sha256: 3b2e1cb617df6d9afa47daa41b8a9677fc92388d5c05a4f4e64f7dd79d7e72c4
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: cb28a2aa9a9d19ffd921b0ce973408d3d02ef03543ce924592ef0ac49586e7c9
+    audited_at: '2026-07-25T23:30:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 19c145b3fe7826848ab4d1f55ff03431934958a6e6e6a9725d4d3c24ec823b86
+    audited_at: '2026-07-25T23:30:00Z'
+- id: snapshot-2026-07-25-task-15-authority-closure-final
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: dd617ebecfa2245abe60afce6049453e1fc1d51b9cc26ebc608912731a7a6af9
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: b09df34d9c4f1cba9d31ae6389bfdad3ad96b393d5850f7ab8a1019b44ad0d04
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: c1e472e65feaf88c3ac413fe333966c7871aa78c03acc5483d0eeb97042b0ab1
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 8616cf085844acf6844dd80c921138b56b82d7d576fe89b944f1ab7f96fa2126
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: ccd6b9e173293b91e8c6304a6166762cfd66354d433d7f00913ebbd459ec0770
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: 2a086090ee0f839be491b9b4dff5adfccb6b024aff436f6604e266f6a0098a8c
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: 382e2796467848253f9655268b41bc8d5f1977a9e5d4bc1237986579bca7d084
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: research/ui-foundation/tools/collect_status_test_nodes.py
+    sha256: 49ac029814f873672c086fa95658459fa7c9903f13fcf39d4c5e8d54b978c1be
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 581bd83beda09bbe72254943228c723ba900e9f4089547f201ed5a66725ee782
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: tests/integration/test_status_test_nodes.py
+    sha256: 8c8a4a60eae60634922ba9ee5c18564bad3a6bd6c408910b7f254b4c4cc67e75
+    audited_at: '2026-07-25T23:55:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 4f5a4978154144fa2f4dab87ec8b481809df777e2b37561d3fb34375770f9c83
+    audited_at: '2026-07-25T23:55:00Z'
+- id: snapshot-2026-07-25-task-15-authority-closure-final2
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: 9423a5e0e3ed6553e39ef1adfb1e682365196897d73d036efd7645b601d28b79
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: .superpowers/sdd/task-15-exact-status-evidence.md
+    sha256: 1391ba9c3dc91fefa567311a6c533b6d47db1aa3143f164fcadc4ca0f94dc423
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: .superpowers/sdd/task-15-status-adjudication.md
+    sha256: 74e84c05212961753016a0ba40081860485604812290f423cfadf1189b2133e6
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: c3d9eaf6ba12f71be5d6f88f8575235e18f8464e513b13e79711237fa97bae71
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: d58be4f2200b211e10036c64e285d02d6b464b74a73cbe5230cf438040faca73
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: research/ui-foundation/agent-reports/11-semantic-verification.md
+    sha256: 1b71ba76d088fa2894572200f848613f0127483972b4250a75b2d79ba0d81675
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: b9672deeb2783a735a1f5f95807b369dbad86846fdae4329c01846319b0c806f
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: research/ui-foundation/catalog/status-scope.yaml
+    sha256: abb735f9c5b1d08f2c80a46193dc466c76d24de65d1dfb9bfc87e301cbb552f6
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: 3212a1e46e772de0eabc241f8d949ea0f4817b9a270eb680bea651972585f31e
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: 9dd1a04935422cfd8656ba1a4766c8cbbd567c3d2d37a6de030ee0dfe99ec2b8
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: 0be5102823240b5ec1656ba60f70251ccf0ae58622388d648db28a614487a682
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: cd6183d4570f2a1dcc45b1a71715df487223455d72a927faba3dc206113bd63e
+    audited_at: '2026-07-25T23:59:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 5f85c9d40e4d7ec8fc8bb02df5280769af4485f93da0d72accc57339dc98a23d
+    audited_at: '2026-07-25T23:59:00Z'
+- id: snapshot-2026-07-25-task-15-authority-closure-final3
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final2
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: 3ce77d1b0877b8821d43d005758992853ed1bab714ad296fe5e3dfde38fb3067
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 48734d2873dc150f0fca4c509c0b01c715738e16f2e780e7e824a96d1ec05203
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 53c3fff4370669bd3da6b9eecef1c6d31255a271e418a86f8462c69efeee4945
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 2725798d5999b8b52122a1950cc403e0d6540d3a4c2fd6678f40637f5960e597
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: 838e84dd4e7be635c4f4c6195534cf2e7510bac3c90846f4238a79ca193e7533
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: research/ui-foundation/index.md
+    sha256: afb5dd86816b0645bb186f34bd28b51bf7322a63b367cb77d3cc096043efe10e
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: research/ui-foundation/status.md
+    sha256: 03a82b25990c5f274053c70c7651321f938180c9b8147f46471e84f3eb8a6b41
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: research/ui-foundation/tools/record_snapshot_lineage.py
+    sha256: 049fc7d59bf51d9b99b5e274387f15247f8b525a3b1790ba5ce651fcb015ce7b
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 4fa0a2f79600775b611815d154be2a666f1df23537f549e3aee5861eddc19303
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: tests/integration/test_status_test_nodes.py
+    sha256: bcad74fce443397ef3e3a684c8c5de46ecbb0ab11a5f50996b96070a47090b6c
+    audited_at: '2026-07-25T23:59:30Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 4c32585dbef7fc7ae21a5081487eb6281d0ce1258faefc589674f60f0c366439
+    audited_at: '2026-07-25T23:59:30Z'
+- id: snapshot-2026-07-25-task-15-authority-closure-final4
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final3
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: b5bd4f026c34bdf06b9f22b45495ee01c7948c3c254f07a7afb73e09f92057e3
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: f83a6229c9d48410d5ec756e405890e0203ffb6b2eb5e30f21c4251d36a76fe1
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 3f98a53f3e949e4df36ffd94ea76f9dca4c7c7aad0bfb4fd65b0a8d253be71d6
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: research/ui-foundation/catalog/claims.yaml
+    sha256: 891c4cb4d6dce18722492f09b48d625da616b8e48c1353a6148657bb075f8c6c
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: research/ui-foundation/catalog/evidence.yaml
+    sha256: 59b4d981d58745cdf2dd3a5dcbfc8b7ccc45a5b6c2bb96fa432ff5932e5a03d1
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: research/ui-foundation/catalog/snapshot-lineage.yaml
+    sha256: 2d552d2f60687b4069d9f5c40bdd70b96a46ce2fd19061f7a1a24dfdc262dbb5
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: f8c1503f381f9515b3cb12c2685e72b8fb42195decc75ecf9b416ace9b9c755e
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: 42fe4f9d7c9476c9c1bf07c613a749e3f161b4c844850ddd04ffd054a70ee50e
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: research/ui-foundation/index.md
+    sha256: 8d7ac3f571ca45b1a53a8ff8d25b54652bdaaae0b00ad147d5fe334deca5fe27
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: research/ui-foundation/status.md
+    sha256: bb391878b2ec5d5ac4210367a697b2af6b2e2c1b21dd7757e898bcbc80eef6b0
+    audited_at: '2026-07-25T23:59:45Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 7c4715cf406402551d774872cb8e92e4f9cb0fb7774f9ec2e5ae74b71bec8065
+    audited_at: '2026-07-25T23:59:45Z'
+- id: snapshot-2026-07-25-task-15-authority-closure-final5
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final4
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: ffee3f5edbd423b613cfbe96346b433d2e67192fc2b792e9c9c8b6ddd0a8a548
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: e50bee60331a4fe47d69217cfef333ff515e10d69665d5ff18b86a26ad8edf2a
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 9a1518b420260f86f01dfcfcf8c95184eaf5d1a27a21fd430e6c98cbc8bd8d29
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: f6258f0ec2f5aabaa8e1579e1bb146316e38be50a75ab35c1eb074b706efbe68
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: e4f9a89c65004972e3ab8cad3711664fdf75050584a429ad72855b6470120cc0
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: research/ui-foundation/index.md
+    sha256: c5361629695adaee764dc8a3367f35eec08a314929408afdba12568398564b15
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: research/ui-foundation/status.md
+    sha256: 1686848ef06a38a7ca80546683fee95d2550e50465fddf50e88609099f80b08a
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: research/ui-foundation/tools/collect_status_test_nodes.py
+    sha256: 09f64c84075e0524239894f7eade8386b3ab36fe4a0fabc4ea7aa9d5016c164b
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: research/ui-foundation/tools/record_snapshot_lineage.py
+    sha256: 89514c23c17763aa6eb787a7006a31a8298800b224c2407025bf3ecd0bd3a253
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 933593af84bf26429a1dce784162928a9671fbebf4a72a206b838aa256fa62bd
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: tests/integration/test_status_test_nodes.py
+    sha256: 6e97968914910ee609fa0b6d2e7aabae7bf83c556c7317c83dd6afe518083e8a
+    audited_at: '2026-07-25T23:59:55Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: a71d5e70fa3fc5e3382519556c906a8740231bbd58dfd34d800d0f17d804031a
+    audited_at: '2026-07-25T23:59:55Z'
+- id: snapshot-2026-07-25-task-15-authority-closure-final6
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final5
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: d38578c72d297fcf50e2b141b9ae4047d4106e3d58d441319211f5aba1f32e0a
+    audited_at: '2026-07-25T23:59:58Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 3b4695b4e2512c4dbee7fd459dc0ebed51f130aff47ff9d3bc2e27f8c5433f7a
+    audited_at: '2026-07-25T23:59:58Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 6d6bab9e9bed63cd5b0e42edb39f07afa847436a7719b8a56151f6e1aea3783f
+    audited_at: '2026-07-25T23:59:58Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 73e294b4301f32952d25e6aa3c3b56def27570158b5bdfe1daf42462af7730cf
+    audited_at: '2026-07-25T23:59:58Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: 13ed5ea2158464d1d06b8d56e179307b08404f8511a1a040c1cc17cc7bb843ee
+    audited_at: '2026-07-25T23:59:58Z'
+  - path: research/ui-foundation/index.md
+    sha256: 9e7abedcbfcfb244f6570ea6f51fb639e4e441cf03a811fdf3667f2fd530c00e
+    audited_at: '2026-07-25T23:59:58Z'
+  - path: research/ui-foundation/status.md
+    sha256: ddacf5f12bff0fd85c80b3dae3f42315e87d98eea41252c5d93d5677791eab69
+    audited_at: '2026-07-25T23:59:58Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: dd530f0de7a6faf5bc8ddfbea9c21a979fe5debc0d0f8b67561e3ea51fadb066
+    audited_at: '2026-07-25T23:59:58Z'

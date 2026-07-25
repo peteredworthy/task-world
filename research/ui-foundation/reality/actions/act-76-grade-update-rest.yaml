@@ -18,9 +18,9 @@ retry_behavior: Re-read requirement before retrying.
 reversibility: Later eligible grade update supersedes it.
 audit_evidence_ids: [EVD-121, EVD-122, EVD-138]
 transition_variants:
-- {carrier: task, from_state_id: STA-10, to_state_id: STA-10, eligibility_precondition: 'active run and task status is exactly VERIFYING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
-- {carrier: task, from_state_id: STA-14, to_state_id: STA-14, eligibility_precondition: 'active run and task status is exactly COMPLETED', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
-- {carrier: task, from_state_id: STA-15, to_state_id: STA-15, eligibility_precondition: 'active run and task status is exactly FAILED', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
+- {authority_clause_id: act-76-grade-update-sta-10-self-loop, carrier: task, from_state_id: STA-10, to_state_id: STA-10, eligibility_precondition: 'active run and task status is exactly VERIFYING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
+- {authority_clause_id: act-76-grade-update-sta-14-self-loop, carrier: task, from_state_id: STA-14, to_state_id: STA-14, eligibility_precondition: 'active run and task status is exactly COMPLETED', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
+- {authority_clause_id: act-76-grade-update-sta-15-self-loop, carrier: task, from_state_id: STA-15, to_state_id: STA-15, eligibility_precondition: 'active run and task status is exactly FAILED', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
 carrier_relationship:
   affected_carrier: checklist item grade and grade_reason while the representative VERIFYING task status is preserved
   caveat: This is a field-mutation carrier self-loop, not a task lifecycle transition; the handler also tolerates terminal task carriers.
@@ -40,9 +40,10 @@ status_basis:
   test: 'ACT-76 test status exercised: ACT-76 Persists the requirement grade and reason through the workflow
     service. is exercised because admitted SER rows SER-0486 contain direct assertions at tests/integration/test_api_tasks.py::test_full_task_lifecycle;
     no active rejected locator defeats that proof.'
-  documentation: 'ACT-76 documentation status documented: ACT-76 Persists the requirement grade and reason
-    through the workflow service. is documented at reality/actions/act-76-grade-update-rest.yaml and by
-    EVD-121, EVD-122, EVD-138; any listed question (Q-5 (open: Define product-role authorization before treating actor text
+  documentation: 'ACT-76 documentation status documented: reality/actions/act-76-grade-update-rest.yaml
+    records grade-update REST authority from EVD-121, its EVD-122 lifecycle exercise, and EVD-138 exact
+    self-loop variants for STA-10, STA-14, and STA-15 while STA-8, STA-9, STA-11, STA-12, and STA-13 are rejected;
+    any listed question (Q-5 (open: Define product-role authorization before treating actor text
     as authority)) is explicitly disclosed and does not create contradictory documentation for this bounded
     proposition.'
   capability: 'ACT-76 capability status unknown: ACT-76 Persists the requirement grade and reason through

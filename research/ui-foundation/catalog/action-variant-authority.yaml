@@ -1,0 +1,212 @@
+schema_version: '1'
+reviewed_rows:
+- action_id: ACT-75
+  command_id: CMD-45
+  source_locators:
+  - src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item
+  evidence_ids: [EVD-137]
+  required_variants:
+  - clause_id: act-75-checklist-update-sta-8-self-loop
+    carrier: task
+    from_state_id: STA-8
+    to_state_id: STA-8
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly PENDING
+    source_branch_fact: TaskStatus.PENDING is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+  - clause_id: act-75-checklist-update-sta-9-self-loop
+    carrier: task
+    from_state_id: STA-9
+    to_state_id: STA-9
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly BUILDING
+    source_branch_fact: TaskStatus.BUILDING is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+  - clause_id: act-75-checklist-update-sta-11-self-loop
+    carrier: task
+    from_state_id: STA-11
+    to_state_id: STA-11
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly PENDING_USER_ACTION
+    source_branch_fact: TaskStatus.PENDING_USER_ACTION is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+  - clause_id: act-75-checklist-update-sta-12-self-loop
+    carrier: task
+    from_state_id: STA-12
+    to_state_id: STA-12
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly RECOVERING
+    source_branch_fact: TaskStatus.RECOVERING is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+  - clause_id: act-75-checklist-update-sta-13-self-loop
+    carrier: task
+    from_state_id: STA-13
+    to_state_id: STA-13
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly FAN_OUT_RUNNING
+    source_branch_fact: TaskStatus.FAN_OUT_RUNNING is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+- action_id: ACT-76
+  command_id: CMD-46
+  source_locators:
+  - src/orchestrator/workflow/service.py::WorkflowService.set_grade
+  evidence_ids: [EVD-138]
+  required_variants:
+  - clause_id: act-76-grade-update-sta-10-self-loop
+    carrier: task
+    from_state_id: STA-10
+    to_state_id: STA-10
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly VERIFYING
+    source_branch_fact: TaskStatus.VERIFYING is admitted by the exact VERIFYING, FAILED, or COMPLETED membership branch.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.set_grade]
+    evidence_ids: [EVD-138]
+  - clause_id: act-76-grade-update-sta-14-self-loop
+    carrier: task
+    from_state_id: STA-14
+    to_state_id: STA-14
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly COMPLETED
+    source_branch_fact: TaskStatus.COMPLETED is admitted by the exact VERIFYING, FAILED, or COMPLETED membership branch.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.set_grade]
+    evidence_ids: [EVD-138]
+  - clause_id: act-76-grade-update-sta-15-self-loop
+    carrier: task
+    from_state_id: STA-15
+    to_state_id: STA-15
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly FAILED
+    source_branch_fact: TaskStatus.FAILED is admitted by the exact VERIFYING, FAILED, or COMPLETED membership branch.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.set_grade]
+    evidence_ids: [EVD-138]
+- action_id: ACT-80
+  command_id: CMD-50
+  source_locators:
+  - src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item
+  evidence_ids: [EVD-137]
+  required_variants:
+  - clause_id: act-80-checklist-update-sta-8-self-loop
+    carrier: task
+    from_state_id: STA-8
+    to_state_id: STA-8
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly PENDING
+    source_branch_fact: TaskStatus.PENDING is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+  - clause_id: act-80-checklist-update-sta-9-self-loop
+    carrier: task
+    from_state_id: STA-9
+    to_state_id: STA-9
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly BUILDING
+    source_branch_fact: TaskStatus.BUILDING is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+  - clause_id: act-80-checklist-update-sta-11-self-loop
+    carrier: task
+    from_state_id: STA-11
+    to_state_id: STA-11
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly PENDING_USER_ACTION
+    source_branch_fact: TaskStatus.PENDING_USER_ACTION is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+  - clause_id: act-80-checklist-update-sta-12-self-loop
+    carrier: task
+    from_state_id: STA-12
+    to_state_id: STA-12
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly RECOVERING
+    source_branch_fact: TaskStatus.RECOVERING is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+  - clause_id: act-80-checklist-update-sta-13-self-loop
+    carrier: task
+    from_state_id: STA-13
+    to_state_id: STA-13
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly FAN_OUT_RUNNING
+    source_branch_fact: TaskStatus.FAN_OUT_RUNNING is admitted because the rejection branch matches only COMPLETED, FAILED, or VERIFYING.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item]
+    evidence_ids: [EVD-137]
+- action_id: ACT-81
+  command_id: CMD-51
+  source_locators:
+  - src/orchestrator/api/mcp/tools.py::ToolHandler._submit
+  evidence_ids: [EVD-134, EVD-135, EVD-136]
+  required_variants:
+  - clause_id: act-81-passing-gates-transition
+    carrier: task
+    from_state_id: STA-9
+    to_state_id: STA-10
+    effect_kind: state-change
+    eligibility_predicate: task status is exactly BUILDING and submission gates pass
+    source_branch_fact: When the paused-human-review predicate is false, ToolHandler._submit calls submit_for_verification; the exact MCP test proves BUILDING to VERIFYING.
+    source_locators: [src/orchestrator/api/mcp/tools.py::ToolHandler._submit, tests/integration/test_mcp_server.py::test_full_workflow_through_mcp_server]
+    evidence_ids: [EVD-134, EVD-135]
+  - clause_id: act-81-paused-requirement-escalated-noop
+    carrier: run
+    from_state_id: STA-4
+    to_state_id: STA-4
+    effect_kind: accepted-no-op
+    eligibility_predicate: run status is exactly PAUSED and pause_reason is exactly requirement_escalated; task is not mutated
+    source_branch_fact: The paused-human-review branch matches requirement_escalated and returns skipped success without calling submit_for_verification; the exact escalation test proves unchanged task status.
+    source_locators: [src/orchestrator/api/mcp/tools.py::ToolHandler._submit, tests/integration/test_mcp_server.py::test_escalate_requirement_through_mcp_server]
+    evidence_ids: [EVD-134, EVD-136]
+  - clause_id: act-81-paused-awaiting-clarification-noop
+    carrier: run
+    from_state_id: STA-4
+    to_state_id: STA-4
+    effect_kind: accepted-no-op
+    eligibility_predicate: run status is exactly PAUSED and pause_reason is exactly awaiting_clarification; task is not mutated
+    source_branch_fact: The paused-human-review branch separately matches awaiting_clarification and returns skipped success without calling submit_for_verification.
+    source_locators: [src/orchestrator/api/mcp/tools.py::ToolHandler._submit]
+    evidence_ids: [EVD-134]
+- action_id: ACT-82
+  command_id: CMD-52
+  source_locators:
+  - src/orchestrator/workflow/service.py::WorkflowService.set_grade
+  evidence_ids: [EVD-127, EVD-138]
+  required_variants:
+  - clause_id: act-82-grade-update-sta-10-self-loop
+    carrier: task
+    from_state_id: STA-10
+    to_state_id: STA-10
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly VERIFYING
+    source_branch_fact: TaskStatus.VERIFYING is admitted by the exact VERIFYING, FAILED, or COMPLETED membership branch.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.set_grade]
+    evidence_ids: [EVD-138]
+  - clause_id: act-82-grade-update-sta-14-self-loop
+    carrier: task
+    from_state_id: STA-14
+    to_state_id: STA-14
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly COMPLETED
+    source_branch_fact: TaskStatus.COMPLETED is admitted by the exact VERIFYING, FAILED, or COMPLETED membership branch.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.set_grade]
+    evidence_ids: [EVD-138]
+  - clause_id: act-82-grade-update-sta-15-self-loop
+    carrier: task
+    from_state_id: STA-15
+    to_state_id: STA-15
+    effect_kind: self-loop-field-mutation
+    eligibility_predicate: active run and task status is exactly FAILED
+    source_branch_fact: TaskStatus.FAILED is admitted by the exact VERIFYING, FAILED, or COMPLETED membership branch.
+    source_locators: [src/orchestrator/workflow/service.py::WorkflowService.set_grade]
+    evidence_ids: [EVD-138]
+  - clause_id: act-82-paused-requirement-escalated-noop
+    carrier: run
+    from_state_id: STA-4
+    to_state_id: STA-4
+    effect_kind: accepted-no-op
+    eligibility_predicate: run status is exactly PAUSED and pause_reason is exactly requirement_escalated; grade and task are not mutated
+    source_branch_fact: ToolHandler._set_grade returns skipped success before calling WorkflowService.set_grade, so neither the requested grade nor task state is mutated.
+    source_locators: [src/orchestrator/api/mcp/tools.py::ToolHandler._set_grade]
+    evidence_ids: [EVD-127]

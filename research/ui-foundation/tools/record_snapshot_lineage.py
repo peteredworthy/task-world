@@ -5,16 +5,24 @@ import hashlib
 import json
 from pathlib import Path
 import sys
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
 
+RESERVED_SELF_PATHS = frozenset(
+    {
+        "research/ui-foundation/catalog/evidence.yaml",
+        "research/ui-foundation/catalog/snapshot-lineage.yaml",
+    }
+)
+
+
 def _load(path: Path) -> dict[str, Any]:
-    value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    value: Any = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"YAML_MAPPING_REQUIRED:{path}")
-    return value
+    return cast(dict[str, Any], value)
 
 
 def _digest(value: dict[str, Any]) -> str:
@@ -28,11 +36,15 @@ def _entry_digest(entry: dict[str, Any]) -> str:
 
 
 def _snapshots(evidence: dict[str, Any]) -> list[dict[str, Any]]:
-    values = [evidence.get("snapshot"), *(evidence.get("snapshots") or [])]
+    values: list[Any] = [evidence.get("snapshot")]
+    registered = evidence.get("snapshots")
+    if isinstance(registered, list):
+        values.extend(cast(list[Any], registered))
     if not all(isinstance(value, dict) for value in values):
         raise ValueError("SNAPSHOT_INVALID")
     snapshots: list[dict[str, Any]] = []
     for value in values:
+        value = cast(dict[str, Any], value)
         if value not in snapshots:
             snapshots.append(value)
     return snapshots
@@ -61,9 +73,15 @@ def _effective(
         current = by_id[parent]
     effective: dict[str, dict[str, Any]] = {}
     for snapshot in reversed(chain):
-        for record in snapshot.get("files", []):
-            if not isinstance(record, dict) or not isinstance((path := record.get("path")), str):
+        for raw_record in cast(list[Any], snapshot.get("files", [])):
+            if not isinstance(raw_record, dict):
                 raise ValueError("SNAPSHOT_FILE_INVALID")
+            record = cast(dict[str, Any], raw_record)
+            path = record.get("path")
+            if not isinstance(path, str):
+                raise ValueError("SNAPSHOT_FILE_INVALID")
+            if path in RESERVED_SELF_PATHS:
+                continue
             if record.get("tombstone") is True:
                 if path not in effective:
                     raise ValueError(f"INVALID_TOMBSTONE:{path}")
@@ -81,16 +99,47 @@ def _safe_path(repository: Path, value: str) -> Path:
     return candidate
 
 
+def _dependent_status_bytes(root: Path, snapshot_id: str) -> dict[str, bytes]:
+    repository = root.parents[1].resolve()
+    generated: dict[str, bytes] = {}
+    for status_path in (
+        root / "catalog/status-test-nodes.yaml",
+        root / "catalog/status-evidence-reviews.yaml",
+    ):
+        if not status_path.exists():
+            continue
+        status = _load(status_path)
+        target = (
+            status.get("metadata") if status_path.name == "status-evidence-reviews.yaml" else status
+        )
+        if isinstance(target, dict):
+            target["active_snapshot_id"] = snapshot_id
+        if status_path.name == "status-test-nodes.yaml":
+            for item in status.get("entries", []):
+                if isinstance(item, dict):
+                    item["active_snapshot_id"] = snapshot_id
+        final_bytes = yaml.safe_dump(status, sort_keys=False).encode()
+        if final_bytes != status_path.read_bytes():
+            relative = status_path.resolve().relative_to(repository).as_posix()
+            generated[relative] = final_bytes
+    return generated
+
+
 def record(
     root: Path, snapshot_id: str, audited_at: str, paths: list[str], removals: list[str]
 ) -> None:
     evidence_path = root / "catalog/evidence.yaml"
     lineage_path = root / "catalog/snapshot-lineage.yaml"
     evidence, lineage = _load(evidence_path), _load(lineage_path)
+    if RESERVED_SELF_PATHS.intersection(paths + removals):
+        raise ValueError("SNAPSHOT_SELF_REFERENCE")
     snapshots = _snapshots(evidence)
-    entries = lineage.get("entries")
-    if not isinstance(entries, list) or not all(isinstance(entry, dict) for entry in entries):
+    raw_entries = lineage.get("entries")
+    if not isinstance(raw_entries, list) or not all(
+        isinstance(entry, dict) for entry in cast(list[Any], raw_entries)
+    ):
         raise ValueError("LINEAGE_INVALID")
+    entries = cast(list[dict[str, Any]], raw_entries)
     active_id = evidence.get("active_snapshot_id")
     active = next((snapshot for snapshot in snapshots if snapshot.get("id") == active_id), None)
     if not isinstance(active, dict) or not isinstance(active_id, str):
@@ -119,20 +168,30 @@ def record(
             changed.add(path)
     if not changed and not any(path not in effective for path in paths) and not removals:
         raise ValueError("NO_OP_DELTA")
-    if set(requested) != changed | {path for path in paths if path not in effective}:
+    generated = _dependent_status_bytes(root, snapshot_id)
+    generated_paths = set(generated)
+    expected_requested = changed - generated_paths
+    expected_requested.update(
+        path for path in paths if path not in effective and path not in generated_paths
+    )
+    caller_requested = set(requested) - generated_paths
+    if caller_requested != expected_requested:
         raise ValueError("UNREQUESTED_DRIFT")
-    records: list[dict[str, Any]] = []
-    for path in sorted(paths):
+    record_bytes: dict[str, bytes] = {}
+    for path in paths:
         candidate = _safe_path(repository, path)
         if not candidate.is_file():
             raise ValueError(f"SOURCE_FILE_MISSING:{path}")
-        records.append(
-            {
-                "path": path,
-                "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
-                "audited_at": audited_at,
-            }
-        )
+        record_bytes[path] = candidate.read_bytes()
+    record_bytes.update(generated)
+    records: list[dict[str, Any]] = [
+        {
+            "path": path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "audited_at": audited_at,
+        }
+        for path, content in sorted(record_bytes.items())
+    ]
     for path in sorted(removals):
         _safe_path(repository, path)
         if path not in effective or (repository / path).exists():
@@ -154,23 +213,8 @@ def record(
     }
     entry["lineage_entry_digest"] = _entry_digest(entry)
     entries.append(entry)
-    for status_path in (
-        root / "catalog/status-test-nodes.yaml",
-        root / "catalog/status-evidence-reviews.yaml",
-    ):
-        if not status_path.exists():
-            continue
-        status = _load(status_path)
-        target = (
-            status.get("metadata") if status_path.name == "status-evidence-reviews.yaml" else status
-        )
-        if isinstance(target, dict):
-            target["active_snapshot_id"] = snapshot_id
-        if status_path.name == "status-test-nodes.yaml":
-            for item in status.get("entries", []):
-                if isinstance(item, dict):
-                    item["active_snapshot_id"] = snapshot_id
-        status_path.write_text(yaml.safe_dump(status, sort_keys=False), encoding="utf-8")
+    for path, content in generated.items():
+        _safe_path(repository, path).write_bytes(content)
     evidence_path.write_text(yaml.safe_dump(evidence, sort_keys=False), encoding="utf-8")
     lineage_path.write_text(yaml.safe_dump(lineage, sort_keys=False), encoding="utf-8")
 

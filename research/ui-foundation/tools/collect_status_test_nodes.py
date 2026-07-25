@@ -11,6 +11,12 @@ import yaml
 
 
 TOOL_SCHEMA = "status-test-nodes/v1"
+RESERVED_SELF_PATHS = frozenset(
+    {
+        "research/ui-foundation/catalog/evidence.yaml",
+        "research/ui-foundation/catalog/snapshot-lineage.yaml",
+    }
+)
 COMMAND = [
     "uv",
     "run",
@@ -57,7 +63,11 @@ def _active_snapshot(root: Path) -> dict[str, object]:
     files = {
         item["path"]: item
         for item in snapshot.get("files", [])
-        if isinstance(item, dict) and isinstance(item.get("path"), str)
+        if (
+            isinstance(item, dict)
+            and isinstance(item.get("path"), str)
+            and item["path"] not in RESERVED_SELF_PATHS
+        )
     }
     parent = snapshot.get("parent_snapshot_id")
     visited = {snapshot["id"]}
@@ -65,7 +75,11 @@ def _active_snapshot(root: Path) -> dict[str, object]:
         visited.add(parent)
         parent_snapshot = by_id[parent]
         for item in parent_snapshot.get("files", []):
-            if isinstance(item, dict) and isinstance(item.get("path"), str):
+            if (
+                isinstance(item, dict)
+                and isinstance(item.get("path"), str)
+                and item["path"] not in RESERVED_SELF_PATHS
+            ):
                 files.setdefault(item["path"], item)
         parent = parent_snapshot.get("parent_snapshot_id")
     resolved["files"] = list(files.values())
@@ -108,7 +122,17 @@ def _exercised_locators(root: Path) -> list[str]:
     return sorted(set(locators))
 
 
-def _source_hashes(snapshot: dict[str, object], repository: Path) -> dict[str, str]:
+def _safe_path(repository: Path, value: str) -> Path:
+    path = Path(value)
+    candidate = (repository / path).resolve()
+    if path.is_absolute() or ".." in path.parts or not candidate.is_relative_to(repository):
+        raise ValueError(f"UNSAFE_PATH:{value}")
+    return candidate
+
+
+def _source_hashes(
+    snapshot: dict[str, object], repository: Path, referenced_paths: set[str]
+) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for item in snapshot.get("files", []):
         if (
@@ -118,9 +142,20 @@ def _source_hashes(snapshot: dict[str, object], repository: Path) -> dict[str, s
         ):
             hashes[item["path"]] = item["sha256"]
     for path, expected in hashes.items():
-        content = (repository / path).read_bytes()
-        if hashlib.sha256(content).hexdigest() != expected:
+        candidate = _safe_path(repository, path)
+        if not candidate.is_file():
+            raise ValueError(f"SOURCE_FILE_MISSING:{path}")
+        content = candidate.read_bytes()
+        current = hashlib.sha256(content).hexdigest()
+        if path in referenced_paths:
+            hashes[path] = current
+        elif current != expected:
             raise ValueError(f"STALE_ACTIVE_HASH:{path}")
+    for path in referenced_paths - hashes.keys():
+        candidate = _safe_path(repository, path)
+        if not candidate.is_file():
+            raise ValueError(f"SOURCE_FILE_MISSING:{path}")
+        hashes[path] = hashlib.sha256(candidate.read_bytes()).hexdigest()
     return hashes
 
 
@@ -135,10 +170,13 @@ def _collected_nodes(output: str) -> set[str]:
 def collect(root: Path) -> dict[str, Any]:
     repository = root.parents[1]
     snapshot = _active_snapshot(root)
-    hashes = _source_hashes(snapshot, repository)
     locators = _exercised_locators(root)
     if not locators:
         raise ValueError("NO_EXERCISED_TEST_LOCATORS")
+    referenced_paths = {locator.partition("::")[0] for locator in locators}
+    for path in referenced_paths:
+        _safe_path(repository, path)
+    hashes = _source_hashes(snapshot, repository, referenced_paths)
     result = subprocess.run(
         [*COMMAND, *locators],
         cwd=repository,

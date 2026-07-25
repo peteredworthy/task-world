@@ -458,6 +458,7 @@ class ActionTransitionVariant(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     carrier: Literal["task", "run", "result", "file", "projection"]
+    authority_clause_id: str | None = Field(default=None, min_length=1)
     from_state_id: str = Field(pattern=r"^STA-[0-9]+$")
     to_state_id: str = Field(pattern=r"^STA-[0-9]+$")
     eligibility_precondition: str = Field(min_length=1)
@@ -661,6 +662,47 @@ class StatusEvidenceLocatorReview(BaseModel):
     covered_clause_ids: list[str] = []
 
 
+class EvidenceAuthorityBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    evidence_id: str = Field(pattern=r"^EVD-[0-9]+$")
+    expected_source_kind: str = Field(min_length=1)
+    expected_provenance_role: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    symbol_or_heading: str = Field(min_length=1)
+    proposition_role: str = Field(min_length=1)
+
+
+class DocumentationDeclaration(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    path: str = Field(min_length=1)
+    id: str = Field(pattern=r"^(?:REL|STA|ACT|EVI|INV)-[0-9]+$")
+    hash_scope: Literal["exact-yaml-record-block"]
+    current_sha256: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class DocumentationAuthority(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    canonical_declaration: DocumentationDeclaration
+    evidence_bindings: list[EvidenceAuthorityBinding]
+
+
+class CapabilityAuthorityBinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    authority_id: str = Field(pattern=r"^CAP-[0-9]+$")
+    relation: Literal[
+        "implementation-carrier",
+        "output",
+        "action",
+        "derived-authority",
+        "source-demand",
+        "gap-contract",
+    ]
+
+
 class StatusEvidenceDimensionReview(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -726,10 +768,13 @@ class StatusEvidenceDimensionReview(BaseModel):
     unresolved_boundary: str = ""
     observation_evidence_ids: list[str] = []
     derivation_contract_ids: list[str] = []
-    inference_rule: str = ""
+    inference_rule: dict[str, JsonValue] | str = ""
     inference_evidence_ids: list[str] = []
     assertion_evidence_ids: list[str] = []
     proposal_authority_ids: list[str] = []
+    documentation_authority: DocumentationAuthority | None = None
+    capability_authority_bindings: list[CapabilityAuthorityBinding] = []
+    epistemic_authority_bindings: list[EvidenceAuthorityBinding] = []
 
 
 class StatusEvidenceReviewCatalog(BaseModel):
@@ -738,6 +783,14 @@ class StatusEvidenceReviewCatalog(BaseModel):
     metadata: StatusEvidenceReviewMetadata
     reviews: list[StatusEvidenceLocatorReview]
     dimension_reviews: list[StatusEvidenceDimensionReview]
+
+
+RESERVED_SELF_PATHS = frozenset(
+    {
+        "research/ui-foundation/catalog/evidence.yaml",
+        "research/ui-foundation/catalog/snapshot-lineage.yaml",
+    }
+)
 
 
 def _issue(code: str, path: Path | str, message: object) -> ValidationIssue:
@@ -783,6 +836,8 @@ def load_foundation(root: Path) -> FoundationPackage:
             continue
         relative, expected = record.get("path"), record.get("sha256")
         if not isinstance(relative, str) or not isinstance(expected, str):
+            continue
+        if relative in RESERVED_SELF_PATHS:
             continue
         candidate = Path(relative)
         unsafe = candidate.is_absolute() or ".." in candidate.parts
@@ -916,8 +971,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     for relative, document in canonical.items():
         raw_document = package.documents.get(relative)
         is_phase_two_claim_projection = (
-            phase >= 2
-            and relative == "catalog/claims.yaml"
+            relative == "catalog/claims.yaml"
             and isinstance(raw_document, dict)
             and raw_document.get("registry") == "capabilities/registry.yaml"
         )
@@ -2007,6 +2061,11 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
 
     issues.extend(_validate_actions(package, declarations, commands, evidence))
     if phase >= 1:
+        issues.extend(
+            _validate_action_variant_authority(
+                package, action_records, evidence, active_snapshot_hashes
+            )
+        )
         issues.extend(validate_graph_node_state_contract(package.root))
         issues.extend(validate_graph_retirement_transition_contract(package.root))
     issues.extend(_validate_epistemics(package, canonical, evidence))
@@ -2187,6 +2246,98 @@ def _validate_action_authority_surfaces(
             issues.append(
                 _issue("ACTION_AUTHORITY_ROUTE_INVENTORY_LOCATOR_UNRESOLVED", location, locator)
             )
+    return issues
+
+
+def _validate_action_variant_authority(
+    package: FoundationPackage,
+    actions: dict[object, dict[str, JsonValue]],
+    evidence: dict[str, EvidenceRecord],
+    active_snapshot_hashes: dict[str, str],
+) -> list[ValidationIssue]:
+    """Require the reviewed Task15 variants to be an exact, current authority map."""
+    location = package.root / "catalog/action-variant-authority.yaml"
+    raw = package.documents.get("catalog/action-variant-authority.yaml")
+    if not isinstance(raw, dict) or not isinstance(raw.get("reviewed_rows"), list):
+        return [_issue("ACTION_VARIANT_AUTHORITY_CATALOG_INVALID", location, "reviewed_rows")]
+    rows = [row for row in raw["reviewed_rows"] if isinstance(row, dict)]
+    expected_actions = {"ACT-75", "ACT-76", "ACT-80", "ACT-81", "ACT-82"}
+    row_ids = [row.get("action_id") for row in rows]
+    issues: list[ValidationIssue] = []
+    if (
+        len(rows) != len(raw["reviewed_rows"])
+        or len(row_ids) != len(set(row_ids))
+        or set(row_ids) != expected_actions
+    ):
+        issues.append(_issue("ACTION_VARIANT_AUTHORITY_ACTION_PARITY", location, row_ids))
+        return issues
+    repository_root = package.root.parents[1]
+    for row in rows:
+        action_id = cast(str, row["action_id"])
+        action = actions.get(action_id)
+        clauses = row.get("required_variants")
+        if not isinstance(action, dict) or not isinstance(clauses, list):
+            issues.append(_issue("ACTION_VARIANT_AUTHORITY_PARITY", location, action_id))
+            continue
+        canonical = action.get("transition_variants")
+        if not isinstance(canonical, list):
+            issues.append(_issue("ACTION_VARIANT_AUTHORITY_PARITY", location, action_id))
+            continue
+        canonical_by_clause = {
+            item.get("authority_clause_id"): item for item in canonical if isinstance(item, dict)
+        }
+        authority_by_clause = {
+            item.get("clause_id"): item for item in clauses if isinstance(item, dict)
+        }
+        if (
+            len(canonical_by_clause) != len(canonical)
+            or len(authority_by_clause) != len(clauses)
+            or set(canonical_by_clause) != set(authority_by_clause)
+        ):
+            issues.append(_issue("ACTION_VARIANT_AUTHORITY_PARITY", location, action_id))
+            continue
+        for clause_id, authority in authority_by_clause.items():
+            canonical_variant = canonical_by_clause[clause_id]
+            if any(
+                canonical_variant.get(canonical_field) != authority.get(authority_field)
+                for canonical_field, authority_field in (
+                    ("carrier", "carrier"),
+                    ("from_state_id", "from_state_id"),
+                    ("to_state_id", "to_state_id"),
+                    ("effect_kind", "effect_kind"),
+                    ("eligibility_precondition", "eligibility_predicate"),
+                )
+            ):
+                issues.append(
+                    _issue("ACTION_VARIANT_AUTHORITY_CLAUSE_MISMATCH", location, clause_id)
+                )
+            locators = authority.get("source_locators")
+            evidence_ids = authority.get("evidence_ids")
+            if (
+                not isinstance(locators, list)
+                or not locators
+                or any(
+                    not isinstance(locator, str)
+                    or not _implementation_locator_is_snapshot_resolvable(
+                        locator, repository_root, active_snapshot_hashes
+                    )
+                    for locator in locators
+                )
+            ):
+                issues.append(
+                    _issue("ACTION_VARIANT_AUTHORITY_LOCATOR_UNRESOLVED", location, clause_id)
+                )
+            if (
+                not isinstance(evidence_ids, list)
+                or not evidence_ids
+                or any(
+                    not isinstance(evidence_id, str) or evidence_id not in evidence
+                    for evidence_id in evidence_ids
+                )
+            ):
+                issues.append(
+                    _issue("ACTION_VARIANT_AUTHORITY_EVIDENCE_UNRESOLVED", location, clause_id)
+                )
     return issues
 
 
@@ -2985,12 +3136,113 @@ def _phase_two_gaps_projection(items: list[dict[str, JsonValue]]) -> str:
     return "\n".join(lines)
 
 
-def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
-    counts = _phase_two_counts(items)
+def _status_scope_records(package: FoundationPackage) -> list[dict[str, JsonValue]]:
+    scope = package.documents.get("catalog/status-scope.yaml")
+    scope_items = scope.get("items") if isinstance(scope, dict) else None
+    records: list[dict[str, JsonValue]] = []
+    for scope_item in scope_items if isinstance(scope_items, list) else []:
+        if not isinstance(scope_item, dict):
+            continue
+        identifier = scope_item.get("id")
+        path = scope_item.get("path")
+        if not isinstance(identifier, str) or not isinstance(path, str):
+            continue
+        document = package.documents.get(path)
+        if not isinstance(document, dict):
+            continue
+        if document.get("id") == identifier:
+            records.append(document)
+            continue
+        document_items = document.get("items")
+        record = (
+            next(
+                (
+                    item
+                    for item in document_items
+                    if isinstance(item, dict) and item.get("id") == identifier
+                ),
+                None,
+            )
+            if isinstance(document_items, list)
+            else None
+        )
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def _status_summary_parts(parts: list[str]) -> str:
+    if len(parts) < 2:
+        return "".join(parts)
+    return ", ".join(parts[:-1]) + ", and " + parts[-1]
+
+
+def _phase_two_status_projection(package: FoundationPackage) -> str:
+    registry = package.documents.get("capabilities/registry.yaml")
+    raw_capability_items = registry.get("items") if isinstance(registry, dict) else None
+    capability_items = (
+        [
+            cast(dict[str, JsonValue], item)
+            for item in raw_capability_items
+            if isinstance(item, dict)
+        ]
+        if isinstance(raw_capability_items, list)
+        else []
+    )
+    counts = _phase_two_counts(capability_items)
+    records = _status_scope_records(package)
+    family_counts: dict[str, int] = {}
+    test_counts: dict[str, dict[str, int]] = {}
+    exact_locator_count = 0
+    bounded_locator_count = 0
+    for record in records:
+        identifier = record.get("id")
+        if not isinstance(identifier, str):
+            continue
+        family = identifier.partition("-")[0]
+        if family not in family_counts:
+            family_counts[family] = 0
+            test_counts[family] = {"exercised": 0, "unexercised": 0}
+        family_counts[family] += 1
+        test_status = record.get("test_status")
+        if isinstance(test_status, str) and test_status in {"exercised", "unexercised"}:
+            test_counts[family][test_status] += 1
+        exact_locator_count += len(_string_list(record.get("test_locators")))
+        bounded_locator_count += len(_string_list(record.get("bounded_test_locators")))
+
+    manifest = package.documents.get("catalog/status-test-nodes.yaml")
+    manifest_entries = manifest.get("entries") if isinstance(manifest, dict) else None
+    manifest_base_count = 0
+    manifest_concrete_count = 0
+    for entry in manifest_entries if isinstance(manifest_entries, list) else []:
+        if not isinstance(entry, dict) or not isinstance(entry.get("base_locator"), str):
+            continue
+        manifest_base_count += 1
+        manifest_concrete_count += len(_string_list(entry.get("concrete_node_ids")))
+
+    evidence = package.documents.get("catalog/evidence.yaml")
+    snapshot_id = evidence.get("active_snapshot_id") if isinstance(evidence, dict) else None
+    rendered_snapshot_id = (
+        snapshot_id if isinstance(snapshot_id, str) and snapshot_id else "unknown"
+    )
+
+    questions = package.documents.get("catalog/questions.yaml")
+    question_items = questions.get("items") if isinstance(questions, dict) else None
+    q5 = (
+        next(
+            (item for item in question_items if isinstance(item, dict) and item.get("id") == "Q-5"),
+            None,
+        )
+        if isinstance(question_items, list)
+        else None
+    )
+    q5_affected_ids = _string_list(q5.get("affected_ids")) if isinstance(q5, dict) else []
+    q5_affected_act_count = sum(identifier.startswith("ACT-") for identifier in q5_affected_ids)
+
     identifiers = {
         status: [
             str(item.get("id"))
-            for item in sorted(items, key=_capability_sort_key)
+            for item in sorted(capability_items, key=_capability_sort_key)
             if item.get("capability_status") == status
         ]
         for status in CAPABILITY_STATUSES
@@ -2998,13 +3250,28 @@ def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
     lines = [
         "# UI foundation status",
         "",
-        f"Phase 2 is complete with {len(items)} one-to-one scope-demand classifications and {sum(counts.values())} projected claims.",
+        (
+            "Phase 2 is complete with "
+            f"{len(capability_items)} "
+            "one-to-one scope-demand classifications and "
+            f"{sum(counts.values())} projected claims."
+        ),
         "",
-        "Task15 remains IN PROGRESS pending independent review. The current semantic-clause "
-        "projection covers 210 records (35 REL, 74 STA, 86 ACT, 9 EVI, 6 INV), with 139 exact "
-        "and 49 bounded test locators in a 118-node collected manifest under "
-        "snapshot-2026-07-25-task-15-semantic-clauses. Test distributions are REL 13/22, "
-        "STA 57/17, ACT 57/29, EVI 2/7, and INV 6/0 exercised/unexercised; 62 actions retain Q-5.",
+        (
+            "Task15 remains IN PROGRESS pending independent review. The current semantic-clause "
+            f"projection covers {sum(family_counts.values())} records ("
+            + ", ".join(f"{count} {family}" for family, count in family_counts.items())
+            + f"), with {exact_locator_count} exact and {bounded_locator_count} bounded test locators "
+            f"in a {manifest_base_count}-base/{manifest_concrete_count}-concrete-node collected "
+            f"manifest under `{rendered_snapshot_id}`. Test distributions are "
+            + _status_summary_parts(
+                [
+                    f"{family} {counts['exercised']}/{counts['unexercised']}"
+                    for family, counts in test_counts.items()
+                ]
+            )
+            + f" exercised/unexercised; {q5_affected_act_count} actions retain Q-5."
+        ),
         "",
     ]
     for status in CAPABILITY_STATUSES:
@@ -3067,7 +3334,7 @@ def _validate_phase_two_projections(
             )
     expected_text = {
         "capabilities/gaps.md": _phase_two_gaps_projection(items),
-        "status.md": _phase_two_status_projection(items),
+        "status.md": _phase_two_status_projection(package),
     }
     codes = {
         "capabilities/gaps.md": "PHASE_TWO_GAPS_PROJECTION_STALE",
@@ -3098,7 +3365,7 @@ def write_phase_two_projections(root: Path) -> None:
         encoding="utf-8",
     )
     (root / "capabilities/gaps.md").write_text(_phase_two_gaps_projection(items), encoding="utf-8")
-    (root / "status.md").write_text(_phase_two_status_projection(items), encoding="utf-8")
+    (root / "status.md").write_text(_phase_two_status_projection(package), encoding="utf-8")
 
 
 def _markdown_heading_slugs(markdown: str) -> set[str]:
@@ -3304,6 +3571,43 @@ def _yaml_ids(value: object) -> set[str]:
     return identifiers
 
 
+def _declared_evidence_ids(value: JsonValue) -> set[str]:
+    if isinstance(value, dict):
+        declared = {
+            evidence_id
+            for key, child in value.items()
+            if key.endswith("evidence_ids")
+            for evidence_id in _string_list(child)
+        }
+        return declared | set().union(*(_declared_evidence_ids(child) for child in value.values()))
+    if isinstance(value, list):
+        return set().union(*(_declared_evidence_ids(child) for child in value))
+    return set()
+
+
+def _has_evidence_id_declaration(value: JsonValue) -> bool:
+    if isinstance(value, dict):
+        return any(key.endswith("evidence_ids") for key in value) or any(
+            _has_evidence_id_declaration(child) for child in value.values()
+        )
+    if isinstance(value, list):
+        return any(_has_evidence_id_declaration(child) for child in value)
+    return False
+
+
+def _canonical_epistemic_evidence_ids(record: dict[str, JsonValue]) -> set[str]:
+    declared = _declared_evidence_ids(record)
+    if _has_evidence_id_declaration(record):
+        return declared
+    status_basis = record.get("status_basis")
+    epistemic_basis = status_basis.get("epistemic") if isinstance(status_basis, dict) else None
+    return (
+        set(re.findall(r"EVD-[0-9]+", epistemic_basis))
+        if isinstance(epistemic_basis, str)
+        else set()
+    )
+
+
 def _implementation_locator_is_snapshot_resolvable(
     locator: str, repository_root: Path, active_snapshot_hashes: dict[str, str]
 ) -> bool:
@@ -3417,6 +3721,54 @@ def _implementation_locators_are_snapshot_resolvable(
     )
 
 
+def _epistemic_evidence_locator_is_current(
+    evidence: dict[str, JsonValue],
+    repository_root: Path,
+    snapshot_paths: dict[str, set[str]],
+) -> bool:
+    path = evidence.get("path")
+    symbol = evidence.get("symbol")
+    snapshot_id = evidence.get("snapshot_id")
+    snapshot_path = evidence.get("snapshot_path")
+    if not all(isinstance(value, str) and value.strip() for value in (path, symbol)):
+        return False
+    assert isinstance(path, str) and isinstance(symbol, str)
+    if (
+        evidence.get("source_kind") == "audit-report"
+        or evidence.get("provenance_role") == "synthesis"
+    ):
+        if (
+            evidence.get("source_kind") != "audit-report"
+            or evidence.get("provenance_role") != "synthesis"
+        ):
+            return False
+        report_path, separator, heading = path.partition("#")
+        if (
+            separator != "#"
+            or not heading
+            or snapshot_path != report_path
+            or not isinstance(snapshot_id, str)
+            or report_path not in snapshot_paths.get(snapshot_id, set())
+        ):
+            return False
+        try:
+            markdown = (repository_root / report_path).read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return False
+        return heading in _markdown_heading_slugs(markdown)
+    if path != snapshot_path:
+        return False
+    if not isinstance(snapshot_id, str) or path not in snapshot_paths.get(snapshot_id, set()):
+        return False
+    try:
+        current_hash = hashlib.sha256((repository_root / path).read_bytes()).hexdigest()
+    except OSError:
+        return False
+    return _implementation_locator_is_snapshot_resolvable(
+        f"{path}::{symbol.replace('::', '.')}", repository_root, {path: current_hash}
+    )
+
+
 def _expected_status_scope_ids() -> set[str]:
     return (
         {f"REL-{number}" for number in range(1, 36)}
@@ -3508,42 +3860,76 @@ def _validate_status_evidence_reviews(
         "epistemic": "epistemic_status",
     }
     evidence_document = package.documents.get("catalog/evidence.yaml")
-    evidence_ids = (
-        {
-            item.get("id")
-            for item in evidence_document.get("items", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
-        if isinstance(evidence_document, dict)
-        else set()
-    )
+    evidence_records: dict[str, list[dict[str, JsonValue]]] = {}
+    if isinstance(evidence_document, dict):
+        raw_evidence_items = evidence_document.get("items")
+        if isinstance(raw_evidence_items, list):
+            for item in raw_evidence_items:
+                evidence_id = item.get("id") if isinstance(item, dict) else None
+                if isinstance(evidence_id, str):
+                    evidence_records.setdefault(evidence_id, []).append(
+                        cast(dict[str, JsonValue], item)
+                    )
+    evidence_ids = set(evidence_records)
     conflicts_document = package.documents.get("catalog/conflicts.yaml")
-    conflicts = (
-        {
-            item.get("id"): item
-            for item in conflicts_document.get("items", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
-        }
-        if isinstance(conflicts_document, dict)
-        else {}
-    )
+    conflicts: dict[str, dict[str, JsonValue]] = {}
+    if isinstance(conflicts_document, dict):
+        raw_conflicts = conflicts_document.get("items")
+        if isinstance(raw_conflicts, list):
+            for item in raw_conflicts:
+                conflict_id = item.get("id") if isinstance(item, dict) else None
+                if isinstance(conflict_id, str):
+                    conflicts[conflict_id] = cast(dict[str, JsonValue], item)
     registry = package.documents.get("capabilities/registry.yaml")
-    capability_statuses = (
-        {
-            item.get("id"): item.get("capability_status")
-            for item in registry.get("items", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), str)
+    capability_records: dict[str, dict[str, JsonValue]] = {}
+    registry_items = registry.get("items") if isinstance(registry, dict) else None
+    for item in registry_items if isinstance(registry_items, list) else []:
+        capability_id = item.get("id") if isinstance(item, dict) else None
+        if isinstance(capability_id, str):
+            capability_records[capability_id] = cast(dict[str, JsonValue], item)
+    derivations: dict[str, dict[str, JsonValue]] = {}
+    for relative, value in package.documents.items():
+        derivation_id = value.get("id") if isinstance(value, dict) else None
+        if relative.startswith("capabilities/derivations/") and isinstance(derivation_id, str):
+            derivations[derivation_id] = value
+    derivation_ids = set(derivations)
+    snapshots: list[dict[str, JsonValue]] = []
+    if isinstance(evidence_document, dict):
+        initial_snapshot = evidence_document.get("snapshot")
+        if isinstance(initial_snapshot, dict):
+            snapshots.append(initial_snapshot)
+        later_snapshots = evidence_document.get("snapshots")
+        if isinstance(later_snapshots, list):
+            snapshots.extend(value for value in later_snapshots if isinstance(value, dict))
+    snapshot_paths = {
+        snapshot_id: {
+            path
+            for item in files
+            if isinstance(item, dict) and isinstance((path := item.get("path")), str)
         }
-        if isinstance(registry, dict)
-        else {}
-    )
-    derivation_ids = {
-        value.get("id")
-        for relative, value in package.documents.items()
-        if relative.startswith("capabilities/derivations/")
-        and isinstance(value, dict)
-        and isinstance(value.get("id"), str)
+        for snapshot in snapshots
+        if isinstance((snapshot_id := snapshot.get("id")), str)
+        and isinstance((files := snapshot.get("files")), list)
     }
+    effective_active_snapshot = (
+        _active_snapshot(evidence_document) if isinstance(evidence_document, dict) else None
+    )
+    effective_active_snapshot_files: dict[str, dict[str, JsonValue]] = {}
+    active_snapshot_files = (
+        effective_active_snapshot.get("files")
+        if isinstance(effective_active_snapshot, dict)
+        else None
+    )
+    for raw_snapshot_record in (
+        active_snapshot_files if isinstance(active_snapshot_files, list) else []
+    ):
+        if not isinstance(raw_snapshot_record, dict):
+            continue
+        snapshot_record = cast(dict[str, JsonValue], raw_snapshot_record)
+        snapshot_path = snapshot_record.get("path")
+        if isinstance(snapshot_path, str):
+            effective_active_snapshot_files[snapshot_path] = snapshot_record
+    repository_root = package.root.parents[1]
     for summary in catalog.dimension_reviews:
         key = (summary.record_id, summary.dimension)
         if summary.record_id not in records:
@@ -3787,25 +4173,222 @@ def _validate_status_evidence_reviews(
                         _issue("STATUS_EVIDENCE_CANONICAL_STATUS_MISMATCH", location, identifier)
                     )
             elif dimension == "documentation":
-                unresolved_reciprocal = any(
-                    conflict_id in conflicts
+                authority = summary.documentation_authority
+                if authority is None:
+                    issues.append(
+                        _issue(
+                            "STATUS_EVIDENCE_DOCUMENTATION_AUTHORITY_REQUIRED",
+                            location,
+                            identifier,
+                        )
+                    )
+
+                declaration_valid = False
+                declaration_hash_current = False
+                declaration_file_current = False
+                declaration_path_active = False
+                binding_ids: list[str] = []
+                bindings_valid = False
+                if authority is not None:
+                    declaration = authority.canonical_declaration
+                    declaration_document = package.documents.get(declaration.path)
+                    resolved_records: list[dict[str, JsonValue]] = []
+                    if isinstance(declaration_document, dict):
+                        if declaration_document.get("id") == declaration.id:
+                            resolved_records.append(declaration_document)
+                        declaration_items = declaration_document.get("items")
+                        if isinstance(declaration_items, list):
+                            resolved_records.extend(
+                                item
+                                for item in declaration_items
+                                if isinstance(item, dict) and item.get("id") == declaration.id
+                            )
+                    declaration_valid = (
+                        declaration.path == record_path
+                        and declaration.id == identifier
+                        and len(resolved_records) == 1
+                        and resolved_records[0] == record
+                    )
+                    if not declaration_valid:
+                        issues.append(
+                            _issue(
+                                "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_INVALID",
+                                location,
+                                identifier,
+                            )
+                        )
+                    elif resolved_records:
+                        canonical_record = json.dumps(
+                            resolved_records[0],
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ).encode("utf-8")
+                        current_sha256 = f"sha256:{hashlib.sha256(canonical_record).hexdigest()}"
+                        declaration_hash_current = declaration.current_sha256 == current_sha256
+                        if not declaration_hash_current:
+                            issues.append(
+                                _issue(
+                                    "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_HASH_MISMATCH",
+                                    location,
+                                    identifier,
+                                )
+                            )
+
+                    declaration_path_on_repository = (package.root / declaration.path).resolve()
+                    if declaration_path_on_repository.is_relative_to(repository_root):
+                        declaration_snapshot_path = declaration_path_on_repository.relative_to(
+                            repository_root
+                        ).as_posix()
+                    else:
+                        declaration_snapshot_path = None
+                    snapshot_record = (
+                        effective_active_snapshot_files.get(declaration_snapshot_path)
+                        if declaration_snapshot_path is not None
+                        else None
+                    )
+                    if snapshot_record is None:
+                        issues.append(
+                            _issue(
+                                "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_PATH_NOT_ACTIVE",
+                                location,
+                                identifier,
+                            )
+                        )
+                    else:
+                        declaration_path_active = True
+                        try:
+                            current_file_sha256 = hashlib.sha256(
+                                declaration_path_on_repository.read_bytes()
+                            ).hexdigest()
+                        except OSError:
+                            current_file_sha256 = None
+                        if current_file_sha256 != snapshot_record.get("sha256"):
+                            issues.append(
+                                _issue(
+                                    "STATUS_EVIDENCE_DOCUMENTATION_DECLARATION_FILE_HASH_MISMATCH",
+                                    location,
+                                    identifier,
+                                )
+                            )
+                        else:
+                            declaration_file_current = True
+
+                    binding_ids = [binding.evidence_id for binding in authority.evidence_bindings]
+                    canonical_record_text = json.dumps(
+                        record, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+                    )
+                    bindings_valid = (
+                        len(binding_ids) == len(set(binding_ids))
+                        and set(binding_ids) <= set(summary.evidence_ids)
+                        and all(evidence_id in canonical_record_text for evidence_id in binding_ids)
+                        and all(
+                            len(evidence_records.get(binding.evidence_id, [])) == 1
+                            and (
+                                evidence_records[binding.evidence_id][0].get("source_kind"),
+                                evidence_records[binding.evidence_id][0].get("provenance_role"),
+                                evidence_records[binding.evidence_id][0].get("path"),
+                                evidence_records[binding.evidence_id][0].get("symbol"),
+                            )
+                            == (
+                                binding.expected_source_kind,
+                                binding.expected_provenance_role,
+                                binding.path,
+                                binding.symbol_or_heading,
+                            )
+                            for binding in authority.evidence_bindings
+                        )
+                    )
+                    if not bindings_valid:
+                        issues.append(
+                            _issue(
+                                "STATUS_EVIDENCE_DOCUMENTATION_BINDING_INVALID",
+                                location,
+                                identifier,
+                            )
+                        )
+
+                exact_documentation_evidence = len(summary.documentation_evidence_ids) == len(
+                    set(summary.documentation_evidence_ids)
+                ) and set(summary.documentation_evidence_ids) == set(binding_ids)
+                reciprocal_conflicts = {
+                    conflict_id: conflicts[conflict_id]
+                    for conflict_id in summary.conflict_ids
+                    if conflict_id in conflicts
                     and conflicts[conflict_id].get("status") == "unresolved"
                     and identifier in _string_list(conflicts[conflict_id].get("affected_ids"))
-                    for conflict_id in summary.conflict_ids
+                }
+                expected_contradictions: dict[str, str] = {}
+                for conflict_id, conflict in reciprocal_conflicts.items():
+                    claims = conflict.get("claims")
+                    if not isinstance(claims, list):
+                        continue
+                    for index, claim in enumerate(claims):
+                        proposition = claim.get("proposition") if isinstance(claim, dict) else None
+                        if isinstance(proposition, str):
+                            expected_contradictions[f"{conflict_id}#claim-{index}"] = proposition
+                contradiction_valid = (
+                    bool(reciprocal_conflicts)
+                    and set(reciprocal_conflicts) == set(summary.conflict_ids)
+                    and summary.contradiction_clauses == expected_contradictions
+                    and bool(expected_contradictions)
                 )
-                documentation_evidence_resolves = (
-                    bool(summary.documentation_evidence_ids)
-                    and set(summary.documentation_evidence_ids) <= evidence_ids
+                if summary.compatible_status == "conflicting" and not contradiction_valid:
+                    issues.append(
+                        _issue(
+                            "STATUS_EVIDENCE_DOCUMENTATION_CONTRADICTION_INVALID",
+                            location,
+                            identifier,
+                        )
+                    )
+
+                issue_ids = set(summary.conflict_ids) | set(summary.question_ids)
+                qualification_text = f"{summary.boundary} {summary.rationale}"
+                documented_issues_are_qualified = (
+                    not summary.contradiction_clauses
+                    and set(summary.unresolved_issue_ids) == issue_ids
+                    and all(issue_id in qualification_text for issue_id in issue_ids)
                 )
+                narrative_is_specific = (
+                    identifier in summary.record_proposition
+                    and record_path in summary.observed_fact
+                    and all(
+                        evidence_id in summary.observed_fact
+                        for evidence_id in summary.documentation_evidence_ids
+                    )
+                    and (identifier in summary.boundary or bool(issue_ids))
+                    and identifier in summary.rationale
+                )
+                if not narrative_is_specific:
+                    issues.append(
+                        _issue(
+                            "STATUS_EVIDENCE_DOCUMENTATION_NARRATIVE_GENERIC",
+                            location,
+                            identifier,
+                        )
+                    )
+
                 documented = (
                     summary.combined_verdict == "proves"
-                    and documentation_evidence_resolves
+                    and bool(binding_ids)
+                    and exact_documentation_evidence
+                    and bindings_valid
+                    and declaration_valid
+                    and declaration_hash_current
+                    and declaration_path_active
+                    and declaration_file_current
                     and summary.freshness_state == "current"
+                    and documented_issues_are_qualified
                 )
                 conflicting = (
                     summary.combined_verdict == "contradicts"
-                    and bool(summary.contradiction_clauses)
-                    and unresolved_reciprocal
+                    and exact_documentation_evidence
+                    and bindings_valid
+                    and declaration_valid
+                    and declaration_hash_current
+                    and declaration_path_active
+                    and declaration_file_current
+                    and contradiction_valid
                 )
                 unknown = "unknown" in summary.boundary.casefold()
                 if not (
@@ -3814,13 +4397,28 @@ def _validate_status_evidence_reviews(
                     or (summary.compatible_status == "unknown" and unknown)
                     or (
                         summary.compatible_status == "stale"
+                        and summary.combined_verdict == "partially-proves"
+                        and summary.freshness_state == "stale"
+                        and exact_documentation_evidence
+                        and bindings_valid
+                        and declaration_valid
+                        and declaration_hash_current
+                        and declaration_path_active
+                        and declaration_file_current
                         and bool(summary.freshness_boundary.strip())
                         and bool(summary.evidence_age.strip())
                     )
                     or (
                         summary.compatible_status == "undocumented"
+                        and summary.combined_verdict == "absent"
+                        and summary.freshness_state in {None, "unknown"}
                         and bool(summary.missing_documentation_boundary.strip())
                         and not summary.documentation_evidence_ids
+                        and not binding_ids
+                        and declaration_valid
+                        and declaration_hash_current
+                        and declaration_path_active
+                        and declaration_file_current
                     )
                 ):
                     issues.append(
@@ -3834,40 +4432,143 @@ def _validate_status_evidence_reviews(
                     "gap": "absent",
                     "unknown": "unknown",
                 }.get(summary.compatible_status)
-                capability_records = registry.get("items", []) if isinstance(registry, dict) else []
-                linked_capability_authority = any(
-                    isinstance(capability, dict)
-                    and capability.get("capability_status") in {"current", "derived"}
-                    and identifier in str(capability.get("implementation_carrier_bindings", []))
-                    for capability in capability_records
+                bindings = summary.capability_authority_bindings
+                binding_ids = [binding.authority_id for binding in bindings]
+                binding_records = [capability_records.get(value) for value in binding_ids]
+                canonical_evidence_ids = set(
+                    re.findall(r"EVD-[0-9]+", json.dumps(record, sort_keys=True))
                 )
-                authority_statuses = [
-                    capability_statuses.get(value) for value in summary.authority_ids
-                ]
-                authority_ids_resolve = len(summary.authority_ids) == len(
-                    set(summary.authority_ids)
-                ) and all(status is not None for status in authority_statuses)
-                matching_authority = (
-                    bool(summary.authority_ids)
-                    and authority_ids_resolve
-                    and all(status == summary.compatible_status for status in authority_statuses)
+                references_valid = (
+                    set(summary.evidence_ids) <= canonical_evidence_ids
+                    and set(summary.conflict_ids) == set(_string_list(record.get("conflict_ids")))
+                    and set(summary.question_ids) == set(_string_list(record.get("question_ids")))
                 )
-                valid_capability_status = summary.combined_verdict == expected_verdict and (
-                    summary.compatible_status in {"current", "derived", "proposed"}
-                    and matching_authority
-                    and (linked_capability_authority or summary.compatible_status == "proposed")
-                    or summary.compatible_status == "unknown"
-                    and bool(summary.unresolved_boundary.strip())
-                    and authority_ids_resolve
-                    and not any(
-                        status in {"current", "derived", "proposed"}
-                        for status in authority_statuses
+                narrative_is_specific = all(
+                    identifier in value
+                    for value in (
+                        summary.record_proposition,
+                        summary.observed_fact,
+                        summary.boundary,
+                        summary.rationale,
                     )
-                    or summary.compatible_status == "gap"
-                    and bool(summary.gap_contract_ids)
+                )
+                bindings_are_unique = len(binding_ids) == len(set(binding_ids))
+
+                def reciprocally_binds(capability: dict[str, JsonValue], relation: str) -> bool:
+                    if relation == "implementation-carrier":
+                        raw_bindings = capability.get("implementation_carrier_bindings")
+                        return identifier in _string_list(
+                            capability.get("implementation_carrier_ids")
+                        ) or any(
+                            isinstance(value, dict) and value.get("id") == identifier
+                            for value in (raw_bindings if isinstance(raw_bindings, list) else [])
+                        )
+                    if relation == "output":
+                        return identifier in _string_list(
+                            capability.get("output_ids")
+                        ) or identifier in re.findall(
+                            r"(?:REL|STA|ACT|EVI|INV)-[0-9]+",
+                            json.dumps(capability.get("output_contract"), sort_keys=True),
+                        )
+                    if relation == "action":
+                        return identifier in (
+                            _string_list(capability.get("action_ids"))
+                            + _string_list(capability.get("current_action_ids"))
+                        )
+                    return False
+
+                current = (
+                    bool(bindings)
+                    and binding_ids == summary.authority_ids
                     and all(
-                        capability_statuses.get(value) == "gap"
-                        for value in summary.gap_contract_ids
+                        isinstance(capability, dict)
+                        and capability.get("capability_status") == "current"
+                        and binding.relation in {"implementation-carrier", "output", "action"}
+                        and reciprocally_binds(capability, binding.relation)
+                        for binding, capability in zip(bindings, binding_records, strict=True)
+                    )
+                    and not summary.gap_contract_ids
+                    and not summary.derivation_contract_ids
+                )
+                derived = (
+                    bool(bindings)
+                    and binding_ids == summary.authority_ids
+                    and bool(summary.derivation_contract_ids)
+                    and len(summary.derivation_contract_ids)
+                    == len(set(summary.derivation_contract_ids))
+                    and set(summary.derivation_contract_ids) <= derivation_ids
+                    and all(
+                        isinstance(capability, dict)
+                        and capability.get("capability_status") == "derived"
+                        and binding.relation == "derived-authority"
+                        and set(summary.derivation_contract_ids)
+                        == set(_string_list(capability.get("derivation_contract_ids")))
+                        for binding, capability in zip(bindings, binding_records, strict=True)
+                    )
+                    and not summary.gap_contract_ids
+                )
+                record_source_demands = set(_string_list(record.get("source_demand_ids")))
+                proposed = (
+                    bool(bindings)
+                    and binding_ids == summary.authority_ids
+                    and all(
+                        isinstance(capability, dict)
+                        and capability.get("capability_status") == "proposed"
+                        and binding.relation == "source-demand"
+                        and capability.get("scope_demand_key") in record_source_demands
+                        for binding, capability in zip(bindings, binding_records, strict=True)
+                    )
+                    and not summary.gap_contract_ids
+                    and not summary.derivation_contract_ids
+                )
+                gap = (
+                    bool(bindings)
+                    and binding_ids == summary.gap_contract_ids
+                    and not summary.authority_ids
+                    and all(
+                        isinstance(capability, dict)
+                        and capability.get("capability_status") == "gap"
+                        and binding.relation == "gap-contract"
+                        and identifier in _string_list(capability.get("gap_action_ids"))
+                        for binding, capability in zip(bindings, binding_records, strict=True)
+                    )
+                    and identifier.startswith("ACT-")
+                    and summary.record_proposition
+                    == f"{identifier} user-capability proposition: {record.get('required_outcome')}"
+                    and not summary.derivation_contract_ids
+                )
+                unknown_authorities = [
+                    capability_records.get(value) for value in summary.authority_ids
+                ]
+                unknown = (
+                    bool(summary.unresolved_boundary.strip())
+                    and len(summary.authority_ids) == len(set(summary.authority_ids))
+                    and all(
+                        isinstance(capability, dict)
+                        and capability.get("capability_status") in {"unknown", "gap", "proposed"}
+                        and reciprocally_binds(capability, "implementation-carrier")
+                        for capability in unknown_authorities
+                    )
+                    and not summary.gap_contract_ids
+                    and not summary.derivation_contract_ids
+                    and not bindings
+                )
+                valid_capability_status = (
+                    summary.combined_verdict == expected_verdict
+                    and references_valid
+                    and narrative_is_specific
+                    and bindings_are_unique
+                    and (
+                        summary.compatible_status == "current"
+                        and current
+                        or summary.compatible_status == "derived"
+                        and derived
+                        or summary.compatible_status == "proposed"
+                        and proposed
+                        or summary.compatible_status == "gap"
+                        and gap
+                        or summary.compatible_status == "unknown"
+                        and unknown
                     )
                 )
                 if not valid_capability_status:
@@ -3875,41 +4576,175 @@ def _validate_status_evidence_reviews(
                         _issue("STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID", location, identifier)
                     )
             elif dimension == "epistemic":
+                canonical_evidence_ids = _canonical_epistemic_evidence_ids(record)
+                bindings = summary.epistemic_authority_bindings
+                binding_ids = [binding.evidence_id for binding in bindings]
+                valid_bindings: dict[str, EvidenceAuthorityBinding] = {}
+                for binding in bindings:
+                    matches = evidence_records.get(binding.evidence_id, [])
+                    evidence_record = matches[0] if len(matches) == 1 else None
+                    if (
+                        evidence_record is not None
+                        and binding.evidence_id in summary.evidence_ids
+                        and binding.evidence_id in canonical_evidence_ids
+                        and (
+                            evidence_record.get("source_kind"),
+                            evidence_record.get("provenance_role"),
+                            evidence_record.get("path"),
+                            evidence_record.get("symbol"),
+                        )
+                        == (
+                            binding.expected_source_kind,
+                            binding.expected_provenance_role,
+                            binding.path,
+                            binding.symbol_or_heading,
+                        )
+                        and _epistemic_evidence_locator_is_current(
+                            evidence_record,
+                            repository_root,
+                            snapshot_paths,
+                        )
+                    ):
+                        valid_bindings[binding.evidence_id] = binding
+                bindings_valid = len(binding_ids) == len(set(binding_ids)) and len(
+                    valid_bindings
+                ) == len(bindings)
+                if not bindings_valid:
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_EPISTEMIC_BINDING_INVALID", location, identifier)
+                    )
+
+                narrative_is_specific = all(
+                    identifier in value
+                    and _normalized_status_basis(value) not in GENERIC_STATUS_BASES
+                    for value in (
+                        summary.record_proposition,
+                        summary.observed_fact,
+                        summary.boundary,
+                        summary.rationale,
+                    )
+                )
+                if not narrative_is_specific:
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_EPISTEMIC_NARRATIVE_GENERIC", location, identifier)
+                    )
+
+                observation_binding_ids = {
+                    evidence_id
+                    for evidence_id, binding in valid_bindings.items()
+                    if "observation" in binding.proposition_role.casefold()
+                }
+                derivation_contracts = [
+                    derivations.get(derivation_id)
+                    for derivation_id in summary.derivation_contract_ids
+                ]
+                canonical_derivation_ids = _string_list(record.get("derivation_contract_ids"))
+                canonical_derivation_inputs = _string_list(record.get("derivation_input_ids"))
+                deterministic_authority = (
+                    bool(derivation_contracts)
+                    and len(summary.derivation_contract_ids)
+                    == len(set(summary.derivation_contract_ids))
+                    and summary.derivation_contract_ids == canonical_derivation_ids
+                    and all(
+                        isinstance(contract, dict)
+                        and contract.get("status") == "admitted"
+                        and _string_list(contract.get("output_ids")) == [identifier]
+                        and bool(canonical_derivation_inputs)
+                        and _string_list(contract.get("inputs")) == canonical_derivation_inputs
+                        for contract in derivation_contracts
+                    )
+                )
+                inference_rule = summary.inference_rule
+                typed_inference_rule = (
+                    isinstance(inference_rule, dict)
+                    and isinstance(inference_rule.get("type"), str)
+                    and bool(cast(str, inference_rule["type"]).strip())
+                    and _nonempty_string_list(inference_rule.get("premises"))
+                    and isinstance(inference_rule.get("conclusion"), str)
+                    and bool(cast(str, inference_rule["conclusion"]).strip())
+                )
+                inference_ids = summary.inference_evidence_ids
+                inference_authority = (
+                    typed_inference_rule
+                    and bool(inference_ids)
+                    and len(inference_ids) == len(set(inference_ids))
+                    and set(inference_ids) <= set(valid_bindings)
+                    and all(
+                        "inference" in valid_bindings[evidence_id].proposition_role.casefold()
+                        for evidence_id in inference_ids
+                    )
+                )
+                assertion_ids = summary.assertion_evidence_ids
+                assertion_authority = (
+                    bool(assertion_ids)
+                    and len(assertion_ids) == len(set(assertion_ids))
+                    and set(assertion_ids) <= set(valid_bindings)
+                    and all(
+                        evidence_records[evidence_id][0].get("source_kind") == "operator-assertion"
+                        and isinstance(
+                            evidence_records[evidence_id][0].get("operator_identity"), str
+                        )
+                        and bool(
+                            cast(
+                                str,
+                                evidence_records[evidence_id][0]["operator_identity"],
+                            ).strip()
+                        )
+                        and "assertion" in valid_bindings[evidence_id].proposition_role.casefold()
+                        for evidence_id in assertion_ids
+                    )
+                )
+                proposal_ids = summary.proposal_authority_ids
+                proposal_authority = (
+                    bool(proposal_ids)
+                    and len(proposal_ids) == len(set(proposal_ids))
+                    and set(proposal_ids) == set(valid_bindings)
+                    and all(
+                        evidence_records[evidence_id][0].get("source_kind") == "proposal"
+                        and evidence_records[evidence_id][0].get("provenance_role") == "proposal"
+                        and "proposal" in valid_bindings[evidence_id].proposition_role.casefold()
+                        for evidence_id in proposal_ids
+                    )
+                )
                 valid = (
-                    (
-                        summary.compatible_status == "observed"
-                        and summary.combined_verdict == "proves"
-                        and bool(summary.observation_evidence_ids)
-                        and set(summary.observation_evidence_ids) <= evidence_ids
-                    )
-                    or (
-                        summary.compatible_status == "deterministically-derived"
-                        and summary.combined_verdict == "proves"
-                        and bool(summary.derivation_contract_ids)
-                        and set(summary.derivation_contract_ids) <= derivation_ids
-                    )
-                    or (
-                        summary.compatible_status == "inferred"
-                        and summary.combined_verdict == "partially-proves"
-                        and bool(summary.inference_rule.strip())
-                        and bool(summary.inference_evidence_ids)
-                        and set(summary.inference_evidence_ids) <= evidence_ids
-                    )
-                    or (
-                        summary.compatible_status == "operator-asserted"
-                        and summary.combined_verdict == "proves"
-                        and bool(summary.assertion_evidence_ids)
-                        and set(summary.assertion_evidence_ids) <= evidence_ids
-                    )
-                    or (
-                        summary.compatible_status == "proposed"
-                        and summary.combined_verdict == "proposed"
-                        and bool(summary.proposal_authority_ids)
-                        and set(summary.proposal_authority_ids) <= evidence_ids
-                    )
-                    or (
-                        summary.compatible_status == "unknown"
-                        and bool(summary.unresolved_boundary.strip())
+                    bindings_valid
+                    and narrative_is_specific
+                    and (
+                        (
+                            summary.compatible_status == "observed"
+                            and summary.combined_verdict == "proves"
+                            and bool(summary.observation_evidence_ids)
+                            and len(summary.observation_evidence_ids)
+                            == len(set(summary.observation_evidence_ids))
+                            and set(summary.observation_evidence_ids) <= observation_binding_ids
+                        )
+                        or (
+                            summary.compatible_status == "deterministically-derived"
+                            and summary.combined_verdict == "proves"
+                            and deterministic_authority
+                        )
+                        or (
+                            summary.compatible_status == "inferred"
+                            and summary.combined_verdict == "partially-proves"
+                            and inference_authority
+                        )
+                        or (
+                            summary.compatible_status == "operator-asserted"
+                            and summary.combined_verdict == "proves"
+                            and assertion_authority
+                        )
+                        or (
+                            summary.compatible_status == "proposed"
+                            and summary.combined_verdict == "proposed"
+                            and proposal_authority
+                        )
+                        or (
+                            summary.compatible_status == "unknown"
+                            and summary.combined_verdict == "unknown"
+                            and bool(summary.unresolved_boundary.strip())
+                            and not summary.observation_evidence_ids
+                            and not observation_binding_ids
+                        )
                     )
                 )
                 if not valid:
@@ -4854,7 +5689,21 @@ def _active_snapshot(evidence: dict[str, JsonValue]) -> dict[str, JsonValue] | N
     active_id = evidence.get("active_snapshot_id")
     snapshots = evidence.get("snapshots")
     if not isinstance(active_id, str) or not isinstance(snapshots, list):
-        return evidence.get("snapshot") if isinstance(evidence.get("snapshot"), dict) else None
+        snapshot = evidence.get("snapshot")
+        if not isinstance(snapshot, dict):
+            return None
+        resolved: dict[str, JsonValue] = dict(snapshot)
+        files = snapshot.get("files")
+        if isinstance(files, list):
+            resolved["files"] = cast(
+                list[JsonValue],
+                [
+                    record
+                    for record in files
+                    if not isinstance(record, dict) or record.get("path") not in RESERVED_SELF_PATHS
+                ],
+            )
+        return resolved
     active = next(
         (
             snapshot
@@ -4900,6 +5749,8 @@ def _active_snapshot(evidence: dict[str, JsonValue]) -> dict[str, JsonValue] | N
         for record in records:
             if not isinstance(record, dict) or not isinstance((path := record.get("path")), str):
                 return None
+            if path in RESERVED_SELF_PATHS:
+                continue
             if record.get("tombstone") is True:
                 if path not in files:
                     return None

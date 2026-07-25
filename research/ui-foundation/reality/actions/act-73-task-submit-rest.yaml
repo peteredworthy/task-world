@@ -37,7 +37,7 @@ status_basis:
     the record proposition under EVD-110.'
   test: 'ACT-73 test status exercised: ACT-73 Validates and persists submission-gate side effects, then
     enqueues ACTIVITY_COMPLETED and commits its outbox; consumer application is separate. is exercised
-    because admitted SER rows SER-0483 contain direct assertions at tests/integration/test_api_tasks.py::test_db_backed_activity_signals_are_persisted;
+    because admitted SER rows SER-0483 contain direct assertions at tests/integration/test_idempotency.py::test_submit_twice;
     no active rejected locator defeats that proof.'
   documentation: 'ACT-73 documentation status documented: ACT-73 Validates and persists submission-gate
     side effects, then enqueues ACTIVITY_COMPLETED and commits its outbox; consumer application is separate.
@@ -50,9 +50,9 @@ status_basis:
     carrier but no relevant CAP authority classifies this record as current or derived.'
   epistemic: 'ACT-73 epistemic status observed: ACT-73 Validates and persists submission-gate side effects,
     then enqueues ACTIVITY_COMPLETED and commits its outbox; consumer application is separate. is observed
-    from direct/audit authority EVD-110 (EVD-110 (test: tests/integration/test_idempotency.py)), qualified
+    from direct/audit authority EVD-110 (EVD-110 (test: tests/integration/test_idempotency.py::test_submit_twice)), qualified
     by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators: [src/orchestrator/api/routers/tasks.py::submit_task]
 test_locators:
-- tests/integration/test_api_tasks.py::test_db_backed_activity_signals_are_persisted
+- tests/integration/test_idempotency.py::test_submit_twice
 bounded_test_locators: []

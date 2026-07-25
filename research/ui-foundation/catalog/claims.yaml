@@ -4472,6 +4472,8 @@ items:
     demand.
   absence_contract_ids:
   - ACT-17
+  gap_action_ids:
+  - ACT-17
   implementation_carrier_ids: []
   absence_verified: true
   disqualifying_evidence_ids: []
@@ -4867,6 +4869,8 @@ items:
     demand.
   absence_contract_ids:
   - ACT-15
+  gap_action_ids:
+  - ACT-15
   implementation_carrier_ids: []
   absence_verified: true
   disqualifying_evidence_ids: []
@@ -4898,6 +4902,8 @@ items:
   - Do not call every accepted graph topology patch a steering patch or use patch
     validation as directive-delivery evidence.
   scope_demand_key: decisions.apply-steering-patch
+  gap_action_ids:
+  - ACT-16
   implementation_carrier_bindings:
   - id: ACT-13
     role: action-contract

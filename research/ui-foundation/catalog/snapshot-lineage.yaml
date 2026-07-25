@@ -124,5 +124,53 @@ entries:
   parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-verified
   snapshot_digest: bf5436326574df12dd80141e7c97e3cf1c0612f7bf0d120ff228495826affb76
   predecessor_lineage_digest: 452edb91b552475f51125f616fcbdfbed16b49f3cb38bf31518ecfdd4854adad
+  status: historical
+  lineage_entry_digest: d0a808a6346862814f64f1c0e6688d57aceaaaefb1defe469c9d4e3fc128bb00
+- snapshot_id: snapshot-2026-07-25-task-15-final-authority
+  parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-hookfix
+  snapshot_digest: 32baa8d1eb9c9edadd263b7deb6da40b72f07df966404a79759467c796b96088
+  predecessor_lineage_digest: d0a808a6346862814f64f1c0e6688d57aceaaaefb1defe469c9d4e3fc128bb00
+  status: historical
+  lineage_entry_digest: fb3d6984681d46e425276f3a8dbf29f9c7e9af029e6fd5163382b2ad31ba94ca
+- snapshot_id: snapshot-2026-07-25-task-15-authority-closure
+  parent_snapshot_id: snapshot-2026-07-25-task-15-final-authority
+  snapshot_digest: 0dfc2a67b57b008884bfe009db2b6b7b8414b48996c571a4a3a1eeeafee74ad0
+  predecessor_lineage_digest: fb3d6984681d46e425276f3a8dbf29f9c7e9af029e6fd5163382b2ad31ba94ca
+  status: historical
+  lineage_entry_digest: 93038a70c527b25c60b6bb260bebfcd6002c53ecb18e64a679d73724162d0a3f
+- snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure
+  snapshot_digest: a2c4424506b2feba7654a29b9a01c1a73cf16c0b193167d02c5199f9e2020b2f
+  predecessor_lineage_digest: 93038a70c527b25c60b6bb260bebfcd6002c53ecb18e64a679d73724162d0a3f
+  status: historical
+  lineage_entry_digest: f0ebe755d086d1981643249b82d8192f911e98d55f5e76aebc221bfbc52683f4
+- snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final2
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final
+  snapshot_digest: d67f53a7dbe4cbf7eaa4ec3c356ecb2a46a581952494a53074391f3a2d9ed314
+  predecessor_lineage_digest: f0ebe755d086d1981643249b82d8192f911e98d55f5e76aebc221bfbc52683f4
+  status: historical
+  lineage_entry_digest: b254a6acb7744d7a87a0abe9428aebe271caf3314daf1bb42bc8f41883a9a809
+- snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final3
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final2
+  snapshot_digest: 52baca06303bc1e74a9db71ae0c89527f76d1bd5bdfd52c302581ad9a18e0da3
+  predecessor_lineage_digest: b254a6acb7744d7a87a0abe9428aebe271caf3314daf1bb42bc8f41883a9a809
+  status: historical
+  lineage_entry_digest: fa7a7a9c3b7adffc0d8ce922e01b064dd7fdcc52cc7a192d6ebac68f1d6662e0
+- snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final4
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final3
+  snapshot_digest: 6041efd8b1fe6d211213f9df3b58573ba8c47d67fd920336686aa2f71e803627
+  predecessor_lineage_digest: fa7a7a9c3b7adffc0d8ce922e01b064dd7fdcc52cc7a192d6ebac68f1d6662e0
+  status: historical
+  lineage_entry_digest: c8e9ede5360377e55b01485f93fa19d985aa66e830fbeaa3c2c4a423e70e3d96
+- snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final5
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final4
+  snapshot_digest: f2f3be5cfd9c7f03a30586fb681a3a853d6a5ae92b5a5992a152a780dd580a7b
+  predecessor_lineage_digest: c8e9ede5360377e55b01485f93fa19d985aa66e830fbeaa3c2c4a423e70e3d96
+  status: historical
+  lineage_entry_digest: 8cfaf34a1f39d3f2c5890c91f383277cbe214dde82e3986b8affe5e64505bb4c
+- snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final6
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final5
+  snapshot_digest: 402ccc6cade198c988da4fcbd3ac98ececdd2139e92b5e5489f87fee2a9b7a8e
+  predecessor_lineage_digest: 8cfaf34a1f39d3f2c5890c91f383277cbe214dde82e3986b8affe5e64505bb4c
   status: active
-  lineage_entry_digest: 4af68ca5e7cf5503bfc67ecf952e12c2f9b7b6301e9888fb885e8e0bcd469eaf
+  lineage_entry_digest: af3b1dad3c673201ec7ad19f9f05614113244b0d3be9c899eb6e279ae2f18b44

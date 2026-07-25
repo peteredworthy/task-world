@@ -13,7 +13,7 @@ next_suffixes:
   INV: 12
   Q: 8
   CON: 10
-  EVD: 129
+  EVD: 148
   CAP: 133
   DRV: 12
 items:
@@ -2882,6 +2882,51 @@ items:
   canonical_id: EVD-138
   provisional_key: evidence.implementation.workflow.grade-update-eligibility
   title: Workflow grade update exact task-status eligibility
+  status: active
+- namespace: EVD
+  canonical_id: EVD-139
+  provisional_key: evidence.implementation.rest.clarification-create
+  title: REST clarification creation route implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-140
+  provisional_key: evidence.test.rest.clarification-create
+  title: REST clarification creation exact test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-141
+  provisional_key: evidence.implementation.mcp.clarification-registration
+  title: MCP clarification registration implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-142
+  provisional_key: evidence.implementation.mcp.clarification-handler
+  title: MCP clarification handler implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-143
+  provisional_key: evidence.test.mcp.clarification-registration
+  title: MCP clarification registration exact test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-144
+  provisional_key: evidence.implementation.foundation.validate-foundation-authority
+  title: validate_foundation authority rule implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-145
+  provisional_key: evidence.test.foundation.authority-rule
+  title: Foundation authority rule exact test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-146
+  provisional_key: evidence.test.rest.task-verification-idempotency
+  title: REST verification completion idempotency exact test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-147
+  provisional_key: evidence.test.rest.run-cancellation-idempotency
+  title: REST run cancellation idempotency exact test
   status: active
 - namespace: DRV
   provisional_key: last-event-age
