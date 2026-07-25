@@ -71,12 +71,28 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-44 binds denied AuthorityDecisionRecord, releases lease, and
-    completes authority node.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks'
-  documentation: ACT-44 node outcome is documented separately from denial decision.
-  capability: Caller-supplied decider is not enforced authorization.
-  epistemic: ACT-44 is directly observed by EVD-27.
+  implementation: 'ACT-44 implementation status present: ACT-44 The accepted AuthorityDecisionRecord is
+    bound where applicable, its scoped lease is released where present, and the authority_request graph
+    node is projected completed. is present: SER rows SER-0069 inspect src/orchestrator/graph/_commands.py::_apply_record_decision
+    and establish the record proposition under EVD-27.'
+  test: 'ACT-44 test status exercised: ACT-44 The accepted AuthorityDecisionRecord is bound where applicable,
+    its scoped lease is released where present, and the authority_request graph node is projected completed.
+    is exercised because admitted SER rows SER-0070 contain direct assertions at tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-44 documentation status documented: ACT-44 The accepted AuthorityDecisionRecord
+    is bound where applicable, its scoped lease is released where present, and the authority_request graph
+    node is projected completed. is documented at reality/actions/act-44-graph-authority-denial-node-outcome.yaml
+    and by EVD-27; any listed question (no canonical unresolved conflict or question) is explicitly disclosed
+    and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-44 capability status unknown: ACT-44 The accepted AuthorityDecisionRecord is bound
+    where applicable, its scoped lease is released where present, and the authority_request graph node
+    is projected completed. remains unknown as a user capability: no CAP implementation_carrier_binding;
+    EVD-27 establishes the record carrier but no relevant CAP authority classifies this record as current
+    or derived.'
+  epistemic: 'ACT-44 epistemic status observed: ACT-44 The accepted AuthorityDecisionRecord is bound where
+    applicable, its scoped lease is released where present, and the authority_request graph node is projected
+    completed. is observed from direct/audit authority EVD-27 (EVD-27 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#graph-decision-patch-retiresupersede-and-requeue-capability)),
+    with no canonical conflict/question qualification; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/graph/_commands.py::_apply_record_decision
 test_locators:

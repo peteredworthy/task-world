@@ -67,11 +67,30 @@ limitations:
 documentation_status: conflicting
 epistemic_status: observed
 status_basis:
-  implementation: ACT-21 accepts paused-run cancellation for later consumer application.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_api_runs.py::test_cancel_run_from_paused'
-  documentation: ACT-21 remains qualified by legacy/graph application timing.
-  capability: One paused path does not prove every cancellation race.
-  epistemic: ACT-21 is observed by EVD-7/EVD-11/EVD-20/EVD-38-40.
+  implementation: 'ACT-21 implementation status present: ACT-21 Cancel paused run through REST is present:
+    SER rows SER-0022 inspect src/orchestrator/api/routers/runs.py::cancel_run and establish the record
+    proposition under EVD-7, EVD-11, EVD-20, EVD-38, EVD-39, EVD-40.'
+  test: 'ACT-21 test status exercised: ACT-21 Cancel paused run through REST is exercised because admitted
+    SER rows SER-0023 contain direct assertions at tests/integration/test_api_runs.py::test_cancel_run_from_paused;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-21 documentation status conflicting: ACT-21 Cancel paused run through REST is conflicting
+    because reciprocal issue authority CON-7 (unresolved: Stopping-row cancellation acceptance is inconsistent);
+    Q-5 (open: Define product-role authorization before treating actor text as authority) names ACT-21
+    and remains unresolved; the conflict is supported by EVD-7, EVD-11, EVD-20, EVD-38, EVD-39, EVD-40,
+    not prose alone.'
+  capability: 'ACT-21 capability status unknown: ACT-21 Cancel paused run through REST remains unknown
+    as a user capability: CAP-21=gap as reversibility-action; CAP-39=unknown as action-contract; CAP-44=gap
+    as reversibility-action; CAP-61=unknown as action-contract; CAP-89=unknown as action-contract; EVD-7,
+    EVD-11, EVD-20, EVD-38, EVD-39, EVD-40 establishes the record carrier but no relevant CAP authority
+    classifies this record as current or derived.'
+  epistemic: 'ACT-21 epistemic status observed: ACT-21 Cancel paused run through REST is observed from
+    direct/audit authority EVD-7, EVD-11, EVD-20, EVD-38, EVD-39, EVD-40 (EVD-7 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#state-carriers-and-legal-transitions);
+    EVD-11 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#legacy-versus-graph-mode);
+    EVD-20 (audit-report: research/ui-foundation/agent-reports/02-graph-runtime.md#command_specs-exhaustive-command-to-effect-table);
+    EVD-38 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#authority-model);
+    EVD-39 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#authority-model);
+    EVD-40 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#legacy-versus-graph-mode)),
+    qualified by conflicts/questions [''CON-7'', ''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/runs.py::cancel_run
 test_locators:

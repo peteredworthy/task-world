@@ -64,23 +64,68 @@ items:
   - CAP-42
   - CAP-70
   - CAP-86
+  - ACT-1
+  - ACT-2
+  - ACT-3
+  - ACT-6
   - ACT-7
   - ACT-8
-  - ACT-1
+  - ACT-9
   - ACT-10
   - ACT-11
   - ACT-12
   - ACT-13
   - ACT-14
+  - ACT-18
+  - ACT-19
   - ACT-20
   - ACT-21
+  - ACT-22
+  - ACT-23
+  - ACT-24
+  - ACT-25
+  - ACT-26
   - ACT-27
+  - ACT-28
+  - ACT-29
+  - ACT-30
+  - ACT-31
+  - ACT-32
+  - ACT-33
+  - ACT-34
+  - ACT-36
+  - ACT-38
+  - ACT-42
+  - ACT-52
+  - ACT-53
+  - ACT-55
+  - ACT-57
+  - ACT-59
+  - ACT-60
+  - ACT-62
+  - ACT-63
+  - ACT-64
   - ACT-66
   - ACT-67
   - ACT-68
   - ACT-69
   - ACT-70
   - ACT-71
+  - ACT-72
+  - ACT-73
+  - ACT-74
+  - ACT-75
+  - ACT-76
+  - ACT-77
+  - ACT-78
+  - ACT-79
+  - ACT-80
+  - ACT-81
+  - ACT-82
+  - ACT-83
+  - ACT-84
+  - ACT-85
+  - ACT-86
 - id: Q-6
   title: Decide whether execution-bound graph MCP patch macros need an action contract
   blocking: true

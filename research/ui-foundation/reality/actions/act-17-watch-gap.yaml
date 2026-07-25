@@ -17,11 +17,24 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-17 is an explicit ignore/keep-watching absence contract.
-  test: No admitted proving exact test locator supports exercised status.
-  documentation: ACT-17 records the required missing contract.
-  capability: Durable watch choice is a confirmed gap.
-  epistemic: Absence is observed in approved action/UI audits.
+  implementation: 'ACT-17 implementation status absent: ACT-17 Record an operator watch/ignore decision
+    without resolving the condition. is absent: SER rows SER-0014 inspect bounded absence audit and establish
+    the record proposition under EVD-61, EVD-68.'
+  test: 'ACT-17 test status unexercised: ACT-17 Record an operator watch/ignore decision without resolving
+    the condition. remains unexercised because no admitted exact test locator asserts its complete record
+    proposition under EVD-61, EVD-68.'
+  documentation: 'ACT-17 documentation status documented: ACT-17 Record an operator watch/ignore decision
+    without resolving the condition. is documented at reality/actions/act-17-watch-gap.yaml and by EVD-61,
+    EVD-68; any listed question (no canonical unresolved conflict or question) is explicitly disclosed
+    and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-17 capability status gap: ACT-17 Record an operator watch/ignore decision without resolving
+    the condition. is a user-capability gap: CAP-85=gap (Ignore or keep watching); absence evidence EVD-61,
+    EVD-68 identifies the missing reachable outcome rather than merely a low-level carrier state.'
+  epistemic: 'ACT-17 epistemic status observed: ACT-17 Record an operator watch/ignore decision without
+    resolving the condition. is observed from direct/audit authority EVD-61, EVD-68 (EVD-61 (audit-report:
+    research/ui-foundation/agent-reports/04-api-actions-authority.md#key-findings); EVD-68 (audit-report:
+    research/ui-foundation/agent-reports/07-tests-documentation.md#key-findings)), with no canonical conflict/question
+    qualification; only the bounded record proposition is observed.'
 implementation_locators: []
 test_locators: []
 bounded_test_locators: []

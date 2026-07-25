@@ -36,16 +36,27 @@ enforced_authorization: absent
 domain_eligibility: PER-7 repository prerequisites
 proposed_role_policy: null
 conflict_ids: []
-question_ids: []
+question_ids: [Q-5]
 test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-2 implements clone/symlink/registration.
-  test: No admitted proving exact test locator supports exercised status.
-  documentation: ACT-2 add contract is documented.
-  capability: Availability remains unknown without an exercised success path.
-  epistemic: ACT-2 implementation is observed by EVD-35.
+  implementation: 'ACT-2 implementation status present: ACT-2 Synchronously clones, symlinks, or registers
+    repository. is present: SER rows SER-0019 inspect src/orchestrator/api/routers/repos.py::add_repository
+    and establish the record proposition under EVD-35.'
+  test: 'ACT-2 test status unexercised: ACT-2 Synchronously clones, symlinks, or registers repository.
+    remains unexercised because no admitted exact test locator asserts its complete record proposition
+    under EVD-35.'
+  documentation: 'ACT-2 documentation status documented: ACT-2 Synchronously clones, symlinks, or registers
+    repository. is documented at reality/actions/act-2-repository-add.yaml and by EVD-35; any listed question
+    (Q-5 (open: Define product-role authorization before treating actor text as authority)) is explicitly
+    disclosed and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-2 capability status unknown: ACT-2 Synchronously clones, symlinks, or registers repository.
+    remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-35 establishes the
+    record carrier but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-2 epistemic status observed: ACT-2 Synchronously clones, symlinks, or registers repository.
+    is observed from direct/audit authority EVD-35 (EVD-35 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/repos.py::add_repository
 test_locators: []

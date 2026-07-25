@@ -39,16 +39,27 @@ enforced_authorization: absent
 domain_eligibility: Legacy task approval state and transition checks.
 proposed_role_policy: null
 conflict_ids: []
-question_ids: []
+question_ids: [Q-5]
 test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-23 records approval and completes pending-user-action task.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_approval_workflow.py::test_approve_task_transitions_to_completed'
-  documentation: ACT-23 task approval is documented.
-  capability: Approval attribution is not product-role authorization.
-  epistemic: ACT-23 is observed by EVD-12.
+  implementation: 'ACT-23 implementation status present: ACT-23 Approve legacy task awaiting approval
+    is present: SER rows SER-0026 inspect src/orchestrator/api/routers/tasks.py::approve_task and establish
+    the record proposition under EVD-12.'
+  test: 'ACT-23 test status exercised: ACT-23 Approve legacy task awaiting approval is exercised because
+    admitted SER rows SER-0027 contain direct assertions at tests/integration/test_approval_workflow.py::test_approve_task_transitions_to_completed;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-23 documentation status documented: ACT-23 Approve legacy task awaiting approval
+    is documented at reality/actions/act-23-task-approve.yaml and by EVD-12; any listed question (Q-5
+    (open: Define product-role authorization before treating actor text as authority)) is explicitly disclosed
+    and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-23 capability status unknown: ACT-23 Approve legacy task awaiting approval remains
+    unknown as a user capability: CAP-21=gap as reversibility-action; EVD-12 establishes the record carrier
+    but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-23 epistemic status observed: ACT-23 Approve legacy task awaiting approval is observed
+    from direct/audit authority EVD-12 (EVD-12 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#state-carriers-and-legal-transitions)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/tasks.py::approve_task
 test_locators:

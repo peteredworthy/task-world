@@ -1,0 +1,55 @@
+id: ACT-86
+implementation_status: present
+capability_status: unknown
+executable: true
+command_id: CMD-56
+actor: local CLI operator
+permission_requirements: [PER-7]
+preconditions: [server lock absent, database path available, replayable event store]
+expected_source_version: 'None'
+required_input: {db_path_override: optional}
+validation: [server-lock-absence, event-deserialization]
+durable_effect: Deletes projection-owned rows and rebuilds projections from workflow events.
+resulting_state_id: STA-75
+failure_modes: [server lock, database error, replay error]
+stale_state_behavior: No version fence; command requires server stopped to limit races.
+idempotency: Rebuild converges for the represented event stream.
+retry_behavior: Stop server and correct database/replay issue before retry.
+reversibility: Rebuild again or restore a backup; erased projection rows are regenerated only from events.
+audit_evidence_ids: [EVD-115]
+transition: {from_state_id: STA-75, to_state_id: STA-75}
+carrier_relationship:
+  affected_carrier: projection-owned database rows
+  caveat: This projection-row result-carrier self-loop is non-lifecycle and does not reuse the git-operation state.
+enforced_authentication: none local CLI
+enforced_authorization: absent
+domain_eligibility: PER-7 local database prerequisites; local CLI has no product authorization.
+proposed_role_policy: null
+conflict_ids: []
+question_ids: [Q-5]
+test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'ACT-86 implementation status present: ACT-86 Deletes projection-owned rows and rebuilds
+    projections from workflow events. is present: SER rows SER-0476 inspect src/orchestrator/cli/db.py::rebuild_projections_cmd
+    and establish the record proposition under EVD-115.'
+  test: 'ACT-86 test status unexercised: ACT-86 Deletes projection-owned rows and rebuilds projections
+    from workflow events. remains unexercised: bounded SER rows SER-0496 cover tests/integration/test_projection_recovery.py::test_full_lifecycle_rebuild
+    but do not assert the complete record proposition.'
+  documentation: 'ACT-86 documentation status documented: ACT-86 Deletes projection-owned rows and rebuilds
+    projections from workflow events. is documented at reality/actions/act-86-db-rebuild-projections-cli.yaml
+    and by EVD-115; any listed question (Q-5 (open: Define product-role authorization before treating
+    actor text as authority)) is explicitly disclosed and does not create contradictory documentation
+    for this bounded proposition.'
+  capability: 'ACT-86 capability status unknown: ACT-86 Deletes projection-owned rows and rebuilds projections
+    from workflow events. remains unknown as a user capability: no CAP implementation_carrier_binding;
+    EVD-115 establishes the record carrier but no relevant CAP authority classifies this record as current
+    or derived.'
+  epistemic: 'ACT-86 epistemic status observed: ACT-86 Deletes projection-owned rows and rebuilds projections
+    from workflow events. is observed from direct/audit authority EVD-115 (EVD-115 (implementation: src/orchestrator/cli/db.py)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
+implementation_locators: [src/orchestrator/cli/db.py::rebuild_projections_cmd]
+test_locators: []
+bounded_test_locators:
+- tests/integration/test_projection_recovery.py::test_full_lifecycle_rebuild

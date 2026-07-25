@@ -67,11 +67,29 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-12 records an oversight decision projection without output DecisionRecord.
-  test: No admitted proving exact test locator supports exercised status.
-  documentation: ACT-12 oversight/no-output boundary is documented.
-  capability: Source presence does not establish routed availability or authorization.
-  epistemic: ACT-12 is observed by EVD-27.
+  implementation: 'ACT-12 implementation status present: ACT-12 Appends oversight_decision_recorded and
+    updates the oversight decision projection. Oversight creates no DecisionRecord or AuthorityDecisionRecord
+    output record. is present: SER rows SER-0007 inspect src/orchestrator/api/routers/graph.py::record_graph_decision
+    and establish the record proposition under EVD-27.'
+  test: 'ACT-12 test status unexercised: ACT-12 Appends oversight_decision_recorded and updates the oversight
+    decision projection. Oversight creates no DecisionRecord or AuthorityDecisionRecord output record.
+    remains unexercised because no admitted exact test locator asserts its complete record proposition
+    under EVD-27.'
+  documentation: 'ACT-12 documentation status documented: ACT-12 Appends oversight_decision_recorded and
+    updates the oversight decision projection. Oversight creates no DecisionRecord or AuthorityDecisionRecord
+    output record. is documented at reality/actions/act-12-graph-oversight.yaml and by EVD-27; any listed
+    question (Q-5 (open: Define product-role authorization before treating actor text as authority)) is
+    explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-12 capability status unknown: ACT-12 Appends oversight_decision_recorded and updates
+    the oversight decision projection. Oversight creates no DecisionRecord or AuthorityDecisionRecord
+    output record. remains unknown as a user capability: CAP-19=unknown as action-contract; CAP-39=unknown
+    as action-contract; CAP-40=unknown as action-contract; CAP-42=gap as authority-action; CAP-61=unknown
+    as action-contract; EVD-27 establishes the record carrier but no relevant CAP authority classifies
+    this record as current or derived.'
+  epistemic: 'ACT-12 epistemic status observed: ACT-12 Appends oversight_decision_recorded and updates
+    the oversight decision projection. Oversight creates no DecisionRecord or AuthorityDecisionRecord
+    output record. is observed from direct/audit authority EVD-27 (EVD-27 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#graph-decision-patch-retiresupersede-and-requeue-capability)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/graph.py::record_graph_decision
 test_locators: []

@@ -53,12 +53,29 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-14 resets failed outbox fields and appends requeue audit in
-    one transaction.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event'
-  documentation: ACT-14 requeue boundary is documented.
-  capability: Recording executor does not prove external side-effect idempotency.
-  epistemic: ACT-14 is directly observed by EVD-23.
+  implementation: 'ACT-14 implementation status present: ACT-14 In one transaction, resets the failed
+    graph outbox row to pending, clears its retry/error/backoff fields as implemented, and appends outbox_requeued
+    audit evidence. is present: SER rows SER-0010 inspect src/orchestrator/api/routers/graph.py::requeue_failed_outbox_row
+    and establish the record proposition under EVD-23.'
+  test: 'ACT-14 test status exercised: ACT-14 In one transaction, resets the failed graph outbox row to
+    pending, clears its retry/error/backoff fields as implemented, and appends outbox_requeued audit evidence.
+    is exercised because admitted SER rows SER-0011 contain direct assertions at tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-14 documentation status documented: ACT-14 In one transaction, resets the failed
+    graph outbox row to pending, clears its retry/error/backoff fields as implemented, and appends outbox_requeued
+    audit evidence. is documented at reality/actions/act-14-outbox-requeue.yaml and by EVD-23; any listed
+    question (Q-5 (open: Define product-role authorization before treating actor text as authority)) is
+    explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-14 capability status unknown: ACT-14 In one transaction, resets the failed graph outbox
+    row to pending, clears its retry/error/backoff fields as implemented, and appends outbox_requeued
+    audit evidence. remains unknown as a user capability: CAP-39=unknown as action-contract; CAP-40=unknown
+    as action-contract; CAP-41=unknown as action-contract; CAP-61=unknown as action-contract; CAP-91=unknown
+    as action-contract; CAP-107=unknown as action-contract; EVD-23 establishes the record carrier but
+    no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-14 epistemic status observed: ACT-14 In one transaction, resets the failed graph outbox
+    row to pending, clears its retry/error/backoff fields as implemented, and appends outbox_requeued
+    audit evidence. is observed from direct/audit authority EVD-23 (EVD-23 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#graph-decision-patch-retiresupersede-and-requeue-capability)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/graph.py::requeue_failed_outbox_row
 test_locators:

@@ -43,11 +43,22 @@ test_status: unexercised
 documentation_status: conflicting
 epistemic_status: observed
 status_basis:
-  implementation: ACT-8 directly applies start from the CLI implementation.
-  test: No admitted proving exact test locator supports exercised status.
-  documentation: ACT-8 conflicts with queue-first lifecycle descriptions.
-  capability: Source presence does not prove CLI availability.
-  epistemic: ACT-8 is observed by EVD-7/EVD-40.
+  implementation: 'ACT-8 implementation status present: ACT-8 Start run through CLI direct path is present:
+    SER rows SER-0128 inspect src/orchestrator/cli/runs.py::start_run and establish the record proposition
+    under EVD-7, EVD-40.'
+  test: 'ACT-8 test status unexercised: ACT-8 Start run through CLI direct path remains unexercised because
+    no admitted exact test locator asserts its complete record proposition under EVD-7, EVD-40.'
+  documentation: 'ACT-8 documentation status conflicting: ACT-8 Start run through CLI direct path is conflicting
+    because reciprocal issue authority CON-6 (unresolved: Lifecycle REST acceptance differs from direct
+    CLI application); Q-5 (open: Define product-role authorization before treating actor text as authority)
+    names ACT-8 and remains unresolved; the conflict is supported by EVD-7, EVD-40, not prose alone.'
+  capability: 'ACT-8 capability status unknown: ACT-8 Start run through CLI direct path remains unknown
+    as a user capability: no CAP implementation_carrier_binding; EVD-7, EVD-40 establishes the record
+    carrier but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-8 epistemic status observed: ACT-8 Start run through CLI direct path is observed from
+    direct/audit authority EVD-7, EVD-40 (EVD-7 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#state-carriers-and-legal-transitions);
+    EVD-40 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#legacy-versus-graph-mode)),
+    qualified by conflicts/questions [''CON-6'', ''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/cli/runs.py::start_run
 test_locators: []

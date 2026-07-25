@@ -83,12 +83,36 @@ limitations:
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-13 accepts a raw graph patch and appends operation-specific
-    graph effects.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_graph_api.py::test_operator_graph_patch_endpoint_accepts_human_patch'
-  documentation: ACT-13 explicitly disclaims universal node/run result semantics.
-  capability: Raw patching is not typed steering or directive binding.
-  epistemic: ACT-13 is directly observed by EVD-37.
+  implementation: 'ACT-13 implementation status present: ACT-13 Appends graph_patch_accepted and its operation-specific
+    graph topology, binding, or repair events. The patch-attempt carrier records acceptance; no universal
+    node or run result is implied. is present: SER rows SER-0008 inspect src/orchestrator/api/routers/graph.py::submit_operator_graph_patch
+    and establish the record proposition under EVD-37.'
+  test: 'ACT-13 test status exercised: ACT-13 Appends graph_patch_accepted and its operation-specific
+    graph topology, binding, or repair events. The patch-attempt carrier records acceptance; no universal
+    node or run result is implied. is exercised because admitted SER rows SER-0009 contain direct assertions
+    at tests/integration/test_graph_api.py::test_operator_graph_patch_endpoint_accepts_human_patch; no
+    active rejected locator defeats that proof.'
+  documentation: 'ACT-13 documentation status documented: ACT-13 Appends graph_patch_accepted and its
+    operation-specific graph topology, binding, or repair events. The patch-attempt carrier records acceptance;
+    no universal node or run result is implied. is documented at reality/actions/act-13-graph-patch.yaml
+    and by EVD-37; any listed question (Q-5 (open: Define product-role authorization before treating actor
+    text as authority)) is explicitly disclosed and does not create contradictory documentation for this
+    bounded proposition.'
+  capability: 'ACT-13 capability status unknown: ACT-13 Appends graph_patch_accepted and its operation-specific
+    graph topology, binding, or repair events. The patch-attempt carrier records acceptance; no universal
+    node or run result is implied. remains unknown as a user capability: CAP-7=gap as action-contract;
+    CAP-17=gap as action-contract; CAP-20=gap as action-contract; CAP-21=gap as reversibility-action;
+    CAP-25=unknown as action-contract; CAP-39=unknown as action-contract; CAP-40=unknown as action-contract;
+    CAP-41=unknown as action-contract; CAP-44=gap as reversibility-action; CAP-45=unknown as action-contract;
+    CAP-58=gap as action-contract; CAP-61=unknown as action-contract; CAP-86=unknown as action-contract;
+    CAP-90=unknown as action-contract; CAP-93=gap as action-contract; CAP-103=unknown as action-contract;
+    CAP-107=unknown as action-contract; EVD-37 establishes the record carrier but no relevant CAP authority
+    classifies this record as current or derived.'
+  epistemic: 'ACT-13 epistemic status observed: ACT-13 Appends graph_patch_accepted and its operation-specific
+    graph topology, binding, or repair events. The patch-attempt carrier records acceptance; no universal
+    node or run result is implied. is observed from direct/audit authority EVD-37 (EVD-37 (audit-report:
+    research/ui-foundation/agent-reports/04-api-actions-authority.md#graph-decision-patch-retiresupersede-and-requeue-capability)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/graph.py::submit_operator_graph_patch
 test_locators:

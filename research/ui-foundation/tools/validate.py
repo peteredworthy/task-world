@@ -87,6 +87,7 @@ PHASE_FILES = {
         "reviews/index.html",
     ),
     1: (
+        "catalog/action-authority-surfaces.yaml",
         "reality/domain-model.yaml",
         "reality/relationships.yaml",
         "reality/state-model.yaml",
@@ -105,6 +106,7 @@ CANONICAL_COLLECTIONS = {
     "catalog/questions.yaml",
     "catalog/decisions.yaml",
     "catalog/evidence.yaml",
+    "catalog/action-authority-surfaces.yaml",
     "reality/domain-model.yaml",
     "reality/relationships.yaml",
     "reality/state-model.yaml",
@@ -273,6 +275,54 @@ class CapabilityCatalog(SemanticCatalog):
     expected_prefix = "CAP"
 
 
+class ActionAuthoritySurface(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    action_id: str = Field(pattern=r"^ACT-[0-9]+$")
+    command_id: str | None = Field(default=None, pattern=r"^CMD-[0-9]+$")
+    surface_kind: Literal[
+        "independent-external-mutation",
+        "derived-same-command-consequence",
+        "absent-gap",
+        "non-mutating",
+        "internal",
+    ]
+    independently_callable: bool
+    mutates_state: bool
+    enforced_authorization: Literal["absent", "partial", "present", "not-applicable"]
+    authority_owner_action_id: str | None = Field(default=None, pattern=r"^ACT-[0-9]+$")
+    q5_required: bool
+    route_family: str = Field(min_length=1)
+    implementation_locators: list[str]
+    evidence_ids: list[str]
+    rationale: str = Field(min_length=1)
+
+
+class MutationRouteInventoryItem(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    route_family: str = Field(min_length=1)
+    action_id: str = Field(pattern=r"^ACT-[0-9]+$")
+    command_id: str = Field(pattern=r"^CMD-[0-9]+$")
+    implementation_locator: str = Field(min_length=1)
+
+
+class ActionAuthorityCatalog(CanonicalDocument):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source_commit: str = Field(pattern=r"^[0-9a-f]{40}$")
+    question_id: Literal["Q-5"]
+    route_inventory: list[MutationRouteInventoryItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_authority_items(self) -> ActionAuthorityCatalog:
+        if not self.items:
+            raise ValueError("action authority items must not be empty")
+        for item in self.items:
+            ActionAuthoritySurface.model_validate(item)
+        return self
+
+
 CATALOG_MODELS: dict[str, type[CanonicalDocument]] = {
     "catalog/scope.yaml": ScopeCatalog,
     "catalog/ids.yaml": IdCatalog,
@@ -282,6 +332,7 @@ CATALOG_MODELS: dict[str, type[CanonicalDocument]] = {
     "catalog/questions.yaml": QuestionCatalog,
     "catalog/decisions.yaml": DecisionCatalog,
     "catalog/evidence.yaml": EvidenceCatalog,
+    "catalog/action-authority-surfaces.yaml": ActionAuthorityCatalog,
     "reality/domain-model.yaml": DomainCatalog,
     "reality/relationships.yaml": RelationshipCatalog,
     "reality/state-model.yaml": StateCatalog,
@@ -541,13 +592,48 @@ class StatusEvidenceDimensionReview(BaseModel):
 
     review_id: str = Field(pattern=r"^SDR-[0-9]{4}$")
     record_id: str = Field(pattern=r"^(?:REL|STA|ACT|EVI|INV)-[0-9]+$")
-    dimension: Literal["implementation", "test"]
-    combined_verdict: Literal["proves", "partially-proves", "absent", "unexercised"]
-    compatible_status: Literal["present", "partial", "absent", "exercised", "unexercised"]
-    admitted_locators: list[str]
-    bounded_locators: list[str]
-    rejected_locators: list[str]
-    uncovered_boundary: str = Field(min_length=1)
+    dimension: Literal["implementation", "test", "documentation", "capability", "epistemic"]
+    combined_verdict: Literal[
+        "proves",
+        "partially-proves",
+        "absent",
+        "unexercised",
+        "contradicts",
+        "proposed",
+        "gap",
+        "unknown",
+    ]
+    compatible_status: Literal[
+        "present",
+        "partial",
+        "absent",
+        "unknown",
+        "exercised",
+        "unexercised",
+        "contradicted",
+        "documented",
+        "undocumented",
+        "stale",
+        "conflicting",
+        "current",
+        "derived",
+        "proposed",
+        "gap",
+        "observed",
+        "deterministically-derived",
+        "inferred",
+        "operator-asserted",
+    ]
+    admitted_locators: list[str] = []
+    bounded_locators: list[str] = []
+    rejected_locators: list[str] = []
+    evidence_ids: list[str] = []
+    conflict_ids: list[str] = []
+    question_ids: list[str] = []
+    record_proposition: str = Field(min_length=1)
+    observed_fact: str = Field(min_length=1)
+    boundary: str = Field(min_length=1)
+    uncovered_boundary: str = ""
     rationale: str = Field(min_length=1)
     reviewer: str = Field(min_length=1)
     reviewed_at: str = Field(min_length=1)
@@ -1194,7 +1280,15 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     )
                 )
 
-    issues.extend(_validate_q5_authorization_coverage(package, question_document, action_records))
+    issues.extend(
+        _validate_action_authority_surfaces(
+            package,
+            question_document,
+            action_records,
+            commands,
+            active_snapshot_hashes,
+        )
+    )
 
     registry = canonical.get("capabilities/registry.yaml")
     if phase >= 2:
@@ -1826,54 +1920,179 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     return issues
 
 
-def _validate_q5_authorization_coverage(
+def _authority_locator_target(locator: str) -> str:
+    """Return the exact source locator from a reviewed transport annotation."""
+    return locator.rsplit(" -> ", 1)[-1]
+
+
+def _validate_action_authority_surfaces(
     package: FoundationPackage,
     questions: QuestionCatalog | None,
     actions: dict[object, dict[str, JsonValue]],
+    commands: dict[str, CommandDeclaration],
+    active_snapshot_hashes: dict[str, str],
 ) -> list[ValidationIssue]:
-    """Keep the authorization settlement tied to typed action authority fields."""
+    """Keep action, command, route, and Q5 authority coverage mechanically aligned."""
+    location = package.root / "catalog/action-authority-surfaces.yaml"
+    raw_catalog = package.documents.get("catalog/action-authority-surfaces.yaml")
+    if not isinstance(raw_catalog, dict):
+        return []
+    raw_items = raw_catalog.get("items")
+    if not isinstance(raw_items, list):
+        return []
+    items = [item for item in raw_items if isinstance(item, dict)]
+    identifiers = [item.get("action_id") for item in items]
+    authority_by_action = {
+        identifier: item for item in items if isinstance((identifier := item.get("action_id")), str)
+    }
+    action_ids = {identifier for identifier in actions if isinstance(identifier, str)}
+    issues: list[ValidationIssue] = []
+    if len(identifiers) != len(set(identifiers)):
+        issues.append(_issue("ACTION_AUTHORITY_ACTION_DUPLICATE", location, "action_id"))
+    if set(authority_by_action) != action_ids:
+        issues.append(
+            _issue(
+                "ACTION_AUTHORITY_ACTION_PARITY",
+                location,
+                f"map={sorted(authority_by_action)} actions={sorted(action_ids)}",
+            )
+        )
+
+    repository_root = package.root.parents[1]
+    for action_id, item in authority_by_action.items():
+        action = actions.get(action_id)
+        command_id = item.get("command_id")
+        if isinstance(action, dict) and action.get("command_id") != command_id:
+            issues.append(_issue("ACTION_AUTHORITY_COMMAND_PARITY", location, action_id))
+        if isinstance(command_id, str) and command_id not in commands:
+            issues.append(_issue("ACTION_AUTHORITY_COMMAND_MISSING", location, command_id))
+
+        surface_kind = item.get("surface_kind")
+        owner_id = item.get("authority_owner_action_id")
+        if surface_kind == "derived-same-command-consequence":
+            owner = authority_by_action.get(owner_id) if isinstance(owner_id, str) else None
+            if (
+                not isinstance(owner, dict)
+                or owner.get("surface_kind") != "independent-external-mutation"
+                or owner.get("command_id") != command_id
+                or owner.get("q5_required") is not True
+            ):
+                issues.append(_issue("ACTION_AUTHORITY_DERIVED_OWNER_INVALID", location, action_id))
+
+        if (
+            surface_kind == "independent-external-mutation"
+            and item.get("independently_callable") is not True
+        ):
+            issues.append(_issue("ACTION_AUTHORITY_CALLABILITY_MISMATCH", location, action_id))
+        expected_q5 = (
+            surface_kind == "independent-external-mutation"
+            and item.get("mutates_state") is True
+            and item.get("enforced_authorization") in {"absent", "partial"}
+        )
+        if item.get("q5_required") is not expected_q5:
+            issues.append(_issue("ACTION_AUTHORITY_Q5_RULE_MISMATCH", location, action_id))
+        if not isinstance(item.get("rationale"), str) or not str(item.get("rationale")).strip():
+            issues.append(_issue("ACTION_AUTHORITY_RATIONALE_MISSING", location, action_id))
+
+        locators = item.get("implementation_locators")
+        for locator in locators if isinstance(locators, list) else []:
+            exact = _authority_locator_target(locator) if isinstance(locator, str) else ""
+            if not _implementation_locator_is_snapshot_resolvable(
+                exact, repository_root, active_snapshot_hashes
+            ):
+                issues.append(
+                    _issue(
+                        "ACTION_AUTHORITY_IMPLEMENTATION_LOCATOR_UNRESOLVED",
+                        location,
+                        f"{action_id}:{locator}",
+                    )
+                )
+
     q5 = next(
         (item for item in (questions.items if questions else []) if item.get("id") == "Q-5"), None
     )
     if not isinstance(q5, dict):
-        return []
-    affected = set(_string_list(q5.get("affected_ids")))
-    issues: list[ValidationIssue] = []
-    for identifier in sorted(affected):
-        action = actions.get(identifier)
-        if not isinstance(action, dict):
-            continue
-        actor = action.get("actor")
-        permissions = action.get("permission_requirements")
-        authorization = action.get("enforced_authorization")
-        backlinks = _string_list(action.get("question_ids"))
-        is_authority_candidate = (
-            isinstance(actor, str)
-            and bool(actor.strip())
-            and isinstance(permissions, list)
-            and all(isinstance(permission, str) for permission in permissions)
-            and authorization in {None, "absent", "partial", "unknown"}
-        )
-        if is_authority_candidate and "Q-5" not in backlinks:
-            issues.append(
-                _issue(
-                    "Q5_AUTHORIZATION_COVERAGE_MISSING",
-                    package.root / f"reality/actions/{identifier}.yaml",
-                    identifier,
-                )
+        return issues
+    affected_actions = {
+        identifier
+        for identifier in _string_list(q5.get("affected_ids"))
+        if identifier.startswith("ACT-")
+    }
+    required_actions = {
+        action_id
+        for action_id, item in authority_by_action.items()
+        if item.get("q5_required") is True
+    }
+    if affected_actions != required_actions:
+        issues.append(
+            _issue(
+                "Q5_AUTHORIZATION_COVERAGE_MISSING"
+                if required_actions - affected_actions
+                else "Q5_AUTHORIZATION_COVERAGE_EXTRA",
+                package.root / "catalog/questions.yaml",
+                f"required={sorted(required_actions)} affected={sorted(affected_actions)}",
             )
-    for identifier, action in actions.items():
+        )
+    backlink_actions = {
+        identifier
+        for identifier, action in actions.items()
+        if isinstance(identifier, str) and "Q-5" in _string_list(action.get("question_ids"))
+    }
+    if backlink_actions != required_actions:
+        issues.append(
+            _issue(
+                "Q5_AUTHORIZATION_COVERAGE_MISSING"
+                if required_actions - backlink_actions
+                else "Q5_AUTHORIZATION_COVERAGE_EXTRA",
+                location,
+                f"required={sorted(required_actions)} backlinks={sorted(backlink_actions)}",
+            )
+        )
+
+    route_inventory = raw_catalog.get("route_inventory")
+    inventory_items = route_inventory if isinstance(route_inventory, list) else []
+    route_families = [
+        item.get("route_family") for item in inventory_items if isinstance(item, dict)
+    ]
+    if len(route_families) != len(set(route_families)):
+        issues.append(
+            _issue("ACTION_AUTHORITY_ROUTE_INVENTORY_DUPLICATE", location, "route_family")
+        )
+    for inventory_item in inventory_items:
+        if not isinstance(inventory_item, dict):
+            continue
+        action_id = inventory_item.get("action_id")
+        command_id = inventory_item.get("command_id")
+        locator = inventory_item.get("implementation_locator")
+        action = actions.get(action_id)
+        if not isinstance(action, dict):
+            issues.append(
+                _issue("ACTION_AUTHORITY_ROUTE_INVENTORY_ACTION_MISSING", location, action_id)
+            )
+        if not isinstance(command_id, str) or command_id not in commands:
+            issues.append(
+                _issue("ACTION_AUTHORITY_ROUTE_INVENTORY_COMMAND_MISSING", location, command_id)
+            )
+        authority = authority_by_action.get(action_id) if isinstance(action_id, str) else None
+        authority_locators = (
+            {
+                _authority_locator_target(value)
+                for value in _string_list(authority.get("implementation_locators"))
+            }
+            if isinstance(authority, dict)
+            else set()
+        )
         if (
-            isinstance(identifier, str)
-            and "Q-5" in _string_list(action.get("question_ids"))
-            and identifier not in affected
+            not isinstance(authority, dict)
+            or authority.get("command_id") != command_id
+            or locator not in authority_locators
+        ):
+            issues.append(_issue("ACTION_AUTHORITY_ROUTE_INVENTORY_PARITY", location, action_id))
+        if not isinstance(locator, str) or not _implementation_locator_is_snapshot_resolvable(
+            locator, repository_root, active_snapshot_hashes
         ):
             issues.append(
-                _issue(
-                    "Q5_AUTHORIZATION_COVERAGE_EXTRA",
-                    package.root / "catalog/questions.yaml",
-                    identifier,
-                )
+                _issue("ACTION_AUTHORITY_ROUTE_INVENTORY_LOCATOR_UNRESOLVED", location, locator)
             )
     return issues
 
@@ -2996,7 +3215,7 @@ def _implementation_locator_is_snapshot_resolvable(
     """Resolve one exact Python symbol or YAML id against current snapshot bytes."""
     match = re.fullmatch(
         r"(?P<path>[A-Za-z0-9_./-]+\.(?P<suffix>py|ya?ml))::"
-        r"(?P<symbol>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?|[A-Z][A-Z0-9]*-\d+)",
+        r"(?P<symbol>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*|[A-Z][A-Z0-9]*-\d+)",
         locator,
     )
     if match is None:
@@ -3021,7 +3240,7 @@ def _implementation_locator_is_snapshot_resolvable(
         tree = ast.parse(content, filename=path)
     except SyntaxError:
         return False
-    parent, _, member = symbol.partition(".")
+    parent, *members = symbol.split(".")
     top_level = next(
         (
             node
@@ -3045,22 +3264,46 @@ def _implementation_locator_is_snapshot_resolvable(
         None,
     )
     if top_level is None:
-        return False
-    if not member:
-        return True
-    return isinstance(top_level, ast.ClassDef) and any(
-        (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == member)
-        or (
-            isinstance(node, ast.AnnAssign)
-            and isinstance(node.target, ast.Name)
-            and node.target.id == member
+        # MCP server tool functions are registered inside the server factory;
+        # their stable public callable names remain exact AST symbols even
+        # though they are not module-level declarations.
+        return not members and any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == parent
+            for node in ast.walk(tree)
         )
-        or (
-            isinstance(node, ast.Assign)
-            and any(isinstance(target, ast.Name) and target.id == member for target in node.targets)
+    current = top_level
+    for member in members:
+        body = (
+            current.body
+            if isinstance(current, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            else []
         )
-        for node in top_level.body
-    )
+        current = next(
+            (
+                node
+                for node in body
+                if (
+                    isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                    and node.name == member
+                )
+                or (
+                    isinstance(node, ast.AnnAssign)
+                    and isinstance(node.target, ast.Name)
+                    and node.target.id == member
+                )
+                or (
+                    isinstance(node, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name) and target.id == member
+                        for target in node.targets
+                    )
+                )
+            ),
+            None,
+        )
+        if current is None:
+            return False
+    return True
 
 
 def _implementation_locators_are_snapshot_resolvable(
@@ -3082,8 +3325,8 @@ def _implementation_locators_are_snapshot_resolvable(
 def _expected_status_scope_ids() -> set[str]:
     return (
         {f"REL-{number}" for number in range(1, 36)}
-        | ({f"STA-{number}" for number in range(1, 74)} - {"STA-28"})
-        | {f"ACT-{number}" for number in range(1, 72)}
+        | ({f"STA-{number}" for number in range(1, 76)} - {"STA-28"})
+        | {f"ACT-{number}" for number in range(1, 87)}
         | {f"EVI-{number}" for number in range(1, 10)}
         | {f"INV-{number}" for number in range(2, 8)}
     )
@@ -3150,7 +3393,7 @@ def _validate_status_evidence_reviews(
         if row.record_id not in records:
             issues.append(_issue("STATUS_EVIDENCE_REVIEW_UNKNOWN_RECORD", path, row.review_id))
         if row.dimension == "test":
-            if row.admission == "admitted" and row.verdict != "proves":
+            if row.admission == "admitted" and row.verdict not in {"proves", "partially-proves"}:
                 issues.append(_issue("STATUS_EVIDENCE_TEST_ADMISSION_INVALID", path, row.review_id))
             if row.admission == "bounded" and row.verdict != "partially-proves":
                 issues.append(_issue("STATUS_EVIDENCE_TEST_BOUNDARY_INVALID", path, row.review_id))
@@ -3162,6 +3405,43 @@ def _validate_status_evidence_reviews(
             )
 
     summaries_by_key: dict[tuple[str, str], StatusEvidenceDimensionReview] = {}
+    canonical_status_field = {
+        "implementation": "implementation_status",
+        "test": "test_status",
+        "documentation": "documentation_status",
+        "capability": "capability_status",
+        "epistemic": "epistemic_status",
+    }
+    evidence_document = package.documents.get("catalog/evidence.yaml")
+    evidence_ids = (
+        {
+            item.get("id")
+            for item in evidence_document.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if isinstance(evidence_document, dict)
+        else set()
+    )
+    conflicts_document = package.documents.get("catalog/conflicts.yaml")
+    conflicts = (
+        {
+            item.get("id"): item
+            for item in conflicts_document.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if isinstance(conflicts_document, dict)
+        else {}
+    )
+    questions_document = package.documents.get("catalog/questions.yaml")
+    questions = (
+        {
+            item.get("id"): item
+            for item in questions_document.get("items", [])
+            if isinstance(item, dict) and isinstance(item.get("id"), str)
+        }
+        if isinstance(questions_document, dict)
+        else {}
+    )
     for summary in catalog.dimension_reviews:
         key = (summary.record_id, summary.dimension)
         if summary.record_id not in records:
@@ -3176,7 +3456,7 @@ def _validate_status_evidence_reviews(
 
     for identifier, (record_path, record) in records.items():
         location = package.root / record_path
-        for dimension in ("implementation", "test"):
+        for dimension in STATUS_BASIS_DIMENSIONS:
             key = (identifier, dimension)
             summary = summaries_by_key.get(key)
             rows = rows_by_key.get(key, [])
@@ -3185,11 +3465,47 @@ def _validate_status_evidence_reviews(
                     _issue("STATUS_EVIDENCE_DIMENSION_SUMMARY_MISSING", location, identifier)
                 )
                 continue
+            if (
+                summary.compatible_status != record.get(canonical_status_field[dimension])
+                or len(
+                    {
+                        summary.record_proposition,
+                        summary.observed_fact,
+                        summary.boundary,
+                        summary.rationale,
+                    }
+                )
+                < 4
+                or any(
+                    len(value.strip()) < 20
+                    for value in (
+                        summary.record_proposition,
+                        summary.observed_fact,
+                        summary.boundary,
+                        summary.rationale,
+                    )
+                )
+            ):
+                issues.append(
+                    _issue("STATUS_EVIDENCE_DIMENSION_CANONICAL_MISMATCH", location, identifier)
+                )
+            if (
+                not set(summary.evidence_ids) <= evidence_ids
+                or set(summary.conflict_ids) != set(_string_list(record.get("conflict_ids")))
+                or set(summary.question_ids) != set(_string_list(record.get("question_ids")))
+            ):
+                issues.append(
+                    _issue("STATUS_EVIDENCE_DIMENSION_REFERENCES_INVALID", location, identifier)
+                )
             expected_locators = (
                 _string_list(record.get("implementation_locators"))
                 if dimension == "implementation"
-                else _string_list(record.get("test_locators"))
-                + _string_list(record.get("bounded_test_locators"))
+                else (
+                    _string_list(record.get("test_locators"))
+                    + _string_list(record.get("bounded_test_locators"))
+                    if dimension == "test"
+                    else []
+                )
             )
             expected_row_keys = {(identifier, dimension, locator) for locator in expected_locators}
             expected_row_keys.update(
@@ -3236,9 +3552,14 @@ def _validate_status_evidence_reviews(
             ]
             if dimension == "test":
                 admitted_proving = [row for row in admitted if row.verdict == "proves"]
+                admitted_composition_proves = admitted_proving or (
+                    len([row for row in admitted if row.verdict == "partially-proves"]) >= 2
+                )
                 active_rejected = [row for row in rejected if row.locator in expected_locators]
                 expected_status = (
-                    "exercised" if admitted_proving and not active_rejected else "unexercised"
+                    "exercised"
+                    if admitted_composition_proves and not active_rejected
+                    else "unexercised"
                 )
                 if summary.compatible_status != expected_status or (
                     summary.combined_verdict != "proves"
@@ -3273,7 +3594,7 @@ def _validate_status_evidence_reviews(
                             identifier,
                         )
                     )
-            else:
+            elif dimension == "implementation":
                 canonical_status = record.get("implementation_status")
                 canonical_paths = {locator.partition("::")[0] for locator in expected_locators}
                 if record_path in canonical_paths:
@@ -3306,7 +3627,7 @@ def _validate_status_evidence_reviews(
                     summary.combined_verdict == "partially-proves"
                     and summary.compatible_status == "partial"
                     and (admitted or bounded)
-                    and summary.uncovered_boundary.strip()
+                    and (summary.uncovered_boundary.strip() or summary.boundary.strip())
                 ):
                     issues.append(
                         _issue("STATUS_EVIDENCE_SUMMARY_STATUS_INVALID", location, identifier)
@@ -3314,6 +3635,76 @@ def _validate_status_evidence_reviews(
                 if canonical_status != summary.compatible_status:
                     issues.append(
                         _issue("STATUS_EVIDENCE_CANONICAL_STATUS_MISMATCH", location, identifier)
+                    )
+            elif dimension == "documentation":
+                unresolved_reciprocal = any(
+                    conflict_id in conflicts
+                    and conflicts[conflict_id].get("status") == "unresolved"
+                    and identifier in _string_list(conflicts[conflict_id].get("affected_ids"))
+                    for conflict_id in summary.conflict_ids
+                ) or any(
+                    question_id in questions
+                    and questions[question_id].get("status") != "resolved"
+                    and identifier in _string_list(questions[question_id].get("affected_ids"))
+                    for question_id in summary.question_ids
+                )
+                documented = summary.combined_verdict == "proves" and bool(summary.evidence_ids)
+                conflicting = summary.combined_verdict == "contradicts" and unresolved_reciprocal
+                unknown = "unknown" in summary.boundary.casefold()
+                if not (
+                    (summary.compatible_status == "documented" and documented)
+                    or (summary.compatible_status == "conflicting" and conflicting)
+                    or (summary.compatible_status == "unknown" and unknown)
+                    or summary.compatible_status in {"undocumented", "stale"}
+                ):
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID", location, identifier)
+                    )
+            elif dimension == "capability":
+                expected_verdict = {
+                    "current": "proves",
+                    "derived": "proves",
+                    "proposed": "proposed",
+                    "gap": "absent",
+                    "unknown": "unknown",
+                }.get(summary.compatible_status)
+                registry = package.documents.get("capabilities/registry.yaml")
+                capability_records = registry.get("items", []) if isinstance(registry, dict) else []
+                linked_capability_authority = any(
+                    isinstance(capability, dict)
+                    and capability.get("capability_status") in {"current", "derived"}
+                    and identifier in str(capability.get("implementation_carrier_bindings", []))
+                    for capability in capability_records
+                )
+                if summary.combined_verdict != expected_verdict or (
+                    summary.compatible_status in {"current", "derived"}
+                    and not linked_capability_authority
+                ):
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID", location, identifier)
+                    )
+            elif dimension == "epistemic":
+                valid = (
+                    (
+                        summary.compatible_status == "observed"
+                        and summary.combined_verdict == "proves"
+                        and bool(summary.evidence_ids)
+                    )
+                    or (
+                        summary.compatible_status == "proposed"
+                        and summary.combined_verdict == "proposed"
+                        and bool(summary.evidence_ids)
+                    )
+                    or (
+                        summary.compatible_status == "unknown"
+                        and "unknown" in summary.boundary.casefold()
+                    )
+                    or summary.compatible_status
+                    in {"deterministically-derived", "inferred", "operator-asserted"}
+                )
+                if not valid:
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID", location, identifier)
                     )
     return issues
 

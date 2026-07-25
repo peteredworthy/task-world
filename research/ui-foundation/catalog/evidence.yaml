@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-24-task15-sv001-reconciliation
+active_snapshot_id: snapshot-2026-07-25-task-15-test-final
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -3242,6 +3242,328 @@ items:
   path: src/orchestrator/api/routers/agents.py
   symbol: reset_prompt
   snapshot_path: src/orchestrator/api/routers/agents.py
+  test_evidence_ids: []
+  test_status: unexercised
+- id: CMD-42
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: REST POST /api/runs/{run_id}/tasks/{task_id}/start; synchronous legacy task
+    start
+  transport: REST
+  actor_boundary: External REST caller after the optional global bearer gate.
+  authority_boundary: Legacy-mode and task-state eligibility are enforced; product-role
+    authorization is absent.
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: start_task
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  evidence_ids:
+  - EVD-117
+  question_ids:
+  - Q-5
+  test_evidence_ids:
+  - EVD-118
+  test_status: exercised
+- id: CMD-43
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: REST POST /api/runs/{run_id}/tasks/{task_id}/submit; durable ACTIVITY_COMPLETED
+    acceptance before consumer application
+  transport: REST plus durable signal transport
+  actor_boundary: External REST caller after the optional global bearer gate.
+  authority_boundary: Legacy-mode and submission gates are enforced; product-role
+    authorization is absent.
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: submit_task
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  evidence_ids:
+  - EVD-110
+  question_ids:
+  - Q-5
+  test_evidence_ids:
+  - EVD-110
+  test_status: exercised
+- id: CMD-44
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: REST POST /api/runs/{run_id}/tasks/{task_id}/complete-verification; durable
+    ACTIVITY_VERIFIED acceptance before consumer application
+  transport: REST plus durable signal transport
+  actor_boundary: External REST caller after the optional global bearer gate.
+  authority_boundary: Legacy-mode and verification eligibility are enforced; product-role
+    authorization is absent.
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: complete_verification_endpoint
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  evidence_ids:
+  - EVD-110
+  question_ids:
+  - Q-5
+  test_evidence_ids:
+  - EVD-110
+  test_status: exercised
+- id: CMD-45
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: REST PATCH /api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}; synchronous
+    checklist field mutation
+  transport: REST
+  actor_boundary: External REST caller after the optional global bearer gate.
+  authority_boundary: Legacy-mode and mutable-task eligibility are enforced; product-role
+    authorization is absent.
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: update_checklist_item
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  evidence_ids:
+  - EVD-119
+  question_ids:
+  - Q-5
+  test_evidence_ids:
+  - EVD-120
+  test_status: exercised
+- id: CMD-46
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: REST PUT /api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}/grade; synchronous
+    grade field mutation
+  transport: REST
+  actor_boundary: External REST caller after the optional global bearer gate.
+  authority_boundary: Legacy-mode and verifier/terminal task eligibility are enforced;
+    product-role authorization is absent.
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: set_grade
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  evidence_ids:
+  - EVD-121
+  question_ids:
+  - Q-5
+  test_evidence_ids:
+  - EVD-122
+  test_status: exercised
+- id: CMD-47
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: REST POST /api/runs/{run_id}/tasks/{task_id}/clarifications; synchronous
+    clarification request creation and task transition
+  transport: REST
+  actor_boundary: External REST caller with fixed current-user attribution.
+  authority_boundary: Builder task-transition eligibility is enforced; caller attribution
+    is not product-role authorization.
+  path: src/orchestrator/api/routers/clarifications.py
+  symbol: create_clarification
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/clarifications.py
+  evidence_ids:
+  - EVD-13
+  question_ids:
+  - Q-5
+  test_evidence_ids: []
+  test_status: unexercised
+- id: CMD-48
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: REST POST /api/runs/{run_id}/tasks/{task_id}/escalate; synchronous checklist
+    escalation and active-run pause
+  transport: REST
+  actor_boundary: External REST caller after the optional global bearer gate.
+  authority_boundary: Legacy-mode and active-run eligibility are enforced; product-role
+    authorization is absent.
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: escalate_requirement
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  evidence_ids:
+  - EVD-116
+  question_ids:
+  - Q-5
+  test_evidence_ids: []
+  test_status: unexercised
+- id: CMD-49
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: REST POST /api/runs/{run_id}/review/revert-file; synchronous worktree file
+    revert and git commit
+  transport: REST
+  actor_boundary: External REST caller after the optional global bearer gate.
+  authority_boundary: Worktree and git prerequisites are enforced; product-role authorization
+    is absent.
+  path: src/orchestrator/api/routers/review.py
+  symbol: revert_file_endpoint
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/review.py
+  evidence_ids:
+  - EVD-29
+  question_ids:
+  - Q-5
+  test_evidence_ids: []
+  test_status: unexercised
+- id: CMD-50
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: Public MCP orchestrator_update_checklist; synchronous checklist field mutation
+  transport: scoped public MCP tool dispatch
+  actor_boundary: MCP caller whose tool name is admitted by the generated allowed-tools
+    scope.
+  authority_boundary: Tool exposure and workflow eligibility are enforced; scope exposure
+    is not product-role authorization.
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._update_checklist
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  registration_path: src/orchestrator/api/mcp/server.py
+  registration_symbol: OrchestratorMCPServer._register_tools
+  evidence_ids:
+  - EVD-123
+  - EVD-124
+  question_ids:
+  - Q-5
+  test_evidence_ids:
+  - EVD-125
+  test_status: exercised
+- id: CMD-51
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: Public MCP orchestrator_submit; synchronous BUILDING to VERIFYING application
+  transport: scoped public MCP tool dispatch
+  actor_boundary: MCP caller whose tool name is admitted by the generated allowed-tools
+    scope.
+  authority_boundary: Tool exposure and workflow submission gates are enforced; scope
+    exposure is not product-role authorization.
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._submit
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  registration_path: src/orchestrator/api/mcp/server.py
+  registration_symbol: OrchestratorMCPServer._register_tools
+  evidence_ids:
+  - EVD-110
+  question_ids:
+  - Q-5
+  test_evidence_ids:
+  - EVD-110
+  test_status: exercised
+- id: CMD-52
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: Public MCP orchestrator_set_grade; synchronous grade field mutation
+  transport: scoped public MCP tool dispatch
+  actor_boundary: MCP caller whose tool name is admitted by the generated allowed-tools
+    scope.
+  authority_boundary: Tool exposure and verifier/terminal eligibility are enforced;
+    scope exposure is not product-role authorization.
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._set_grade
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  registration_path: src/orchestrator/api/mcp/server.py
+  registration_symbol: OrchestratorMCPServer._register_tools
+  evidence_ids:
+  - EVD-126
+  - EVD-127
+  question_ids:
+  - Q-5
+  test_evidence_ids:
+  - EVD-128
+  test_status: exercised
+- id: CMD-53
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: Public MCP orchestrator_request_clarification; synchronous request creation
+    and task transition
+  transport: scoped public MCP tool dispatch
+  actor_boundary: MCP caller whose tool name is admitted by the generated allowed-tools
+    scope.
+  authority_boundary: Tool exposure and clarification eligibility are enforced; scope
+    exposure is not product-role authorization.
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._request_clarification
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  registration_path: src/orchestrator/api/mcp/server.py
+  registration_symbol: OrchestratorMCPServer._register_tools
+  evidence_ids:
+  - EVD-13
+  question_ids:
+  - Q-5
+  test_evidence_ids: []
+  test_status: unexercised
+- id: CMD-54
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: Public MCP orchestrator_escalate_requirement; synchronous checklist escalation
+    and active-run pause
+  transport: scoped public MCP tool dispatch
+  actor_boundary: MCP caller whose tool name is admitted by the generated allowed-tools
+    scope.
+  authority_boundary: Tool exposure and active-run eligibility are enforced; scope
+    exposure is not product-role authorization.
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._escalate_requirement
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  registration_path: src/orchestrator/api/mcp/server.py
+  registration_symbol: OrchestratorMCPServer._register_tools
+  evidence_ids:
+  - EVD-116
+  question_ids:
+  - Q-5
+  test_evidence_ids: []
+  test_status: unexercised
+- id: CMD-55
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: Local Click CLI db restore-backup; synchronous selected-database replacement
+  transport: local Click CLI
+  actor_boundary: Local process operator with filesystem access to backup metadata
+    and target database.
+  authority_boundary: Click path and backup metadata validation are enforced; no product
+    authorization is claimed for local CLI access.
+  path: src/orchestrator/cli/db.py
+  symbol: restore_backup_cmd
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/cli/db.py
+  evidence_ids:
+  - EVD-114
+  question_ids:
+  - Q-5
+  test_evidence_ids: []
+  test_status: unexercised
+- id: CMD-56
+  source_kind: command
+  implementation_status: present
+  reachable: true
+  label: Local Click CLI db rebuild-projections; synchronous projection-row rebuild
+    from workflow events
+  transport: local Click CLI
+  actor_boundary: Local process operator with database filesystem access.
+  authority_boundary: Server-lock absence and replay parsing are enforced; no product
+    authorization is claimed for local CLI access.
+  path: src/orchestrator/cli/db.py
+  symbol: rebuild_projections_cmd
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/cli/db.py
+  evidence_ids:
+  - EVD-115
+  question_ids:
+  - Q-5
   test_evidence_ids: []
   test_status: unexercised
 - id: EVD-7
@@ -4370,6 +4692,214 @@ items:
   symbol: validate_source_snapshot_coverage
   snapshot_path: research/ui-foundation/tools/validate.py
   test_status: exercised
+- id: EVD-114
+  source_kind: implementation
+  path: src/orchestrator/cli/db.py
+  symbol: restore_backup_cmd
+  reachable: true
+  test_status: unexercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/cli/db.py
+  provenance_role: direct
+  supported_semantic_types:
+  - restored database contents
+  supported_command_identities:
+  - db.restore-backup
+- id: EVD-115
+  source_kind: implementation
+  path: src/orchestrator/cli/db.py
+  symbol: rebuild_projections_cmd
+  reachable: true
+  test_status: unexercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/cli/db.py
+  provenance_role: direct
+  supported_semantic_types:
+  - rebuilt projection rows
+  supported_command_identities:
+  - db.rebuild-projections
+- id: EVD-116
+  source_kind: implementation
+  path: src/orchestrator/workflow/engine/engine.py
+  symbol: WorkflowEngine.escalate_requirement
+  reachable: true
+  test_status: unexercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/workflow/engine/engine.py
+  provenance_role: direct
+  supported_semantic_types:
+  - legacy run status
+  - checklist item status
+  supported_command_identities:
+  - requirement.escalate
+- id: EVD-117
+  source_kind: implementation
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: start_task
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  provenance_role: direct
+  supported_semantic_types:
+  - TransitionResponse
+  - TaskState
+  supported_command_identities:
+  - task.start
+- id: EVD-118
+  source_kind: test
+  path: tests/integration/test_api_tasks.py
+  symbol: test_full_task_lifecycle
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: tests/integration/test_api_tasks.py
+  provenance_role: direct
+  supported_semantic_types:
+  - TransitionResponse
+  - TaskState
+  supported_command_identities:
+  - task.start
+- id: EVD-119
+  source_kind: implementation
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: update_checklist_item
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  provenance_role: direct
+  supported_semantic_types:
+  - ChecklistItemSchema
+  - checklist item status and note
+  supported_command_identities:
+  - task.checklist-update
+- id: EVD-120
+  source_kind: test
+  path: tests/integration/test_api_tasks.py
+  symbol: test_full_task_lifecycle
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: tests/integration/test_api_tasks.py
+  provenance_role: direct
+  supported_semantic_types:
+  - ChecklistItemSchema
+  - checklist item status and note
+  supported_command_identities:
+  - task.checklist-update
+- id: EVD-121
+  source_kind: implementation
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: set_grade
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  provenance_role: direct
+  supported_semantic_types:
+  - ChecklistItemSchema
+  - requirement grade and reason
+  supported_command_identities:
+  - task.grade-update
+- id: EVD-122
+  source_kind: test
+  path: tests/integration/test_api_tasks.py
+  symbol: test_full_task_lifecycle
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: tests/integration/test_api_tasks.py
+  provenance_role: direct
+  supported_semantic_types:
+  - ChecklistItemSchema
+  - requirement grade and reason
+  supported_command_identities:
+  - task.grade-update
+- id: EVD-123
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/server.py
+  symbol: OrchestratorMCPServer._register_tools.orchestrator_update_checklist
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP checklist tool
+  - JSON checklist result
+  supported_command_identities:
+  - mcp.task-checklist-update
+- id: EVD-124
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._update_checklist
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  provenance_role: direct
+  supported_semantic_types:
+  - checklist item status and note
+  - MCP tool result
+  supported_command_identities:
+  - mcp.task-checklist-update
+- id: EVD-125
+  source_kind: test
+  path: tests/integration/test_mcp_server.py
+  symbol: test_full_workflow_through_mcp_server
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: tests/integration/test_mcp_server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP checklist tool
+  - checklist item status
+  supported_command_identities:
+  - mcp.task-checklist-update
+- id: EVD-126
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/server.py
+  symbol: OrchestratorMCPServer._register_tools.orchestrator_set_grade
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP grade tool
+  - JSON grade result
+  supported_command_identities:
+  - mcp.task-grade-update
+- id: EVD-127
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._set_grade
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  provenance_role: direct
+  supported_semantic_types:
+  - requirement grade and reason
+  - MCP tool result
+  supported_command_identities:
+  - mcp.task-grade-update
+- id: EVD-128
+  source_kind: test
+  path: tests/integration/test_mcp_server.py
+  symbol: test_full_workflow_through_mcp_server
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-phase-1
+  snapshot_path: tests/integration/test_mcp_server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP grade tool
+  - requirement grade
+  supported_command_identities:
+  - mcp.task-grade-update
 snapshots:
 - id: snapshot-2026-07-23-phase-0
   immutable: true
@@ -15923,3 +16453,36 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: a018b3916c5c76143c8b6f91c2fb02080da4701dd938a68cb3c5a2fd4ed9b3a3
     audited_at: '2026-07-25T00:30:00Z'
+- id: snapshot-2026-07-24-action-inventory-omission
+  parent_snapshot_id: snapshot-2026-07-24-task15-sv001-reconciliation
+  files:
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 3ce43d59a2c3b6d40456c6fb88c20a4fd838a68a1ce75e2f8e86ee7bacb04730
+    audited_at: '2026-07-24T23:30:00Z'
+- id: snapshot-2026-07-25-task-15-final
+  parent_snapshot_id: snapshot-2026-07-24-action-inventory-omission
+  files:
+  - path: research/ui-foundation/reality/evidence/inventory.yaml
+    sha256: de5a0fbd80e96718c32ae681d5c89f262aefd922a5bcb74a65f4dff3f28435b2
+    audited_at: '2026-07-25T12:00:00Z'
+  - path: research/ui-foundation/reality/state-model.yaml
+    sha256: c6d0a4b2f4945eae5fbf3c705625cdfa4681c702ac843eb61510c69928e73b92
+    audited_at: '2026-07-25T12:00:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: abd88beed92c78a692ba987721170bddeab6411404fbf82fe663570f0d1edce6
+    audited_at: '2026-07-25T12:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: f3b36900728f80df9dd9e7496d175b5dba9ccff127af36c94c2dc518e235c690
+    audited_at: '2026-07-25T12:00:00Z'
+- id: snapshot-2026-07-25-task-15-validator-final
+  parent_snapshot_id: snapshot-2026-07-25-task-15-final
+  files:
+  - path: research/ui-foundation/tools/validate.py
+    sha256: e4f18ad7d063bfd7c989479575f16aaa6ab51ba3a44b549284fd32db76d57375
+    audited_at: '2026-07-25T12:05:00Z'
+- id: snapshot-2026-07-25-task-15-test-final
+  parent_snapshot_id: snapshot-2026-07-25-task-15-validator-final
+  files:
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 9a2799aebbac28c1b74f5e1ff73646487d86abc90325fc8d0afd53f9b4181471
+    audited_at: '2026-07-25T12:10:00Z'

@@ -70,5 +70,29 @@ entries:
   parent_snapshot_id: snapshot-2026-07-24-task15-lineage-fix
   snapshot_digest: 2e1aa78051d3f8810ea76911a128da194b78eaffeb2218f8ca0100ee0c1041db
   predecessor_lineage_digest: 19ec7e2e4c416b87c842500f5eed477ea1cd36a552209ea1ef074c6119b71ba3
+  status: historical
+  lineage_entry_digest: c80af7b9b879ddc3d18e3a5b9c4645a8b9e2798713faf5717efa8bd4ad46c9dc
+- snapshot_id: snapshot-2026-07-24-action-inventory-omission
+  parent_snapshot_id: snapshot-2026-07-24-task15-sv001-reconciliation
+  snapshot_digest: 94e6969e4a7fb5ecebedf894074521039ac9efaf4b8375a7f69561783ac3699b
+  predecessor_lineage_digest: c80af7b9b879ddc3d18e3a5b9c4645a8b9e2798713faf5717efa8bd4ad46c9dc
+  status: historical
+  lineage_entry_digest: 8bb37195e3071f852872cf910ec9ffc44c05563e0a3baff2a9051b8a7ced3e1d
+- snapshot_id: snapshot-2026-07-25-task-15-final
+  parent_snapshot_id: snapshot-2026-07-24-action-inventory-omission
+  snapshot_digest: a9e68cce0702b28a5043804824757568615e5d0f7fac4498f721346554259757
+  predecessor_lineage_digest: 8bb37195e3071f852872cf910ec9ffc44c05563e0a3baff2a9051b8a7ced3e1d
+  status: historical
+  lineage_entry_digest: 6e2a1aec217611ab08f88cbd42b5088f129502aa4ab060197dba2c63a8b1c5b8
+- snapshot_id: snapshot-2026-07-25-task-15-validator-final
+  parent_snapshot_id: snapshot-2026-07-25-task-15-final
+  snapshot_digest: 1422d1505a281cde1c3880f5f84d03cb8f517313d3097028bf11e29f30c28299
+  predecessor_lineage_digest: 6e2a1aec217611ab08f88cbd42b5088f129502aa4ab060197dba2c63a8b1c5b8
+  status: historical
+  lineage_entry_digest: 58c44170e4255e1d002d74889cd43a9d2605eb45151a7c783baab4f9f1a36832
+- snapshot_id: snapshot-2026-07-25-task-15-test-final
+  parent_snapshot_id: snapshot-2026-07-25-task-15-validator-final
+  snapshot_digest: 715eb034f13d4247f3b3c2c93186c10ac103d369148bdb424e198112bebbce43
+  predecessor_lineage_digest: 58c44170e4255e1d002d74889cd43a9d2605eb45151a7c783baab4f9f1a36832
   status: active
-  lineage_entry_digest: 8ed503caa1691da8646413944d4ed936e4d89591ee193138708d1e55b8ad6a45
+  lineage_entry_digest: def385183cd8f12b08f5db5ebdb1ffc0f43f130bbb1087d6ccae9ae62c253ab0

@@ -1,0 +1,977 @@
+schema_version: '1'
+source_commit: 6c916c0800f582691a3d31cb62eb527c6530582a
+question_id: Q-5
+route_inventory:
+- {route_family: task-start, action_id: ACT-72, command_id: CMD-42, implementation_locator: 'src/orchestrator/api/routers/tasks.py::start_task'}
+- {route_family: task-submit, action_id: ACT-73, command_id: CMD-43, implementation_locator: 'src/orchestrator/api/routers/tasks.py::submit_task'}
+- {route_family: task-complete-verification, action_id: ACT-74, command_id: CMD-44, implementation_locator: 'src/orchestrator/api/routers/tasks.py::complete_verification_endpoint'}
+- {route_family: task-checklist, action_id: ACT-75, command_id: CMD-45, implementation_locator: 'src/orchestrator/api/routers/tasks.py::update_checklist_item'}
+- {route_family: task-grade, action_id: ACT-76, command_id: CMD-46, implementation_locator: 'src/orchestrator/api/routers/tasks.py::set_grade'}
+- {route_family: clarification-create, action_id: ACT-77, command_id: CMD-47, implementation_locator: 'src/orchestrator/api/routers/clarifications.py::create_clarification'}
+- {route_family: requirement-escalation, action_id: ACT-78, command_id: CMD-48, implementation_locator: 'src/orchestrator/api/routers/tasks.py::escalate_requirement'}
+- {route_family: review-file-revert, action_id: ACT-79, command_id: CMD-49, implementation_locator: 'src/orchestrator/api/routers/review.py::revert_file_endpoint'}
+- {route_family: public-mcp-task-checklist, action_id: ACT-80, command_id: CMD-50, implementation_locator: 'src/orchestrator/api/mcp/tools.py::ToolHandler._update_checklist'}
+- {route_family: public-mcp-task-submit, action_id: ACT-81, command_id: CMD-51, implementation_locator: 'src/orchestrator/api/mcp/tools.py::ToolHandler._submit'}
+- {route_family: public-mcp-task-grade, action_id: ACT-82, command_id: CMD-52, implementation_locator: 'src/orchestrator/api/mcp/tools.py::ToolHandler._set_grade'}
+- {route_family: public-mcp-clarification-create, action_id: ACT-83, command_id: CMD-53, implementation_locator: 'src/orchestrator/api/mcp/tools.py::ToolHandler._request_clarification'}
+- {route_family: public-mcp-requirement-escalation, action_id: ACT-84, command_id: CMD-54, implementation_locator: 'src/orchestrator/api/mcp/tools.py::ToolHandler._escalate_requirement'}
+- {route_family: local-cli-db-restore-backup, action_id: ACT-85, command_id: CMD-55, implementation_locator: 'src/orchestrator/cli/db.py::restore_backup_cmd'}
+- {route_family: local-cli-db-rebuild-projections, action_id: ACT-86, command_id: CMD-56, implementation_locator: 'src/orchestrator/cli/db.py::rebuild_projections_cmd'}
+items:
+- action_id: ACT-1
+  command_id: CMD-23
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-1
+  q5_required: true
+  route_family: runner-model-profile-defaults
+  implementation_locators:
+  - REST PUT /api/agent-runners/{runner_type}/model-profile-defaults -> src/orchestrator/api/routers/runners.py::set_agent_runner_model_profile_defaults
+  evidence_ids: [EVD-34]
+  rationale: Replaces persisted runner defaults through a caller-invoked administrative route without product-role authorization.
+- action_id: ACT-2
+  command_id: CMD-24
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-2
+  q5_required: true
+  route_family: repository-admin
+  implementation_locators:
+  - REST POST /api/repos -> src/orchestrator/api/routers/repos.py::add_repository
+  evidence_ids: [EVD-35]
+  rationale: Clones, symlinks, or registers a repository through an independently callable route with no product-role authorization.
+- action_id: ACT-3
+  command_id: CMD-25
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-3
+  q5_required: true
+  route_family: repository-admin
+  implementation_locators:
+  - REST DELETE /api/repos/{name} -> src/orchestrator/api/routers/repos.py::remove_repository
+  evidence_ids: [EVD-35]
+  rationale: Recursively removes repository state through an external destructive route without product-role authorization.
+- action_id: ACT-4
+  command_id: CMD-15
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-52
+  q5_required: false
+  route_family: back-merge
+  implementation_locators:
+  - src/orchestrator/api/routers/runs.py::back_merge_endpoint
+  evidence_ids: [EVD-29]
+  rationale: This detail-view conflict state is a possible CMD-15 result, not a separately callable authority surface; it inherits ACT-52 authorization.
+- action_id: ACT-5
+  command_id: CMD-15
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-52
+  q5_required: false
+  route_family: back-merge
+  implementation_locators:
+  - src/orchestrator/api/routers/runs.py::back_merge_endpoint
+  evidence_ids: [EVD-29]
+  rationale: This review-view conflict state is the same CMD-15 route outcome and inherits authority from independently callable ACT-52.
+- action_id: ACT-6
+  command_id: CMD-1
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-6
+  q5_required: true
+  route_family: run-create
+  implementation_locators:
+  - REST POST /api/runs -> src/orchestrator/api/routers/runs.py::create_run
+  - CLI runs create -> src/orchestrator/cli/runs.py::create_run
+  evidence_ids: [EVD-43, EVD-38, EVD-39, EVD-40]
+  rationale: REST and local CLI callers can create durable run state, and neither path enforces product-role authorization.
+- action_id: ACT-7
+  command_id: CMD-2
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-7
+  q5_required: true
+  route_family: run-start
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/start -> src/orchestrator/api/routers/runs.py::start_run
+  evidence_ids: [EVD-7, EVD-38, EVD-39, EVD-40]
+  rationale: The route durably enqueues start acceptance and is an external mutation lacking product-role authorization.
+- action_id: ACT-8
+  command_id: CMD-3
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-8
+  q5_required: true
+  route_family: run-start
+  implementation_locators:
+  - CLI runs start -> src/orchestrator/cli/runs.py::start_run
+  evidence_ids: [EVD-7, EVD-40]
+  rationale: The local operator CLI directly applies lifecycle state outside REST authentication and without product-role authorization.
+- action_id: ACT-9
+  command_id: CMD-7
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-9
+  q5_required: true
+  route_family: run-delete
+  implementation_locators:
+  - REST DELETE /api/runs/{run_id} -> src/orchestrator/api/routers/runs.py::delete_run
+  evidence_ids: [EVD-43, EVD-38, EVD-39, EVD-40]
+  rationale: Deletes an eligible run and owned rows through an independently callable destructive route with no product-role authorization.
+- action_id: ACT-10
+  command_id: CMD-11
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-10
+  q5_required: true
+  route_family: graph-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/graph/decisions -> src/orchestrator/api/routers/graph.py::record_graph_decision
+  evidence_ids: [EVD-27]
+  rationale: The approved approval variant is caller-selected and mutates decision state; supplied decider attribution is not authorization.
+- action_id: ACT-11
+  command_id: CMD-11
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-11
+  q5_required: true
+  route_family: graph-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/graph/decisions -> src/orchestrator/api/routers/graph.py::record_graph_decision
+  evidence_ids: [EVD-27]
+  rationale: The authority-denial command variant is externally selected and durable, while its decider identity is only caller attribution.
+- action_id: ACT-12
+  command_id: CMD-11
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-12
+  q5_required: true
+  route_family: graph-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/graph/decisions -> src/orchestrator/api/routers/graph.py::record_graph_decision
+  evidence_ids: [EVD-27]
+  rationale: The oversight decision variant can be called independently and writes graph decision state without authenticated-subject policy.
+- action_id: ACT-13
+  command_id: CMD-12
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-13
+  q5_required: true
+  route_family: graph-patch
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/graph/patch -> src/orchestrator/api/routers/graph.py::submit_operator_graph_patch
+  evidence_ids: [EVD-37]
+  rationale: The REST operator patch is a standalone topology mutation; endpoint-stamped operator context does not authorize the caller.
+- action_id: ACT-14
+  command_id: CMD-14
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-14
+  q5_required: true
+  route_family: graph-outbox-requeue
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/graph/outbox/requeue/{event_id} -> src/orchestrator/api/routers/graph.py::requeue_failed_outbox_row
+  evidence_ids: [EVD-23]
+  rationale: An operator can independently reset a failed outbox row for redispatch; fixed operator text is not product authorization.
+- action_id: ACT-15
+  command_id: null
+  surface_kind: absent-gap
+  independently_callable: false
+  mutates_state: false
+  enforced_authorization: not-applicable
+  authority_owner_action_id: null
+  q5_required: false
+  route_family: steering
+  implementation_locators: []
+  evidence_ids: []
+  rationale: No steer-context command is implemented, so there is no current external mutation authority surface.
+- action_id: ACT-16
+  command_id: null
+  surface_kind: absent-gap
+  independently_callable: false
+  mutates_state: false
+  enforced_authorization: not-applicable
+  authority_owner_action_id: null
+  q5_required: false
+  route_family: steering
+  implementation_locators: []
+  evidence_ids: []
+  rationale: No typed steering-patch route exists; a missing capability does not require current mutation authorization.
+- action_id: ACT-17
+  command_id: null
+  surface_kind: absent-gap
+  independently_callable: false
+  mutates_state: false
+  enforced_authorization: not-applicable
+  authority_owner_action_id: null
+  q5_required: false
+  route_family: watch
+  implementation_locators: []
+  evidence_ids: []
+  rationale: The declared watch gap has no implemented action command and therefore no mutation authority to settle.
+- action_id: ACT-18
+  command_id: CMD-4
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-18
+  q5_required: true
+  route_family: run-pause
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/pause -> src/orchestrator/api/routers/runs.py::pause_run
+  - CLI runs pause -> src/orchestrator/cli/runs.py::pause_run
+  evidence_ids: [EVD-7, EVD-8, EVD-38, EVD-39, EVD-40]
+  rationale: REST and its CLI wrapper initiate durable pause processing without per-action subject, role, scope, or ownership checks.
+- action_id: ACT-19
+  command_id: CMD-5
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-19
+  q5_required: true
+  route_family: run-resume
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/resume -> src/orchestrator/api/routers/runs.py::resume_run
+  - CLI runs resume -> src/orchestrator/cli/runs.py::resume_run
+  evidence_ids: [EVD-7, EVD-19, EVD-38, EVD-39, EVD-40]
+  rationale: Resume is an independently callable lifecycle mutation, including runner/worktree choices, with absent product authorization.
+- action_id: ACT-20
+  command_id: CMD-6
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-20
+  q5_required: true
+  route_family: run-cancel
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/cancel -> src/orchestrator/api/routers/runs.py::cancel_run
+  - CLI runs cancel -> src/orchestrator/cli/runs.py::cancel_run
+  evidence_ids: [EVD-7, EVD-11, EVD-20, EVD-38, EVD-39, EVD-40]
+  rationale: The active-source cancel variant is externally callable and destructive; graph effects are derived below rather than new authorities.
+- action_id: ACT-21
+  command_id: CMD-6
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-21
+  q5_required: true
+  route_family: run-cancel
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/cancel -> src/orchestrator/api/routers/runs.py::cancel_run
+  - CLI runs cancel -> src/orchestrator/cli/runs.py::cancel_run
+  evidence_ids: [EVD-7, EVD-11, EVD-20, EVD-38, EVD-39, EVD-40]
+  rationale: The paused-source cancel variant is independently invocable under its own precondition and has no product-role authorization.
+- action_id: ACT-22
+  command_id: CMD-7
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-22
+  q5_required: true
+  route_family: run-delete
+  implementation_locators:
+  - REST DELETE /api/runs/{run_id} -> src/orchestrator/api/routers/runs.py::delete_run
+  evidence_ids: [EVD-43, EVD-38, EVD-39, EVD-40]
+  rationale: A caller can invoke the delete route against the distinct paused-startup-orphan eligibility branch; it remains an external destructive authority surface.
+- action_id: ACT-23
+  command_id: CMD-29
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-23
+  q5_required: true
+  route_family: task-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/approve -> src/orchestrator/api/routers/tasks.py::approve_task
+  evidence_ids: [EVD-12]
+  rationale: Approving a task is an external human-decision mutation, while the injected user string is not bound to token claims.
+- action_id: ACT-24
+  command_id: CMD-30
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-24
+  q5_required: true
+  route_family: task-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/reject -> src/orchestrator/api/routers/tasks.py::reject_task
+  evidence_ids: [EVD-12]
+  rationale: Reject with attempts remaining is a directly invoked task decision that creates revision state without product-role authorization.
+- action_id: ACT-25
+  command_id: CMD-30
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-25
+  q5_required: true
+  route_family: task-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/reject -> src/orchestrator/api/routers/tasks.py::reject_task
+  evidence_ids: [EVD-12]
+  rationale: Reject at the attempt limit is the externally callable terminal branch of the reject action and still requires caller authority.
+- action_id: ACT-26
+  command_id: CMD-31
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-26
+  q5_required: true
+  route_family: task-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/force-accept -> src/orchestrator/api/routers/tasks.py::force_accept_task
+  - src/orchestrator/workflow/engine/transitions.py::transition_force_accept
+  evidence_ids: [EVD-16]
+  rationale: Force accept bypasses grade evaluation through an independent external route, making absent authorization directly Q5-relevant.
+- action_id: ACT-27
+  command_id: CMD-32
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-27
+  q5_required: true
+  route_family: step-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/steps/{step_id}/approve -> src/orchestrator/api/routers/runs.py::approve_step
+  - CLI runs approve -> src/orchestrator/cli/approve.py::approve_command
+  evidence_ids: [EVD-36]
+  rationale: Step approval is externally callable and durable; caller-supplied approved_by and CLI choice are not authorization enforcement.
+- action_id: ACT-28
+  command_id: CMD-33
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-28
+  q5_required: true
+  route_family: step-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/steps/{step_id}/skip -> src/orchestrator/api/routers/runs.py::skip_step
+  evidence_ids: [EVD-7, EVD-12]
+  rationale: Skipping a gated step mutates progression and can resume execution, yet the route has no product-role authorization.
+- action_id: ACT-29
+  command_id: CMD-8
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-29
+  q5_required: true
+  route_family: clarification-response
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/clarifications/{request_id}/respond -> src/orchestrator/api/routers/clarifications.py::respond_to_clarification
+  - src/orchestrator/workflow/service.py::WorkflowService.respond_to_clarification
+  evidence_ids: [EVD-13]
+  rationale: Answering writes response, config, artifact, and task/run state; the legacy responder identity is not authenticated-subject authority.
+- action_id: ACT-30
+  command_id: CMD-8
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-30
+  q5_required: true
+  route_family: clarification-response
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/clarifications/{request_id}/respond -> src/orchestrator/api/routers/clarifications.py::respond_to_clarification
+  evidence_ids: [EVD-13]
+  rationale: The caller-selectable skipped-response variant writes durable clarification and progression state without product-role authorization.
+- action_id: ACT-31
+  command_id: CMD-9
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-31
+  q5_required: true
+  route_family: task-recovery
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/complete-recovery -> src/orchestrator/api/routers/tasks.py::complete_recovery
+  - MCP orchestrator_complete_recovery -> src/orchestrator/api/mcp/server.py::OrchestratorMCPServer._register_tools.orchestrator_complete_recovery
+  - src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_retry
+  evidence_ids: [EVD-14]
+  rationale: Retry is a selectable REST/MCP recovery outcome that creates an attempt and resumes work without product-role authorization.
+- action_id: ACT-32
+  command_id: CMD-9
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-32
+  q5_required: true
+  route_family: task-recovery
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/complete-recovery -> src/orchestrator/api/routers/tasks.py::complete_recovery
+  - MCP orchestrator_complete_recovery -> src/orchestrator/api/mcp/server.py::OrchestratorMCPServer._register_tools.orchestrator_complete_recovery
+  - src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_skip
+  evidence_ids: [EVD-14]
+  rationale: Skip is a separately selectable REST/MCP recovery outcome that completes and progresses task state without product-role authorization.
+- action_id: ACT-33
+  command_id: CMD-9
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-33
+  q5_required: true
+  route_family: task-recovery
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/complete-recovery -> src/orchestrator/api/routers/tasks.py::complete_recovery
+  - MCP orchestrator_complete_recovery -> src/orchestrator/api/mcp/server.py::OrchestratorMCPServer._register_tools.orchestrator_complete_recovery
+  - src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_abandon
+  evidence_ids: [EVD-14]
+  rationale: Abandon is a caller-selected REST/MCP recovery outcome that fails the task and has no product-role authorization.
+- action_id: ACT-34
+  command_id: CMD-10
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-34
+  q5_required: true
+  route_family: fanout-retry
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/tasks/{task_id}/retry -> src/orchestrator/api/routers/tasks.py::retry_fan_out_child
+  - src/orchestrator/workflow/service.py::WorkflowService.retry_fan_out_child
+  evidence_ids: [EVD-44]
+  rationale: The addressed child reset is the independently callable fan-out retry mutation and owns authority for its paired parent consequence.
+- action_id: ACT-35
+  command_id: CMD-10
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: false
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-34
+  q5_required: false
+  route_family: fanout-retry
+  implementation_locators:
+  - src/orchestrator/workflow/service.py::WorkflowService.retry_fan_out_child
+  evidence_ids: [EVD-44]
+  rationale: Parent fan-out-running preservation is a non-callable carrier consequence of ACT-34 and inherits its absent authorization.
+- action_id: ACT-36
+  command_id: CMD-34
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-36
+  q5_required: true
+  route_family: transition-back
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/transition-back -> src/orchestrator/api/routers/runs.py::transition_back
+  evidence_ids: [EVD-45]
+  rationale: The run-level transition-back call is the external command owner; it rewinds progression without product-role authorization.
+- action_id: ACT-37
+  command_id: CMD-34
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-36
+  q5_required: false
+  route_family: transition-back
+  implementation_locators:
+  - src/orchestrator/api/routers/runs.py::transition_back
+  evidence_ids: [EVD-45]
+  rationale: Resetting affected tasks is an inseparable same-call consequence of ACT-36, not an independently authorized route.
+- action_id: ACT-38
+  command_id: CMD-35
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-38
+  q5_required: true
+  route_family: run-recovery
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/recover -> src/orchestrator/api/routers/runs.py::recover_run
+  - src/orchestrator/workflow/service.py::WorkflowService.recover_run
+  evidence_ids: [EVD-45]
+  rationale: The run recover route is the independent compensating-rewind authority owner and lacks product-role authorization.
+- action_id: ACT-39
+  command_id: CMD-35
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-38
+  q5_required: false
+  route_family: run-recovery
+  implementation_locators:
+  - src/orchestrator/workflow/service.py::WorkflowService.recover_run
+  evidence_ids: [EVD-45]
+  rationale: Target-task reset is a same-command carrier consequence of ACT-38 and inherits that route's absent authorization.
+- action_id: ACT-40
+  command_id: CMD-35
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-38
+  q5_required: false
+  route_family: run-recovery
+  implementation_locators:
+  - src/orchestrator/workflow/service.py::WorkflowService.recover_run
+  evidence_ids: [EVD-45]
+  rationale: Downstream-task reset is another non-callable CMD-35 consequence owned by ACT-38.
+- action_id: ACT-41
+  command_id: CMD-11
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-10
+  q5_required: false
+  route_family: graph-decision
+  implementation_locators:
+  - src/orchestrator/graph/_commands.py::_apply_record_decision
+  evidence_ids: [EVD-27]
+  rationale: The approved-decision node completion is an internal same-command projection effect and inherits ACT-10 authority.
+- action_id: ACT-42
+  command_id: CMD-11
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-42
+  q5_required: true
+  route_family: graph-decision
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/graph/decisions -> src/orchestrator/api/routers/graph.py::record_graph_decision
+  - src/orchestrator/graph/_commands.py::_apply_record_decision
+  evidence_ids: [EVD-26, EVD-27]
+  rationale: Rejected required approval is a caller-selected decision variant that durably records state without product-role authorization.
+- action_id: ACT-43
+  command_id: CMD-11
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-42
+  q5_required: false
+  route_family: graph-decision
+  implementation_locators:
+  - src/orchestrator/graph/_commands.py::_apply_record_decision
+  evidence_ids: [EVD-26, EVD-27]
+  rationale: Required-node failure is the same-command node consequence of rejected approval ACT-42, not a second caller authority.
+- action_id: ACT-44
+  command_id: CMD-11
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-11
+  q5_required: false
+  route_family: graph-decision
+  implementation_locators:
+  - src/orchestrator/graph/_commands.py::_apply_record_decision
+  evidence_ids: [EVD-27]
+  rationale: Authority-denial node effects are derived inside the ACT-11 command transaction and inherit its authorization status.
+- action_id: ACT-45
+  command_id: CMD-12
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-13
+  q5_required: false
+  route_family: graph-patch
+  implementation_locators:
+  - src/orchestrator/graph/patch_validator.py::validate_patch
+  evidence_ids: [EVD-37]
+  rationale: A rejected patch event is a possible durable CMD-12 outcome, not a separately callable patch authority; it inherits ACT-13.
+- action_id: ACT-46
+  command_id: CMD-6
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-20
+  q5_required: false
+  route_family: run-cancel
+  implementation_locators:
+  - src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS
+  evidence_ids: [EVD-11, EVD-20, EVD-38, EVD-39, EVD-40]
+  rationale: Active graph-run terminal cancellation is a mode-specific CMD-6 consequence owned by external cancel ACT-20.
+- action_id: ACT-47
+  command_id: CMD-6
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-20
+  q5_required: false
+  route_family: run-cancel
+  implementation_locators:
+  - src/orchestrator/graph/commands/lifecycle.py::handle_cancel
+  evidence_ids: [EVD-20, EVD-38, EVD-39, EVD-40]
+  rationale: Active graph-node and lease cancellation is not independently callable and inherits ACT-20 authorization.
+- action_id: ACT-48
+  command_id: CMD-6
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-21
+  q5_required: false
+  route_family: run-cancel
+  implementation_locators:
+  - src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS
+  evidence_ids: [EVD-11, EVD-20, EVD-38, EVD-39, EVD-40]
+  rationale: Paused graph-run terminal cancellation is a derived effect of external paused cancel ACT-21.
+- action_id: ACT-49
+  command_id: CMD-6
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-21
+  q5_required: false
+  route_family: run-cancel
+  implementation_locators:
+  - src/orchestrator/graph/commands/lifecycle.py::handle_cancel
+  evidence_ids: [EVD-20, EVD-38, EVD-39, EVD-40]
+  rationale: Paused graph-node and lease cancellation is a non-callable consequence owned by ACT-21.
+- action_id: ACT-50
+  command_id: CMD-6
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-20
+  q5_required: false
+  route_family: run-cancel
+  implementation_locators:
+  - src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS
+  evidence_ids: [EVD-11, EVD-20, EVD-38, EVD-39, EVD-40]
+  rationale: Active graph-run entry into cancelling is part of the same ACT-20 cancel application, not another external command.
+- action_id: ACT-51
+  command_id: CMD-6
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-21
+  q5_required: false
+  route_family: run-cancel
+  implementation_locators:
+  - src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS
+  evidence_ids: [EVD-11, EVD-20, EVD-38, EVD-39, EVD-40]
+  rationale: Paused graph-run entry into cancelling is part of ACT-21's same command and inherits its authority status.
+- action_id: ACT-52
+  command_id: CMD-15
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-52
+  q5_required: true
+  route_family: back-merge
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/back-merge -> src/orchestrator/api/routers/runs.py::back_merge_endpoint
+  - CLI runs back-merge -> src/orchestrator/cli/runs.py::back_merge_cmd
+  evidence_ids: [EVD-29]
+  rationale: CMD-15 has one external REST route and CLI wrapper; ACT-52 owns its source-to-run git mutation and the duplicate view/outcome contracts.
+- action_id: ACT-53
+  command_id: CMD-16
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-53
+  q5_required: true
+  route_family: merge-back
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/merge-back -> src/orchestrator/api/routers/runs.py::merge_back_endpoint
+  - CLI runs merge-back -> src/orchestrator/cli/runs.py::merge_back_cmd
+  evidence_ids: [EVD-29]
+  rationale: CMD-16 has one external final merge route and CLI wrapper; ACT-53 owns the source-branch mutation.
+- action_id: ACT-54
+  command_id: CMD-15
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-52
+  q5_required: false
+  route_family: back-merge
+  implementation_locators:
+  - src/orchestrator/git/ops/branch_ops.py::back_merge
+  evidence_ids: [EVD-29]
+  rationale: Source inspection shows no distinct review back-merge route; this clean git effect is the implementation consequence of ACT-52.
+- action_id: ACT-55
+  command_id: CMD-17
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-55
+  q5_required: true
+  route_family: review-revert-back-merge
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/review/revert-back-merge -> src/orchestrator/api/routers/review.py::revert_back_merge_endpoint
+  - src/orchestrator/git/ops/branch_ops.py::revert_back_merge
+  evidence_ids: [EVD-29]
+  rationale: The review revert route independently creates a git revert and event without product-role authorization.
+- action_id: ACT-56
+  command_id: CMD-16
+  surface_kind: derived-same-command-consequence
+  independently_callable: false
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-53
+  q5_required: false
+  route_family: merge-back
+  implementation_locators:
+  - src/orchestrator/api/routers/runs.py::merge_back_endpoint
+  evidence_ids: [EVD-29]
+  rationale: There is no distinct review final-merge route in source; ACT-56 is the same CMD-16 effect already owned by ACT-53.
+- action_id: ACT-57
+  command_id: CMD-27
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-57
+  q5_required: true
+  route_family: review-test
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/review/test -> src/orchestrator/api/routers/review.py::start_test_run
+  evidence_ids: [EVD-47]
+  rationale: Starts an asynchronous command-execution job and writes job events, so validation purpose does not make this route non-mutating.
+- action_id: ACT-58
+  command_id: null
+  surface_kind: absent-gap
+  independently_callable: false
+  mutates_state: false
+  enforced_authorization: not-applicable
+  authority_owner_action_id: null
+  q5_required: false
+  route_family: review-agent-test-fix
+  implementation_locators: []
+  evidence_ids: []
+  rationale: The UI-only agent test-fix request has no backend command, route, or current mutation authority surface.
+- action_id: ACT-59
+  command_id: CMD-28
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-59
+  q5_required: true
+  route_family: review-agent-conflict-resolution
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/review/conflicts/agent-resolve -> src/orchestrator/api/routers/review.py::agent_resolve_conflicts
+  evidence_ids: [EVD-48]
+  rationale: Externally dispatches an agent job and writes AgentFixStarted without product-role authorization.
+- action_id: ACT-60
+  command_id: CMD-18
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-60
+  q5_required: true
+  route_family: review-conflict-resolution
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/review/conflicts/{file_path:path}/resolve -> src/orchestrator/api/routers/review.py::resolve_conflict_endpoint
+  - src/orchestrator/git/ops/conflict_ops.py::resolve_conflict
+  evidence_ids: [EVD-30]
+  rationale: Writes and stages caller-selected conflict resolutions through an external route with no product-role authorization.
+- action_id: ACT-61
+  command_id: CMD-19
+  surface_kind: non-mutating
+  independently_callable: true
+  mutates_state: false
+  enforced_authorization: not-applicable
+  authority_owner_action_id: null
+  q5_required: false
+  route_family: review-prune
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/review/prune/preview -> src/orchestrator/api/routers/review.py::prune_preview
+  - src/orchestrator/git/ops/prune_ops.py::preview_prune
+  evidence_ids: [EVD-28]
+  rationale: Computes and returns a prune preview without modifying the worktree; mutation authorization and Q5 do not apply.
+- action_id: ACT-62
+  command_id: CMD-20
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-62
+  q5_required: true
+  route_family: review-prune
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/review/prune/apply -> src/orchestrator/api/routers/review.py::prune_apply
+  - src/orchestrator/git/ops/prune_ops.py::apply_prune
+  evidence_ids: [EVD-28]
+  rationale: Applies filesystem changes and commits through an independently callable route without product-role authorization.
+- action_id: ACT-63
+  command_id: CMD-21
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-63
+  q5_required: true
+  route_family: environment-files
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/env-files/revert -> src/orchestrator/api/routers/envfiles.py::revert_env_files
+  evidence_ids: [EVD-31]
+  rationale: Restores managed environment files using caller-supplied path context and has no ownership or product-role authorization check.
+- action_id: ACT-64
+  command_id: CMD-22
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-64
+  q5_required: true
+  route_family: environment-files
+  implementation_locators:
+  - REST POST /api/runs/{run_id}/env-files/copy-back -> src/orchestrator/api/routers/envfiles.py::copy_back_env_files
+  evidence_ids: [EVD-31]
+  rationale: Copies snapshot content to a caller target, producing an external filesystem mutation without product-role authorization.
+- action_id: ACT-65
+  command_id: CMD-26
+  surface_kind: non-mutating
+  independently_callable: true
+  mutates_state: false
+  enforced_authorization: not-applicable
+  authority_owner_action_id: null
+  q5_required: false
+  route_family: routine-validation
+  implementation_locators:
+  - REST POST /api/routines/validate -> src/orchestrator/api/routers/routines.py::validate_routine
+  evidence_ids: [EVD-46]
+  rationale: Parses and validates YAML without saving routine or metadata state, so mutation authorization is not applicable.
+- action_id: ACT-66
+  command_id: CMD-36
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-66
+  q5_required: true
+  route_family: routine-visibility
+  implementation_locators:
+  - REST POST /api/routines/{routine_id}/archive -> src/orchestrator/api/routers/routines.py::archive_routine
+  evidence_ids: [EVD-32]
+  rationale: Independently changes persisted routine visibility metadata without product-role authorization.
+- action_id: ACT-67
+  command_id: CMD-37
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-67
+  q5_required: true
+  route_family: routine-visibility
+  implementation_locators:
+  - REST POST /api/routines/{routine_id}/unarchive -> src/orchestrator/api/routers/routines.py::unarchive_routine
+  evidence_ids: [EVD-32]
+  rationale: Independently clears persisted routine visibility metadata without product-role authorization.
+- action_id: ACT-68
+  command_id: CMD-38
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-68
+  q5_required: true
+  route_family: agent-admin
+  implementation_locators:
+  - REST POST /api/agents -> src/orchestrator/api/routers/agents.py::create_agent
+  evidence_ids: [EVD-33]
+  rationale: Creates future agent policy/configuration through an administrative route with no product-role authorization.
+- action_id: ACT-69
+  command_id: CMD-39
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-69
+  q5_required: true
+  route_family: agent-admin
+  implementation_locators:
+  - REST PUT /api/agents/{agent_id} -> src/orchestrator/api/routers/agents.py::update_agent
+  evidence_ids: [EVD-33]
+  rationale: Updates agent prompt/profile configuration through an independently callable route without product-role authorization.
+- action_id: ACT-70
+  command_id: CMD-40
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-70
+  q5_required: true
+  route_family: agent-admin
+  implementation_locators:
+  - REST DELETE /api/agents/{agent_id} -> src/orchestrator/api/routers/agents.py::delete_agent
+  evidence_ids: [EVD-33]
+  rationale: Deletes agent configuration through a destructive administrative route without product-role authorization.
+- action_id: ACT-71
+  command_id: CMD-41
+  surface_kind: independent-external-mutation
+  independently_callable: true
+  mutates_state: true
+  enforced_authorization: absent
+  authority_owner_action_id: ACT-71
+  q5_required: true
+  route_family: agent-admin
+  implementation_locators:
+  - REST POST /api/agents/{agent_id}/reset-prompt -> src/orchestrator/api/routers/agents.py::reset_prompt
+  evidence_ids: [EVD-33]
+  rationale: Resets the effective system prompt through an independently callable mutation route without product-role authorization.
+- {action_id: ACT-72, command_id: CMD-42, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-72, q5_required: true, route_family: task-start, implementation_locators: ['REST POST /api/runs/{run_id}/tasks/{task_id}/start -> src/orchestrator/api/routers/tasks.py::start_task'], evidence_ids: [EVD-117], rationale: 'Independent REST task start has optional authentication but no product-role authorization.'}
+- {action_id: ACT-73, command_id: CMD-43, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-73, q5_required: true, route_family: task-submit, implementation_locators: ['REST POST /api/runs/{run_id}/tasks/{task_id}/submit -> src/orchestrator/api/routers/tasks.py::submit_task'], evidence_ids: [EVD-110], rationale: 'Independent REST submission enqueues durable activity without product-role authorization.'}
+- {action_id: ACT-74, command_id: CMD-44, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-74, q5_required: true, route_family: task-complete-verification, implementation_locators: ['REST POST /api/runs/{run_id}/tasks/{task_id}/complete-verification -> src/orchestrator/api/routers/tasks.py::complete_verification_endpoint'], evidence_ids: [EVD-110], rationale: 'Independent REST verification completion enqueues durable activity without product-role authorization.'}
+- {action_id: ACT-75, command_id: CMD-45, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-75, q5_required: true, route_family: task-checklist, implementation_locators: ['REST PATCH /api/runs/{run_id}/tasks/{task_id}/checklist/{req_id} -> src/orchestrator/api/routers/tasks.py::update_checklist_item'], evidence_ids: [EVD-119], rationale: 'Independent REST checklist mutation lacks product-role authorization.'}
+- {action_id: ACT-76, command_id: CMD-46, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-76, q5_required: true, route_family: task-grade, implementation_locators: ['REST PUT /api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}/grade -> src/orchestrator/api/routers/tasks.py::set_grade'], evidence_ids: [EVD-121], rationale: 'Independent REST grade mutation lacks product-role authorization.'}
+- {action_id: ACT-77, command_id: CMD-47, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-77, q5_required: true, route_family: clarification-create, implementation_locators: ['REST POST /api/runs/{run_id}/tasks/{task_id}/clarifications -> src/orchestrator/api/routers/clarifications.py::create_clarification'], evidence_ids: [EVD-13], rationale: 'Independent REST clarification creation lacks product-role authorization.'}
+- {action_id: ACT-78, command_id: CMD-48, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-78, q5_required: true, route_family: requirement-escalation, implementation_locators: ['REST POST /api/runs/{run_id}/tasks/{task_id}/escalate -> src/orchestrator/api/routers/tasks.py::escalate_requirement'], evidence_ids: [EVD-116], rationale: 'Independent REST escalation lacks product-role authorization.'}
+- {action_id: ACT-79, command_id: CMD-49, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-79, q5_required: true, route_family: review-file-revert, implementation_locators: ['REST POST /api/runs/{run_id}/review/revert-file -> src/orchestrator/api/routers/review.py::revert_file_endpoint'], evidence_ids: [EVD-29], rationale: 'Independent REST worktree revert commits git state without product-role authorization.'}
+- {action_id: ACT-80, command_id: CMD-50, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-80, q5_required: true, route_family: public-mcp-task-checklist, implementation_locators: ['Public MCP orchestrator_update_checklist -> src/orchestrator/api/mcp/tools.py::ToolHandler._update_checklist'], evidence_ids: [EVD-124], rationale: 'Scoped public MCP exposure is not product-role authorization.'}
+- {action_id: ACT-81, command_id: CMD-51, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-81, q5_required: true, route_family: public-mcp-task-submit, implementation_locators: ['Public MCP orchestrator_submit -> src/orchestrator/api/mcp/tools.py::ToolHandler._submit'], evidence_ids: [EVD-110], rationale: 'Scoped public MCP exposure is not product-role authorization.'}
+- {action_id: ACT-82, command_id: CMD-52, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-82, q5_required: true, route_family: public-mcp-task-grade, implementation_locators: ['Public MCP orchestrator_set_grade -> src/orchestrator/api/mcp/tools.py::ToolHandler._set_grade'], evidence_ids: [EVD-127], rationale: 'Scoped public MCP exposure is not product-role authorization.'}
+- {action_id: ACT-83, command_id: CMD-53, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-83, q5_required: true, route_family: public-mcp-clarification-create, implementation_locators: ['Public MCP orchestrator_request_clarification -> src/orchestrator/api/mcp/tools.py::ToolHandler._request_clarification'], evidence_ids: [EVD-13], rationale: 'Scoped public MCP exposure is not product-role authorization.'}
+- {action_id: ACT-84, command_id: CMD-54, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-84, q5_required: true, route_family: public-mcp-requirement-escalation, implementation_locators: ['Public MCP orchestrator_escalate_requirement -> src/orchestrator/api/mcp/tools.py::ToolHandler._escalate_requirement'], evidence_ids: [EVD-116], rationale: 'Scoped public MCP exposure is not product-role authorization.'}
+- {action_id: ACT-85, command_id: CMD-55, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-85, q5_required: true, route_family: local-cli-db-restore-backup, implementation_locators: ['Local CLI db restore-backup -> src/orchestrator/cli/db.py::restore_backup_cmd'], evidence_ids: [EVD-114], rationale: 'Local CLI restore mutates a selected database; no local CLI authorization is claimed.'}
+- {action_id: ACT-86, command_id: CMD-56, surface_kind: independent-external-mutation, independently_callable: true, mutates_state: true, enforced_authorization: absent, authority_owner_action_id: ACT-86, q5_required: true, route_family: local-cli-db-rebuild-projections, implementation_locators: ['Local CLI db rebuild-projections -> src/orchestrator/cli/db.py::rebuild_projections_cmd'], evidence_ids: [EVD-115], rationale: 'Local CLI rebuild mutates projection rows; no local CLI authorization is claimed.'}

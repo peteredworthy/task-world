@@ -41,11 +41,22 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-54 clean-merges source into run through review route.
-  test: 'Bounded partial test locator(s): tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean'
-  documentation: ACT-54 review back-merge is documented.
-  capability: One clean merge does not prove every conflict policy.
-  epistemic: ACT-54 is observed by EVD-29.
+  implementation: 'ACT-54 implementation status present: ACT-54 Synchronously clean-merges source branch
+    into run branch. is present: SER rows SER-0090 inspect src/orchestrator/git/ops/branch_ops.py::back_merge
+    and establish the record proposition under EVD-29.'
+  test: 'ACT-54 test status unexercised: ACT-54 Synchronously clean-merges source branch into run branch.
+    remains unexercised: bounded SER rows SER-0091 cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+    but do not assert the complete record proposition.'
+  documentation: 'ACT-54 documentation status documented: ACT-54 Synchronously clean-merges source branch
+    into run branch. is documented at reality/actions/act-54-review-back-merge.yaml and by EVD-29; any
+    listed question (no canonical unresolved conflict or question) is explicitly disclosed and does not
+    create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-54 capability status unknown: ACT-54 Synchronously clean-merges source branch into
+    run branch. remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-29 establishes
+    the record carrier but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-54 epistemic status observed: ACT-54 Synchronously clean-merges source branch into run
+    branch. is observed from direct/audit authority EVD-29 (EVD-29 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects)),
+    with no canonical conflict/question qualification; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/git/ops/branch_ops.py::back_merge
 test_locators: []

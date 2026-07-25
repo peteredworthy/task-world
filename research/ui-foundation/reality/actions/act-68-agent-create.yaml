@@ -43,11 +43,22 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-68 synchronously creates an agent configuration row.
-  test: 'Bounded partial test locator(s): tests/integration/test_api_agent_configs.py::TestCreateAgent::test_create_returns_201'
-  documentation: ACT-68 agent create is documented.
-  capability: Configuration creation does not prove runner execution.
-  epistemic: ACT-68 is observed by EVD-33.
+  implementation: 'ACT-68 implementation status present: ACT-68 Synchronously creates configuration row.
+    is present: SER rows SER-0118 inspect src/orchestrator/api/routers/agents.py::create_agent and establish
+    the record proposition under EVD-33.'
+  test: 'ACT-68 test status unexercised: ACT-68 Synchronously creates configuration row. remains unexercised:
+    bounded SER rows SER-0119 cover tests/integration/test_api_agent_configs.py::TestCreateAgent::test_create_returns_201
+    but do not assert the complete record proposition.'
+  documentation: 'ACT-68 documentation status documented: ACT-68 Synchronously creates configuration row.
+    is documented at reality/actions/act-68-agent-create.yaml and by EVD-33; any listed question (Q-5
+    (open: Define product-role authorization before treating actor text as authority)) is explicitly disclosed
+    and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-68 capability status unknown: ACT-68 Synchronously creates configuration row. remains
+    unknown as a user capability: CAP-94=unknown as action-contract; EVD-33 establishes the record carrier
+    but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-68 epistemic status observed: ACT-68 Synchronously creates configuration row. is observed
+    from direct/audit authority EVD-33 (EVD-33 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/agents.py::create_agent
 test_locators: []

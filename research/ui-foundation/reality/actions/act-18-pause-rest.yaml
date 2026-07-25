@@ -55,16 +55,33 @@ enforced_authorization: absent
 domain_eligibility: Legacy row must be active; stopping is rejected.
 proposed_role_policy: null
 conflict_ids: []
-question_ids: []
+question_ids: [Q-5]
 test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-18 writes stopping, enqueues PAUSE, then consumer applies paused.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused'
-  documentation: ACT-18 lifecycle timing is documented.
-  capability: In-memory queue exercise does not prove cross-process delivery.
-  epistemic: ACT-18 is observed by EVD-7/EVD-8/EVD-38-40.
+  implementation: 'ACT-18 implementation status present: ACT-18 Pause run through REST is present: SER
+    rows SER-0015 inspect src/orchestrator/api/routers/runs.py::pause_run and establish the record proposition
+    under EVD-7, EVD-8, EVD-38, EVD-39, EVD-40.'
+  test: 'ACT-18 test status exercised: ACT-18 Pause run through REST is exercised because admitted SER
+    rows SER-0016 contain direct assertions at tests/integration/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-18 documentation status documented: ACT-18 Pause run through REST is documented
+    at reality/actions/act-18-pause-rest.yaml and by EVD-7, EVD-8, EVD-38, EVD-39, EVD-40; any listed
+    question (Q-5 (open: Define product-role authorization before treating actor text as authority)) is
+    explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-18 capability status unknown: ACT-18 Pause run through REST remains unknown as a user
+    capability: CAP-21=gap as reversibility-action; CAP-39=unknown as action-contract; CAP-40=unknown
+    as action-contract; CAP-44=gap as reversibility-action; CAP-61=unknown as action-contract; CAP-89=unknown
+    as action-contract; EVD-7, EVD-8, EVD-38, EVD-39, EVD-40 establishes the record carrier but no relevant
+    CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-18 epistemic status observed: ACT-18 Pause run through REST is observed from direct/audit
+    authority EVD-7, EVD-8, EVD-38, EVD-39, EVD-40 (EVD-7 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#state-carriers-and-legal-transitions);
+    EVD-8 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#state-carriers-and-legal-transitions);
+    EVD-38 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#authority-model);
+    EVD-39 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#authority-model);
+    EVD-40 (audit-report: research/ui-foundation/agent-reports/03-workflow-state.md#legacy-versus-graph-mode)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/runs.py::pause_run
 test_locators:

@@ -82,12 +82,39 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-11 records authority denial, binds it, completes authority node,
-    and defers downstream work.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks'
-  documentation: ACT-11 denial boundaries are documented.
-  capability: Supplied actor text is not enforced authorization.
-  epistemic: ACT-11 is directly observed by EVD-27.
+  implementation: 'ACT-11 implementation status present: ACT-11 Appends authority_decision_recorded and
+    projects an AuthorityDecisionRecord; the accepted denial is bound to the authority request, completes
+    that graph node, and leaves a downstream node that requires the denied input planned with a separately
+    projected deferred reason. No row carrier or invented deferred state is used. is present: SER rows
+    SER-0005 inspect src/orchestrator/api/routers/graph.py::record_graph_decision and establish the record
+    proposition under EVD-27.'
+  test: 'ACT-11 test status exercised: ACT-11 Appends authority_decision_recorded and projects an AuthorityDecisionRecord;
+    the accepted denial is bound to the authority request, completes that graph node, and leaves a downstream
+    node that requires the denied input planned with a separately projected deferred reason. No row carrier
+    or invented deferred state is used. is exercised because admitted SER rows SER-0006 contain direct
+    assertions at tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-11 documentation status documented: ACT-11 Appends authority_decision_recorded and
+    projects an AuthorityDecisionRecord; the accepted denial is bound to the authority request, completes
+    that graph node, and leaves a downstream node that requires the denied input planned with a separately
+    projected deferred reason. No row carrier or invented deferred state is used. is documented at reality/actions/act-11-graph-authority-denial.yaml
+    and by EVD-27; any listed question (Q-5 (open: Define product-role authorization before treating actor
+    text as authority)) is explicitly disclosed and does not create contradictory documentation for this
+    bounded proposition.'
+  capability: 'ACT-11 capability status unknown: ACT-11 Appends authority_decision_recorded and projects
+    an AuthorityDecisionRecord; the accepted denial is bound to the authority request, completes that
+    graph node, and leaves a downstream node that requires the denied input planned with a separately
+    projected deferred reason. No row carrier or invented deferred state is used. remains unknown as a
+    user capability: CAP-19=unknown as action-contract; CAP-39=unknown as action-contract; CAP-40=unknown
+    as action-contract; CAP-42=gap as authority-action; CAP-61=unknown as action-contract; CAP-86=unknown
+    as action-contract; EVD-27 establishes the record carrier but no relevant CAP authority classifies
+    this record as current or derived.'
+  epistemic: 'ACT-11 epistemic status observed: ACT-11 Appends authority_decision_recorded and projects
+    an AuthorityDecisionRecord; the accepted denial is bound to the authority request, completes that
+    graph node, and leaves a downstream node that requires the denied input planned with a separately
+    projected deferred reason. No row carrier or invented deferred state is used. is observed from direct/audit
+    authority EVD-27 (EVD-27 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#graph-decision-patch-retiresupersede-and-requeue-capability)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/graph.py::record_graph_decision
 test_locators:

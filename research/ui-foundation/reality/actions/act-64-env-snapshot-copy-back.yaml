@@ -34,16 +34,27 @@ enforced_authorization: absent
 domain_eligibility: PER-7 environment prerequisites
 proposed_role_policy: null
 conflict_ids: []
-question_ids: []
+question_ids: [Q-5]
 test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-64 synchronously copies snapshot files to caller target.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_envfile_revert.py::test_copy_back_api'
-  documentation: ACT-64 snapshot copy-back is documented.
-  capability: One managed file set does not prove arbitrary filesystem copy.
-  epistemic: ACT-64 is observed by EVD-31.
+  implementation: 'ACT-64 implementation status present: ACT-64 Synchronously copies snapshot files to
+    caller target. is present: SER rows SER-0109 inspect src/orchestrator/api/routers/envfiles.py::copy_back_env_files
+    and establish the record proposition under EVD-31.'
+  test: 'ACT-64 test status exercised: ACT-64 Synchronously copies snapshot files to caller target. is
+    exercised because admitted SER rows SER-0110 contain direct assertions at tests/integration/test_envfile_revert.py::test_copy_back_api;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-64 documentation status documented: ACT-64 Synchronously copies snapshot files to
+    caller target. is documented at reality/actions/act-64-env-snapshot-copy-back.yaml and by EVD-31;
+    any listed question (Q-5 (open: Define product-role authorization before treating actor text as authority))
+    is explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-64 capability status unknown: ACT-64 Synchronously copies snapshot files to caller
+    target. remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-31 establishes
+    the record carrier but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-64 epistemic status observed: ACT-64 Synchronously copies snapshot files to caller target.
+    is observed from direct/audit authority EVD-31 (EVD-31 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/envfiles.py::copy_back_env_files
 test_locators:

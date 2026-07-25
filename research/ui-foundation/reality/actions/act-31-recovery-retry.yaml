@@ -40,17 +40,30 @@ enforced_authorization: absent
 domain_eligibility: Legacy recovering task only.
 proposed_role_policy: null
 conflict_ids: []
-question_ids: []
+question_ids: [Q-5]
 test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-31 records recovery notes, creates attempt, builds, and may
-    resume.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_workflow_service.py::test_complete_recovery_retry_projects_attempts_and_resumes_without_save_run'
-  documentation: ACT-31 recovery retry is documented.
-  capability: One retry path does not define canonical retry count/delta.
-  epistemic: ACT-31 is observed by EVD-14.
+  implementation: 'ACT-31 implementation status present: ACT-31 Retry legacy recovering task is present:
+    SER rows SER-0042 inspect src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_retry
+    and establish the record proposition under EVD-14.'
+  test: 'ACT-31 test status exercised: ACT-31 Retry legacy recovering task is exercised because admitted
+    SER rows SER-0043 contain direct assertions at tests/integration/test_workflow_service.py::test_complete_recovery_retry_projects_attempts_and_resumes_without_save_run;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-31 documentation status documented: ACT-31 Retry legacy recovering task is documented
+    at reality/actions/act-31-recovery-retry.yaml and by EVD-14; any listed question (Q-5 (open: Define
+    product-role authorization before treating actor text as authority)) is explicitly disclosed and does
+    not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-31 capability status unknown: ACT-31 Retry legacy recovering task remains unknown as
+    a user capability: CAP-21=gap as reversibility-action; CAP-27=unknown as action-contract; CAP-39=unknown
+    as action-contract; CAP-44=gap as reversibility-action; CAP-49=gap as action-contract; CAP-59=gap
+    as action-contract; CAP-61=unknown as action-contract; CAP-88=unknown as action-contract; CAP-107=unknown
+    as action-contract; EVD-14 establishes the record carrier but no relevant CAP authority classifies
+    this record as current or derived.'
+  epistemic: 'ACT-31 epistemic status observed: ACT-31 Retry legacy recovering task is observed from direct/audit
+    authority EVD-14 (EVD-14 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#legacy-task-approval-clarification-and-retry-capability)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_retry
 test_locators:

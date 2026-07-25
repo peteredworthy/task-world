@@ -527,6 +527,60 @@ def test_status_evidence_reviews_reject_partial_test_left_exact_and_wrong_summar
     assert "STATUS_EVIDENCE_CANONICAL_TEST_PARTITION_MISMATCH" in codes
 
 
+def test_status_evidence_reviews_rejects_each_dimension_status_mutation(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    replacements = {
+        "implementation": "absent",
+        "test": "unexercised",
+        "documentation": "unknown",
+        "capability": "gap",
+        "epistemic": "unknown",
+    }
+    for dimension, replacement in replacements.items():
+        summary = next(
+            item
+            for item in summaries
+            if item["record_id"] == "REL-1" and item["dimension"] == dimension
+        )
+        summary["compatible_status"] = replacement
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DIMENSION_CANONICAL_MISMATCH" in codes
+
+
+def test_status_evidence_reviews_rejects_false_conflict_promotion_and_epistemic_evidence_removal(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    documentation = next(
+        item
+        for item in summaries
+        if item["record_id"] == "REL-1" and item["dimension"] == "documentation"
+    )
+    documentation["compatible_status"] = "conflicting"
+    documentation["combined_verdict"] = "contradicts"
+    epistemic = next(
+        item
+        for item in summaries
+        if item["record_id"] == "REL-1" and item["dimension"] == "epistemic"
+    )
+    epistemic["evidence_ids"] = []
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID" in codes
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in codes
+
+
 def test_status_scope_rejects_missing_record(tmp_path: Path) -> None:
     root = copy_foundation_with_source(tmp_path)
     items = status_scope_items(root)
@@ -561,6 +615,53 @@ def test_status_scope_rejects_duplicate_record(tmp_path: Path) -> None:
     result = run_validator(root)
 
     assert "STATUS_SCOPE_DUPLICATE" in issue_codes(result)
+
+
+def test_external_mutation_inventory_covers_independent_transport_commands() -> None:
+    """Every independently callable omitted mutation has one stable ACT/CMD root."""
+    root = REPO_ROOT / "research/ui-foundation"
+    ids = yaml.safe_load((root / "catalog/ids.yaml").read_text(encoding="utf-8"))
+    authority = yaml.safe_load(
+        (root / "catalog/action-authority-surfaces.yaml").read_text(encoding="utf-8")
+    )
+    actions = {
+        value["id"]: value
+        for path in (root / "reality/actions").glob("act-*.yaml")
+        if (value := yaml.safe_load(path.read_text(encoding="utf-8")))
+    }
+    ledger = {value["canonical_id"]: value for value in ids["items"] if value["namespace"] == "CMD"}
+    expected_routes = {
+        "task-start": "src/orchestrator/api/routers/tasks.py::start_task",
+        "task-submit": "src/orchestrator/api/routers/tasks.py::submit_task",
+        "task-complete-verification": "src/orchestrator/api/routers/tasks.py::complete_verification_endpoint",
+        "task-checklist": "src/orchestrator/api/routers/tasks.py::update_checklist_item",
+        "task-grade": "src/orchestrator/api/routers/tasks.py::set_grade",
+        "clarification-create": "src/orchestrator/api/routers/clarifications.py::create_clarification",
+        "requirement-escalation": "src/orchestrator/api/routers/tasks.py::escalate_requirement",
+        "review-file-revert": "src/orchestrator/api/routers/review.py::revert_file_endpoint",
+        "public-mcp-task-checklist": "src/orchestrator/api/mcp/tools.py::ToolHandler._update_checklist",
+        "public-mcp-task-submit": "src/orchestrator/api/mcp/tools.py::ToolHandler._submit",
+        "public-mcp-task-grade": "src/orchestrator/api/mcp/tools.py::ToolHandler._set_grade",
+        "public-mcp-clarification-create": "src/orchestrator/api/mcp/tools.py::ToolHandler._request_clarification",
+        "public-mcp-requirement-escalation": "src/orchestrator/api/mcp/tools.py::ToolHandler._escalate_requirement",
+        "local-cli-db-restore-backup": "src/orchestrator/cli/db.py::restore_backup_cmd",
+        "local-cli-db-rebuild-projections": "src/orchestrator/cli/db.py::rebuild_projections_cmd",
+    }
+    inventory = {item["route_family"]: item for item in authority["route_inventory"]}
+    assert {
+        family: item["implementation_locator"] for family, item in inventory.items()
+    } == expected_routes
+    authority_by_action = {item["action_id"]: item for item in authority["items"]}
+    assert all(
+        item["action_id"] in actions
+        and actions[item["action_id"]]["command_id"] == item["command_id"]
+        and item["command_id"] in ledger
+        and authority_by_action[item["action_id"]]["command_id"] == item["command_id"]
+        and authority_by_action[item["action_id"]]["surface_kind"]
+        == "independent-external-mutation"
+        and authority_by_action[item["action_id"]]["q5_required"] is True
+        for item in inventory.values()
+    )
 
 
 def test_status_scope_rejects_wrong_declaration_path(tmp_path: Path) -> None:
@@ -727,15 +828,15 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
 
     expected_test_statuses = {
         "REL": {"exercised": 13, "unexercised": 22},
-        "STA": {"exercised": 56, "unexercised": 16},
-        "ACT": {"exercised": 46, "unexercised": 25},
-        "EVI": {"exercised": 1, "unexercised": 8},
-        "INV": {"exercised": 3, "unexercised": 3},
+        "STA": {"exercised": 57, "unexercised": 17},
+        "ACT": {"exercised": 56, "unexercised": 30},
+        "EVI": {"exercised": 2, "unexercised": 7},
+        "INV": {"exercised": 6},
     }
     family_ids = {
         "REL": {f"REL-{number}" for number in range(1, 36)},
-        "STA": {f"STA-{number}" for number in range(1, 74)} - {"STA-28"},
-        "ACT": {f"ACT-{number}" for number in range(1, 72)},
+        "STA": {f"STA-{number}" for number in range(1, 76)} - {"STA-28"},
+        "ACT": {f"ACT-{number}" for number in range(1, 87)},
         "EVI": {f"EVI-{number}" for number in range(1, 10)},
         "INV": {f"INV-{number}" for number in range(2, 8)},
     }
@@ -768,7 +869,7 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
         for field in ("test_locators", "bounded_test_locators")
         for locator in records[identifier].get(field, [])
     }
-    assert len(exact_locators) == 104
+    assert len(exact_locators) == 117
 
 
 def test_exercised_status_rejects_empty_exact_test_locators(tmp_path: Path) -> None:
@@ -1304,6 +1405,118 @@ def test_q5_backlinks_cover_every_externally_callable_unauthorized_mutation(
     result = run_validator(root)
 
     assert "Q5_AUTHORIZATION_COVERAGE_MISSING" in issue_codes(result)
+
+
+def test_action_authority_map_has_exact_action_command_and_q5_parity(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+
+    result = run_validator(root)
+
+    relevant = {
+        code
+        for code in issue_codes(result)
+        if code.startswith("ACTION_AUTHORITY_") or code.startswith("Q5_AUTHORIZATION_")
+    }
+    assert relevant == set()
+
+
+def test_action_authority_map_rejects_missing_action_row(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    path = root / "catalog/action-authority-surfaces.yaml"
+    catalog = yaml.safe_load(path.read_text(encoding="utf-8"))
+    catalog["items"].pop()
+    write_yaml(path, catalog)
+
+    result = run_validator(root)
+
+    assert "ACTION_AUTHORITY_ACTION_PARITY" in issue_codes(result)
+
+
+def test_reviewed_mutation_route_inventory_requires_action_and_command_coverage(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    authority_path = root / "catalog/action-authority-surfaces.yaml"
+    authority = yaml.safe_load(authority_path.read_text(encoding="utf-8"))
+    inventory_item = authority["route_inventory"][0]
+    action_id = inventory_item["action_id"]
+    action_path = next(
+        path
+        for path in (root / "reality/actions").glob("act-*.yaml")
+        if yaml.safe_load(path.read_text(encoding="utf-8"))["id"] == action_id
+    )
+    action_path.unlink()
+
+    result = run_validator(root)
+
+    assert "ACTION_AUTHORITY_ROUTE_INVENTORY_ACTION_MISSING" in issue_codes(result)
+
+
+def test_reviewed_mutation_route_inventory_rejects_missing_command(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    authority = yaml.safe_load(
+        (root / "catalog/action-authority-surfaces.yaml").read_text(encoding="utf-8")
+    )
+    command_id = authority["route_inventory"][0]["command_id"]
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["items"] = [item for item in evidence["items"] if item.get("id") != command_id]
+    write_yaml(evidence_path, evidence)
+
+    result = run_validator(root)
+
+    assert "ACTION_AUTHORITY_ROUTE_INVENTORY_COMMAND_MISSING" in issue_codes(result)
+
+
+def test_q5_action_ids_are_exactly_the_map_required_rows(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    authority = yaml.safe_load(
+        (root / "catalog/action-authority-surfaces.yaml").read_text(encoding="utf-8")
+    )
+    required_id = next(item["action_id"] for item in authority["items"] if item["q5_required"])
+    questions_path = root / "catalog/questions.yaml"
+    questions = yaml.safe_load(questions_path.read_text(encoding="utf-8"))
+    q5 = next(item for item in questions["items"] if item["id"] == "Q-5")
+    q5["affected_ids"].remove(required_id)
+    write_yaml(questions_path, questions)
+
+    result = run_validator(root)
+
+    assert "Q5_AUTHORIZATION_COVERAGE_MISSING" in issue_codes(result)
+
+
+def test_derived_authority_row_requires_same_command_independent_owner(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    path = root / "catalog/action-authority-surfaces.yaml"
+    authority = yaml.safe_load(path.read_text(encoding="utf-8"))
+    derived = next(
+        item
+        for item in authority["items"]
+        if item["surface_kind"] == "derived-same-command-consequence"
+    )
+    derived["authority_owner_action_id"] = derived["action_id"]
+    write_yaml(path, authority)
+
+    result = run_validator(root)
+
+    assert "ACTION_AUTHORITY_DERIVED_OWNER_INVALID" in issue_codes(result)
+
+
+def test_action_authority_locators_resolve_exact_symbols_including_cli_start(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    path = root / "catalog/action-authority-surfaces.yaml"
+    catalog = yaml.safe_load(path.read_text(encoding="utf-8"))
+    cli_start = next(item for item in catalog["items"] if item["action_id"] == "ACT-8")
+    cli_start["implementation_locators"] = [
+        "CLI runs start -> src/orchestrator/cli/runs.py::missing_start_run"
+    ]
+    write_yaml(path, catalog)
+
+    result = run_validator(root)
+
+    assert "ACTION_AUTHORITY_IMPLEMENTATION_LOCATOR_UNRESOLVED" in issue_codes(result)
 
 
 def test_retired_node_transitions_are_command_specific_and_do_not_invent_broad_edges() -> None:

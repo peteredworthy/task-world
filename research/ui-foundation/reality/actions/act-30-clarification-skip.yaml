@@ -45,16 +45,27 @@ enforced_authorization: absent
 domain_eligibility: Legacy clarification request and task wait state.
 proposed_role_policy: null
 conflict_ids: []
-question_ids: []
+question_ids: [Q-5]
 test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-30 persists skipped response/reason/artifact and resumes building.
-  test: 'Bounded partial test locator(s): tests/integration/test_api_clarifications.py::test_respond_with_skipped_true'
-  documentation: ACT-30 clarification skip is documented.
-  capability: The carrier does not prove a complete decision packet/UI.
-  epistemic: ACT-30 is observed by EVD-13.
+  implementation: 'ACT-30 implementation status present: ACT-30 Skip legacy clarification question is
+    present: SER rows SER-0040 inspect src/orchestrator/api/routers/clarifications.py::respond_to_clarification
+    and establish the record proposition under EVD-13.'
+  test: 'ACT-30 test status unexercised: ACT-30 Skip legacy clarification question remains unexercised:
+    bounded SER rows SER-0041 cover tests/integration/test_api_clarifications.py::test_respond_with_skipped_true
+    but do not assert the complete record proposition.'
+  documentation: 'ACT-30 documentation status documented: ACT-30 Skip legacy clarification question is
+    documented at reality/actions/act-30-clarification-skip.yaml and by EVD-13; any listed question (Q-5
+    (open: Define product-role authorization before treating actor text as authority)) is explicitly disclosed
+    and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-30 capability status unknown: ACT-30 Skip legacy clarification question remains unknown
+    as a user capability: CAP-87=unknown as action-contract; EVD-13 establishes the record carrier but
+    no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-30 epistemic status observed: ACT-30 Skip legacy clarification question is observed
+    from direct/audit authority EVD-13 (EVD-13 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#legacy-task-approval-clarification-and-retry-capability)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/clarifications.py::respond_to_clarification
 test_locators: []

@@ -39,11 +39,22 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-67 synchronously clears routine archive metadata.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_api_routines.py::test_unarchive_routine'
-  documentation: ACT-67 unarchive action is documented.
-  capability: Metadata mutation is not a broader product capability.
-  epistemic: ACT-67 is observed by EVD-32.
+  implementation: 'ACT-67 implementation status present: ACT-67 Synchronously clears routine visibility
+    archive metadata. is present: SER rows SER-0116 inspect src/orchestrator/api/routers/routines.py::unarchive_routine
+    and establish the record proposition under EVD-32.'
+  test: 'ACT-67 test status exercised: ACT-67 Synchronously clears routine visibility archive metadata.
+    is exercised because admitted SER rows SER-0117 contain direct assertions at tests/integration/test_api_routines.py::test_unarchive_routine;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-67 documentation status documented: ACT-67 Synchronously clears routine visibility
+    archive metadata. is documented at reality/actions/act-67-routine-unarchive.yaml and by EVD-32; any
+    listed question (Q-5 (open: Define product-role authorization before treating actor text as authority))
+    is explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-67 capability status unknown: ACT-67 Synchronously clears routine visibility archive
+    metadata. remains unknown as a user capability: CAP-94=unknown as action-contract; EVD-32 establishes
+    the record carrier but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-67 epistemic status observed: ACT-67 Synchronously clears routine visibility archive
+    metadata. is observed from direct/audit authority EVD-32 (EVD-32 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/routines.py::unarchive_routine
 test_locators:

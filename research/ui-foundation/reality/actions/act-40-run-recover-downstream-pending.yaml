@@ -74,11 +74,21 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-40 clears downstream attempts/markers/checklist and sets pending.
-  test: No admitted proving exact test locator supports exercised status.
-  documentation: ACT-40 qualified completed-task reopen is documented.
-  capability: One compensation path is not a complete recovery capability.
-  epistemic: ACT-40 is observed by EVD-45.
+  implementation: 'ACT-40 implementation status present: ACT-40 Reset run-recovery downstream task to
+    pending is present: SER rows SER-0061 inspect src/orchestrator/workflow/service.py::WorkflowService.recover_run
+    and establish the record proposition under EVD-45.'
+  test: 'ACT-40 test status unexercised: ACT-40 Reset run-recovery downstream task to pending remains
+    unexercised because no admitted exact test locator asserts its complete record proposition under EVD-45.'
+  documentation: 'ACT-40 documentation status documented: ACT-40 Reset run-recovery downstream task to
+    pending is documented at reality/actions/act-40-run-recover-downstream-pending.yaml and by EVD-45;
+    any listed question (no canonical unresolved conflict or question) is explicitly disclosed and does
+    not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-40 capability status unknown: ACT-40 Reset run-recovery downstream task to pending
+    remains unknown as a user capability: CAP-88=unknown as action-contract; EVD-45 establishes the record
+    carrier but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-40 epistemic status observed: ACT-40 Reset run-recovery downstream task to pending is
+    observed from direct/audit authority EVD-45 (EVD-45 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#run-and-lifecycle-capability)),
+    with no canonical conflict/question qualification; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/workflow/service.py::WorkflowService.recover_run
 test_locators: []

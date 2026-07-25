@@ -43,11 +43,23 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-56 is the distinct review final-merge route.
-  test: No admitted proving exact test locator supports exercised status.
-  documentation: ACT-56 review final merge is documented.
-  capability: Source inspection does not prove route availability.
-  epistemic: ACT-56 is observed by EVD-29.
+  implementation: 'ACT-56 implementation status present: ACT-56 Synchronously review-merges run branch
+    into source branch. is present: SER rows SER-0094 inspect src/orchestrator/api/routers/runs.py::merge_back_endpoint
+    and establish the record proposition under EVD-29.'
+  test: 'ACT-56 test status unexercised: ACT-56 Synchronously review-merges run branch into source branch.
+    remains unexercised because no admitted exact test locator asserts its complete record proposition
+    under EVD-29.'
+  documentation: 'ACT-56 documentation status documented: ACT-56 Synchronously review-merges run branch
+    into source branch. is documented at reality/actions/act-56-review-final-merge.yaml and by EVD-29;
+    any listed question (no canonical unresolved conflict or question) is explicitly disclosed and does
+    not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-56 capability status unknown: ACT-56 Synchronously review-merges run branch into source
+    branch. remains unknown as a user capability: CAP-21=gap as reversibility-action; CAP-44=gap as reversibility-action;
+    EVD-29 establishes the record carrier but no relevant CAP authority classifies this record as current
+    or derived.'
+  epistemic: 'ACT-56 epistemic status observed: ACT-56 Synchronously review-merges run branch into source
+    branch. is observed from direct/audit authority EVD-29 (EVD-29 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects)),
+    with no canonical conflict/question qualification; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/runs.py::merge_back_endpoint
 test_locators: []

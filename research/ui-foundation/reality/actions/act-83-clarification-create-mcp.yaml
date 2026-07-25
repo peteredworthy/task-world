@@ -1,0 +1,57 @@
+id: ACT-83
+implementation_status: present
+capability_status: unknown
+executable: true
+command_id: CMD-53
+actor: public MCP caller
+permission_requirements: [PER-1, PER-5, PER-3]
+preconditions: [tool is exposed by scope, task clarification eligible]
+expected_source_version: 'None'
+required_input: {run_id: required, task_id: required, questions: required}
+validation: [scope-exposure, handler-and-question-validation]
+durable_effect: Dispatches public MCP clarification request to the workflow boundary.
+resulting_state_id: STA-11
+failure_modes: [tool unavailable, handler error, transition error]
+stale_state_behavior: Handler applies current task state.
+idempotency: No request idempotency key.
+retry_behavior: Inspect pending clarification before retry.
+reversibility: Answer or skip separately.
+audit_evidence_ids: [EVD-13]
+transition: {from_state_id: STA-9, to_state_id: STA-11}
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-5 scoped exposure plus PER-3 clarification eligibility
+proposed_role_policy: null
+conflict_ids: []
+question_ids: [Q-5]
+test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'ACT-83 implementation status present: ACT-83 Dispatches public MCP clarification request
+    to the workflow boundary. is present: SER rows SER-0473, SER-0480 inspect src/orchestrator/api/mcp/server.py::orchestrator_request_clarification,
+    src/orchestrator/api/mcp/tools.py::ToolHandler._request_clarification and establish the record proposition
+    under EVD-13.'
+  test: 'ACT-83 test status unexercised: ACT-83 Dispatches public MCP clarification request to the workflow
+    boundary. remains unexercised: bounded SER rows SER-0493 cover tests/integration/test_mcp_server.py::test_tool_names
+    but do not assert the complete record proposition.'
+  documentation: 'ACT-83 documentation status documented: ACT-83 Dispatches public MCP clarification request
+    to the workflow boundary. is documented at reality/actions/act-83-clarification-create-mcp.yaml and
+    by EVD-13; any listed question (Q-5 (open: Define product-role authorization before treating actor
+    text as authority)) is explicitly disclosed and does not create contradictory documentation for this
+    bounded proposition.'
+  capability: 'ACT-83 capability status unknown: ACT-83 Dispatches public MCP clarification request to
+    the workflow boundary. remains unknown as a user capability: no CAP implementation_carrier_binding;
+    EVD-13 establishes the record carrier but no relevant CAP authority classifies this record as current
+    or derived.'
+  epistemic: 'ACT-83 epistemic status observed: ACT-83 Dispatches public MCP clarification request to
+    the workflow boundary. is observed from direct/audit authority EVD-13 (EVD-13 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#legacy-task-approval-clarification-and-retry-capability)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
+implementation_locators:
+- src/orchestrator/api/mcp/tools.py::ToolHandler._request_clarification
+- src/orchestrator/api/mcp/server.py::orchestrator_request_clarification
+- src/orchestrator/api/mcp/tools.py::ToolHandler._request_clarification
+- src/orchestrator/api/mcp/server.py::orchestrator_request_clarification
+test_locators: []
+bounded_test_locators:
+- tests/integration/test_mcp_server.py::test_tool_names

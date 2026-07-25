@@ -21,11 +21,25 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-58 is an explicit absent agent-test-fix job contract.
-  test: No admitted proving exact test locator supports exercised status.
-  documentation: ACT-58 records the UI/backend gap.
-  capability: Agent test-fix dispatch is a confirmed gap.
-  epistemic: Absence is observed by approved action/UI audits.
+  implementation: 'ACT-58 implementation status absent: ACT-58 A reachable agent-test-fix endpoint must
+    dispatch a job and return durable job identity/status. is absent: SER rows SER-0097 inspect bounded
+    absence audit and establish the record proposition under EVD-53, EVD-68.'
+  test: 'ACT-58 test status unexercised: ACT-58 A reachable agent-test-fix endpoint must dispatch a job
+    and return durable job identity/status. remains unexercised because no admitted exact test locator
+    asserts its complete record proposition under EVD-53, EVD-68.'
+  documentation: 'ACT-58 documentation status documented: ACT-58 A reachable agent-test-fix endpoint must
+    dispatch a job and return durable job identity/status. is documented at reality/actions/act-58-agent-test-fix-job-gap.yaml
+    and by EVD-53, EVD-68; any listed question (no canonical unresolved conflict or question) is explicitly
+    disclosed and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-58 capability status gap: ACT-58 A reachable agent-test-fix endpoint must dispatch
+    a job and return durable job identity/status. is a user-capability gap: no CAP implementation_carrier_binding;
+    absence evidence EVD-53, EVD-68 identifies the missing reachable outcome rather than merely a low-level
+    carrier state.'
+  epistemic: 'ACT-58 epistemic status observed: ACT-58 A reachable agent-test-fix endpoint must dispatch
+    a job and return durable job identity/status. is observed from direct/audit authority EVD-53, EVD-68
+    (EVD-53 (audit-report: research/ui-foundation/agent-reports/06-ui-projections.md#key-findings); EVD-68
+    (audit-report: research/ui-foundation/agent-reports/07-tests-documentation.md#key-findings)), with
+    no canonical conflict/question qualification; only the bounded record proposition is observed.'
 implementation_locators: []
 test_locators: []
 bounded_test_locators: []

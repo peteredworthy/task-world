@@ -5,15 +5,15 @@ allocation_policy: Task 13 canonical allocation; values are monotonic and retain
 next_suffixes:
   ENT: 32
   REL: 36
-  STA: 74
+  STA: 76
   PER: 8
-  ACT: 72
+  ACT: 87
   EVI: 10
-  CMD: 42
+  CMD: 57
   INV: 12
   Q: 8
   CON: 10
-  EVD: 114
+  EVD: 129
   CAP: 133
   DRV: 12
 items:
@@ -1379,6 +1379,16 @@ items:
   title: Graph node retired
   status: active
   canonical_id: STA-73
+- namespace: STA
+  provisional_key: state.database.restored-contents
+  title: Database contents restored
+  status: active
+  canonical_id: STA-74
+- namespace: STA
+  provisional_key: state.database.rebuilt-projection-rows
+  title: Database projection rows rebuilt
+  status: active
+  canonical_id: STA-75
 - namespace: PER
   provisional_key: PER-900
   title: Optional global bearer authentication
@@ -1769,6 +1779,21 @@ items:
   title: action
   status: active
   canonical_id: ACT-71
+- {namespace: ACT, provisional_key: action.rest.legacy-task.start, title: 'Start task through REST', status: active, canonical_id: ACT-72}
+- {namespace: ACT, provisional_key: action.rest.legacy-task.submit-signal-acceptance, title: 'Submit task through REST', status: active, canonical_id: ACT-73}
+- {namespace: ACT, provisional_key: action.rest.legacy-task.verification-signal-acceptance, title: 'Complete verification through REST', status: active, canonical_id: ACT-74}
+- {namespace: ACT, provisional_key: action.rest.legacy-checklist.update, title: 'Update checklist through REST', status: active, canonical_id: ACT-75}
+- {namespace: ACT, provisional_key: action.rest.legacy-checklist.grade, title: 'Update grade through REST', status: active, canonical_id: ACT-76}
+- {namespace: ACT, provisional_key: action.rest.clarification.create, title: 'Create clarification through REST', status: active, canonical_id: ACT-77}
+- {namespace: ACT, provisional_key: action.rest.requirement.escalate, title: 'Escalate requirement through REST', status: active, canonical_id: ACT-78}
+- {namespace: ACT, provisional_key: action.rest.review-file.revert, title: 'Revert review file through REST', status: active, canonical_id: ACT-79}
+- {namespace: ACT, provisional_key: action.mcp.legacy-checklist.update, title: 'Update checklist through public MCP', status: active, canonical_id: ACT-80}
+- {namespace: ACT, provisional_key: action.mcp.legacy-task.submit, title: 'Submit task through public MCP', status: active, canonical_id: ACT-81}
+- {namespace: ACT, provisional_key: action.mcp.legacy-checklist.grade, title: 'Update grade through public MCP', status: active, canonical_id: ACT-82}
+- {namespace: ACT, provisional_key: action.mcp.clarification.create, title: 'Create clarification through public MCP', status: active, canonical_id: ACT-83}
+- {namespace: ACT, provisional_key: action.mcp.requirement.escalate, title: 'Escalate requirement through public MCP', status: active, canonical_id: ACT-84}
+- {namespace: ACT, provisional_key: action.cli.database.restore-backup, title: 'Restore database backup through local CLI', status: active, canonical_id: ACT-85}
+- {namespace: ACT, provisional_key: action.cli.database.rebuild-projections, title: 'Rebuild projections through local CLI', status: active, canonical_id: ACT-86}
 - namespace: EVI
   provisional_key: EVI-P-01
   title: workflow-event
@@ -2026,6 +2051,21 @@ items:
   title: REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous default-prompt restoration
   status: active
   canonical_id: CMD-41
+- {namespace: CMD, provisional_key: command.rest.legacy-task.start, title: 'REST task start; start_task; synchronous legacy task start', status: active, canonical_id: CMD-42}
+- {namespace: CMD, provisional_key: command.rest.legacy-task.submit-signal-acceptance, title: 'REST task submit; submit_task; ACTIVITY_COMPLETED signal acceptance', status: active, canonical_id: CMD-43}
+- {namespace: CMD, provisional_key: command.rest.legacy-task.verification-signal-acceptance, title: 'REST complete verification; complete_verification_endpoint; ACTIVITY_VERIFIED signal acceptance', status: active, canonical_id: CMD-44}
+- {namespace: CMD, provisional_key: command.rest.legacy-checklist.update, title: 'REST checklist update; update_checklist_item; synchronous checklist mutation', status: active, canonical_id: CMD-45}
+- {namespace: CMD, provisional_key: command.rest.legacy-checklist.grade, title: 'REST grade update; set_grade; synchronous grade mutation', status: active, canonical_id: CMD-46}
+- {namespace: CMD, provisional_key: command.rest.clarification.create, title: 'REST clarification creation; create_clarification; synchronous request creation', status: active, canonical_id: CMD-47}
+- {namespace: CMD, provisional_key: command.rest.requirement.escalate, title: 'REST requirement escalation; escalate_requirement; synchronous escalation', status: active, canonical_id: CMD-48}
+- {namespace: CMD, provisional_key: command.rest.review-file.revert, title: 'REST review file revert; revert_file_endpoint; synchronous git commit', status: active, canonical_id: CMD-49}
+- {namespace: CMD, provisional_key: command.mcp.legacy-checklist.update, title: 'Public MCP update checklist; ToolHandler._update_checklist', status: active, canonical_id: CMD-50}
+- {namespace: CMD, provisional_key: command.mcp.legacy-task.submit, title: 'Public MCP submit; ToolHandler._submit', status: active, canonical_id: CMD-51}
+- {namespace: CMD, provisional_key: command.mcp.legacy-checklist.grade, title: 'Public MCP set grade; ToolHandler._set_grade', status: active, canonical_id: CMD-52}
+- {namespace: CMD, provisional_key: command.mcp.clarification.create, title: 'Public MCP request clarification; ToolHandler._request_clarification', status: active, canonical_id: CMD-53}
+- {namespace: CMD, provisional_key: command.mcp.requirement.escalate, title: 'Public MCP escalate requirement; ToolHandler._escalate_requirement', status: active, canonical_id: CMD-54}
+- {namespace: CMD, provisional_key: command.cli.database.restore-backup, title: 'Local CLI db restore-backup; restore_backup_cmd', status: active, canonical_id: CMD-55}
+- {namespace: CMD, provisional_key: command.cli.database.rebuild-projections, title: 'Local CLI db rebuild-projections; rebuild_projections_cmd', status: active, canonical_id: CMD-56}
 - namespace: EVD
   provisional_key: EVI-900
   title: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions
@@ -2717,6 +2757,81 @@ items:
   canonical_id: EVD-113
   provisional_key: EVD-113
   title: Phase 1 snapshot coverage attestation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-114
+  provisional_key: evidence.implementation.cli.database.restore-backup
+  title: restore_backup_cmd implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-115
+  provisional_key: evidence.implementation.cli.database.rebuild-projections
+  title: rebuild_projections_cmd implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-116
+  provisional_key: evidence.implementation.workflow.requirement-escalation
+  title: WorkflowEngine.escalate_requirement implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-117
+  provisional_key: evidence.implementation.rest.task-start
+  title: REST task start implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-118
+  provisional_key: evidence.test.rest.task-start
+  title: REST task start test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-119
+  provisional_key: evidence.implementation.rest.checklist-update
+  title: REST checklist update implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-120
+  provisional_key: evidence.test.rest.checklist-update
+  title: REST checklist update test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-121
+  provisional_key: evidence.implementation.rest.grade-update
+  title: REST grade update implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-122
+  provisional_key: evidence.test.rest.grade-update
+  title: REST grade update test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-123
+  provisional_key: evidence.implementation.mcp.checklist-registration
+  title: MCP checklist registration implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-124
+  provisional_key: evidence.implementation.mcp.checklist-handler
+  title: MCP checklist handler implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-125
+  provisional_key: evidence.test.mcp.checklist-update
+  title: MCP checklist update test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-126
+  provisional_key: evidence.implementation.mcp.grade-registration
+  title: MCP grade registration implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-127
+  provisional_key: evidence.implementation.mcp.grade-handler
+  title: MCP grade handler implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-128
+  provisional_key: evidence.test.mcp.grade-update
+  title: MCP grade update test
   status: active
 - namespace: DRV
   provisional_key: last-event-age

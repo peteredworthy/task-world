@@ -1,0 +1,61 @@
+id: ACT-81
+implementation_status: present
+capability_status: unknown
+executable: true
+command_id: CMD-51
+actor: public MCP caller
+permission_requirements: [PER-1, PER-5, PER-3]
+preconditions: [tool is exposed by scope, task submission eligible]
+expected_source_version: 'None'
+required_input: {run_id: required, task_id: required}
+validation: [scope-exposure, handler-and-submission-gates]
+durable_effect: Calls submit_for_verification synchronously through ToolHandler and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead returns a no-op success.
+resulting_state_id: STA-10
+failure_modes: [tool unavailable, handler error, gate failure]
+stale_state_behavior: Handler applies current task state.
+idempotency: State-validated by submit handling.
+retry_behavior: Correct gates then re-invoke if exposed.
+reversibility: No direct undo of accepted submission.
+audit_evidence_ids: [EVD-110]
+transition: {from_state_id: STA-9, to_state_id: STA-10}
+enforced_authentication: optional JWT
+enforced_authorization: absent
+domain_eligibility: PER-5 scoped exposure plus PER-3 task eligibility
+proposed_role_policy: null
+conflict_ids: []
+question_ids: [Q-5]
+test_status: unexercised
+documentation_status: documented
+epistemic_status: observed
+status_basis:
+  implementation: 'ACT-81 implementation status present: ACT-81 Calls submit_for_verification synchronously
+    through ToolHandler and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
+    returns a no-op success. is present: SER rows SER-0471, SER-0478 inspect src/orchestrator/api/mcp/server.py::orchestrator_submit,
+    src/orchestrator/api/mcp/tools.py::ToolHandler._submit and establish the record proposition under
+    EVD-110.'
+  test: 'ACT-81 test status unexercised: ACT-81 Calls submit_for_verification synchronously through ToolHandler
+    and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead returns a no-op
+    success. remains unexercised: bounded SER rows SER-0491 cover tests/integration/test_mcp_server.py::test_full_workflow_through_mcp_server
+    but do not assert the complete record proposition.'
+  documentation: 'ACT-81 documentation status documented: ACT-81 Calls submit_for_verification synchronously
+    through ToolHandler and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
+    returns a no-op success. is documented at reality/actions/act-81-task-submit-mcp.yaml and by EVD-110;
+    any listed question (Q-5 (open: Define product-role authorization before treating actor text as authority))
+    is explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
+  capability: 'ACT-81 capability status unknown: ACT-81 Calls submit_for_verification synchronously through
+    ToolHandler and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead returns
+    a no-op success. remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-110
+    establishes the record carrier but no relevant CAP authority classifies this record as current or
+    derived.'
+  epistemic: 'ACT-81 epistemic status observed: ACT-81 Calls submit_for_verification synchronously through
+    ToolHandler and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead returns
+    a no-op success. is observed from direct/audit authority EVD-110 (EVD-110 (test: tests/integration/test_idempotency.py)),
+    qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
+implementation_locators:
+- src/orchestrator/api/mcp/tools.py::ToolHandler._submit
+- src/orchestrator/api/mcp/server.py::orchestrator_submit
+- src/orchestrator/api/mcp/tools.py::ToolHandler._submit
+- src/orchestrator/api/mcp/server.py::orchestrator_submit
+test_locators: []
+bounded_test_locators:
+- tests/integration/test_mcp_server.py::test_full_workflow_through_mcp_server

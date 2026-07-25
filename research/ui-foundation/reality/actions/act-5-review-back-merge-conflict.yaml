@@ -40,11 +40,22 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-5 leaves a review back-merge conflict in progress.
-  test: 'Admitted proving exact test locator(s): tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status'
-  documentation: ACT-5 conflict outcome is documented.
-  capability: One exercised variant does not prove all merge policy.
-  epistemic: ACT-5 is observed by EVD-29.
+  implementation: 'ACT-5 implementation status present: ACT-5 Leaves review back-merge conflict in progress.
+    is present: SER rows SER-0080 inspect src/orchestrator/api/routers/runs.py::back_merge_endpoint and
+    establish the record proposition under EVD-29.'
+  test: 'ACT-5 test status exercised: ACT-5 Leaves review back-merge conflict in progress. is exercised
+    because admitted SER rows SER-0081 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status;
+    no active rejected locator defeats that proof.'
+  documentation: 'ACT-5 documentation status documented: ACT-5 Leaves review back-merge conflict in progress.
+    is documented at reality/actions/act-5-review-back-merge-conflict.yaml and by EVD-29; any listed question
+    (no canonical unresolved conflict or question) is explicitly disclosed and does not create contradictory
+    documentation for this bounded proposition.'
+  capability: 'ACT-5 capability status unknown: ACT-5 Leaves review back-merge conflict in progress. remains
+    unknown as a user capability: no CAP implementation_carrier_binding; EVD-29 establishes the record
+    carrier but no relevant CAP authority classifies this record as current or derived.'
+  epistemic: 'ACT-5 epistemic status observed: ACT-5 Leaves review back-merge conflict in progress. is
+    observed from direct/audit authority EVD-29 (EVD-29 (audit-report: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects)),
+    with no canonical conflict/question qualification; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/runs.py::back_merge_endpoint
 test_locators:
