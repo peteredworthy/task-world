@@ -658,6 +658,7 @@ class StatusEvidenceLocatorReview(BaseModel):
     reviewer: str = Field(min_length=1)
     reviewed_at: str = Field(min_length=1)
     admission: Literal["admitted", "bounded", "rejected"]
+    covered_clause_ids: list[str] = []
 
 
 class StatusEvidenceDimensionReview(BaseModel):
@@ -710,6 +711,25 @@ class StatusEvidenceDimensionReview(BaseModel):
     rationale: str = Field(min_length=1)
     reviewer: str = Field(min_length=1)
     reviewed_at: str = Field(min_length=1)
+    required_clause_ids: list[str] = []
+    clauses: dict[str, str] = {}
+    documentation_evidence_ids: list[str] = []
+    freshness_state: Literal["current", "stale", "unknown"] | None = None
+    freshness_boundary: str = ""
+    evidence_age: str = ""
+    missing_documentation_boundary: str = ""
+    contradiction_clauses: dict[str, str] = {}
+    unresolved_issue_ids: list[str] = []
+    absence_evidence_ids: list[str] = []
+    authority_ids: list[str] = []
+    gap_contract_ids: list[str] = []
+    unresolved_boundary: str = ""
+    observation_evidence_ids: list[str] = []
+    derivation_contract_ids: list[str] = []
+    inference_rule: str = ""
+    inference_evidence_ids: list[str] = []
+    assertion_evidence_ids: list[str] = []
+    proposal_authority_ids: list[str] = []
 
 
 class StatusEvidenceReviewCatalog(BaseModel):
@@ -2980,9 +3000,11 @@ def _phase_two_status_projection(items: list[dict[str, JsonValue]]) -> str:
         "",
         f"Phase 2 is complete with {len(items)} one-to-one scope-demand classifications and {sum(counts.values())} projected claims.",
         "",
-        "Task15 in progress: SV-001 through SV-008 adjudicated; the exact-evidence projection is "
-        "REL 23/12, STA 67/5, ACT 58/13, EVI 5/4, and INV 6/0 exercised/unexercised with "
-        "113 unique exact pytest locators. Independent re-review remains pending.",
+        "Task15 remains IN PROGRESS pending independent review. The current semantic-clause "
+        "projection covers 210 records (35 REL, 74 STA, 86 ACT, 9 EVI, 6 INV), with 139 exact "
+        "and 49 bounded test locators in a 118-node collected manifest under "
+        "snapshot-2026-07-25-task-15-semantic-clauses. Test distributions are REL 13/22, "
+        "STA 57/17, ACT 57/29, EVI 2/7, and INV 6/0 exercised/unexercised; 62 actions retain Q-5.",
         "",
     ]
     for status in CAPABILITY_STATUSES:
@@ -3505,16 +3527,23 @@ def _validate_status_evidence_reviews(
         if isinstance(conflicts_document, dict)
         else {}
     )
-    questions_document = package.documents.get("catalog/questions.yaml")
-    questions = (
+    registry = package.documents.get("capabilities/registry.yaml")
+    capability_statuses = (
         {
-            item.get("id"): item
-            for item in questions_document.get("items", [])
+            item.get("id"): item.get("capability_status")
+            for item in registry.get("items", [])
             if isinstance(item, dict) and isinstance(item.get("id"), str)
         }
-        if isinstance(questions_document, dict)
+        if isinstance(registry, dict)
         else {}
     )
+    derivation_ids = {
+        value.get("id")
+        for relative, value in package.documents.items()
+        if relative.startswith("capabilities/derivations/")
+        and isinstance(value, dict)
+        and isinstance(value.get("id"), str)
+    }
     for summary in catalog.dimension_reviews:
         key = (summary.record_id, summary.dimension)
         if summary.record_id not in records:
@@ -3624,9 +3653,57 @@ def _validate_status_evidence_reviews(
                 row_by_id[value] for value in summary.rejected_locators if value in row_by_id
             ]
             if dimension == "test":
+                required_clauses = summary.required_clause_ids
+                required_clause_set = set(required_clauses)
+                clauses_are_complete = (
+                    _nonempty_string_list(required_clauses)
+                    and len(required_clauses) == len(required_clause_set)
+                    and set(summary.clauses) == required_clause_set
+                    and all(value.strip() for value in summary.clauses.values())
+                )
+                all_row_clauses_are_known = all(
+                    set(row.covered_clause_ids) <= required_clause_set for row in rows
+                )
+                admitted_coverage = (
+                    set().union(*(set(row.covered_clause_ids) for row in admitted))
+                    if admitted
+                    else set()
+                )
+                partial_coverages = [
+                    set(row.covered_clause_ids)
+                    for row in admitted
+                    if row.verdict == "partially-proves"
+                ]
+                partials_are_complementary = all(
+                    left and right and not left.intersection(right)
+                    for index, left in enumerate(partial_coverages)
+                    for right in partial_coverages[index + 1 :]
+                )
+                if (
+                    not clauses_are_complete
+                    or not all_row_clauses_are_known
+                    or not partials_are_complementary
+                    or any(
+                        row.locator in _string_list(record.get("bounded_test_locators"))
+                        for row in admitted
+                    )
+                    or (
+                        summary.combined_verdict == "proves"
+                        and admitted_coverage != required_clause_set
+                    )
+                    or (
+                        summary.combined_verdict == "unexercised"
+                        and admitted_coverage == required_clause_set
+                    )
+                ):
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_CLAUSE_COVERAGE_INVALID", location, identifier)
+                    )
                 admitted_proving = [row for row in admitted if row.verdict == "proves"]
-                admitted_composition_proves = admitted_proving or (
-                    len([row for row in admitted if row.verdict == "partially-proves"]) >= 2
+                admitted_composition_proves = bool(admitted_proving) or (
+                    len(partial_coverages) >= 2
+                    and partials_are_complementary
+                    and admitted_coverage == required_clause_set
                 )
                 active_rejected = [row for row in rejected if row.locator in expected_locators]
                 expected_status = (
@@ -3715,20 +3792,36 @@ def _validate_status_evidence_reviews(
                     and conflicts[conflict_id].get("status") == "unresolved"
                     and identifier in _string_list(conflicts[conflict_id].get("affected_ids"))
                     for conflict_id in summary.conflict_ids
-                ) or any(
-                    question_id in questions
-                    and questions[question_id].get("status") != "resolved"
-                    and identifier in _string_list(questions[question_id].get("affected_ids"))
-                    for question_id in summary.question_ids
                 )
-                documented = summary.combined_verdict == "proves" and bool(summary.evidence_ids)
-                conflicting = summary.combined_verdict == "contradicts" and unresolved_reciprocal
+                documentation_evidence_resolves = (
+                    bool(summary.documentation_evidence_ids)
+                    and set(summary.documentation_evidence_ids) <= evidence_ids
+                )
+                documented = (
+                    summary.combined_verdict == "proves"
+                    and documentation_evidence_resolves
+                    and summary.freshness_state == "current"
+                )
+                conflicting = (
+                    summary.combined_verdict == "contradicts"
+                    and bool(summary.contradiction_clauses)
+                    and unresolved_reciprocal
+                )
                 unknown = "unknown" in summary.boundary.casefold()
                 if not (
                     (summary.compatible_status == "documented" and documented)
                     or (summary.compatible_status == "conflicting" and conflicting)
                     or (summary.compatible_status == "unknown" and unknown)
-                    or summary.compatible_status in {"undocumented", "stale"}
+                    or (
+                        summary.compatible_status == "stale"
+                        and bool(summary.freshness_boundary.strip())
+                        and bool(summary.evidence_age.strip())
+                    )
+                    or (
+                        summary.compatible_status == "undocumented"
+                        and bool(summary.missing_documentation_boundary.strip())
+                        and not summary.documentation_evidence_ids
+                    )
                 ):
                     issues.append(
                         _issue("STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID", location, identifier)
@@ -3741,7 +3834,6 @@ def _validate_status_evidence_reviews(
                     "gap": "absent",
                     "unknown": "unknown",
                 }.get(summary.compatible_status)
-                registry = package.documents.get("capabilities/registry.yaml")
                 capability_records = registry.get("items", []) if isinstance(registry, dict) else []
                 linked_capability_authority = any(
                     isinstance(capability, dict)
@@ -3749,10 +3841,36 @@ def _validate_status_evidence_reviews(
                     and identifier in str(capability.get("implementation_carrier_bindings", []))
                     for capability in capability_records
                 )
-                if summary.combined_verdict != expected_verdict or (
-                    summary.compatible_status in {"current", "derived"}
-                    and not linked_capability_authority
-                ):
+                authority_statuses = [
+                    capability_statuses.get(value) for value in summary.authority_ids
+                ]
+                authority_ids_resolve = len(summary.authority_ids) == len(
+                    set(summary.authority_ids)
+                ) and all(status is not None for status in authority_statuses)
+                matching_authority = (
+                    bool(summary.authority_ids)
+                    and authority_ids_resolve
+                    and all(status == summary.compatible_status for status in authority_statuses)
+                )
+                valid_capability_status = summary.combined_verdict == expected_verdict and (
+                    summary.compatible_status in {"current", "derived", "proposed"}
+                    and matching_authority
+                    and (linked_capability_authority or summary.compatible_status == "proposed")
+                    or summary.compatible_status == "unknown"
+                    and bool(summary.unresolved_boundary.strip())
+                    and authority_ids_resolve
+                    and not any(
+                        status in {"current", "derived", "proposed"}
+                        for status in authority_statuses
+                    )
+                    or summary.compatible_status == "gap"
+                    and bool(summary.gap_contract_ids)
+                    and all(
+                        capability_statuses.get(value) == "gap"
+                        for value in summary.gap_contract_ids
+                    )
+                )
+                if not valid_capability_status:
                     issues.append(
                         _issue("STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID", location, identifier)
                     )
@@ -3761,19 +3879,38 @@ def _validate_status_evidence_reviews(
                     (
                         summary.compatible_status == "observed"
                         and summary.combined_verdict == "proves"
-                        and bool(summary.evidence_ids)
+                        and bool(summary.observation_evidence_ids)
+                        and set(summary.observation_evidence_ids) <= evidence_ids
+                    )
+                    or (
+                        summary.compatible_status == "deterministically-derived"
+                        and summary.combined_verdict == "proves"
+                        and bool(summary.derivation_contract_ids)
+                        and set(summary.derivation_contract_ids) <= derivation_ids
+                    )
+                    or (
+                        summary.compatible_status == "inferred"
+                        and summary.combined_verdict == "partially-proves"
+                        and bool(summary.inference_rule.strip())
+                        and bool(summary.inference_evidence_ids)
+                        and set(summary.inference_evidence_ids) <= evidence_ids
+                    )
+                    or (
+                        summary.compatible_status == "operator-asserted"
+                        and summary.combined_verdict == "proves"
+                        and bool(summary.assertion_evidence_ids)
+                        and set(summary.assertion_evidence_ids) <= evidence_ids
                     )
                     or (
                         summary.compatible_status == "proposed"
                         and summary.combined_verdict == "proposed"
-                        and bool(summary.evidence_ids)
+                        and bool(summary.proposal_authority_ids)
+                        and set(summary.proposal_authority_ids) <= evidence_ids
                     )
                     or (
                         summary.compatible_status == "unknown"
-                        and "unknown" in summary.boundary.casefold()
+                        and bool(summary.unresolved_boundary.strip())
                     )
-                    or summary.compatible_status
-                    in {"deterministically-derived", "inferred", "operator-asserted"}
                 )
                 if not valid:
                     issues.append(
@@ -4381,7 +4518,7 @@ def _validate_actions(
                 )
         elif action.get("implementation_status") == "absent":
             if (
-                action.get("capability_status") not in {"gap", "proposed"}
+                action.get("capability_status") not in {"gap", "proposed", "unknown"}
                 or action.get("executable") is not False
             ):
                 issues.append(
@@ -4391,7 +4528,12 @@ def _validate_actions(
                         "must be a non-executable gap or proposal",
                     )
                 )
-            for field in absent_fields:
+            required_absent_fields = (
+                tuple(field for field in absent_fields if field != "source_demand_ids")
+                if action.get("capability_status") == "unknown"
+                else absent_fields
+            )
+            for field in required_absent_fields:
                 if action.get(field) in (None, "", []):
                     issues.append(_issue("ABSENT_INTERVENTION_REQUIREMENT_MISSING", path, field))
             completed_fields = (

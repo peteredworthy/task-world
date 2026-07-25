@@ -2,7 +2,7 @@
 
 Phase 2 is complete with 132 one-to-one scope-demand classifications and 132 projected claims.
 
-Task15 in progress: SV-001 through SV-008 adjudicated; the exact-evidence projection is REL 23/12, STA 67/5, ACT 58/13, EVI 5/4, and INV 6/0 exercised/unexercised with 113 unique exact pytest locators. Independent re-review remains pending.
+Task15 remains IN PROGRESS pending independent review. The current semantic-clause projection covers 210 records (35 REL, 74 STA, 86 ACT, 9 EVI, 6 INV), with 139 exact and 49 bounded test locators in a 118-node collected manifest under snapshot-2026-07-25-task-15-semantic-clauses. Test distributions are REL 13/22, STA 57/17, ACT 57/29, EVI 2/7, and INV 6/0 exercised/unexercised; 62 actions retain Q-5.
 
 - **current (1)**: `CAP-69`
 - **derived (0)**: none

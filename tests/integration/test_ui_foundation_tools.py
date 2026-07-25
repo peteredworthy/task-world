@@ -573,12 +573,262 @@ def test_status_evidence_reviews_rejects_false_conflict_promotion_and_epistemic_
         if item["record_id"] == "REL-1" and item["dimension"] == "epistemic"
     )
     epistemic["evidence_ids"] = []
+    epistemic["observation_evidence_ids"] = []
     write_status_review_catalog(root, catalog)
 
     codes = validate_status_reviews(root)
 
     assert "STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID" in codes
     assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_overlapping_partial_clause_coverage(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    reviews = catalog["reviews"]
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(reviews, list) and isinstance(summaries, list)
+    summary = next(
+        value
+        for value in summaries
+        if value["dimension"] == "test"
+        and value["compatible_status"] == "exercised"
+        and len(value["admitted_locators"]) >= 2
+    )
+    first, second = (
+        next(value for value in reviews if value["review_id"] == review_id)
+        for review_id in summary["admitted_locators"][:2]
+    )
+    assert isinstance(first["covered_clause_ids"], list)
+    second["covered_clause_ids"] = list(first["covered_clause_ids"])
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_CLAUSE_COVERAGE_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_missing_required_test_clause(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(
+        value
+        for value in summaries
+        if value["dimension"] == "test" and value["compatible_status"] == "exercised"
+    )
+    assert isinstance(summary["required_clause_ids"], list)
+    summary["required_clause_ids"] = summary["required_clause_ids"] + ["missing-required-clause"]
+    summary["clauses"]["missing-required-clause"] = "A required clause without admitted evidence."
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_CLAUSE_COVERAGE_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_bounded_test_clause_counted_as_exercised(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    reviews = catalog["reviews"]
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(reviews, list) and isinstance(summaries, list)
+    summary = next(
+        value
+        for value in summaries
+        if value["dimension"] == "test"
+        and value["compatible_status"] == "unexercised"
+        and value["bounded_locators"]
+    )
+    bounded = next(
+        value for value in reviews if value["review_id"] == summary["bounded_locators"][0]
+    )
+    summary["admitted_locators"].append(bounded["review_id"])
+    summary["bounded_locators"].remove(bounded["review_id"])
+    bounded["admission"] = "admitted"
+    bounded["verdict"] = "proves"
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_CLAUSE_COVERAGE_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_open_question_as_documentation_contradiction(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(value for value in summaries if value["dimension"] == "documentation")
+    summary["compatible_status"] = "conflicting"
+    summary["combined_verdict"] = "contradicts"
+    summary["contradiction_clauses"] = {"Q-5": "A question is not contradictory authority."}
+    summary["conflict_ids"] = []
+    summary["question_ids"] = ["Q-5"]
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_documented_without_current_evidence(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(
+        value
+        for value in summaries
+        if value["dimension"] == "documentation" and value["compatible_status"] == "documented"
+    )
+    summary["freshness_state"] = "stale"
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_stale_without_freshness_boundary_and_age(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(value for value in summaries if value["dimension"] == "documentation")
+    summary["compatible_status"] = "stale"
+    summary["freshness_boundary"] = ""
+    summary["evidence_age"] = ""
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_undocumented_without_missing_boundary(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(value for value in summaries if value["dimension"] == "documentation")
+    summary["compatible_status"] = "undocumented"
+    summary["documentation_evidence_ids"] = []
+    summary["missing_documentation_boundary"] = ""
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_DOCUMENTATION_STATUS_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_capability_unknown_without_boundary(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(
+        value
+        for value in summaries
+        if value["dimension"] == "capability" and value["compatible_status"] == "unknown"
+    )
+    summary["unresolved_boundary"] = ""
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_capability_gap_without_resolving_authority(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(
+        value
+        for value in summaries
+        if value["dimension"] == "capability" and value["compatible_status"] == "gap"
+    )
+    summary["gap_contract_ids"] = []
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_CAPABILITY_STATUS_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_observed_without_observation_evidence(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    summary = next(value for value in summaries if value["dimension"] == "epistemic")
+    summary["observation_evidence_ids"] = []
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in codes
+
+
+def test_status_evidence_reviews_rejects_derived_inferred_and_operator_statuses_without_proof(
+    tmp_path: Path,
+) -> None:
+    for status, verdict in (
+        ("deterministically-derived", "proves"),
+        ("inferred", "partially-proves"),
+        ("operator-asserted", "proves"),
+    ):
+        root = copy_foundation_with_source(tmp_path / status)
+        catalog = status_review_catalog(root)
+        summaries = catalog["dimension_reviews"]
+        assert isinstance(summaries, list)
+        summary = next(value for value in summaries if value["dimension"] == "epistemic")
+        summary["compatible_status"] = status
+        summary["combined_verdict"] = verdict
+        summary["derivation_contract_ids"] = []
+        summary["inference_rule"] = ""
+        summary["inference_evidence_ids"] = []
+        summary["assertion_evidence_ids"] = []
+        write_status_review_catalog(root, catalog)
+
+        codes = validate_status_reviews(root)
+
+        assert "STATUS_EVIDENCE_EPISTEMIC_STATUS_INVALID" in codes
+
+
+def test_absent_unknown_action_does_not_require_unallocated_gap_demand(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    action = yaml.safe_load(
+        (root / "reality/actions/act-58-agent-test-fix-job-gap.yaml").read_text(encoding="utf-8")
+    )
+    assert action["capability_status"] == "unknown"
+    assert action["source_demand_ids"] == []
+
+    result = run_validator(root)
+
+    assert "ABSENT_INTERVENTION_INVALID" not in issue_codes(result)
+    assert "ABSENT_INTERVENTION_REQUIREMENT_MISSING" not in issue_codes(result)
 
 
 def test_status_scope_rejects_missing_record(tmp_path: Path) -> None:
@@ -829,7 +1079,7 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
     expected_test_statuses = {
         "REL": {"exercised": 13, "unexercised": 22},
         "STA": {"exercised": 57, "unexercised": 17},
-        "ACT": {"exercised": 58, "unexercised": 28},
+        "ACT": {"exercised": 57, "unexercised": 29},
         "EVI": {"exercised": 2, "unexercised": 7},
         "INV": {"exercised": 6},
     }
@@ -1998,11 +2248,12 @@ def test_task15_action_variants_encode_exact_eligibility_and_paused_no_op() -> N
         ("task", "STA-9", "STA-10", "state-change"),
         ("run", "STA-4", "STA-4", "accepted-no-op"),
     }
-    paused = next(value for value in submit if value["carrier"] == "run")
-    assert paused["eligibility_precondition"] == (
+    assert {value["eligibility_precondition"] for value in submit if value["carrier"] == "run"} == {
         "run status is exactly PAUSED and pause_reason is exactly "
-        "requirement_escalated or awaiting_clarification; task is not mutated"
-    )
+        "requirement_escalated; task is not mutated",
+        "run status is exactly PAUSED and pause_reason is exactly "
+        "awaiting_clarification; task is not mutated",
+    }
 
 
 def test_task15_escalation_evidence_separates_transports_from_engine() -> None:

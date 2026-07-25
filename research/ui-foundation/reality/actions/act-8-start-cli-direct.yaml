@@ -40,7 +40,7 @@ conflict_ids:
 question_ids:
 - Q-5
 test_status: unexercised
-documentation_status: conflicting
+documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: 'ACT-8 implementation status present: ACT-8 Start run through CLI direct path is present:
@@ -48,10 +48,10 @@ status_basis:
     under EVD-7, EVD-40.'
   test: 'ACT-8 test status unexercised: ACT-8 Start run through CLI direct path remains unexercised because
     no admitted exact test locator asserts its complete record proposition under EVD-7, EVD-40.'
-  documentation: 'ACT-8 documentation status conflicting: ACT-8 Start run through CLI direct path is conflicting
-    because reciprocal issue authority CON-6 (unresolved: Lifecycle REST acceptance differs from direct
-    CLI application); Q-5 (open: Define product-role authorization before treating actor text as authority)
-    names ACT-8 and remains unresolved; the conflict is supported by EVD-7, EVD-40, not prose alone.'
+  documentation: 'ACT-8 documentation status documented: ACT-8 Start run through CLI direct path is documented
+    at reality/actions/act-8-start-cli-direct.yaml and by EVD-7, EVD-40. CON-6 qualifies the separate REST
+    timing contract and Q-5 leaves product-role authorization unresolved; neither negates this bounded synchronous
+    CLI-start proposition.'
   capability: 'ACT-8 capability status unknown: ACT-8 Start run through CLI direct path remains unknown
     as a user capability: no CAP implementation_carrier_binding; EVD-7, EVD-40 establishes the record
     carrier but no relevant CAP authority classifies this record as current or derived.'

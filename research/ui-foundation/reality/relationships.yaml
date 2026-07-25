@@ -174,7 +174,7 @@ items:
   id: REL-4
   implementation_status: present
   test_status: unexercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   confidence: medium
   confidence_basis: Approved bounded-audit synthesis
@@ -197,10 +197,10 @@ items:
     test: 'REL-4 test status unexercised: REL-4 owns remains unexercised: bounded SER rows SER-0251, SER-0252
       cover tests/integration/test_database.py::test_cascade_delete, tests/integration/test_database.py::test_crud_with_steps_and_tasks
       but do not assert the complete record proposition.'
-    documentation: 'REL-4 documentation status conflicting: REL-4 owns is conflicting because reciprocal
-      issue authority CON-1 (unresolved: Attempt identity contracts conflict); Q-1 (open: Choose and migrate
-      canonical attempt identity) names REL-4 and remains unresolved; the conflict is supported by EVD-62,
-      EVD-51, not prose alone.'
+    documentation: 'REL-4 documentation status documented: REL-4 owns is documented at reality/relationships.yaml
+      and by EVD-62, EVD-51. CON-1 and Q-1 qualify the unresolved attempt identity and uniqueness boundary;
+      they do not negate the bounded task-to-attempt ownership proposition established by the non-null FK
+      and delete-orphan relationship.'
     capability: 'REL-4 capability status unknown: REL-4 owns remains unknown as a user capability: no CAP
       implementation_carrier_binding; EVD-62, EVD-51 establishes the record carrier but no relevant CAP
       authority classifies this record as current or derived.'
@@ -1313,10 +1313,10 @@ items:
       the record proposition under EVD-62, EVD-51.'
     test: 'REL-26 test status unexercised: REL-26 optional primary key reference remains unexercised because
       no admitted exact test locator asserts its complete record proposition under EVD-62, EVD-51.'
-    documentation: 'REL-26 documentation status conflicting: REL-26 optional primary key reference is conflicting
-      because reciprocal issue authority CON-1 (unresolved: Attempt identity contracts conflict); Q-1 (open:
-      Choose and migrate canonical attempt identity) names REL-26 and remains unresolved; the conflict is
-      supported by EVD-62, EVD-51, not prose alone.'
+    documentation: 'REL-26 documentation status conflicting: CON-1 supplies opposing persisted attempt-identity
+      claims that directly affect which primary key this optional reference denotes, supported by EVD-62
+      and EVD-51. Q-1 remains an open settlement question and qualifies the unresolved migration boundary;
+      it is not itself a contradiction.'
     capability: 'REL-26 capability status unknown: REL-26 optional primary key reference remains unknown
       as a user capability: no CAP implementation_carrier_binding; EVD-62, EVD-51 establishes the record
       carrier but no relevant CAP authority classifies this record as current or derived.'
@@ -1463,10 +1463,10 @@ items:
       and establish the record proposition under EVD-62, EVD-51.'
     test: 'REL-29 test status unexercised: REL-29 optional primary key reference remains unexercised because
       no admitted exact test locator asserts its complete record proposition under EVD-62, EVD-51.'
-    documentation: 'REL-29 documentation status conflicting: REL-29 optional primary key reference is conflicting
-      because reciprocal issue authority CON-1 (unresolved: Attempt identity contracts conflict); Q-1 (open:
-      Choose and migrate canonical attempt identity) names REL-29 and remains unresolved; the conflict is
-      supported by EVD-62, EVD-51, not prose alone.'
+    documentation: 'REL-29 documentation status conflicting: CON-1 supplies opposing persisted attempt-identity
+      claims that directly affect which primary key this optional reference denotes, supported by EVD-62
+      and EVD-51. Q-1 remains an open settlement question and qualifies the unresolved migration boundary;
+      it is not itself a contradiction.'
     capability: 'REL-29 capability status unknown: REL-29 optional primary key reference remains unknown
       as a user capability: no CAP implementation_carrier_binding; EVD-62, EVD-51 establishes the record
       carrier but no relevant CAP authority classifies this record as current or derived.'
@@ -1783,11 +1783,10 @@ items:
     test: 'REL-35 test status exercised: REL-35 conditionally imports into is exercised because admitted
       SER rows SER-0248 contain direct assertions at tests/integration/test_jsonl_rotation_recovery.py::test_bootstrap_replays_archives_and_active_in_global_position_order;
       no active rejected locator defeats that proof.'
-    documentation: 'REL-35 documentation status conflicting: REL-35 conditionally imports into is conflicting
-      because reciprocal issue authority CON-2 (unresolved: SQL and JSONL normal-authority descriptions
-      conflict); Q-3 (open: Reconcile JSONL authority documentation with executable SQL authority); Q-4
-      (open: Define a live-WAL-safe backup and replay contract) names REL-35 and remains unresolved; the
-      conflict is supported by EVD-55, EVD-67, EVD-51, not prose alone.'
+    documentation: 'REL-35 documentation status conflicting: CON-2 supplies opposing SQL-first and JSONL-first
+      normal-write authority claims that directly affect the conditional import proposition, supported by
+      EVD-55, EVD-67, and EVD-51. Q-3 and Q-4 remain open settlement questions that qualify authority reconciliation
+      and live-WAL-safe replay; they are not themselves contradictions.'
     capability: 'REL-35 capability status unknown: REL-35 conditionally imports into remains unknown as
       a user capability: no CAP implementation_carrier_binding; EVD-55, EVD-67, EVD-51 establishes the record
       carrier but no relevant CAP authority classifies this record as current or derived.'

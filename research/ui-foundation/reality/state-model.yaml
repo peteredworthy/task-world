@@ -8,7 +8,7 @@ items:
   definition: Persisted legacy run before start.
   implementation_status: present
   test_status: exercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -30,9 +30,9 @@ items:
     test: 'STA-1 test status exercised: STA-1 Legacy run draft is exercised because admitted SER rows SER-0268
       contain direct assertions at tests/integration/test_signal_queue.py::test_run_start_signal_consumed_draft_to_active;
       no active rejected locator defeats that proof.'
-    documentation: 'STA-1 documentation status conflicting: STA-1 Legacy run draft is conflicting because
-      reciprocal issue authority CON-6 (unresolved: Lifecycle REST acceptance differs from direct CLI application)
-      names STA-1 and remains unresolved; the conflict is supported by EVD-7, not prose alone.'
+    documentation: 'STA-1 documentation status documented: STA-1 Legacy run draft is documented at reality/state-model.yaml
+      and by EVD-7. CON-6 qualifies transport-specific start timing; it does not negate the bounded persisted
+      draft-row proposition.'
     capability: 'STA-1 capability status unknown: STA-1 Legacy run draft remains unknown as a user capability:
       CAP-26=unknown as state-input; EVD-7 establishes the record carrier but no relevant CAP authority
       classifies this record as current or derived.'
@@ -50,7 +50,7 @@ items:
   definition: Persisted row-level active control state.
   implementation_status: present
   test_status: exercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -72,9 +72,9 @@ items:
     test: 'STA-2 test status exercised: STA-2 Legacy run active is exercised because admitted SER rows SER-0299
       contain direct assertions at tests/integration/test_signal_queue.py::test_run_start_signal_consumed_draft_to_active;
       no active rejected locator defeats that proof.'
-    documentation: 'STA-2 documentation status conflicting: STA-2 Legacy run active is conflicting because
-      reciprocal issue authority CON-6 (unresolved: Lifecycle REST acceptance differs from direct CLI application)
-      names STA-2 and remains unresolved; the conflict is supported by EVD-7, not prose alone.'
+    documentation: 'STA-2 documentation status documented: STA-2 Legacy run active is documented at reality/state-model.yaml
+      and by EVD-7. CON-6 qualifies transport-specific start timing; it does not negate the bounded persisted
+      active-row proposition.'
     capability: 'STA-2 capability status unknown: STA-2 Legacy run active remains unknown as a user capability:
       CAP-1=gap as state-input; CAP-2=unknown as state-input; CAP-8=unknown as state-input; CAP-26=unknown
       as state-input; CAP-89=unknown as state-input; CAP-105=unknown as state-input; CAP-106=gap as state-input;
@@ -94,7 +94,7 @@ items:
   definition: Visible row-level pause-request intermediate.
   implementation_status: present
   test_status: exercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -115,9 +115,9 @@ items:
     test: 'STA-3 test status exercised: STA-3 Legacy run stopping is exercised because admitted SER rows
       SER-0329 contain direct assertions at tests/integration/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused;
       no active rejected locator defeats that proof.'
-    documentation: 'STA-3 documentation status conflicting: STA-3 Legacy run stopping is conflicting because
-      reciprocal issue authority CON-7 (unresolved: Stopping-row cancellation acceptance is inconsistent)
-      names STA-3 and remains unresolved; the conflict is supported by EVD-8, not prose alone.'
+    documentation: 'STA-3 documentation status documented: STA-3 Legacy run stopping is documented at reality/state-model.yaml
+      and by EVD-8. CON-7 qualifies cancellation eligibility from this state; it does not negate the bounded
+      pause-request intermediate proposition.'
     capability: 'STA-3 capability status unknown: STA-3 Legacy run stopping remains unknown as a user capability:
       CAP-11=unknown as state-input; CAP-26=unknown as state-input; CAP-89=unknown as state-input; CAP-105=unknown
       as state-input; CAP-106=gap as state-input; EVD-8 establishes the record carrier but no relevant CAP
@@ -215,7 +215,7 @@ items:
   definition: Failed legacy run row status.
   implementation_status: present
   test_status: exercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -238,10 +238,9 @@ items:
     test: 'STA-6 test status exercised: STA-6 Legacy run failed is exercised because admitted SER rows SER-0414
       contain direct assertions at tests/unit/test_workflow_engine.py::test_run_auto_fails_when_task_fails;
       no active rejected locator defeats that proof.'
-    documentation: 'STA-6 documentation status conflicting: STA-6 Legacy run failed is conflicting because
-      reciprocal issue authority CON-3 (unresolved: Failed terminality is mode-qualified); CON-7 (unresolved:
-      Stopping-row cancellation acceptance is inconsistent) names STA-6 and remains unresolved; the conflict
-      is supported by EVD-10, not prose alone.'
+    documentation: 'STA-6 documentation status documented: STA-6 Legacy run failed is documented at reality/state-model.yaml
+      and by EVD-10. CON-3 qualifies failed-state terminality by execution mode and CON-7 qualifies stopping-row
+      cancellation; neither negates the bounded failed legacy-row proposition.'
     capability: 'STA-6 capability status unknown: STA-6 Legacy run failed remains unknown as a user capability:
       CAP-37=unknown as state-input; CAP-62=unknown as state-input; EVD-10 establishes the record carrier
       but no relevant CAP authority classifies this record as current or derived.'
@@ -938,7 +937,7 @@ items:
   definition: Graph-local failed state with a qualified reopen path.
   implementation_status: present
   test_status: exercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
   confidence: high
@@ -960,9 +959,9 @@ items:
     test: 'STA-24 test status exercised: STA-24 Graph run failed is exercised because admitted SER rows
       SER-0314 contain direct assertions at tests/unit/test_graph_commands.py::test_lifecycle_legal_transitions;
       no active rejected locator defeats that proof.'
-    documentation: 'STA-24 documentation status conflicting: STA-24 Graph run failed is conflicting because
-      reciprocal issue authority CON-3 (unresolved: Failed terminality is mode-qualified) names STA-24 and
-      remains unresolved; the conflict is supported by EVD-22, not prose alone.'
+    documentation: 'STA-24 documentation status documented: STA-24 Graph run failed is documented at reality/state-model.yaml
+      and by EVD-22. CON-3 qualifies failed-state terminality by execution mode and is consistent with this
+      record''s explicit graph-local reopen boundary; it does not negate the bounded proposition.'
     capability: 'STA-24 capability status unknown: STA-24 Graph run failed remains unknown as a user capability:
       CAP-37=unknown as state-input; CAP-62=unknown as state-input; CAP-105=unknown as state-input; CAP-110=gap
       as state-input; EVD-22 establishes the record carrier but no relevant CAP authority classifies this

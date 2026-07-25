@@ -100,5 +100,29 @@ entries:
   parent_snapshot_id: snapshot-2026-07-25-task-15-test-final
   snapshot_digest: 379f47438708d938e761d4deff91ddc15bc1299693158b754cd610526dfb97ec
   predecessor_lineage_digest: a1e36f0888d3b9c5488b5650ddaf8afe80f8d07a20472898d97403b01ad4f025
+  status: historical
+  lineage_entry_digest: 08f8e99fb9e981b09228b17a592b4954533043485608a8a85d00837342f03377
+- snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses
+  parent_snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
+  snapshot_digest: c516535a9c212bcfb7ffdd6397a3eb8e73b4188add8e37046bae31e8b4a3a78c
+  predecessor_lineage_digest: 08f8e99fb9e981b09228b17a592b4954533043485608a8a85d00837342f03377
+  status: historical
+  lineage_entry_digest: 18d100de6e7ee41b335427f72015dea73594a612199ba8046f3d415cffeee379
+- snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-final
+  parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses
+  snapshot_digest: 55a9bedd991ba7415ab4d6439bc7517f801dd4ba0976a2f5cfcd9837f721f7d7
+  predecessor_lineage_digest: 18d100de6e7ee41b335427f72015dea73594a612199ba8046f3d415cffeee379
+  status: historical
+  lineage_entry_digest: 0a90bcb75056115317d2dc3b97e55e8be2d146da2531a923f9ef8c2a18f48088
+- snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-verified
+  parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-final
+  snapshot_digest: 4dccce95c8748be4e23d19a1f25150e54f60c4360538a495f48858424e2cf933
+  predecessor_lineage_digest: 0a90bcb75056115317d2dc3b97e55e8be2d146da2531a923f9ef8c2a18f48088
+  status: historical
+  lineage_entry_digest: 452edb91b552475f51125f616fcbdfbed16b49f3cb38bf31518ecfdd4854adad
+- snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-hookfix
+  parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-verified
+  snapshot_digest: bf5436326574df12dd80141e7c97e3cf1c0612f7bf0d120ff228495826affb76
+  predecessor_lineage_digest: 452edb91b552475f51125f616fcbdfbed16b49f3cb38bf31518ecfdd4854adad
   status: active
-  lineage_entry_digest: b3bb8f806a2afa30492f0a43d55d7a429a5539487d30a449e554a51d59faa8e8
+  lineage_entry_digest: 4af68ca5e7cf5503bfc67ecf952e12c2f9b7b6301e9888fb885e8e0bcd469eaf

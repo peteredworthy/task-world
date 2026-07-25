@@ -53,6 +53,22 @@ unknown**. This earlier checkpoint adjudicated SV-001 and SV-002 only. Task 15
 remains **IN PROGRESS**; the follow-on adjudication handoff records SV-003
 through SV-006 without modifying the immutable verifier report.
 
+## Current Task 15 closure checkpoint (2026-07-25)
+
+This report's earlier SV-001/SV-002 counts are historical chronology. The current
+closure checkpoint covers 210 status-evidence records (35 REL, 74 STA, 86 ACT, 9
+EVI, 6 INV), with 513 SER and 1,050 SDR rows. It records 139 exact and 49 bounded
+test locators and a regenerated 118-node collection manifest under
+`snapshot-2026-07-25-task-15-semantic-clauses`. The exercised/unexercised results
+are REL 13/22, STA 57/17, ACT 57/29, EVI 2/7, INV 6/0; 62 actions retain Q-5.
+
+The fail-closed validator now requires clause-complete admitted test evidence,
+current documentation evidence or typed stale/undocumented boundaries, reciprocal
+unresolved CON authority for a documentation contradiction, status-matching
+capability authority, and typed epistemic proof. Task 15 remains **IN PROGRESS**
+until final independent review; this checkpoint does not alter Phase 1 or the
+immutable verifier report.
+
 ## Post-adjudication source refresh
 
 The graph projection readback fix refreshes the Phase 1 source snapshot for

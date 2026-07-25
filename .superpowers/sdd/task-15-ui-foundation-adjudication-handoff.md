@@ -4,7 +4,25 @@
 
 Record the canonical SV-008 adjudication correction while preserving Phase 1 immutability.
 
-## Scope inspected
+## Current completion update (2026-07-25)
+
+The current, superseding Task 15 projection covers exactly **210** records: 35 REL,
+74 STA, 86 ACT, 9 EVI, and 6 INV. It has 513 SER locator reviews, 1,050 SDR
+dimension reviews, and 455/50/8 admitted/bounded/rejected SER rows. The exact and
+bounded canonical test-locator counts are 139 and 49; the regenerated collected
+manifest contains 118 bases and concrete nodes. Test distributions are REL 13/22,
+STA 57/17, ACT 57/29, EVI 2/7, and INV 6/0 exercised/unexercised. 62 actions retain
+the Q-5 boundary. The active snapshot is
+`snapshot-2026-07-25-task-15-semantic-clauses`.
+
+The validator now rejects duplicate or incomplete partial-clause compositions,
+bounded evidence promoted as exercise, question-only documentation contradictions,
+stale or undocumented claims without their typed boundaries, unsupported capability
+authority, and epistemic classifications without their required proof. ACT-81's
+awaiting-clarification paused no-op remains explicitly unexercised. Phase 1 and the
+immutable verifier report remain untouched.
+
+## Historical scope inspected (superseded)
 
 The 35 REL, 72 active STA, 71 ACT, 9 EVI, and INV-2 through INV-7 records.
 `research/ui-foundation/catalog/status-scope.yaml` now enumerates all 193 records and their exact

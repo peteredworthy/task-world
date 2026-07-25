@@ -19,14 +19,15 @@ reversibility: No direct undo of accepted submission.
 audit_evidence_ids: [EVD-134, EVD-135, EVD-136]
 transition_variants:
 - {carrier: task, from_state_id: STA-9, to_state_id: STA-10, eligibility_precondition: 'task status is exactly BUILDING and submission gates pass', effect_kind: state-change, evidence_ids: [EVD-134, EVD-135]}
-- {carrier: run, from_state_id: STA-4, to_state_id: STA-4, eligibility_precondition: 'run status is exactly PAUSED and pause_reason is exactly requirement_escalated or awaiting_clarification; task is not mutated', effect_kind: accepted-no-op, evidence_ids: [EVD-134, EVD-136]}
+- {carrier: run, from_state_id: STA-4, to_state_id: STA-4, eligibility_precondition: 'run status is exactly PAUSED and pause_reason is exactly requirement_escalated; task is not mutated', effect_kind: accepted-no-op, evidence_ids: [EVD-134, EVD-136]}
+- {carrier: run, from_state_id: STA-4, to_state_id: STA-4, eligibility_precondition: 'run status is exactly PAUSED and pause_reason is exactly awaiting_clarification; task is not mutated', effect_kind: accepted-no-op, evidence_ids: [EVD-134]}
 enforced_authentication: optional JWT
 enforced_authorization: absent
 domain_eligibility: PER-5 scoped exposure plus PER-3 task eligibility
 proposed_role_policy: null
 conflict_ids: []
 question_ids: [Q-5]
-test_status: exercised
+test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
@@ -35,7 +36,7 @@ status_basis:
     returns a no-op success. is present: SER rows SER-0471, SER-0478 inspect src/orchestrator/api/mcp/server.py::orchestrator_submit,
     src/orchestrator/api/mcp/tools.py::ToolHandler._submit and establish the record proposition under
     EVD-134.'
-  test: 'ACT-81 test status exercised: SER-0491 proves BUILDING to VERIFYING and SER-0512 proves the exact PAUSED accepted no-op with unchanged task status under EVD-135, EVD-136.'
+  test: 'ACT-81 test status unexercised: bounded SER-0491 proves the normal BUILDING-to-VERIFYING clause and bounded SER-0512 proves only the requirement_escalated PAUSED no-op clause; no exact test proves the awaiting_clarification PAUSED no-op clause under EVD-135, EVD-136.'
   documentation: 'ACT-81 documentation status documented: ACT-81 Calls submit_for_verification synchronously
     through ToolHandler and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
     returns a no-op success. is documented at reality/actions/act-81-task-submit-mcp.yaml and by EVD-134, EVD-135, EVD-136;
@@ -53,7 +54,7 @@ status_basis:
 implementation_locators:
 - src/orchestrator/api/mcp/tools.py::ToolHandler._submit
 - src/orchestrator/api/mcp/server.py::orchestrator_submit
-test_locators:
+test_locators: []
+bounded_test_locators:
 - tests/integration/test_mcp_server.py::test_full_workflow_through_mcp_server
 - tests/integration/test_mcp_server.py::test_escalate_requirement_through_mcp_server
-bounded_test_locators: []

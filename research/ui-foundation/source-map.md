@@ -134,3 +134,4 @@
 | `rubric.derived-evidence-access` | `tests-documentation` | `EVD-68` | `found` |
 | `rubric.result-state-confirmation` | `tests-documentation` | `EVD-68` | `found` |
 | `rubric.viability-floor` | `tests-documentation` | `EVD-68` | `found` |
+| `task15.semantic-status-evidence` | `independent-semantic-evidence-reviewer` | `SER-0001..SER-0513`, `SDR-0001..SDR-1050` | current bounded 210-record projection |

@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
+active_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-hookfix
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -16644,3 +16644,45 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: b53408bbfc74d375fdad363f9b95cbef8a92ec46e0a6acef16f15d888ee68b86
     audited_at: '2026-07-25T12:00:00Z'
+- id: snapshot-2026-07-25-task-15-semantic-clauses
+  parent_snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
+  files:
+  - path: research/ui-foundation/reality/evidence/inventory.yaml
+    sha256: a4baf69c72624d8fd3cbd7d1ccc2ac196ffd8e89db50124b16568ba04052f27d
+    audited_at: '2026-07-25T13:00:00Z'
+  - path: research/ui-foundation/reality/state-model.yaml
+    sha256: d950d17fb76e4b66d50c37eee51fdd9b31fdae533e8239a8886e256509d15912
+    audited_at: '2026-07-25T13:00:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 5b9e44a44324bda8d21781ce7a44d97daddd4f37fdd3bedbefa9d0b31c51228a
+    audited_at: '2026-07-25T13:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: cf6c47ef4bbb05b6d00ad19dfa06cc4a8756ace297304193d0b0bd471274f0d6
+    audited_at: '2026-07-25T13:00:00Z'
+- id: snapshot-2026-07-25-task-15-semantic-clauses-final
+  parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: c0f5279bdcc19e8a459c616af8268fdbb238433696a91d9abce2506d6b61f4fc
+    audited_at: '2026-07-25T13:20:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 054e26fe3febba5b7f30df7bb7c9eaa5755f3b6aa6841e66ff46ad2b84e65bee
+    audited_at: '2026-07-25T13:20:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 6b3609e5ed80df1c29c3bb600f3c7b820d77165292aa9b4f719c2ddb757635d8
+    audited_at: '2026-07-25T13:20:00Z'
+- id: snapshot-2026-07-25-task-15-semantic-clauses-verified
+  parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-final
+  files:
+  - path: research/ui-foundation/tools/validate.py
+    sha256: e128efb543cd6d0d528e7b593af4af554d81cffecfdfd508fbdd6536282ff654
+    audited_at: '2026-07-25T13:30:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 8670a1f9faae650954c26a2c5917946d01241b64d22cbc84af9fa688c54305d2
+    audited_at: '2026-07-25T13:30:00Z'
+- id: snapshot-2026-07-25-task-15-semantic-clauses-hookfix
+  parent_snapshot_id: snapshot-2026-07-25-task-15-semantic-clauses-verified
+  files:
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 12a4d831303656e4f7e2c83b435307a35f3a4d41a0b738c2c7709e864689c718
+    audited_at: '2026-07-25T13:45:00Z'

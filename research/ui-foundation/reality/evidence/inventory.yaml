@@ -412,7 +412,7 @@ items:
   id: EVI-6
   implementation_status: partial
   test_status: unexercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
   confidence: medium
@@ -441,10 +441,9 @@ items:
       and establish the record proposition under EVD-83, EVD-84, EVD-85, EVD-86.'
     test: 'EVI-6 test status unexercised: EVI-6 artifact reference remains unexercised because no admitted
       exact test locator asserts its complete record proposition under EVD-83, EVD-84, EVD-85, EVD-86.'
-    documentation: 'EVI-6 documentation status conflicting: EVI-6 artifact reference is conflicting because
-      reciprocal issue authority CON-5 (unresolved: Artifact and telemetry coverage differs between graph
-      and legacy) names EVI-6 and remains unresolved; the conflict is supported by EVD-83, EVD-84, EVD-85,
-      EVD-86, not prose alone.'
+    documentation: 'EVI-6 documentation status documented: EVI-6 artifact reference is documented at reality/evidence/inventory.yaml
+      and by EVD-83, EVD-84, EVD-85, EVD-86. CON-5 qualifies the lack of a unified cross-carrier contract
+      and supports, rather than negates, this bounded carrier-specific identity proposition.'
     capability: 'EVI-6 capability status unknown: EVI-6 artifact reference remains unknown as a user capability:
       no CAP implementation_carrier_binding; EVD-83, EVD-84, EVD-85, EVD-86 establishes the record carrier
       but no relevant CAP authority classifies this record as current or derived.'
@@ -659,7 +658,7 @@ items:
   id: EVI-9
   implementation_status: partial
   test_status: unexercised
-  documentation_status: conflicting
+  documentation_status: documented
   capability_status: unknown
   epistemic_status: observed
   confidence: medium
@@ -690,9 +689,9 @@ items:
       SER-0161, SER-0162 cover tests/integration/test_cost_records.py::test_phase_handler_records_cost_and_interaction_logs_for_each_agent_execution,
       tests/integration/test_graph_usage_persistence.py::test_controller_persists_usage_event_and_replays_run_usage_read_model
       but do not assert the complete record proposition.'
-    documentation: 'EVI-9 documentation status conflicting: EVI-9 cost and usage fact is conflicting because
-      reciprocal issue authority CON-9 (unresolved: Price subtotals can be presented as totals) names EVI-9
-      and remains unresolved; the conflict is supported by EVD-92, EVD-93, EVD-94, EVD-95, not prose alone.'
+    documentation: 'EVI-9 documentation status documented: EVI-9 cost and usage fact is documented at reality/evidence/inventory.yaml
+      and by EVD-92, EVD-93, EVD-94, EVD-95. CON-9 qualifies completeness and presentation of priced totals;
+      it does not negate the bounded graph and legacy usage-identity proposition.'
     capability: 'EVI-9 capability status unknown: EVI-9 cost and usage fact remains unknown as a user capability:
       CAP-6=gap as graph-usage-rollup; CAP-47=gap as graph-usage-rollup; EVD-92, EVD-93, EVD-94, EVD-95
       establishes the record carrier but no relevant CAP authority classifies this record as current or

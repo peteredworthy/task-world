@@ -1,11 +1,10 @@
 id: ACT-58
 implementation_status: absent
-capability_status: gap
+capability_status: unknown
 executable: false
 required_outcome: A reachable agent-test-fix endpoint must dispatch a job and return
   durable job identity/status.
-source_demand_ids:
-- UIP-189
+source_demand_ids: []
 implementation_constraints:
 - Do not infer a backend command from the UI client path.
 required_evidence:
@@ -31,10 +30,10 @@ status_basis:
     dispatch a job and return durable job identity/status. is documented at reality/actions/act-58-agent-test-fix-job-gap.yaml
     and by EVD-53, EVD-68; any listed question (no canonical unresolved conflict or question) is explicitly
     disclosed and does not create contradictory documentation for this bounded proposition.'
-  capability: 'ACT-58 capability status gap: ACT-58 A reachable agent-test-fix endpoint must dispatch
-    a job and return durable job identity/status. is a user-capability gap: no CAP implementation_carrier_binding;
-    absence evidence EVD-53, EVD-68 identifies the missing reachable outcome rather than merely a low-level
-    carrier state.'
+  capability: 'ACT-58 capability status unknown: ACT-58 A reachable agent-test-fix endpoint must dispatch
+    a job and return durable job identity/status. remains unknown as a user capability: no CAP implementation_carrier_binding
+    and no allocated stable source-demand authority classifies the missing carrier as a user-capability gap;
+    UIP-189 is unallocated, so EVD-53 and EVD-68 prove implementation absence only.'
   epistemic: 'ACT-58 epistemic status observed: ACT-58 A reachable agent-test-fix endpoint must dispatch
     a job and return durable job identity/status. is observed from direct/audit authority EVD-53, EVD-68
     (EVD-53 (audit-report: research/ui-foundation/agent-reports/06-ui-projections.md#key-findings); EVD-68
