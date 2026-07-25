@@ -1,4 +1,10 @@
-"""Integration tests for WorktreeManager."""
+"""Integration tests for WorktreeManager.
+
+Real ``git worktree add`` (via ``manager.create``) dominates each test's
+cost, so related assertions that walk one manager through several states
+(list, cleanup) share created worktrees instead of paying for fresh ones
+per assertion.
+"""
 
 import json
 import shutil
@@ -37,6 +43,7 @@ def test_create_worktree(git_repo: tuple[Path, Path]) -> None:
 
     # Verify worktree uses short counter-based path (r1, r2, ...)
     assert wt.path == (worktrees / "r1").resolve()
+    assert wt.path.is_absolute()
     assert wt.branch == "orchestrator/run-test-run-1"
     assert len(wt.commit) == 40  # SHA is 40 chars
 
@@ -219,302 +226,108 @@ def test_delete_worktree_not_found(git_repo: tuple[Path, Path]) -> None:
     assert "nonexistent-run" in str(exc_info.value)
 
 
-def test_list_worktrees_empty(git_repo: tuple[Path, Path]) -> None:
-    """Test listing worktrees when none exist."""
+def test_list_worktrees_lifecycle(git_repo: tuple[Path, Path]) -> None:
+    """list() is empty initially, tracks each created worktree with a unique
+    branch, and filters out non-orchestrator worktrees."""
     repo, worktrees_dir = git_repo
     manager = WorktreeManager(repo, worktrees_dir)
 
-    worktrees = manager.list()
+    assert manager.list() == []
 
-    assert worktrees == []
+    wt1 = manager.create("test-run-9")
+    listed = manager.list()
+    assert len(listed) == 1
+    assert listed[0].path == wt1.path
+    assert listed[0].branch == wt1.branch
+    assert listed[0].commit == wt1.commit
 
+    wt2 = manager.create("test-run-10")
+    wt3 = manager.create("test-run-11")
+    listed = manager.list()
+    assert len(listed) == 3
+    assert {wt.path for wt in listed} == {wt1.path, wt2.path, wt3.path}
+    # Branches are unique per worktree and registered in the repo
+    assert len({wt1.branch, wt2.branch, wt3.branch}) == 3
+    branch_list = _git(["branch", "--list", "orchestrator/*"], cwd=repo)
+    assert "orchestrator/run-test-run-9" in branch_list
+    assert "orchestrator/run-test-run-10" in branch_list
+    assert "orchestrator/run-test-run-11" in branch_list
 
-def test_list_worktrees_single(git_repo: tuple[Path, Path]) -> None:
-    """Test listing a single worktree."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # Create worktree
-    wt = manager.create("test-run-9")
-
-    # List worktrees
-    worktrees = manager.list()
-
-    assert len(worktrees) == 1
-    assert worktrees[0].path == wt.path
-    assert worktrees[0].branch == wt.branch
-    assert worktrees[0].commit == wt.commit
-
-
-def test_list_worktrees_multiple(git_repo: tuple[Path, Path]) -> None:
-    """Test listing multiple worktrees."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # Create multiple worktrees
-    wt1 = manager.create("test-run-10")
-    wt2 = manager.create("test-run-11")
-    wt3 = manager.create("test-run-12")
-
-    # List worktrees
-    worktrees = manager.list()
-
-    assert len(worktrees) == 3
-
-    # Verify all worktrees are present
-    paths = {wt.path for wt in worktrees}
-    assert wt1.path in paths
-    assert wt2.path in paths
-    assert wt3.path in paths
-
-
-def test_list_worktrees_filters_non_orchestrator(git_repo: tuple[Path, Path]) -> None:
-    """Test that list() only returns orchestrator-managed worktrees."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # Create orchestrator worktree
-    wt_orchestrator = manager.create("test-run-13")
-
-    # Create non-orchestrator worktree manually
+    # Create non-orchestrator worktree manually — list() must not return it
     manual_path = worktrees_dir / "manual"
     _git(
         ["worktree", "add", "-b", "manual-branch", str(manual_path), "main"],
         cwd=repo,
     )
-
-    # List worktrees
-    worktrees = manager.list()
-
-    # Should only return orchestrator worktree
-    assert len(worktrees) == 1
-    assert worktrees[0].path == wt_orchestrator.path
+    listed = manager.list()
+    assert len(listed) == 3
+    assert manual_path not in {wt.path for wt in listed}
 
 
-def test_cleanup_stale_removes_inactive(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_stale removes worktrees for inactive runs."""
+def test_cleanup_stale_lifecycle(git_repo: tuple[Path, Path]) -> None:
+    """cleanup_stale is a no-op with no worktrees or when all runs are
+    active, and removes exactly the worktrees of inactive runs otherwise."""
     repo, worktrees_dir = git_repo
     manager = WorktreeManager(repo, worktrees_dir)
 
-    # Create worktrees
+    # No worktrees → nothing to remove
+    assert manager.cleanup_stale({"some-run"}) == 0
+
     wt1 = manager.create("active-run-1")
     wt2 = manager.create("stale-run-1")
     wt3 = manager.create("stale-run-2")
 
-    # Only mark run-1 as active
-    active_runs = {"active-run-1"}
-
-    # Cleanup stale
-    removed = manager.cleanup_stale(active_runs)
-
-    # Should remove 2 stale worktrees
-    assert removed == 2
-
-    # Verify active worktree remains
+    # All runs active → nothing removed
+    assert manager.cleanup_stale({"active-run-1", "stale-run-1", "stale-run-2"}) == 0
     assert wt1.path.exists()
+    assert wt2.path.exists()
+    assert wt3.path.exists()
 
-    # Verify stale worktrees are removed
+    # Only run-1 active → both stale worktrees removed
+    assert manager.cleanup_stale({"active-run-1"}) == 2
+    assert wt1.path.exists()
     assert not wt2.path.exists()
     assert not wt3.path.exists()
 
 
-def test_cleanup_stale_no_active_runs(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_stale removes all worktrees when no runs are active."""
+def test_cleanup_stale_no_active_runs_forces_uncommitted(git_repo: tuple[Path, Path]) -> None:
+    """With no active runs, cleanup_stale removes every worktree, including
+    one with uncommitted changes (force removal)."""
     repo, worktrees_dir = git_repo
     manager = WorktreeManager(repo, worktrees_dir)
 
-    # Create worktrees
     wt1 = manager.create("stale-run-3")
     wt2 = manager.create("stale-run-4")
+    (wt2.path / "uncommitted.txt").write_text("uncommitted\n")
 
-    # No active runs
-    active_runs: set[str] = set()
+    removed = manager.cleanup_stale(set())
 
-    # Cleanup stale
-    removed = manager.cleanup_stale(active_runs)
-
-    # Should remove all worktrees
     assert removed == 2
     assert not wt1.path.exists()
     assert not wt2.path.exists()
 
 
-def test_cleanup_stale_all_active(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_stale removes nothing when all runs are active."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # Create worktrees
-    wt1 = manager.create("active-run-2")
-    wt2 = manager.create("active-run-3")
-
-    # All runs active
-    active_runs = {"active-run-2", "active-run-3"}
-
-    # Cleanup stale
-    removed = manager.cleanup_stale(active_runs)
-
-    # Should remove nothing
-    assert removed == 0
-    assert wt1.path.exists()
-    assert wt2.path.exists()
-
-
-def test_cleanup_stale_empty_list(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_stale with no worktrees returns zero."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # No worktrees
-    active_runs = {"some-run"}
-
-    # Cleanup stale
-    removed = manager.cleanup_stale(active_runs)
-
-    assert removed == 0
-
-
-def test_cleanup_stale_with_uncommitted_changes(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_stale can remove worktrees with uncommitted changes."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # Create worktree with uncommitted changes
-    wt = manager.create("stale-run-5")
-    (wt.path / "uncommitted.txt").write_text("uncommitted\n")
-
-    # Cleanup (should force remove)
-    removed = manager.cleanup_stale(set())
-
-    # Should successfully remove
-    assert removed == 1
-    assert not wt.path.exists()
-
-
-def test_worktree_manager_with_relative_path(git_repo: tuple[Path, Path]) -> None:
-    """Test WorktreeManager works with repository path."""
-    repo, worktrees_dir = git_repo
-    # Create manager with absolute paths
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # Create worktree
-    wt = manager.create("test-run-14")
-
-    # Verify worktree created successfully
-    assert wt.path.exists()
-    assert wt.path.is_absolute()
-
-
-def test_concurrent_worktrees_different_branches(git_repo: tuple[Path, Path]) -> None:
-    """Test multiple worktrees can coexist with different branches."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # Create multiple worktrees
-    wt1 = manager.create("concurrent-1")
-    wt2 = manager.create("concurrent-2")
-    wt3 = manager.create("concurrent-3")
-
-    # Verify all exist
-    assert wt1.path.exists()
-    assert wt2.path.exists()
-    assert wt3.path.exists()
-
-    # Verify unique branches
-    assert wt1.branch != wt2.branch
-    assert wt2.branch != wt3.branch
-    assert wt1.branch != wt3.branch
-
-    # Verify all branches exist
-    branch_list = _git(["branch", "--list", "orchestrator/*"], cwd=repo)
-    assert "orchestrator/run-concurrent-1" in branch_list
-    assert "orchestrator/run-concurrent-2" in branch_list
-    assert "orchestrator/run-concurrent-3" in branch_list
-
-
 # --- cleanup_expired tests ---
 
 
-def test_cleanup_expired_removes_orphaned(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_expired removes worktrees whose run ID is not in the DB."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    wt_known = manager.create("known-run")
-    wt_orphan = manager.create("orphan-run")
-
-    all_run_ids = {"known-run"}
-    run_completed_at: dict[str, datetime] = {}
-
-    removed = manager.cleanup_expired(all_run_ids, run_completed_at, retention=timedelta(days=14))
-
-    assert removed == 1
-    assert wt_known.path.exists()
-    assert not wt_orphan.path.exists()
-
-
-def test_cleanup_expired_removes_old_completed(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_expired removes worktrees for runs completed beyond retention."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    wt_old = manager.create("old-run")
-    wt_recent = manager.create("recent-run")
-    wt_active = manager.create("active-run")
-
-    now = datetime(2025, 3, 1, tzinfo=timezone.utc)
-    all_run_ids = {"old-run", "recent-run", "active-run"}
-    run_completed_at = {
-        "old-run": datetime(2025, 2, 1, tzinfo=timezone.utc),  # 28 days ago
-        "recent-run": datetime(2025, 2, 20, tzinfo=timezone.utc),  # 9 days ago
-        # active-run has no completed_at (still running)
-    }
-
-    removed = manager.cleanup_expired(
-        all_run_ids, run_completed_at, retention=timedelta(days=14), now=now
-    )
-
-    assert removed == 1
-    assert not wt_old.path.exists()
-    assert wt_recent.path.exists()
-    assert wt_active.path.exists()
-
-
-def test_cleanup_expired_keeps_within_retention(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_expired keeps completed worktrees within retention window."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    wt = manager.create("completed-run")
-
-    now = datetime(2025, 3, 1, tzinfo=timezone.utc)
-    all_run_ids = {"completed-run"}
-    run_completed_at = {
-        "completed-run": datetime(2025, 2, 28, tzinfo=timezone.utc),  # 1 day ago
-    }
-
-    removed = manager.cleanup_expired(
-        all_run_ids, run_completed_at, retention=timedelta(days=14), now=now
-    )
-
-    assert removed == 0
-    assert wt.path.exists()
-
-
-def test_cleanup_expired_mixed_orphaned_and_expired(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_expired handles both orphaned and expired worktrees together."""
+def test_cleanup_expired_orphaned_expired_and_retained(git_repo: tuple[Path, Path]) -> None:
+    """cleanup_expired removes worktrees that are orphaned (run not in DB) or
+    completed beyond retention, and keeps recently-completed and active
+    runs."""
     repo, worktrees_dir = git_repo
     manager = WorktreeManager(repo, worktrees_dir)
 
     wt_orphan = manager.create("orphan-run")
     wt_expired = manager.create("expired-run")
-    wt_keep = manager.create("keep-run")
+    wt_recent = manager.create("recent-run")
+    wt_active = manager.create("active-run")
 
     now = datetime(2025, 3, 1, tzinfo=timezone.utc)
-    all_run_ids = {"expired-run", "keep-run"}  # orphan-run not in DB
+    all_run_ids = {"expired-run", "recent-run", "active-run"}  # orphan-run not in DB
     run_completed_at = {
         "expired-run": datetime(2025, 1, 1, tzinfo=timezone.utc),  # 59 days ago
-        # keep-run has no completed_at (still active)
+        "recent-run": datetime(2025, 2, 28, tzinfo=timezone.utc),  # 1 day ago
+        # active-run has no completed_at (still running)
     }
 
     removed = manager.cleanup_expired(
@@ -524,7 +337,29 @@ def test_cleanup_expired_mixed_orphaned_and_expired(git_repo: tuple[Path, Path])
     assert removed == 2
     assert not wt_orphan.path.exists()
     assert not wt_expired.path.exists()
-    assert wt_keep.path.exists()
+    assert wt_recent.path.exists()
+    assert wt_active.path.exists()
+
+
+def test_cleanup_expired_refuses_empty_run_set(git_repo: tuple[Path, Path]) -> None:
+    """Test cleanup_expired refuses to delete worktrees when all_run_ids is empty."""
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
+
+    # Create worktrees that would be "orphaned" if run set is trusted
+    wt1 = manager.create("run-a")
+    wt2 = manager.create("run-b")
+
+    # Pass empty run set — should refuse to remove anything
+    removed = manager.cleanup_expired(
+        all_run_ids=set(),
+        run_completed_at={},
+        retention=timedelta(days=14),
+    )
+
+    assert removed == 0
+    assert wt1.path.exists()
+    assert wt2.path.exists()
 
 
 # --- broken worktree detection tests ---
@@ -540,8 +375,6 @@ def test_ensure_exists_broken_worktree_no_git_file(git_repo: tuple[Path, Path]) 
     original_path = wt.path
 
     # Simulate a broken worktree: remove .git file but keep the directory
-    import shutil
-
     shutil.rmtree(original_path)
     original_path.mkdir()
     (original_path / ".pytest_cache").mkdir()  # leftover artifact
@@ -585,39 +418,22 @@ def test_ensure_exists_broken_legacy_path_no_git_file(git_repo: tuple[Path, Path
     assert len(restored.commit) == 40
 
 
-def test_cleanup_expired_refuses_empty_run_set(git_repo: tuple[Path, Path]) -> None:
-    """Test cleanup_expired refuses to delete worktrees when all_run_ids is empty."""
-    repo, worktrees_dir = git_repo
-    manager = WorktreeManager(repo, worktrees_dir)
-
-    # Create worktrees that would be "orphaned" if run set is trusted
-    wt1 = manager.create("run-a")
-    wt2 = manager.create("run-b")
-
-    # Pass empty run set — should refuse to remove anything
-    removed = manager.cleanup_expired(
-        all_run_ids=set(),
-        run_completed_at={},
-        retention=timedelta(days=14),
-    )
-
-    assert removed == 0
-    assert wt1.path.exists()
-    assert wt2.path.exists()
-
-
 # -- Worktree setup script tests --
 
 
-def test_worktree_setup_script_runs_on_create(git_repo: tuple[Path, Path]) -> None:
-    """Test that scripts/worktree/setup.sh is executed after worktree creation."""
+def test_worktree_setup_script_runs_with_args(git_repo: tuple[Path, Path]) -> None:
+    """scripts/worktree/setup.sh runs after worktree creation and receives
+    the worktree path and main repo path as arguments."""
     repo, worktrees = git_repo
 
-    # Create a setup script that writes a marker file
     setup_script = repo / "scripts" / "worktree" / "setup.sh"
     setup_script.parent.mkdir(parents=True, exist_ok=True)
     setup_script.write_text(
-        '#!/usr/bin/env bash\nset -euo pipefail\necho "setup-ran" > "$1/.setup-marker"\n'
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        'echo "setup-ran" > "$1/.setup-marker"\n'
+        'echo "$1" > "$1/.arg1"\n'
+        'echo "$2" > "$1/.arg2"\n'
     )
     setup_script.chmod(0o755)
 
@@ -627,25 +443,9 @@ def test_worktree_setup_script_runs_on_create(git_repo: tuple[Path, Path]) -> No
     marker = wt.path / ".setup-marker"
     assert marker.exists(), "Setup script should have created .setup-marker"
     assert marker.read_text().strip() == "setup-ran"
-
-
-def test_worktree_setup_script_receives_both_args(git_repo: tuple[Path, Path]) -> None:
-    """Test that setup.sh receives worktree path and main repo path."""
-    repo, worktrees = git_repo
-
-    setup_script = repo / "scripts" / "worktree" / "setup.sh"
-    setup_script.parent.mkdir(parents=True, exist_ok=True)
-    setup_script.write_text(
-        '#!/usr/bin/env bash\nset -euo pipefail\necho "$1" > "$1/.arg1"\necho "$2" > "$1/.arg2"\n'
-    )
-    setup_script.chmod(0o755)
-
-    manager = WorktreeManager(repo, worktrees)
-    wt = manager.create("args-test")
-
+    # arg1 is the worktree path (may not be resolved yet), arg2 the main repo
     arg1 = (wt.path / ".arg1").read_text().strip()
     arg2 = (wt.path / ".arg2").read_text().strip()
-    # arg1 is the worktree path (may not be resolved yet)
     assert Path(arg1).resolve() == wt.path
     assert Path(arg2).resolve() == repo.resolve()
 
@@ -665,16 +465,6 @@ def test_worktree_setup_script_failure_does_not_block(git_repo: tuple[Path, Path
     # Worktree should still be created and usable
     assert wt.path.exists()
     assert (wt.path / ".git").exists()
-
-
-def test_worktree_no_setup_script(git_repo: tuple[Path, Path]) -> None:
-    """Test that missing scripts/worktree/setup.sh is handled gracefully."""
-    repo, worktrees = git_repo
-
-    # No setup script — should work fine (baseline behavior)
-    manager = WorktreeManager(repo, worktrees)
-    wt = manager.create("no-setup-test")
-    assert wt.path.exists()
 
 
 def test_worktree_setup_runs_on_ensure_exists(git_repo: tuple[Path, Path]) -> None:

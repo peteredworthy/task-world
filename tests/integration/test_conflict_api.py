@@ -10,6 +10,12 @@ Each test gets its own FastAPI app and in-memory database; ``create_app`` is
 cheap because compiled routes are cached and grafted onto every new app. No
 cross-test naming discipline is needed here — hardcoded names and global
 collection assertions are safe. See ``tests/integration/conftest.py``.
+
+Merge/conflict *semantics* are unit-tested against real git in
+``tests/unit/test_conflict_ops.py`` and ``tests/unit/test_branch_ops.py``;
+these tests pin the API wiring (status codes, response schema, worktree
+lookup). The worktree spawn (create + start + drain) dominates each test's
+cost, so facets of the same response are asserted together in one test.
 """
 
 from pathlib import Path
@@ -81,74 +87,31 @@ async def _setup_conflict(
 
 
 class TestBackMergeClean:
-    async def test_clean_merge_returns_status_clean(
+    async def test_clean_merge_response_and_worktree_state(
         self,
         client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        """A clean back-merge returns status='clean'."""
+        """A clean back-merge returns status='clean', a 40-char merge SHA,
+        no conflicts, and auto-commits so the worktree HEAD equals the SHA."""
         client, repo, drain = client_with_repo
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
+        worktree_path = Path(run_data["worktree_path"])
 
         # Commit a new file to main that doesn't touch anything on the run branch
         _commit_file(repo, "main_only.py", "x = 1\n", "Add main_only.py")
 
         resp = await client.post(f"/api/runs/{run_id}/back-merge")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "clean"
-
-    async def test_clean_merge_returns_merge_commit_sha(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """A clean back-merge returns a non-null merge_commit_sha."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-
-        _commit_file(repo, "feature.py", "def feature(): pass\n", "Add feature.py")
-
-        resp = await client.post(f"/api/runs/{run_id}/back-merge")
-        assert resp.status_code == 200
         data = resp.json()
+        assert data["status"] == "clean"
         assert data["merge_commit_sha"] is not None
         assert len(data["merge_commit_sha"]) == 40
-
-    async def test_clean_merge_worktree_head_matches_returned_sha(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """After a clean back-merge, the worktree HEAD equals the returned SHA (auto-committed)."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(repo, "new_file.py", "val = 42\n", "Add new_file.py")
-
-        resp = await client.post(f"/api/runs/{run_id}/back-merge")
-        assert resp.status_code == 200
-        merge_sha = resp.json()["merge_commit_sha"]
-
-        head_sha = _git(["rev-parse", "HEAD"], cwd=worktree_path)
-        assert head_sha == merge_sha
-
-    async def test_clean_merge_no_conflict_files(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """A clean back-merge returns empty conflict_files and conflict_count=0."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-
-        _commit_file(repo, "clean.py", "clean = True\n", "Add clean.py")
-
-        resp = await client.post(f"/api/runs/{run_id}/back-merge")
-        assert resp.status_code == 200
-        data = resp.json()
         assert data["conflict_files"] == []
         assert data["conflict_count"] == 0
+
+        head_sha = _git(["rev-parse", "HEAD"], cwd=worktree_path)
+        assert head_sha == data["merge_commit_sha"]
 
 
 # ---------------------------------------------------------------------------
@@ -157,11 +120,12 @@ class TestBackMergeClean:
 
 
 class TestBackMergeConflicts:
-    async def test_conflict_merge_returns_conflicts_status(
+    async def test_conflict_merge_reports_files_and_skips_commit(
         self,
         client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        """Back-merge with conflicts returns status='conflicts'."""
+        """A conflicting back-merge returns status='conflicts', lists the
+        conflicting file, and does not auto-commit (null merge_commit_sha)."""
         client, repo, drain = client_with_repo
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
@@ -172,41 +136,11 @@ class TestBackMergeConflicts:
 
         resp = await client.post(f"/api/runs/{run_id}/back-merge")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "conflicts"
-
-    async def test_conflict_merge_lists_conflict_files(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """The conflicting file appears in conflict_files."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "shared.py", "x = 'run'\n", "Run: shared.py")
-        _commit_file(repo, "shared.py", "x = 'main'\n", "Main: shared.py")
-
-        resp = await client.post(f"/api/runs/{run_id}/back-merge")
         data = resp.json()
+        assert data["status"] == "conflicts"
         assert "shared.py" in data["conflict_files"]
-        assert data["conflict_count"] >= 1
-
-    async def test_conflict_merge_null_commit_sha(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Back-merge with conflicts returns null merge_commit_sha (no auto-commit)."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "shared.py", "x = 'run'\n", "Run: shared.py")
-        _commit_file(repo, "shared.py", "x = 'main'\n", "Main: shared.py")
-
-        resp = await client.post(f"/api/runs/{run_id}/back-merge")
-        assert resp.json()["merge_commit_sha"] is None
+        assert data["conflict_count"] == 1
+        assert data["merge_commit_sha"] is None
 
     async def test_conflict_merge_multiple_files(
         self,
@@ -237,78 +171,37 @@ class TestBackMergeConflicts:
 
 
 class TestGetConflicts:
-    async def test_no_active_merge_returns_empty_list(
+    async def test_conflict_listing_lifecycle(
         self,
         client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        """With no merge in progress, conflicts endpoint returns empty list."""
+        """The conflicts list is empty with no merge in progress, then lists
+        the conflicted file with unresolved status and parsed blocks after a
+        conflicting back-merge."""
         client, repo, drain = client_with_repo
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
+        worktree_path = Path(run_data["worktree_path"])
 
         resp = await client.get(f"/api/runs/{run_id}/review/conflicts")
         assert resp.status_code == 200
         assert resp.json() == []
 
-    async def test_conflict_file_listed_with_path(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """After a conflicting back-merge, the conflict file is listed."""
-        client, repo, drain = client_with_repo
-        run_id, _ = await _setup_conflict(client, repo, drain, filename="conflict.py")
+        _commit_file(worktree_path, "conflict.py", "x = 'run_version'\n", "Run: add conflict.py")
+        _commit_file(repo, "conflict.py", "x = 'main_version'\n", "Main: add conflict.py")
+        back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
+        assert back_merge_resp.status_code == 200
+        assert back_merge_resp.json()["status"] == "conflicts"
 
         resp = await client.get(f"/api/runs/{run_id}/review/conflicts")
         assert resp.status_code == 200
         files = resp.json()
-        paths = [f["path"] for f in files]
-        assert "conflict.py" in paths
-
-    async def test_conflict_file_has_unresolved_status(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Each conflict file has status='unresolved'."""
-        client, repo, drain = client_with_repo
-        run_id, _ = await _setup_conflict(client, repo, drain)
-
-        resp = await client.get(f"/api/runs/{run_id}/review/conflicts")
-        files = resp.json()
-        assert len(files) >= 1
+        assert [f["path"] for f in files] == ["conflict.py"]
         assert files[0]["status"] == "unresolved"
-
-    async def test_conflict_file_has_blocks(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Each conflict file contains at least one conflict block."""
-        client, repo, drain = client_with_repo
-        run_id, _ = await _setup_conflict(client, repo, drain)
-
-        resp = await client.get(f"/api/runs/{run_id}/review/conflicts")
-        files = resp.json()
         assert files[0]["block_count"] >= 1
         assert len(files[0]["blocks"]) >= 1
-
-    async def test_conflict_block_schema(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Each conflict block has index, ours_content, and theirs_content."""
-        client, repo, drain = client_with_repo
-        run_id, _ = await _setup_conflict(
-            client,
-            repo,
-            drain,
-            ours_content="x = 'run_version'\n",
-            theirs_content="x = 'main_version'\n",
-        )
-
-        resp = await client.get(f"/api/runs/{run_id}/review/conflicts")
-        block = resp.json()[0]["blocks"][0]
+        block = files[0]["blocks"][0]
         assert block["index"] == 0
-        assert "ours_content" in block
-        assert "theirs_content" in block
         assert "run_version" in block["ours_content"]
         assert "main_version" in block["theirs_content"]
 
@@ -420,11 +313,14 @@ class TestResolveConflict:
         assert "manually_resolved" in content
         assert "<<<<<<" not in content
 
-    async def test_resolve_invalid_choice_returns_422(
+    async def test_resolve_invalid_bodies_return_422(
         self,
         client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        """An invalid choice value returns 422."""
+        """An invalid choice, or manual choice without manual_content, returns
+        422. Neither request mutates the worktree, so one conflict setup
+        serves both checks. (Run lookup precedes body validation, so a real
+        conflicted run is required to reach the 422.)"""
         client, repo, drain = client_with_repo
         run_id, _ = await _setup_conflict(client, repo, drain)
 
@@ -433,14 +329,6 @@ class TestResolveConflict:
             json={"resolutions": [{"block_index": 0, "choice": "invalid_choice"}]},
         )
         assert resp.status_code == 422
-
-    async def test_resolve_manual_without_content_returns_422(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Manual choice without manual_content returns 422."""
-        client, repo, drain = client_with_repo
-        run_id, _ = await _setup_conflict(client, repo, drain)
 
         resp = await client.post(
             f"/api/runs/{run_id}/review/conflicts/conflict.py/resolve",
@@ -523,44 +411,22 @@ class TestRevertBackMerge:
 
         return run_id, worktree_path, merge_sha
 
-    async def test_revert_clean_back_merge_succeeds(
+    async def test_revert_clean_back_merge_resets_head(
         self,
         client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        """Reverting a clean back-merge (real merge commit) returns 200."""
+        """Reverting a clean back-merge returns the reverted merge SHA and a
+        new head, and moves the worktree HEAD to that new head."""
         client, repo, drain = client_with_repo
-        run_id, _, _ = await self._setup_clean_merge(client, repo, drain)
-
-        resp = await client.post(f"/api/runs/{run_id}/review/revert-back-merge")
-        assert resp.status_code == 200
-
-    async def test_revert_returns_reverted_commit_sha(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Revert response contains the SHA of the reverted merge commit."""
-        client, repo, drain = client_with_repo
-        run_id, _, merge_sha = await self._setup_clean_merge(client, repo, drain)
+        run_id, worktree_path, merge_sha = await self._setup_clean_merge(client, repo, drain)
 
         resp = await client.post(f"/api/runs/{run_id}/review/revert-back-merge")
         assert resp.status_code == 200
         data = resp.json()
         assert data["reverted_commit"] == merge_sha
-
-    async def test_revert_returns_new_head(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Revert response contains a new_head SHA different from the merge SHA."""
-        client, repo, drain = client_with_repo
-        run_id, worktree_path, merge_sha = await self._setup_clean_merge(client, repo, drain)
-
-        resp = await client.post(f"/api/runs/{run_id}/review/revert-back-merge")
-        data = resp.json()
         assert data["new_head"] != merge_sha
         assert len(data["new_head"]) == 40
 
-        # Worktree HEAD should match the returned new_head
         actual_head = _git(["rev-parse", "HEAD"], cwd=worktree_path)
         assert actual_head == data["new_head"]
 

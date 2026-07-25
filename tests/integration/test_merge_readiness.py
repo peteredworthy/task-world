@@ -1,15 +1,20 @@
 """Integration tests for merge readiness endpoint and merge-back strategy.
 
 Covers:
-- Gate computation in various states (all pass, conflicts fail, tests fail, jobs running)
+- Gate computation in various states (all pass, conflicts fail, divergence fail)
 - Merge with squash creates single commit
 - Merge with merge strategy preserves history
-- 409 when gates are unmet
+- 409 when gates are unmet or the run is not completed
 
 Each test gets its own FastAPI app and in-memory database; ``create_app`` is
 cheap because compiled routes are cached and grafted onto every new app. No
 cross-test naming discipline is needed here — hardcoded names and global
 collection assertions are safe. See ``tests/integration/conftest.py``.
+
+Gate/merge *semantics* are unit-tested in ``tests/unit/test_merge_readiness.py``
+and ``tests/unit/test_branch_ops.py``; these tests pin the API wiring. The
+worktree spawn dominates each test's cost, so gate states that share a setup
+are asserted in sequence over one run.
 """
 
 from collections.abc import AsyncGenerator
@@ -86,10 +91,11 @@ async def _mark_run_completed(app: Any, run_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_merge_readiness_all_pass(
+async def test_merge_readiness_all_pass_and_rejects_non_completed(
     app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
-    """All gates pass in a clean state (simple-routine, no conflicts, idle)."""
+    """All gates pass in a clean state, but merge-back still returns 409
+    while the run is not COMPLETED."""
     client, repo, app, drain = app_and_client
     run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
@@ -118,21 +124,39 @@ async def test_merge_readiness_all_pass(
         assert "status" in gate
         assert "description" in gate
 
+    # Even with all gates green, an ACTIVE (non-completed) run cannot merge back
+    resp = await client.post(
+        f"/api/runs/{run_id}/merge-back",
+        json={"strategy": "squash"},
+    )
+    assert resp.status_code == 409
+    assert "COMPLETED" in resp.json()["detail"]
 
-async def test_merge_readiness_conflicts_fail(
+
+async def test_readiness_gates_through_conflict_lifecycle(
     app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
-    """no_unresolved_conflicts gate fails when the worktree has conflict files."""
+    """One diverged run walks the failing-gate states: clean_merge fails on
+    conflicting divergence, no_unresolved_conflicts fails after the
+    back-merge, and merge-back is 409-blocked even for a COMPLETED run."""
     client, repo, app, drain = app_and_client
     run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
     worktree_path = Path(run_data["worktree_path"])
 
-    # Create divergent changes on both branches to produce a conflict
-    _commit_file(worktree_path, "data.py", "value = 'run branch'\n", "Run: data.py")
-    _commit_file(repo, "data.py", "value = 'main branch'\n", "Main: data.py")
+    # Both branches modify the same file differently — conflicting divergence
+    _commit_file(worktree_path, "shared.py", "x = 'run version'\n", "Run: shared.py")
+    _commit_file(repo, "shared.py", "x = 'main version'\n", "Main: shared.py")
 
-    # Back-merge creates conflict state in the worktree
+    # Before any back-merge: a merge would conflict → clean_merge fails
+    resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
+    assert resp.status_code == 200
+    data = resp.json()
+    gate_map = {g["name"]: g["status"] for g in data["gates"]}
+    assert gate_map["clean_merge"] == "fail"
+    assert data["ready"] is False
+
+    # Back-merge puts conflict markers in the worktree
     back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
     assert back_merge_resp.status_code == 200
     assert back_merge_resp.json()["status"] == "conflicts"
@@ -140,10 +164,21 @@ async def test_merge_readiness_conflicts_fail(
     resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
     assert resp.status_code == 200
     data = resp.json()
-
     gate_map = {g["name"]: g["status"] for g in data["gates"]}
     assert gate_map["no_unresolved_conflicts"] == "fail"
     assert data["ready"] is False
+
+    # Even as COMPLETED, merge-back is blocked because a gate fails
+    await _mark_run_completed(app, run_id)
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/merge-back",
+        json={"strategy": "squash"},
+    )
+    assert resp.status_code == 409
+    detail = resp.json()["detail"]
+    # Response should contain gate failure information
+    assert "gates" in detail or "gate" in str(detail).lower() or "conflicts" in str(detail).lower()
 
 
 # ---------------------------------------------------------------------------
@@ -210,78 +245,3 @@ async def test_merge_back_with_strategy_merge(
     log = _git(["log", "--oneline"], cwd=repo)
     lines = [ln for ln in log.strip().split("\n") if ln]
     assert len(lines) == 4
-
-
-# ---------------------------------------------------------------------------
-# 409 gate enforcement tests
-# ---------------------------------------------------------------------------
-
-
-async def test_merge_back_rejects_unmet_gates(
-    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
-) -> None:
-    """merge-back returns 409 when readiness gates are not met (unresolved conflicts)."""
-    client, repo, app, drain = app_and_client
-    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
-    run_id = run_data["id"]
-    worktree_path = Path(run_data["worktree_path"])
-
-    # Create a conflict: both branches modify the same file differently
-    _commit_file(worktree_path, "shared.py", "state = 'run'\n", "Run: shared.py")
-    _commit_file(repo, "shared.py", "state = 'main'\n", "Main: shared.py")
-
-    # Trigger back-merge to produce conflict state
-    back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
-    assert back_merge_resp.status_code == 200
-    assert back_merge_resp.json()["status"] == "conflicts"
-
-    # Even as COMPLETED, merge-back is blocked because a gate fails
-    await _mark_run_completed(app, run_id)
-
-    resp = await client.post(
-        f"/api/runs/{run_id}/merge-back",
-        json={"strategy": "squash"},
-    )
-    assert resp.status_code == 409
-    detail = resp.json()["detail"]
-    # Response should contain gate failure information
-    assert "gates" in detail or "gate" in str(detail).lower() or "conflicts" in str(detail).lower()
-
-
-async def test_merge_back_rejects_non_completed_run(
-    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
-) -> None:
-    """merge-back returns 409 for a run that is not completed."""
-    client, repo, _app, drain = app_and_client
-    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
-    run_id = run_data["id"]
-
-    resp = await client.post(
-        f"/api/runs/{run_id}/merge-back",
-        json={"strategy": "squash"},
-    )
-    assert resp.status_code == 409
-    assert "COMPLETED" in resp.json()["detail"]
-
-
-async def test_merge_readiness_clean_merge_fail(
-    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
-) -> None:
-    """clean_merge gate fails when source branch has diverged with conflicting changes."""
-    client, repo, app, drain = app_and_client
-    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
-    run_id = run_data["id"]
-    worktree_path = Path(run_data["worktree_path"])
-
-    # Both branches modify the same file differently — no back-merge, just divergent history
-    _commit_file(worktree_path, "shared.py", "x = 'run version'\n", "Run: shared.py")
-    _commit_file(repo, "shared.py", "x = 'main version'\n", "Main: shared.py")
-    # The run branch is now behind main, and a merge would produce conflicts
-
-    resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
-    assert resp.status_code == 200
-    data = resp.json()
-
-    gate_map = {g["name"]: g["status"] for g in data["gates"]}
-    assert gate_map["clean_merge"] == "fail"
-    assert data["ready"] is False

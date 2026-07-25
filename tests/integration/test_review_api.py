@@ -4,6 +4,12 @@ Each test gets its own FastAPI app and in-memory database; ``create_app`` is
 cheap because compiled routes are cached and grafted onto every new app. No
 cross-test naming discipline is needed here — hardcoded names and global
 collection assertions are safe. See ``tests/integration/conftest.py``.
+
+Diff/log *semantics* are unit-tested against real git in
+``tests/unit/test_diff_ops.py``; these tests pin the API wiring. The worktree
+spawn (create + start + drain) dominates each test's cost, so each endpoint
+family is exercised as one narrative over a single run: assert the empty
+state first, then layer commits and assert each response in sequence.
 """
 
 from pathlib import Path
@@ -48,36 +54,32 @@ async def _create_and_start_run(
 
 
 class TestGetDiff:
-    async def test_aggregate_diff_empty_branch(
+    async def test_diff_scopes_lifecycle(
         self,
         client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        """Aggregate diff on a branch with no changes returns empty diff."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "diff" in data
-        assert "scope" in data
-        assert data["scope"] == "aggregate"
-        assert data["diff"] == ""
-
-    async def test_aggregate_diff_with_changes(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Aggregate diff contains the changed file."""
+        """One run exercises every diff scope: empty aggregate, aggregate
+        with changes, commit scope (with and without ref), and task scope
+        (with and without ref)."""
         client, repo, drain = client_with_repo
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
-        # Commit a file in the worktree (run branch)
-        _commit_file(worktree_path, "feature.py", "def foo():\n    return 1\n", "Add feature.py")
+        # Empty branch → empty aggregate diff, schema fields present
+        resp = await client.get(f"/api/runs/{run_id}/review/diff")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert set(data.keys()) >= {"diff", "scope"}
+        assert isinstance(data["diff"], str)
+        assert data["scope"] == "aggregate"
+        assert data["diff"] == ""
 
+        sha1 = _commit_file(
+            worktree_path, "feature.py", "def foo():\n    return 1\n", "Add feature.py"
+        )
+
+        # Aggregate diff contains the change
         resp = await client.get(f"/api/runs/{run_id}/review/diff")
         assert resp.status_code == 200
         data = resp.json()
@@ -85,91 +87,38 @@ class TestGetDiff:
         assert "feature.py" in data["diff"]
         assert "+def foo():" in data["diff"]
 
-    async def test_aggregate_diff_schema_fields(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """DiffResponse includes diff, scope, and optional file_path."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert set(data.keys()) >= {"diff", "scope"}
-        assert isinstance(data["diff"], str)
-        assert isinstance(data["scope"], str)
-
-    async def test_commit_scope_requires_ref(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """commit scope without ref returns 400."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-
+        # commit scope without ref → 400
         resp = await client.get(f"/api/runs/{run_id}/review/diff?scope=commit")
         assert resp.status_code == 400
 
-    async def test_commit_scope_with_ref(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """commit scope with valid ref returns diff for that single commit."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        sha = _commit_file(
-            worktree_path, "service.py", "class Service:\n    pass\n", "Add service.py"
-        )
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff?scope=commit&ref={sha}")
+        # commit scope with ref → single-commit diff (git show includes author metadata)
+        resp = await client.get(f"/api/runs/{run_id}/review/diff?scope=commit&ref={sha1}")
         assert resp.status_code == 200
         data = resp.json()
         assert data["scope"] == "commit"
-        assert "service.py" in data["diff"]
-        # git show includes author metadata
+        assert "feature.py" in data["diff"]
         assert "Author:" in data["diff"]
 
-    async def test_task_scope_with_ref(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """task scope with ref returns diff from merge-base to that commit."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "step1.py", "# step1\n", "Add step1.py")
         sha2 = _commit_file(worktree_path, "step2.py", "# step2\n", "Add step2.py")
 
+        # task scope with ref → diff from merge-base to that commit
         resp = await client.get(f"/api/runs/{run_id}/review/diff?scope=task&ref={sha2}")
         assert resp.status_code == 200
         data = resp.json()
         assert data["scope"] == "task"
-        assert "step1.py" in data["diff"] or "step2.py" in data["diff"]
+        assert "feature.py" in data["diff"] or "step2.py" in data["diff"]
 
-    async def test_task_scope_without_ref_falls_back_to_aggregate(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """task scope without ref behaves like aggregate."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "any.py", "# any\n", "Add any.py")
-
+        # task scope without ref falls back to aggregate
         resp = await client.get(f"/api/runs/{run_id}/review/diff?scope=task")
         assert resp.status_code == 200
-        data = resp.json()
-        assert "any.py" in data["diff"]
+        assert "feature.py" in resp.json()["diff"]
+
+        # Multiple commits all appear in the aggregate diff
+        resp = await client.get(f"/api/runs/{run_id}/review/diff")
+        assert resp.status_code == 200
+        diff = resp.json()["diff"]
+        assert "feature.py" in diff
+        assert "step2.py" in diff
 
     async def test_run_not_found_returns_404(
         self,
@@ -200,25 +149,6 @@ class TestGetDiff:
         resp = await client.get(f"/api/runs/{run_id}/review/diff")
         assert resp.status_code == 409
 
-    async def test_multiple_commits_in_aggregate_diff(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Multiple commits on run branch all appear in aggregate diff."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "alpha.py", "# alpha\n", "Add alpha")
-        _commit_file(worktree_path, "beta.py", "# beta\n", "Add beta")
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff")
-        assert resp.status_code == 200
-        diff = resp.json()["diff"]
-        assert "alpha.py" in diff
-        assert "beta.py" in diff
-
 
 # ---------------------------------------------------------------------------
 # GET /api/runs/{run_id}/review/diff/files
@@ -226,107 +156,61 @@ class TestGetDiff:
 
 
 class TestGetDiffFiles:
-    async def test_empty_branch_returns_empty_list(
+    async def test_diff_files_lifecycle(
         self,
         client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        """No changes → empty file list."""
+        """One run exercises the file listing: empty state, an added file
+        with counted additions and full schema, a modified file, multiple
+        files, and exclusion of upstream files after a clean back-merge."""
         client, repo, drain = client_with_repo
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
+        worktree_path = Path(run_data["worktree_path"])
 
+        # No changes → empty file list
         resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
         assert resp.status_code == 200
         assert resp.json() == []
 
-    async def test_added_file_appears(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """An added file shows up with status 'added' and non-zero additions."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
+        _commit_file(worktree_path, "new_file.py", "line1\nline2\nline3\n", "Add new_file.py")
 
-        _commit_file(worktree_path, "new_file.py", "x = 1\ny = 2\n", "Add new_file.py")
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
-        assert resp.status_code == 200
-        files = resp.json()
-        assert len(files) == 1
-        f = files[0]
-        assert f["path"] == "new_file.py"
-        assert f["status"] == "added"
-        assert f["additions"] > 0
-        assert f["deletions"] == 0
-
-    async def test_modified_file_appears(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """A modified file shows status 'modified' with additions and deletions."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        # First, add README.md in the base (already exists as "# Test\n")
-        # Modify it
-        (worktree_path / "README.md").write_text("# Updated Title\nnew content\n")
-        _git(["add", "README.md"], cwd=worktree_path)
-        _git(["commit", "-m", "Modify README"], cwd=worktree_path)
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
-        assert resp.status_code == 200
-        files = resp.json()
-        assert len(files) == 1
-        f = files[0]
-        assert f["path"] == "README.md"
-        assert f["status"] == "modified"
-
-    async def test_multiple_files_listed(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Multiple changed files all appear in the listing."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "file_a.py", "a = 1\n", "Add file_a")
-        _commit_file(worktree_path, "file_b.py", "b = 2\n", "Add file_b")
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
-        assert resp.status_code == 200
-        files = resp.json()
-        paths = [f["path"] for f in files]
-        assert "file_a.py" in paths
-        assert "file_b.py" in paths
-
-    async def test_response_schema(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Each file entry has required DiffFileEntry schema fields."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "schema_test.py", "val = 42\n", "Add schema_test")
-
+        # Added file: status, counted additions, full DiffFileEntry schema
         resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
         assert resp.status_code == 200
         files = resp.json()
         assert len(files) == 1
         entry = files[0]
         assert set(entry.keys()) >= {"path", "status", "additions", "deletions"}
-        assert isinstance(entry["path"], str)
-        assert isinstance(entry["status"], str)
+        assert entry["path"] == "new_file.py"
+        assert entry["status"] == "added"
         assert isinstance(entry["additions"], int)
         assert isinstance(entry["deletions"], int)
+        assert entry["additions"] == 3
+        assert entry["deletions"] == 0
+
+        # Modified file appears with status 'modified'
+        (worktree_path / "README.md").write_text("# Updated Title\nnew content\n")
+        _git(["add", "README.md"], cwd=worktree_path)
+        _git(["commit", "-m", "Modify README"], cwd=worktree_path)
+
+        resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
+        assert resp.status_code == 200
+        by_path = {f["path"]: f for f in resp.json()}
+        assert set(by_path) == {"new_file.py", "README.md"}
+        assert by_path["README.md"]["status"] == "modified"
+
+        # Clean back-merge must not balloon the aggregate view with upstream files
+        _commit_file(repo, "main_only.py", "main = True\n", "Add main_only.py")
+        back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
+        assert back_merge_resp.status_code == 200
+        assert back_merge_resp.json()["status"] == "clean"
+
+        resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
+        assert resp.status_code == 200
+        paths = [entry["path"] for entry in resp.json()]
+        assert "new_file.py" in paths
+        assert "main_only.py" not in paths
 
     async def test_run_not_found_returns_404(
         self,
@@ -355,54 +239,6 @@ class TestGetDiffFiles:
         resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
         assert resp.status_code == 409
 
-    async def test_additions_and_deletions_counted(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Additions and deletions are accurately counted."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        # Add a file with known content
-        _commit_file(
-            worktree_path,
-            "counts.py",
-            "line1\nline2\nline3\n",
-            "Add counts.py",
-        )
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
-        assert resp.status_code == 200
-        files = resp.json()
-        f = next(e for e in files if e["path"] == "counts.py")
-        assert f["additions"] == 3
-        assert f["deletions"] == 0
-
-    async def test_back_merge_excludes_upstream_files_from_aggregate_view(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Aggregate file list should not balloon after a clean back-merge."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "feature_only.py", "feature = True\n", "Add feature_only.py")
-        _commit_file(repo, "main_only.py", "main = True\n", "Add main_only.py")
-
-        back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
-        assert back_merge_resp.status_code == 200
-        assert back_merge_resp.json()["status"] == "clean"
-
-        resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
-        assert resp.status_code == 200
-        paths = [entry["path"] for entry in resp.json()]
-        assert "feature_only.py" in paths
-        assert "main_only.py" not in paths
-
 
 # ---------------------------------------------------------------------------
 # GET /api/runs/{run_id}/review/commits
@@ -410,72 +246,32 @@ class TestGetDiffFiles:
 
 
 class TestGetCommits:
-    async def test_empty_branch_returns_empty_list(
+    async def test_commits_lifecycle(
         self,
         client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        """No commits beyond merge-base → empty commit list."""
+        """One run exercises the commit listing: source-branch commits are
+        excluded, a single commit appears with full schema, ordering is
+        newest-first, and a back-merge does not pull upstream commits into
+        the branch history."""
         client, repo, drain = client_with_repo
+
+        # Commit to main BEFORE creating the run — must never be listed
+        _commit_file(repo, "main_file.py", "# on main\n", "Commit on main")
+        pre_run_main_head = _git(["rev-parse", "HEAD"], cwd=repo)
+
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
+        worktree_path = Path(run_data["worktree_path"])
 
+        # No commits beyond merge-base → empty list
         resp = await client.get(f"/api/runs/{run_id}/review/commits")
         assert resp.status_code == 200
         assert resp.json() == []
 
-    async def test_single_commit_listed(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """A single commit shows up with correct SHA and message."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        sha = _commit_file(worktree_path, "thing.py", "# thing\n", "Add thing.py")
-
-        resp = await client.get(f"/api/runs/{run_id}/review/commits")
-        assert resp.status_code == 200
-        commits = resp.json()
-        assert len(commits) == 1
-        c = commits[0]
-        assert c["sha"] == sha
-        assert c["message"] == "Add thing.py"
-
-    async def test_multiple_commits_newest_first(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Multiple commits appear in reverse chronological order (newest first)."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
         sha1 = _commit_file(worktree_path, "first.py", "# first\n", "First commit")
-        sha2 = _commit_file(worktree_path, "second.py", "# second\n", "Second commit")
 
-        resp = await client.get(f"/api/runs/{run_id}/review/commits")
-        assert resp.status_code == 200
-        commits = resp.json()
-        assert len(commits) == 2
-        # Newest first
-        assert commits[0]["sha"] == sha2
-        assert commits[1]["sha"] == sha1
-
-    async def test_commit_schema_fields(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Each commit entry contains all CommitEntry schema fields."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "schema.py", "# schema\n", "Schema test commit")
-
+        # Single commit with full CommitEntry schema
         resp = await client.get(f"/api/runs/{run_id}/review/commits")
         assert resp.status_code == 200
         commits = resp.json()
@@ -483,13 +279,40 @@ class TestGetCommits:
         c = commits[0]
         required_fields = {"sha", "short_sha", "message", "author", "timestamp"}
         assert required_fields.issubset(set(c.keys()))
-        assert isinstance(c["sha"], str) and len(c["sha"]) == 40
+        assert c["sha"] == sha1
+        assert len(c["sha"]) == 40
         assert isinstance(c["short_sha"], str) and len(c["short_sha"]) == 7
         assert c["sha"].startswith(c["short_sha"])
         assert c["author"] == "Test"
-        assert c["message"] == "Schema test commit"
-        # timestamp is an ISO 8601 string
-        assert isinstance(c["timestamp"], str)
+        assert c["message"] == "First commit"
+        assert isinstance(c["timestamp"], str)  # ISO 8601
+
+        sha2 = _commit_file(worktree_path, "second.py", "# second\n", "Second commit")
+
+        # Newest first
+        resp = await client.get(f"/api/runs/{run_id}/review/commits")
+        assert resp.status_code == 200
+        commits = resp.json()
+        assert [c["sha"] for c in commits] == [sha2, sha1]
+
+        # Back-merge must not list source-branch commits in branch history
+        main_sha = _commit_file(
+            repo, "main_history.py", "main_history = True\n", "Add main history"
+        )
+        back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
+        assert back_merge_resp.status_code == 200
+        merge_sha = back_merge_resp.json()["merge_commit_sha"]
+        assert back_merge_resp.json()["status"] == "clean"
+        assert merge_sha is not None
+
+        resp = await client.get(f"/api/runs/{run_id}/review/commits")
+        assert resp.status_code == 200
+        shas = [commit["sha"] for commit in resp.json()]
+        assert sha1 in shas
+        assert sha2 in shas
+        assert merge_sha in shas
+        assert main_sha not in shas
+        assert pre_run_main_head not in shas
 
     async def test_run_not_found_returns_404(
         self,
@@ -517,57 +340,3 @@ class TestGetCommits:
 
         resp = await client.get(f"/api/runs/{run_id}/review/commits")
         assert resp.status_code == 409
-
-    async def test_commit_not_listed_if_on_source_branch(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Commits from source branch (before branch point) are excluded."""
-        client, repo, drain = client_with_repo
-
-        # Add a commit to main BEFORE creating the run
-        _commit_file(repo, "main_file.py", "# on main\n", "Commit on main")
-
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-
-        # No commits on run branch yet
-        resp = await client.get(f"/api/runs/{run_id}/review/commits")
-        assert resp.status_code == 200
-        commits = resp.json()
-        shas = [c["sha"] for c in commits]
-        main_head = _git(["rev-parse", "HEAD"], cwd=repo)
-        assert main_head not in shas
-
-    async def test_back_merge_excludes_upstream_commits_from_history(
-        self,
-        client_with_repo: tuple[AsyncClient, Path, DrainFn],
-    ) -> None:
-        """Branch history should not list source-branch commits pulled in by back-merge."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        feature_sha = _commit_file(
-            worktree_path,
-            "feature_history.py",
-            "feature_history = True\n",
-            "Add feature history",
-        )
-        main_sha = _commit_file(
-            repo, "main_history.py", "main_history = True\n", "Add main history"
-        )
-
-        back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
-        assert back_merge_resp.status_code == 200
-        merge_sha = back_merge_resp.json()["merge_commit_sha"]
-        assert back_merge_resp.json()["status"] == "clean"
-        assert merge_sha is not None
-
-        resp = await client.get(f"/api/runs/{run_id}/review/commits")
-        assert resp.status_code == 200
-        shas = [commit["sha"] for commit in resp.json()]
-        assert feature_sha in shas
-        assert merge_sha in shas
-        assert main_sha not in shas
