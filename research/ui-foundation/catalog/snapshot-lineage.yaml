@@ -46,5 +46,11 @@ entries:
   parent_snapshot_id: snapshot-2026-07-24-snapshot-lineage-formatted
   snapshot_digest: 22f45e41661321bb8d82181439e32f1a609907b7ae53d9b445100cca61d20b02
   predecessor_lineage_digest: 52250470b998985d3d2ab58f9b9439fab24a0893a919f0f986082345734d74db
+  status: historical
+  lineage_entry_digest: 88496954aa2b1f40b3a9b4b5b27c4e5515067023a993f681d45da309f20d8b71
+- snapshot_id: snapshot-2026-07-24-main-structural-sharing
+  parent_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_digest: a73722c615018aff38b3e4dcbf6d4ec9020b5b8669a132b5dc36c499735c5e2b
+  predecessor_lineage_digest: 88496954aa2b1f40b3a9b4b5b27c4e5515067023a993f681d45da309f20d8b71
   status: active
-  lineage_entry_digest: 150aa3f426a0d3e4c594d418a148efb2fb949036d9c198de47bff63ffbe60602
+  lineage_entry_digest: e8606dd1c4e952ed36698ad6075144b08fc2a2c116a27117920b76e4bbbd7bdf

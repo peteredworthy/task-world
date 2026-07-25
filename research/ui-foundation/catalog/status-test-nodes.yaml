@@ -11,683 +11,683 @@ command:
 - addopts=
 - -n
 - '0'
-active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 entries:
 - base_locator: tests/integration/test_api_agent_configs.py::TestCreateAgent::test_create_returns_201
   concrete_node_ids:
   - tests/integration/test_api_agent_configs.py::TestCreateAgent::test_create_returns_201
   source_path: tests/integration/test_api_agent_configs.py
   source_sha256: 41dd0a093728cdb2bc3cbe948f041619f78a25af76d37a88dfeb1384f8480225
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_agent_configs.py::TestCreateAgent::test_create_returns_schema
   concrete_node_ids:
   - tests/integration/test_api_agent_configs.py::TestCreateAgent::test_create_returns_schema
   source_path: tests/integration/test_api_agent_configs.py
   source_sha256: 41dd0a093728cdb2bc3cbe948f041619f78a25af76d37a88dfeb1384f8480225
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_agent_configs.py::TestDeleteAgent::test_delete_returns_204
   concrete_node_ids:
   - tests/integration/test_api_agent_configs.py::TestDeleteAgent::test_delete_returns_204
   source_path: tests/integration/test_api_agent_configs.py
   source_sha256: 41dd0a093728cdb2bc3cbe948f041619f78a25af76d37a88dfeb1384f8480225
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_agent_configs.py::TestDeleteAgent::test_deleted_agent_returns_404_on_get
   concrete_node_ids:
   - tests/integration/test_api_agent_configs.py::TestDeleteAgent::test_deleted_agent_returns_404_on_get
   source_path: tests/integration/test_api_agent_configs.py
   source_sha256: 41dd0a093728cdb2bc3cbe948f041619f78a25af76d37a88dfeb1384f8480225
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_agent_configs.py::TestResetPrompt::test_reset_restores_default_prompt
   concrete_node_ids:
   - tests/integration/test_api_agent_configs.py::TestResetPrompt::test_reset_restores_default_prompt
   source_path: tests/integration/test_api_agent_configs.py
   source_sha256: 41dd0a093728cdb2bc3cbe948f041619f78a25af76d37a88dfeb1384f8480225
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_agent_configs.py::TestUpdateAgent::test_update_model_profile
   concrete_node_ids:
   - tests/integration/test_api_agent_configs.py::TestUpdateAgent::test_update_model_profile
   source_path: tests/integration/test_api_agent_configs.py
   source_sha256: 41dd0a093728cdb2bc3cbe948f041619f78a25af76d37a88dfeb1384f8480225
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_agent_configs.py::TestUpdateAgent::test_update_system_prompt
   concrete_node_ids:
   - tests/integration/test_api_agent_configs.py::TestUpdateAgent::test_update_system_prompt
   source_path: tests/integration/test_api_agent_configs.py
   source_sha256: 41dd0a093728cdb2bc3cbe948f041619f78a25af76d37a88dfeb1384f8480225
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_backward_transitions.py::test_transition_backward_basic
   concrete_node_ids:
   - tests/integration/test_api_backward_transitions.py::test_transition_backward_basic
   source_path: tests/integration/test_api_backward_transitions.py
   source_sha256: 8ef7473147b774cb8383a1a79ff4ff3caefadadf5e30984cb125e4ded500ab27
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_branch_ops.py::test_back_merge
   concrete_node_ids:
   - tests/integration/test_api_branch_ops.py::test_back_merge
   source_path: tests/integration/test_api_branch_ops.py
   source_sha256: 91c4f2a3d0499d97366a7e99bc7a762268b6eae21dd8365b7fccce46cf2c1c5c
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_clarifications.py::test_respond_with_skipped_true
   concrete_node_ids:
   - tests/integration/test_api_clarifications.py::test_respond_with_skipped_true
   source_path: tests/integration/test_api_clarifications.py
   source_sha256: 86aaa6e6094b5d5586f0a813e42fb99933f40cdaa4b820f252668435f9164336
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_human_approval.py::test_approve_step_audit_trail
   concrete_node_ids:
   - tests/integration/test_api_human_approval.py::test_approve_step_audit_trail
   source_path: tests/integration/test_api_human_approval.py
   source_sha256: 3ffb0031b941db43d8fcf4de3e6bd25e94466e35380b0dc3fce8c1e8743f6a71
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_human_approval.py::test_approve_step_endpoint
   concrete_node_ids:
   - tests/integration/test_api_human_approval.py::test_approve_step_endpoint
   source_path: tests/integration/test_api_human_approval.py
   source_sha256: 3ffb0031b941db43d8fcf4de3e6bd25e94466e35380b0dc3fce8c1e8743f6a71
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_human_approval.py::test_approve_step_multiple_times
   concrete_node_ids:
   - tests/integration/test_api_human_approval.py::test_approve_step_multiple_times
   source_path: tests/integration/test_api_human_approval.py
   source_sha256: 3ffb0031b941db43d8fcf4de3e6bd25e94466e35380b0dc3fce8c1e8743f6a71
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_model_profiles.py::TestAgentRunnerModelDefaultEndpoints::test_put_replaces_all_existing_model_defaults
   concrete_node_ids:
   - tests/integration/test_api_model_profiles.py::TestAgentRunnerModelDefaultEndpoints::test_put_replaces_all_existing_model_defaults
   source_path: tests/integration/test_api_model_profiles.py
   source_sha256: e4e1eadd36dedadfacc8abf1733564abe52468715efe67260ac2ab587419bfa3
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_model_profiles.py::TestAgentRunnerModelDefaultEndpoints::test_set_and_get_model_defaults_roundtrip
   concrete_node_ids:
   - tests/integration/test_api_model_profiles.py::TestAgentRunnerModelDefaultEndpoints::test_set_and_get_model_defaults_roundtrip
   source_path: tests/integration/test_api_model_profiles.py
   source_sha256: e4e1eadd36dedadfacc8abf1733564abe52468715efe67260ac2ab587419bfa3
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_repos.py::TestListRepos::test_empty_repos_dir
   concrete_node_ids:
   - tests/integration/test_api_repos.py::TestListRepos::test_empty_repos_dir
   source_path: tests/integration/test_api_repos.py
   source_sha256: 41a2cb00800bc223fc869623c22150cccb04b65163d06c6df8631d2709ef2a1d
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_routines.py::test_archive_routine
   concrete_node_ids:
   - tests/integration/test_api_routines.py::test_archive_routine
   source_path: tests/integration/test_api_routines.py
   source_sha256: d5cb9f30f039c566ccbbca2cec2005ff9fdd5c918707fe469e16061f0f786881
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_routines.py::test_unarchive_routine
   concrete_node_ids:
   - tests/integration/test_api_routines.py::test_unarchive_routine
   source_path: tests/integration/test_api_routines.py
   source_sha256: d5cb9f30f039c566ccbbca2cec2005ff9fdd5c918707fe469e16061f0f786881
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_routines.py::test_validate_routine_invalid_missing_field
   concrete_node_ids:
   - tests/integration/test_api_routines.py::test_validate_routine_invalid_missing_field
   source_path: tests/integration/test_api_routines.py
   source_sha256: d5cb9f30f039c566ccbbca2cec2005ff9fdd5c918707fe469e16061f0f786881
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_routines.py::test_validate_routine_valid
   concrete_node_ids:
   - tests/integration/test_api_routines.py::test_validate_routine_valid
   source_path: tests/integration/test_api_routines.py
   source_sha256: d5cb9f30f039c566ccbbca2cec2005ff9fdd5c918707fe469e16061f0f786881
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_runs.py::test_cancel_run_from_paused
   concrete_node_ids:
   - tests/integration/test_api_runs.py::test_cancel_run_from_paused
   source_path: tests/integration/test_api_runs.py
   source_sha256: 8f3fdd86ba9c55b0c649ac0de86c1f89804d12f247fce252636de4e1bb869cf2
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_runs.py::test_create_run
   concrete_node_ids:
   - tests/integration/test_api_runs.py::test_create_run
   source_path: tests/integration/test_api_runs.py
   source_sha256: 8f3fdd86ba9c55b0c649ac0de86c1f89804d12f247fce252636de4e1bb869cf2
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_runs.py::test_delete_run
   concrete_node_ids:
   - tests/integration/test_api_runs.py::test_delete_run
   source_path: tests/integration/test_api_runs.py
   source_sha256: 8f3fdd86ba9c55b0c649ac0de86c1f89804d12f247fce252636de4e1bb869cf2
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_runs.py::test_delete_startup_orphan_run
   concrete_node_ids:
   - tests/integration/test_api_runs.py::test_delete_startup_orphan_run
   source_path: tests/integration/test_api_runs.py
   source_sha256: 8f3fdd86ba9c55b0c649ac0de86c1f89804d12f247fce252636de4e1bb869cf2
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_runs.py::test_skip_step_writes_step_skipped_to_events_v2_and_activity
   concrete_node_ids:
   - tests/integration/test_api_runs.py::test_skip_step_writes_step_skipped_to_events_v2_and_activity
   source_path: tests/integration/test_api_runs.py
   source_sha256: 8f3fdd86ba9c55b0c649ac0de86c1f89804d12f247fce252636de4e1bb869cf2
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_runs_recover.py::test_recover_happy_path_sets_paused_and_rewinds
   concrete_node_ids:
   - tests/integration/test_api_runs_recover.py::test_recover_happy_path_sets_paused_and_rewinds
   source_path: tests/integration/test_api_runs_recover.py
   source_sha256: 1ebad12565d66db851d9b25947f3f258ed1d87eb22a8bf1c927a2d12cbb8c2de
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_api_tasks.py::test_full_task_lifecycle
   concrete_node_ids:
   - tests/integration/test_api_tasks.py::test_full_task_lifecycle
   source_path: tests/integration/test_api_tasks.py
   source_sha256: 86a233c00974eedde3289c4fe35b82af6dd8d66c4d085e0443288a51af6c7729
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_approval_workflow.py::test_approve_task_transitions_to_completed
   concrete_node_ids:
   - tests/integration/test_approval_workflow.py::test_approve_task_transitions_to_completed
   source_path: tests/integration/test_approval_workflow.py
   source_sha256: 390771c4f991d1326fa07000e9f770b608fb1afd3a2fbdd9aa511c5c9d176e2f
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_approval_workflow.py::test_reject_at_max_attempts_transitions_to_failed_and_replays
   concrete_node_ids:
   - tests/integration/test_approval_workflow.py::test_reject_at_max_attempts_transitions_to_failed_and_replays
   source_path: tests/integration/test_approval_workflow.py
   source_sha256: 390771c4f991d1326fa07000e9f770b608fb1afd3a2fbdd9aa511c5c9d176e2f
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_approval_workflow.py::test_reject_task_transitions_to_building
   concrete_node_ids:
   - tests/integration/test_approval_workflow.py::test_reject_task_transitions_to_building
   source_path: tests/integration/test_approval_workflow.py
   source_sha256: 390771c4f991d1326fa07000e9f770b608fb1afd3a2fbdd9aa511c5c9d176e2f
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_clarification_repository.py::test_multiple_clarifications_for_different_runs
   concrete_node_ids:
   - tests/integration/test_clarification_repository.py::test_multiple_clarifications_for_different_runs
   source_path: tests/integration/test_clarification_repository.py
   source_sha256: 52707d1d1d420a69b6375121bf5f1aa15b5b22c9baef1741d35ddf985eda30ad
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_clarification_repository.py::test_save_clarification_response
   concrete_node_ids:
   - tests/integration/test_clarification_repository.py::test_save_clarification_response
   source_path: tests/integration/test_clarification_repository.py
   source_sha256: 52707d1d1d420a69b6375121bf5f1aa15b5b22c9baef1741d35ddf985eda30ad
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_clarification_workflow.py::test_full_clarification_cycle
   concrete_node_ids:
   - tests/integration/test_clarification_workflow.py::test_full_clarification_cycle
   source_path: tests/integration/test_clarification_workflow.py
   source_sha256: 776b97f394ab3b18a0775ae9b5d7583d2054563717b250b1143676285b2b25df
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_clarification_workflow.py::test_pending_clarification_blocks_submit
   concrete_node_ids:
   - tests/integration/test_clarification_workflow.py::test_pending_clarification_blocks_submit
   source_path: tests/integration/test_clarification_workflow.py
   source_sha256: 776b97f394ab3b18a0775ae9b5d7583d2054563717b250b1143676285b2b25df
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
   concrete_node_ids:
   - tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
   source_path: tests/integration/test_conflict_api.py
   source_sha256: 06179d1b7d5de4e8afdce78f8d2b9ddeadb955d9db60df96a834fd7e1505e012
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status
   concrete_node_ids:
   - tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status
   source_path: tests/integration/test_conflict_api.py
   source_sha256: 06179d1b7d5de4e8afdce78f8d2b9ddeadb955d9db60df96a834fd7e1505e012
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_manual_writes_custom_content
   concrete_node_ids:
   - tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_manual_writes_custom_content
   source_path: tests/integration/test_conflict_api.py
   source_sha256: 06179d1b7d5de4e8afdce78f8d2b9ddeadb955d9db60df96a834fd7e1505e012
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_ours_removes_markers
   concrete_node_ids:
   - tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_ours_removes_markers
   source_path: tests/integration/test_conflict_api.py
   source_sha256: 06179d1b7d5de4e8afdce78f8d2b9ddeadb955d9db60df96a834fd7e1505e012
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds
   concrete_node_ids:
   - tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds
   source_path: tests/integration/test_conflict_api.py
   source_sha256: 06179d1b7d5de4e8afdce78f8d2b9ddeadb955d9db60df96a834fd7e1505e012
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_cost_records.py::test_phase_handler_records_cost_and_interaction_logs_for_each_agent_execution
   concrete_node_ids:
   - tests/integration/test_cost_records.py::test_phase_handler_records_cost_and_interaction_logs_for_each_agent_execution
   source_path: tests/integration/test_cost_records.py
   source_sha256: aa617df892f21b6744d63ba1ab811c99fad11f3f059f64299bd4da6564a2ef93
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_database.py::test_cascade_delete
   concrete_node_ids:
   - tests/integration/test_database.py::test_cascade_delete
   source_path: tests/integration/test_database.py
   source_sha256: 316b1c5885fe64373f67c694a9f46f9a707c774ce7016dc066cd44ad6f4b760d
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_database.py::test_crud_with_steps_and_tasks
   concrete_node_ids:
   - tests/integration/test_database.py::test_crud_with_steps_and_tasks
   source_path: tests/integration/test_database.py
   source_sha256: 316b1c5885fe64373f67c694a9f46f9a707c774ce7016dc066cd44ad6f4b760d
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_database.py::test_event_v2_insert_and_query
   concrete_node_ids:
   - tests/integration/test_database.py::test_event_v2_insert_and_query
   source_path: tests/integration/test_database.py
   source_sha256: 316b1c5885fe64373f67c694a9f46f9a707c774ce7016dc066cd44ad6f4b760d
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_database.py::test_event_v2_metadata_exposes_durability_contract
   concrete_node_ids:
   - tests/integration/test_database.py::test_event_v2_metadata_exposes_durability_contract
   source_path: tests/integration/test_database.py
   source_sha256: 316b1c5885fe64373f67c694a9f46f9a707c774ce7016dc066cd44ad6f4b760d
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_envfile_revert.py::test_copy_back_api
   concrete_node_ids:
   - tests/integration/test_envfile_revert.py::test_copy_back_api
   source_path: tests/integration/test_envfile_revert.py
   source_sha256: c7eb0b6f732eabebe255d6fab41de4a01753d68d042e12692b95594bed56c25b
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_envfile_revert.py::test_revert_env_files_api
   concrete_node_ids:
   - tests/integration/test_envfile_revert.py::test_revert_env_files_api
   source_path: tests/integration/test_envfile_revert.py
   source_sha256: c7eb0b6f732eabebe255d6fab41de4a01753d68d042e12692b95594bed56c25b
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_event_log_durability.py::test_events_v2_ordering_uses_position_and_aggregate_version
   concrete_node_ids:
   - tests/integration/test_event_log_durability.py::test_events_v2_ordering_uses_position_and_aggregate_version
   source_path: tests/integration/test_event_log_durability.py
   source_sha256: 3f74a8c3648c5d042d3eba2aee7e56f086c05d723b42aa1082da6c00235f5839
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_event_store_wiring.py::test_emit_writes_events_v2_row
   concrete_node_ids:
   - tests/integration/test_event_store_wiring.py::test_emit_writes_events_v2_row
   source_path: tests/integration/test_event_store_wiring.py
   source_sha256: fc84e9e7e9c6c1ebcce81cadceeaa0ef2c71adfefa140279a5752527f88697c0
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_fan_out.py::TestChildTaskStateManagement::test_retry_fan_out_child_records_retry_generation
   concrete_node_ids:
   - tests/integration/test_fan_out.py::TestChildTaskStateManagement::test_retry_fan_out_child_records_retry_generation
   source_path: tests/integration/test_fan_out.py
   source_sha256: e52d7fa0db0f49ab756ee7bf372272fc2e8e05ee31054481050dba1652430b5a
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_fan_out.py::TestFanOutExpansion::test_expand_fan_out_creates_children
   concrete_node_ids:
   - tests/integration/test_fan_out.py::TestFanOutExpansion::test_expand_fan_out_creates_children
   source_path: tests/integration/test_fan_out.py
   source_sha256: e52d7fa0db0f49ab756ee7bf372272fc2e8e05ee31054481050dba1652430b5a
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_full_persistence.py::test_full_lifecycle_survives_restart
   concrete_node_ids:
   - tests/integration/test_full_persistence.py::test_full_lifecycle_survives_restart
   source_path: tests/integration/test_full_persistence.py
   source_sha256: 53cbb76a5b0e87baf2633a2a3b8cf172d9f2492193d769367c8baaf31cfccc4b
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_api.py::test_graph_final_blockers_surface_failed_outbox_rows
   concrete_node_ids:
   - tests/integration/test_graph_api.py::test_graph_final_blockers_surface_failed_outbox_rows
   source_path: tests/integration/test_graph_api.py
   source_sha256: 31b8e7a538d99f0451fef76bba6bf0f22ca730d682acb047c3d24b373c83e9c7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_api.py::test_operator_graph_patch_endpoint_accepts_human_patch
   concrete_node_ids:
   - tests/integration/test_graph_api.py::test_operator_graph_patch_endpoint_accepts_human_patch
   source_path: tests/integration/test_graph_api.py
   source_sha256: 31b8e7a538d99f0451fef76bba6bf0f22ca730d682acb047c3d24b373c83e9c7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event
   concrete_node_ids:
   - tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event
   source_path: tests/integration/test_graph_api.py
   source_sha256: 31b8e7a538d99f0451fef76bba6bf0f22ca730d682acb047c3d24b373c83e9c7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_decisions_api.py::test_decisions_endpoint_reflects_seeded_gates_and_appeals
   concrete_node_ids:
   - tests/integration/test_graph_decisions_api.py::test_decisions_endpoint_reflects_seeded_gates_and_appeals
   source_path: tests/integration/test_graph_decisions_api.py
   source_sha256: 049abd5874eeed5ee460dfc649e79e43ad0a3967f9ff94fe8862d8b1381556e3
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor
   concrete_node_ids:
   - tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor
   source_path: tests/integration/test_graph_decisions_api.py
   source_sha256: 049abd5874eeed5ee460dfc649e79e43ad0a3967f9ff94fe8862d8b1381556e3
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_decisions_api.py::test_record_rejected_approval_is_durable_and_dead_inputs_successor
   concrete_node_ids:
   - tests/integration/test_graph_decisions_api.py::test_record_rejected_approval_is_durable_and_dead_inputs_successor
   source_path: tests/integration/test_graph_decisions_api.py
   source_sha256: 049abd5874eeed5ee460dfc649e79e43ad0a3967f9ff94fe8862d8b1381556e3
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_dynamic_e2e.py::test_dynamic_full_happy_path_completes
   concrete_node_ids:
   - tests/integration/test_graph_dynamic_e2e.py::test_dynamic_full_happy_path_completes
   source_path: tests/integration/test_graph_dynamic_e2e.py
   source_sha256: ed9cc60536ba8fcaf6de7f3a2d368c5c9d4fc9adcd4267fabae70ead26c589f7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_dynamic_e2e.py::test_dynamic_run_does_not_complete_while_final_invariant_check_fails
   concrete_node_ids:
   - tests/integration/test_graph_dynamic_e2e.py::test_dynamic_run_does_not_complete_while_final_invariant_check_fails
   source_path: tests/integration/test_graph_dynamic_e2e.py
   source_sha256: ed9cc60536ba8fcaf6de7f3a2d368c5c9d4fc9adcd4267fabae70ead26c589f7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_event_store.py::test_append_events_adds_durable_base_fields_to_accepted_records
   concrete_node_ids:
   - tests/integration/test_graph_event_store.py::test_append_events_adds_durable_base_fields_to_accepted_records
   source_path: tests/integration/test_graph_event_store.py
   source_sha256: f4694f217bbadfc1e7fb3f754e2137f1077a111edfc5120b3713ba4dd2a82ca7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_event_store.py::test_append_events_stores_durable_input_binding_position
   concrete_node_ids:
   - tests/integration/test_graph_event_store.py::test_append_events_stores_durable_input_binding_position
   source_path: tests/integration/test_graph_event_store.py
   source_sha256: f4694f217bbadfc1e7fb3f754e2137f1077a111edfc5120b3713ba4dd2a82ca7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_event_store.py::test_append_read_round_trip
   concrete_node_ids:
   - tests/integration/test_graph_event_store.py::test_append_read_round_trip
   source_path: tests/integration/test_graph_event_store.py
   source_sha256: f4694f217bbadfc1e7fb3f754e2137f1077a111edfc5120b3713ba4dd2a82ca7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_event_store.py::test_callback_idempotency_uses_valid_snapshot_without_replay
   concrete_node_ids:
   - tests/integration/test_graph_event_store.py::test_callback_idempotency_uses_valid_snapshot_without_replay
   source_path: tests/integration/test_graph_event_store.py
   source_sha256: f4694f217bbadfc1e7fb3f754e2137f1077a111edfc5120b3713ba4dd2a82ca7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_event_store.py::test_graph_stream_coexists_with_legacy_workflow_events
   concrete_node_ids:
   - tests/integration/test_graph_event_store.py::test_graph_stream_coexists_with_legacy_workflow_events
   source_path: tests/integration/test_graph_event_store.py
   source_sha256: f4694f217bbadfc1e7fb3f754e2137f1077a111edfc5120b3713ba4dd2a82ca7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_event_store.py::test_unique_version_conflict
   concrete_node_ids:
   - tests/integration/test_graph_event_store.py::test_unique_version_conflict
   source_path: tests/integration/test_graph_event_store.py
   source_sha256: f4694f217bbadfc1e7fb3f754e2137f1077a111edfc5120b3713ba4dd2a82ca7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_file_state_boundary.py::test_file_state_boundary_accepts_residue_and_snapshots_captured_tree
   concrete_node_ids:
   - tests/integration/test_graph_file_state_boundary.py::test_file_state_boundary_accepts_residue_and_snapshots_captured_tree
   source_path: tests/integration/test_graph_file_state_boundary.py
   source_sha256: df2034b420bcba85c9596f61b76e2005abb190c3c420e89be4b7c917cee3791d
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_file_state_boundary.py::test_secret_file_state_rejection_releases_lease_and_retries_clean_attempt
   concrete_node_ids:
   - tests/integration/test_graph_file_state_boundary.py::test_secret_file_state_rejection_releases_lease_and_retries_clean_attempt
   source_path: tests/integration/test_graph_file_state_boundary.py
   source_sha256: df2034b420bcba85c9596f61b76e2005abb190c3c420e89be4b7c917cee3791d
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_fr07_acceptance.py::test_fr07_macro_tools_route_expand_validate_and_read_back_patch_attempts
   concrete_node_ids:
   - tests/integration/test_graph_fr07_acceptance.py::test_fr07_macro_tools_route_expand_validate_and_read_back_patch_attempts
   source_path: tests/integration/test_graph_fr07_acceptance.py
   source_sha256: 6a51dcde41cd1a12e50b0b2c8bfa800392f1fa40b8bd117ba14adca06eac93f7
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks
   concrete_node_ids:
   - tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks
   source_path: tests/integration/test_graph_fr08_acceptance.py
   source_sha256: 5bfe1f8e6a77789dd5182c3f53e156044a2b91db9f9870e5dcee228bd449838a
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_fr08_acceptance.py::test_fr08_invalid_patch_matrix_rejected_and_readable
   concrete_node_ids:
   - tests/integration/test_graph_fr08_acceptance.py::test_fr08_invalid_patch_matrix_rejected_and_readable
   source_path: tests/integration/test_graph_fr08_acceptance.py
   source_sha256: 5bfe1f8e6a77789dd5182c3f53e156044a2b91db9f9870e5dcee228bd449838a
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_fr09_acceptance.py::test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less_used_nodes
   concrete_node_ids:
   - tests/integration/test_graph_fr09_acceptance.py::test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less_used_nodes
   source_path: tests/integration/test_graph_fr09_acceptance.py
   source_sha256: d86751dd7ded37c1eef581834f18a776ecb5b9957b37a95670cb0b352f7c11ea
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_outbox_crash_points.py::test_events_and_outbox_rows_commit_atomically_on_outbox_failure
   concrete_node_ids:
   - tests/integration/test_graph_outbox_crash_points.py::test_events_and_outbox_rows_commit_atomically_on_outbox_failure
   source_path: tests/integration/test_graph_outbox_crash_points.py
   source_sha256: f7f76cb2b894d7a013be7c44bbc14ecfcd6b0669894887ee497f19cb4697b37b
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized
   concrete_node_ids:
   - tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized
   source_path: tests/integration/test_graph_read_models.py
   source_sha256: f50bbb5df7be741fc45db993db38f7675f6a0a2943fde75387c753be03955e8e
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_read_models.py::test_graph_read_models_roll_back_with_event_append
   concrete_node_ids:
   - tests/integration/test_graph_read_models.py::test_graph_read_models_roll_back_with_event_append
   source_path: tests/integration/test_graph_read_models.py
   source_sha256: f50bbb5df7be741fc45db993db38f7675f6a0a2943fde75387c753be03955e8e
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_graph_usage_persistence.py::test_controller_persists_usage_event_and_replays_run_usage_read_model
   concrete_node_ids:
   - tests/integration/test_graph_usage_persistence.py::test_controller_persists_usage_event_and_replays_run_usage_read_model
   source_path: tests/integration/test_graph_usage_persistence.py
   source_sha256: 15ac8640681746c410fecd6fb67d85ddbab951e416e0f74edcc6fcce473ee5a6
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_jsonl_rotation_recovery.py::test_bootstrap_replays_archives_and_active_in_global_position_order
   concrete_node_ids:
   - tests/integration/test_jsonl_rotation_recovery.py::test_bootstrap_replays_archives_and_active_in_global_position_order
   source_path: tests/integration/test_jsonl_rotation_recovery.py
   source_sha256: 455c17267d51b75076d3d2ee999fad3fb00d7c38cc0dbd2e7c98e01cd503c601
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_merge_readiness.py::test_merge_back_with_strategy_merge
   concrete_node_ids:
   - tests/integration/test_merge_readiness.py::test_merge_back_with_strategy_merge
   source_path: tests/integration/test_merge_readiness.py
   source_sha256: d2760e7fc06b43797fffa218483a0b73a4c59c9e044aa14865e38cb6de6d1f3b
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass
   concrete_node_ids:
   - tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass
   source_path: tests/integration/test_merge_readiness.py
   source_sha256: d2760e7fc06b43797fffa218483a0b73a4c59c9e044aa14865e38cb6de6d1f3b
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_output_batching.py::test_output_batching_line_offset_monotonic_no_gaps
   concrete_node_ids:
   - tests/integration/test_output_batching.py::test_output_batching_line_offset_monotonic_no_gaps
   source_path: tests/integration/test_output_batching.py
   source_sha256: 31d4b9cf608804cc47325cb73eb0964bd03984194cd1eafcf268d613e54ef448
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit
   concrete_node_ids:
   - tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit
   source_path: tests/integration/test_prune_api.py
   source_sha256: 16e1375b1cdf972238061b5816b3ba75e2874b566b0a4fec9db440f17c8a8533
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree
   concrete_node_ids:
   - tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree
   source_path: tests/integration/test_prune_api.py
   source_sha256: 16e1375b1cdf972238061b5816b3ba75e2874b566b0a4fec9db440f17c8a8533
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_returns_stats
   concrete_node_ids:
   - tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_returns_stats
   source_path: tests/integration/test_prune_api.py
   source_sha256: 16e1375b1cdf972238061b5816b3ba75e2874b566b0a4fec9db440f17c8a8533
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_review_test_runner.py::TestGetTestRun::test_get_test_run_returns_running_status
   concrete_node_ids:
   - tests/integration/test_review_test_runner.py::TestGetTestRun::test_get_test_run_returns_running_status
   source_path: tests/integration/test_review_test_runner.py
   source_sha256: fef71e319c463367fb381802d3d13bea2a75e60c53ff8fd8c756cb8058cb631f
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_completes_with_results
   concrete_node_ids:
   - tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_completes_with_results
   source_path: tests/integration/test_review_test_runner.py
   source_sha256: fef71e319c463367fb381802d3d13bea2a75e60c53ff8fd8c756cb8058cb631f
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_reports_failure
   concrete_node_ids:
   - tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_reports_failure
   source_path: tests/integration/test_review_test_runner.py
   source_sha256: fef71e319c463367fb381802d3d13bea2a75e60c53ff8fd8c756cb8058cb631f
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_review_test_runner.py::TestStartTestRun::test_start_test_run_returns_id
   concrete_node_ids:
   - tests/integration/test_review_test_runner.py::TestStartTestRun::test_start_test_run_returns_id
   source_path: tests/integration/test_review_test_runner.py
   source_sha256: fef71e319c463367fb381802d3d13bea2a75e60c53ff8fd8c756cb8058cb631f
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_signal_queue.py::test_cancel_active_run_via_queue
   concrete_node_ids:
   - tests/integration/test_signal_queue.py::test_cancel_active_run_via_queue
   source_path: tests/integration/test_signal_queue.py
   source_sha256: 53881d6785e6e30a63a5c477841ace16a20db50def2a32e14b1d01ff2bbc3cd8
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused
   concrete_node_ids:
   - tests/integration/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused
   source_path: tests/integration/test_signal_queue.py
   source_sha256: 53881d6785e6e30a63a5c477841ace16a20db50def2a32e14b1d01ff2bbc3cd8
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_signal_queue.py::test_resume_signal_consumed_paused_to_active
   concrete_node_ids:
   - tests/integration/test_signal_queue.py::test_resume_signal_consumed_paused_to_active
   source_path: tests/integration/test_signal_queue.py
   source_sha256: 53881d6785e6e30a63a5c477841ace16a20db50def2a32e14b1d01ff2bbc3cd8
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_signal_queue.py::test_run_start_signal_consumed_draft_to_active
   concrete_node_ids:
   - tests/integration/test_signal_queue.py::test_run_start_signal_consumed_draft_to_active
   source_path: tests/integration/test_signal_queue.py
   source_sha256: 53881d6785e6e30a63a5c477841ace16a20db50def2a32e14b1d01ff2bbc3cd8
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_ui_foundation_tools.py::test_current_action_cannot_substitute_proposed_role_for_enforced_authority
   concrete_node_ids:
   - tests/integration/test_ui_foundation_tools.py::test_current_action_cannot_substitute_proposed_role_for_enforced_authority
   source_path: tests/integration/test_ui_foundation_tools.py
-  source_sha256: 50649988054827e44d965568852044487cf8a57d57f7f4db860624d04e6ecd2f
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  source_sha256: 247308bc880b6811e2f3385d049be302c988d9c8c458deead4d8b90d23b3398a
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_workflow_service.py::test_complete_recovery_abandon_projects_failed_attempt_without_save_run
   concrete_node_ids:
   - tests/integration/test_workflow_service.py::test_complete_recovery_abandon_projects_failed_attempt_without_save_run
   source_path: tests/integration/test_workflow_service.py
   source_sha256: fc5ea36bc97fcf2d7c1d3c687d64a0bca91e2a91d83b6acbcd16f6200ec6e8db
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_workflow_service.py::test_complete_recovery_retry_projects_attempts_and_resumes_without_save_run
   concrete_node_ids:
   - tests/integration/test_workflow_service.py::test_complete_recovery_retry_projects_attempts_and_resumes_without_save_run
   source_path: tests/integration/test_workflow_service.py
   source_sha256: fc5ea36bc97fcf2d7c1d3c687d64a0bca91e2a91d83b6acbcd16f6200ec6e8db
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_workflow_service.py::test_complete_recovery_skip_projects_attempt_step_and_run_without_save_run
   concrete_node_ids:
   - tests/integration/test_workflow_service.py::test_complete_recovery_skip_projects_attempt_step_and_run_without_save_run
   source_path: tests/integration/test_workflow_service.py
   source_sha256: fc5ea36bc97fcf2d7c1d3c687d64a0bca91e2a91d83b6acbcd16f6200ec6e8db
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/integration/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run
   concrete_node_ids:
   - tests/integration/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run
   source_path: tests/integration/test_workflow_service.py
   source_sha256: fc5ea36bc97fcf2d7c1d3c687d64a0bca91e2a91d83b6acbcd16f6200ec6e8db
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_artifact_store.py::test_put_deduplicates_content_and_returns_opaque_reference
   concrete_node_ids:
   - tests/unit/test_artifact_store.py::test_put_deduplicates_content_and_returns_opaque_reference
   source_path: tests/unit/test_artifact_store.py
   source_sha256: 36c5d8493e6bc3b0672f6f1282c47bb6849e17f4a9e4a375d11c8371bb045359
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_backup.py::test_create_backup_copies_db_and_writes_metadata
   concrete_node_ids:
   - tests/unit/test_backup.py::test_create_backup_copies_db_and_writes_metadata
   source_path: tests/unit/test_backup.py
   source_sha256: 7982d246ffda8177edf9c64343be36300c9d0fc57d84e34f84d0f1f654634359
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_backup.py::test_create_backup_with_journal_captures_sequence
   concrete_node_ids:
   - tests/unit/test_backup.py::test_create_backup_with_journal_captures_sequence
   source_path: tests/unit/test_backup.py
   source_sha256: 7982d246ffda8177edf9c64343be36300c9d0fc57d84e34f84d0f1f654634359
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_cost_rollup.py::test_tracks_missing_rate_usage_without_inventing_missing_cost
   concrete_node_ids:
   - tests/unit/test_cost_rollup.py::test_tracks_missing_rate_usage_without_inventing_missing_cost
   source_path: tests/unit/test_cost_rollup.py
   source_sha256: 962bec8be2426444ba6678ac273b9c210f172dafb68f48c8d7c6dc789164bc71
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_commands.py::test_acknowledge_start_validates_lease_identity_and_marks_running
   concrete_node_ids:
   - tests/unit/test_graph_commands.py::test_acknowledge_start_validates_lease_identity_and_marks_running
   source_path: tests/unit/test_graph_commands.py
   source_sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_commands.py::test_agent_died_fails_node_when_max_attempts_exhausted
   concrete_node_ids:
   - tests/unit/test_graph_commands.py::test_agent_died_fails_node_when_max_attempts_exhausted
   source_path: tests/unit/test_graph_commands.py
   source_sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_commands.py::test_agent_died_retry_backoff_blocks_until_not_before
   concrete_node_ids:
   - tests/unit/test_graph_commands.py::test_agent_died_retry_backoff_blocks_until_not_before
   source_path: tests/unit/test_graph_commands.py
   source_sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_commands.py::test_callback_accepts_output_records_and_binds_downstream_inputs
   concrete_node_ids:
   - tests/unit/test_graph_commands.py::test_callback_accepts_output_records_and_binds_downstream_inputs
   source_path: tests/unit/test_graph_commands.py
   source_sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_commands.py::test_cancel_revokes_active_lease_and_cancels_running_node
   concrete_node_ids:
   - tests/unit/test_graph_commands.py::test_cancel_revokes_active_lease_and_cancels_running_node
   source_path: tests/unit/test_graph_commands.py
   source_sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_commands.py::test_lifecycle_legal_transitions
   concrete_node_ids:
   - tests/unit/test_graph_commands.py::test_lifecycle_legal_transitions
   source_path: tests/unit/test_graph_commands.py
   source_sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_commands.py::test_schedule_tick_grants_leases
   concrete_node_ids:
   - tests/unit/test_graph_commands.py::test_schedule_tick_grants_leases
   source_path: tests/unit/test_graph_commands.py
   source_sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_commands.py::test_schedule_tick_marks_planned_node_ready_when_required_input_bound
   concrete_node_ids:
   - tests/unit/test_graph_commands.py::test_schedule_tick_marks_planned_node_ready_when_required_input_bound
   source_path: tests/unit/test_graph_commands.py
   source_sha256: db044409c4d793b5159356e4768e5fb22036704ac76c92f972b94fc7f960a739
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_models.py::test_artifact_reference_record_round_trips
   concrete_node_ids:
   - tests/unit/test_graph_models.py::test_artifact_reference_record_round_trips
   source_path: tests/unit/test_graph_models.py
   source_sha256: 7adee41702cc5b53ea3e9354b2b5dc7fb06c8e278af0abf04f521b5ddf6a3110
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_graph_scheduler_view.py::test_lease_view_reports_active_and_suspended
   concrete_node_ids:
   - tests/unit/test_graph_scheduler_view.py::test_lease_view_reports_active_and_suspended
   source_path: tests/unit/test_graph_scheduler_view.py
   source_sha256: 493e4146be310ddeaa98a68d366b75abe90684f80074eceb600e1b9d66a9e94a
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_model_profiles.py::TestResolveModelForProfile::test_profile_default_takes_precedence_over_fallback
   concrete_node_ids:
   - tests/unit/test_model_profiles.py::TestResolveModelForProfile::test_profile_default_takes_precedence_over_fallback
   source_path: tests/unit/test_model_profiles.py
   source_sha256: 91f9f152ffc011bc883a45157bfdf000c0ad428b631746d0e256f934af481ddf
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_run_factory.py::test_create_checklist_from_requirements
   concrete_node_ids:
   - tests/unit/test_run_factory.py::test_create_checklist_from_requirements
   source_path: tests/unit/test_run_factory.py
   source_sha256: ee328fa7c70a5ec8fa0d4a2881f7d3b92b48e52547a82ef2df040942f94a8c93
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_workflow_engine.py::test_run_auto_completes_when_all_steps_done
   concrete_node_ids:
   - tests/unit/test_workflow_engine.py::test_run_auto_completes_when_all_steps_done
   source_path: tests/unit/test_workflow_engine.py
   source_sha256: 53f89c663b69cf1c4df34f2de26265efff291609b256352ebd95cc1adf95922b
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 - base_locator: tests/unit/test_workflow_engine.py::test_run_auto_fails_when_task_fails
   concrete_node_ids:
   - tests/unit/test_workflow_engine.py::test_run_auto_fails_when_task_fails
   source_path: tests/unit/test_workflow_engine.py
   source_sha256: 53f89c663b69cf1c4df34f2de26265efff291609b256352ebd95cc1adf95922b
-  active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  active_snapshot_id: snapshot-2026-07-24-main-structural-sharing

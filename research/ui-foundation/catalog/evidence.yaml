@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+active_snapshot_id: snapshot-2026-07-24-main-structural-sharing
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -15872,3 +15872,18 @@ snapshots:
   - path: ui/src/types/trace.ts
     sha256: 32e299da2e810ff5b490433b17f9094cfd4fc7047b025baed615f40c3a19007f
     audited_at: '2026-07-24T21:50:00Z'
+- id: snapshot-2026-07-24-main-structural-sharing
+  parent_snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  files:
+  - path: research/ui-foundation/tools/validate.py
+    sha256: d6f7cb3cc35f8a75e6b91d751db118ac8878d9a5698242ad8f891692b952aa5c
+    audited_at: '2026-07-24T23:59:00Z'
+  - path: src/orchestrator/graph/models.py
+    sha256: e016c82c709e6c36ac93e155cfc39e6e27da7adfc00689e3d34edb00af550ddf
+    audited_at: '2026-07-24T23:59:00Z'
+  - path: src/orchestrator/graph/projections.py
+    sha256: 97f55f1a0bcef361136bba7e80215103d920471999202f81eed4ee2ff3aacb32
+    audited_at: '2026-07-24T23:59:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 247308bc880b6811e2f3385d049be302c988d9c8c458deead4d8b90d23b3398a
+    audited_at: '2026-07-24T23:59:00Z'

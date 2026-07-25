@@ -12,6 +12,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = REPO_ROOT / "research/ui-foundation/tools/validate.py"
+SNAPSHOT_RECORDER = REPO_ROOT / "research/ui-foundation/tools/record_snapshot_lineage.py"
 
 
 def write_yaml(path: Path, value: object) -> None:
@@ -993,6 +994,108 @@ def test_snapshot_lineage_rejects_missing_active_target(tmp_path: Path) -> None:
     write_yaml(evidence_path, evidence)
 
     assert "SNAPSHOT_LINEAGE_ACTIVE_TARGET_MISSING" in issue_codes(run_validator(root))
+
+
+def test_effective_snapshot_overlays_delta_and_tombstone_only_from_parent_chain(
+    tmp_path: Path,
+) -> None:
+    validator = load_validator()
+    evidence = {
+        "snapshot": {
+            "id": "root",
+            "files": [{"path": "one.py", "sha256": "1" * 64, "audited_at": "now"}],
+        },
+        "snapshots": [
+            {
+                "id": "unrelated",
+                "files": [{"path": "other.py", "sha256": "2" * 64, "audited_at": "now"}],
+            },
+            {
+                "id": "child",
+                "parent_snapshot_id": "root",
+                "files": [
+                    {"path": "one.py", "sha256": "3" * 64, "audited_at": "now"},
+                    {"path": "two.py", "sha256": "4" * 64, "audited_at": "now"},
+                ],
+            },
+            {
+                "id": "leaf",
+                "parent_snapshot_id": "child",
+                "files": [{"path": "two.py", "tombstone": True}],
+            },
+        ],
+        "active_snapshot_id": "leaf",
+    }
+
+    active = validator._active_snapshot(evidence)
+
+    assert active is not None
+    assert {item["path"]: item["sha256"] for item in active["files"]} == {"one.py": "3" * 64}
+
+
+def test_effective_snapshot_rejects_unknown_parent_and_cycle(tmp_path: Path) -> None:
+    validator = load_validator()
+    unknown = {
+        "snapshot": {"id": "root", "files": []},
+        "snapshots": [{"id": "leaf", "parent_snapshot_id": "missing", "files": []}],
+        "active_snapshot_id": "leaf",
+    }
+    cycle = {
+        "snapshot": {"id": "root", "parent_snapshot_id": "leaf", "files": []},
+        "snapshots": [{"id": "leaf", "parent_snapshot_id": "root", "files": []}],
+        "active_snapshot_id": "leaf",
+    }
+
+    assert validator._active_snapshot(unknown) is None
+    assert validator._active_snapshot(cycle) is None
+
+
+def test_snapshot_recorder_appends_one_deterministic_delta_and_refuses_noop(tmp_path: Path) -> None:
+    root = write_minimal_foundation(tmp_path)
+    source = tmp_path / "source.txt"
+    source.write_text("changed\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SNAPSHOT_RECORDER),
+            "--root",
+            str(root),
+            "--snapshot-id",
+            "child",
+            "--audited-at",
+            "2026-07-24T01:00:00Z",
+            "--path",
+            "source.txt",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    evidence = yaml.safe_load((root / "catalog/evidence.yaml").read_text(encoding="utf-8"))
+    assert evidence["active_snapshot_id"] == "child"
+    assert evidence["snapshots"][-1]["parent_snapshot_id"] == "snapshot-test"
+    assert [item["path"] for item in evidence["snapshots"][-1]["files"]] == ["source.txt"]
+    repeat = subprocess.run(
+        [
+            sys.executable,
+            str(SNAPSHOT_RECORDER),
+            "--root",
+            str(root),
+            "--snapshot-id",
+            "again",
+            "--audited-at",
+            "2026-07-24T01:00:00Z",
+            "--path",
+            "source.txt",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert repeat.returncode == 1
+    assert "NO_OP_DELTA" in repeat.stderr
 
 
 def test_q5_backlinks_cover_every_externally_callable_unauthorized_mutation(

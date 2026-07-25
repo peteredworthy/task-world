@@ -469,8 +469,18 @@ class SourceSnapshotFile(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     path: str = Field(min_length=1)
-    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    audited_at: str = Field(min_length=1)
+    sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    audited_at: str | None = Field(default=None, min_length=1)
+    tombstone: bool = False
+
+    @model_validator(mode="after")
+    def validate_delta_record(self) -> SourceSnapshotFile:
+        if self.tombstone:
+            if self.sha256 is not None or self.audited_at is not None:
+                raise ValueError("tombstone cannot carry hash or audit time")
+        elif self.sha256 is None or self.audited_at is None:
+            raise ValueError("source file requires hash and audit time")
+        return self
 
 
 class SourceSnapshot(BaseModel):
@@ -3837,26 +3847,47 @@ def _active_snapshot(evidence: dict[str, JsonValue]) -> dict[str, JsonValue] | N
     )
     if not isinstance(active, dict):
         return None
-    by_id = {
-        identifier: snapshot
-        for snapshot in snapshots
-        if isinstance(snapshot, dict) and isinstance((identifier := snapshot.get("id")), str)
-    }
+    all_snapshots = [
+        value for value in [evidence.get("snapshot"), *snapshots] if isinstance(value, dict)
+    ]
+    by_id: dict[str, dict[str, JsonValue]] = {}
+    for snapshot in all_snapshots:
+        identifier = snapshot.get("id")
+        if not isinstance(identifier, str):
+            return None
+        if identifier in by_id and by_id[identifier] != snapshot:
+            return None
+        by_id.setdefault(identifier, snapshot)
+    chain: list[dict[str, JsonValue]] = []
+    current = active
+    visited: set[str] = set()
+    while True:
+        identifier = current.get("id")
+        if not isinstance(identifier, str) or identifier in visited:
+            return None
+        visited.add(identifier)
+        chain.append(current)
+        parent = current.get("parent_snapshot_id")
+        if parent is None:
+            break
+        if not isinstance(parent, str) or parent not in by_id:
+            return None
+        current = by_id[parent]
     resolved = dict(active)
-    files = {
-        record["path"]: record
-        for record in active.get("files", [])
-        if isinstance(record, dict) and isinstance(record.get("path"), str)
-    }
-    parent = active.get("parent_snapshot_id")
-    visited = {active_id}
-    while isinstance(parent, str) and parent in by_id and parent not in visited:
-        visited.add(parent)
-        parent_snapshot = by_id[parent]
-        for record in parent_snapshot.get("files", []):
-            if isinstance(record, dict) and isinstance(record.get("path"), str):
-                files.setdefault(record["path"], record)
-        parent = parent_snapshot.get("parent_snapshot_id")
+    files: dict[str, dict[str, JsonValue]] = {}
+    for snapshot in reversed(chain):
+        records = snapshot.get("files")
+        if not isinstance(records, list):
+            return None
+        for record in records:
+            if not isinstance(record, dict) or not isinstance((path := record.get("path")), str):
+                return None
+            if record.get("tombstone") is True:
+                if path not in files:
+                    return None
+                files.pop(path)
+            else:
+                files[path] = record
     resolved["files"] = list(files.values())
     return resolved
 
