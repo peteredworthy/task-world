@@ -131,3 +131,15 @@ does not parse audit Markdown. The validator retains the AST resolver only as
 defense in depth and fail-closes on missing, duplicate, malformed, stale,
 inactive, unknown, or uncollected manifest entries. No semantic status, Phase
 1 snapshot, or verifier-report content changed.
+
+## SV-001 reconciliation retirement correction
+
+The executable reconciliation guards return when `ready_nodes` is non-empty and also
+require no active lease. Therefore the reconciliation retirement source set is exactly
+`STA-71`, `STA-72`, and `STA-32`; the impossible `STA-29 -> STA-73` reconciliation
+edge was removed. `STA-29 -> STA-73` remains in the separate accepted `CMD-12`
+`retire_node` patch mapping, whose source set remains `STA-71`, `STA-72`, `STA-29`,
+and `STA-32`. The 72 active-state count and the REL/STA/ACT/EVI/INV status
+projections are unchanged because no state carrier was removed. The validator now
+enforces both mechanism-to-command mapping and source eligibility, with a regression
+covering ready-node reconciliation recurrence.

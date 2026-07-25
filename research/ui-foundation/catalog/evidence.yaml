@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-24-task15-lineage-fix
+active_snapshot_id: snapshot-2026-07-24-task15-sv001-reconciliation
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -15905,3 +15905,21 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: d20d8346e81cf4a0acb1ebaf873bc52106711f46afcf708247aee96fcd54f1fb
     audited_at: '2026-07-24T22:00:00Z'
+- id: snapshot-2026-07-24-task15-sv001-reconciliation
+  parent_snapshot_id: snapshot-2026-07-24-task15-lineage-fix
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: 3ef9db48e481c14b982061fd500891bd56f82863ee68cb5670131543c37dd34a
+    audited_at: '2026-07-25T00:30:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 897cd77ea423e9d9523cef5af8115d101e4c2f307e32b9cfe5e45731c6bbde7f
+    audited_at: '2026-07-25T00:30:00Z'
+  - path: research/ui-foundation/reality/state-model.yaml
+    sha256: 2487cc33828880cc460b83f56096bfb104ee9427085a2636d98f6384c2b68ef2
+    audited_at: '2026-07-25T00:30:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 3033748f54c861af30e8d3fc3016bf593e7a1a5958a13ca80369dd0805b82802
+    audited_at: '2026-07-25T00:30:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: a018b3916c5c76143c8b6f91c2fb02080da4701dd938a68cb3c5a2fd4ed9b3a3
+    audited_at: '2026-07-25T00:30:00Z'

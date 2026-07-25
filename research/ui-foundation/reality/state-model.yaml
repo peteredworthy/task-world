@@ -2478,14 +2478,6 @@ transitions:
   limitations:
   - Reconciliation only retires an unreachable failure branch when the graph is active
     with no active leases or ready nodes; it is not a patch-attempt result.
-- from_state_id: STA-29
-  to_state_id: STA-73
-  mechanism: reconciliation retirement after passed terminal evidence
-  evidence_ids:
-  - EVD-24
-  limitations:
-  - Reconciliation only retires an unreachable failure branch when the graph is active
-    with no active leases or ready nodes; it is not a patch-attempt result.
 - from_state_id: STA-32
   to_state_id: STA-73
   mechanism: reconciliation retirement after passed terminal evidence

@@ -1326,13 +1326,35 @@ def test_retired_node_transitions_are_command_specific_and_do_not_invent_broad_e
     }
 
     assert patch_sources == {"STA-71", "STA-72", "STA-29", "STA-32"}
-    assert reconciliation_sources == {"STA-71", "STA-72", "STA-29", "STA-32"}
+    assert reconciliation_sources == {"STA-71", "STA-72", "STA-32"}
     assert all(
         transition.get("command_id") == "CMD-12"
         for transition in retirement_transitions
         if transition["mechanism"] == "accepted retire_node patch"
     )
     assert {"STA-30", "STA-31"}.isdisjoint(patch_sources | reconciliation_sources)
+
+
+def test_validator_rejects_ready_reconciliation_retirement_but_accepts_patch_retirement(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    state_path = root / "reality/state-model.yaml"
+    state_model = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    state_model["transitions"].append(
+        {
+            "from_state_id": "STA-29",
+            "to_state_id": "STA-73",
+            "mechanism": "reconciliation retirement after passed terminal evidence",
+            "evidence_ids": ["EVD-24"],
+        }
+    )
+    state_path.write_text(yaml.safe_dump(state_model, sort_keys=False), encoding="utf-8")
+
+    validator = load_validator()
+    issues = validator.validate_graph_retirement_transition_contract(root)
+
+    assert "STATE_RETIREMENT_SOURCE_INELIGIBLE" in {issue.code for issue in issues}
 
 
 def test_validator_rejects_malformed_items_and_semantic_fields(tmp_path: Path) -> None:

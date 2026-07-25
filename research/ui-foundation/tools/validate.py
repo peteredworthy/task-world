@@ -1821,6 +1821,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     issues.extend(_validate_actions(package, declarations, commands, evidence))
     if phase >= 1:
         issues.extend(validate_graph_node_state_contract(package.root))
+        issues.extend(validate_graph_retirement_transition_contract(package.root))
     issues.extend(_validate_epistemics(package, canonical, evidence))
     return issues
 
@@ -1960,6 +1961,96 @@ def validate_graph_node_state_contract(root: Path) -> list[ValidationIssue]:
         action = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(action, dict) and references_in(action) & inactive_ids:
             issues.append(_issue("INACTIVE_STATE_REFERENCE", path, action.get("id")))
+    return issues
+
+
+def validate_graph_retirement_transition_contract(root: Path) -> list[ValidationIssue]:
+    """Keep retirement transition mechanisms aligned with executable guards."""
+    state_path = root / "reality/state-model.yaml"
+    if not state_path.exists():
+        return []
+    loaded = yaml.safe_load(state_path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        return []
+    state_document = cast(dict[str, object], loaded)
+    raw_transitions = state_document.get("transitions", [])
+    if not isinstance(raw_transitions, list):
+        return []
+
+    patch_mechanism = "accepted retire_node patch"
+    reconciliation_mechanism = "reconciliation retirement after passed terminal evidence"
+    patch_sources = {"STA-71", "STA-72", "STA-29", "STA-32"}
+    reconciliation_sources = {"STA-71", "STA-72", "STA-32"}
+    observed_sources = {patch_mechanism: set[str](), reconciliation_mechanism: set[str]()}
+    issues: list[ValidationIssue] = []
+
+    for index, raw_transition in enumerate(raw_transitions):
+        try:
+            transition = StateTransition.model_validate(raw_transition)
+        except ValidationError:
+            continue
+        if transition.to_state_id != "STA-73":
+            continue
+        location = f"{state_path}:transitions[{index}]"
+        if transition.mechanism == patch_mechanism:
+            observed_sources[patch_mechanism].add(transition.from_state_id)
+            if transition.command_id != "CMD-12":
+                issues.append(
+                    _issue(
+                        "STATE_RETIREMENT_COMMAND_MISMATCH",
+                        location,
+                        "accepted retire_node patch must use CMD-12",
+                    )
+                )
+            if transition.from_state_id not in patch_sources:
+                issues.append(
+                    _issue(
+                        "STATE_RETIREMENT_SOURCE_INELIGIBLE",
+                        location,
+                        f"patch source {transition.from_state_id}",
+                    )
+                )
+        elif transition.mechanism == reconciliation_mechanism:
+            observed_sources[reconciliation_mechanism].add(transition.from_state_id)
+            if transition.command_id is not None:
+                issues.append(
+                    _issue(
+                        "STATE_RETIREMENT_COMMAND_MISMATCH",
+                        location,
+                        "reconciliation retirement must not claim a command",
+                    )
+                )
+            if transition.from_state_id not in reconciliation_sources:
+                issues.append(
+                    _issue(
+                        "STATE_RETIREMENT_SOURCE_INELIGIBLE",
+                        location,
+                        f"reconciliation source {transition.from_state_id}",
+                    )
+                )
+        else:
+            issues.append(
+                _issue(
+                    "STATE_RETIREMENT_MECHANISM_INVALID",
+                    location,
+                    transition.mechanism,
+                )
+            )
+
+    expected_sources = {
+        patch_mechanism: patch_sources,
+        reconciliation_mechanism: reconciliation_sources,
+    }
+    for mechanism, expected in expected_sources.items():
+        if observed_sources[mechanism] != expected:
+            issues.append(
+                _issue(
+                    "STATE_RETIREMENT_SOURCE_SET_MISMATCH",
+                    state_path,
+                    f"{mechanism}: expected {sorted(expected)}, "
+                    f"observed {sorted(observed_sources[mechanism])}",
+                )
+            )
     return issues
 
 

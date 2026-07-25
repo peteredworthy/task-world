@@ -64,5 +64,11 @@ entries:
   parent_snapshot_id: snapshot-2026-07-24-task15-semantic-review
   snapshot_digest: a08dddaf65841c36c1fc88315e6e8a5def9f6b55babfdfe7f6923645a4a95e95
   predecessor_lineage_digest: 9d1b7bddac9657906742689785c0a2b2124fa5f232e0a4496c1a8c271c367e4a
+  status: historical
+  lineage_entry_digest: 19ec7e2e4c416b87c842500f5eed477ea1cd36a552209ea1ef074c6119b71ba3
+- snapshot_id: snapshot-2026-07-24-task15-sv001-reconciliation
+  parent_snapshot_id: snapshot-2026-07-24-task15-lineage-fix
+  snapshot_digest: 2e1aa78051d3f8810ea76911a128da194b78eaffeb2218f8ca0100ee0c1041db
+  predecessor_lineage_digest: 19ec7e2e4c416b87c842500f5eed477ea1cd36a552209ea1ef074c6119b71ba3
   status: active
-  lineage_entry_digest: 2c4cc987507fa0ef1373dd39150bcfe1dffadc7fef9b2cfcfda10fb040c47f84
+  lineage_entry_digest: 8ed503caa1691da8646413944d4ed936e4d89591ee193138708d1e55b8ad6a45
