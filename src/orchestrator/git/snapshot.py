@@ -7,12 +7,69 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
 from orchestrator.git.errors import GitCommandError, WorktreeError
 
 SNAPSHOT_REF_PREFIX = "refs/orchestrator/snapshots"
+
+SNAPSHOT_REF_LIST_FORMAT = "--format=%(refname) %(objectname) %(tree)"
+
+# Seam for running one git command, so callers (and tests) can supply their own
+# runner instead of reaching into the module. Signature mirrors ``_run_git``.
+GitRunner = Callable[[Path, list[str], dict[str, str]], "subprocess.CompletedProcess[str]"]
+
+
+@dataclass(frozen=True)
+class SnapshotRef:
+    """One entry of the snapshot ref listing."""
+
+    ref: str
+    commit_sha: str
+    tree_sha: str
+
+
+def parse_snapshot_refs(output: str) -> list[SnapshotRef]:
+    """Parse ``for-each-ref`` output into ref/commit/tree triples.
+
+    Pure. ``tree_sha`` is empty when the ref does not point at a commit (or the
+    ``%(tree)`` atom produced nothing), which the caller resolves separately.
+    Git refs cannot contain spaces, so splitting on space is unambiguous.
+    """
+    refs: list[SnapshotRef] = []
+    for line in output.splitlines():
+        fields = line.split(" ")
+        if len(fields) < 2 or not fields[0] or not fields[1]:
+            continue
+        refs.append(
+            SnapshotRef(
+                ref=fields[0],
+                commit_sha=fields[1],
+                tree_sha=fields[2] if len(fields) > 2 else "",
+            )
+        )
+    return refs
+
+
+def match_snapshot_by_tree(
+    refs: Iterable[SnapshotRef],
+    tree_sha: str,
+) -> tuple[SnapshotRef | None, list[SnapshotRef]]:
+    """Find the snapshot ref whose tree equals ``tree_sha``.
+
+    Pure. Returns the match (if the listing alone settles it) plus the refs
+    whose tree the listing did not report, which are the only ones a caller
+    ever needs to resolve individually.
+    """
+    unresolved: list[SnapshotRef] = []
+    for entry in refs:
+        if not entry.tree_sha:
+            unresolved.append(entry)
+        elif entry.tree_sha == tree_sha:
+            return entry, []
+    return None, unresolved
 
 
 @dataclass(frozen=True)
@@ -29,25 +86,26 @@ def snapshot(
     *,
     force_include_paths: list[str] | None = None,
     exclude_paths: list[str] | None = None,
+    run_git: GitRunner | None = None,
 ) -> SnapshotResult:
-    """Capture the current worktree in a snapshot ref without touching HEAD or the index."""
+    """Capture the current worktree in a snapshot ref without touching HEAD or the index.
+
+    ``run_git`` injects the git runner; it defaults to running git directly.
+    """
+    git = run_git or _run_git
     path = _require_worktree_path(worktree_path)
     env = _git_env()
 
     with tempfile.TemporaryDirectory(prefix="orchestrator-snapshot-index-") as tmpdir:
         index_path = Path(tmpdir) / "index"
         indexed_env = {**env, "GIT_INDEX_FILE": str(index_path)}
-        _run_git(path, ["add", "-A"], env=indexed_env)
+        git(path, ["add", "-A"], indexed_env)
         force_paths = _safe_pathspecs(force_include_paths or [])
         excluded_paths = _safe_pathspecs(exclude_paths or [])
         for batch in _pathspec_batches(force_paths):
-            _run_git(
-                path,
-                ["add", "-f", "--", *batch],
-                env=indexed_env,
-            )
+            git(path, ["add", "-f", "--", *batch], indexed_env)
         for batch in _pathspec_batches(excluded_paths):
-            _run_git(
+            git(
                 path,
                 [
                     "rm",
@@ -57,11 +115,11 @@ def snapshot(
                     "--",
                     *batch,
                 ],
-                env=indexed_env,
+                indexed_env,
             )
-        tree_sha = _run_git(path, ["write-tree"], env=indexed_env).stdout.strip()
+        tree_sha = git(path, ["write-tree"], indexed_env).stdout.strip()
 
-    existing = _find_snapshot_by_tree(path, tree_sha, env=env)
+    existing = _find_snapshot_by_tree(path, tree_sha, env=env, run_git=git)
     if existing is not None:
         snapshot_id, commit_sha, ref = existing
         return SnapshotResult(
@@ -71,10 +129,10 @@ def snapshot(
             ref=ref,
         )
 
-    commit_sha = _run_git(path, ["commit-tree", tree_sha, "-m", message], env=env).stdout.strip()
+    commit_sha = git(path, ["commit-tree", tree_sha, "-m", message], env).stdout.strip()
     snapshot_id = uuid.uuid4().hex
     ref = f"{SNAPSHOT_REF_PREFIX}/{snapshot_id}"
-    _run_git(path, ["update-ref", ref, commit_sha], env=env)
+    git(path, ["update-ref", ref, commit_sha], env)
     return SnapshotResult(id=snapshot_id, tree_sha=tree_sha, commit_sha=commit_sha, ref=ref)
 
 
@@ -83,7 +141,7 @@ def restore(worktree_path: str | Path, snapshot_id: str) -> None:
     path = _require_worktree_path(worktree_path)
     ref = f"{SNAPSHOT_REF_PREFIX}/{_validate_snapshot_id(snapshot_id)}"
     env = _git_env()
-    commit = _run_git(path, ["rev-parse", "--verify", ref], env=env).stdout.strip()
+    commit = _run_git(path, ["rev-parse", "--verify", ref], env).stdout.strip()
 
     archive = _open_git_archive(path, commit, env=env)
     try:
@@ -133,7 +191,7 @@ def delete_snapshot_ref(worktree_path: str | Path, snapshot_id: str) -> bool:
     )
     if exists.returncode != 0:
         return False
-    _run_git(path, ["update-ref", "-d", ref], env=env)
+    _run_git(path, ["update-ref", "-d", ref], env)
     return True
 
 
@@ -154,9 +212,7 @@ def _git_env() -> dict[str, str]:
     return env
 
 
-def _run_git(
-    cwd: Path, args: list[str], *, env: dict[str, str]
-) -> subprocess.CompletedProcess[str]:
+def _run_git(cwd: Path, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
             [_git_executable(), *args],
@@ -175,19 +231,36 @@ def _run_git(
 
 
 def _find_snapshot_by_tree(
-    cwd: Path, tree_sha: str, *, env: dict[str, str]
+    cwd: Path,
+    tree_sha: str,
+    *,
+    env: dict[str, str],
+    run_git: GitRunner,
 ) -> tuple[str, str, str] | None:
-    refs = _run_git(
+    # The %(tree) atom reports every snapshot commit's tree from the single
+    # for-each-ref call. Resolving trees with a `git show` per ref instead made
+    # each capture spawn one process per existing snapshot, so a run's captures
+    # cost O(snapshots^2) processes overall.
+    listing = run_git(
         cwd,
-        ["for-each-ref", "--format=%(refname) %(objectname)", SNAPSHOT_REF_PREFIX],
-        env=env,
-    ).stdout.splitlines()
-    for line in refs:
-        ref, commit_sha = line.split(" ", maxsplit=1)
-        existing_tree = _run_git(cwd, ["show", "-s", "--format=%T", commit_sha], env=env)
-        if existing_tree.stdout.strip() == tree_sha:
-            return ref.removeprefix(f"{SNAPSHOT_REF_PREFIX}/"), commit_sha, ref
-    return None
+        ["for-each-ref", SNAPSHOT_REF_LIST_FORMAT, SNAPSHOT_REF_PREFIX],
+        env,
+    ).stdout
+    match, unresolved = match_snapshot_by_tree(parse_snapshot_refs(listing), tree_sha)
+    if match is None:
+        # Only refs the listing could not settle (not commits) cost extra work.
+        for entry in unresolved:
+            resolved = run_git(cwd, ["show", "-s", "--format=%T", entry.commit_sha], env)
+            if resolved.stdout.strip() == tree_sha:
+                match = entry
+                break
+    if match is None:
+        return None
+    return (
+        match.ref.removeprefix(f"{SNAPSHOT_REF_PREFIX}/"),
+        match.commit_sha,
+        match.ref,
+    )
 
 
 def _open_git_archive(cwd: Path, commit: str, *, env: dict[str, str]) -> subprocess.Popen[bytes]:
