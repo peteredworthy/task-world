@@ -6,14 +6,10 @@ Covers:
 - Merge with merge strategy preserves history
 - 409 when gates are unmet
 
-WARNING — shared fixture:
-    The ``app_and_client`` adapter below wraps the module-scoped
-    ``_shared_app_fixture`` (from ``tests/integration/conftest.py``) so every
-    test in this file reuses one FastAPI app + in-memory DB. Isolation relies
-    on: (1) ``git_repo`` having a UUID-suffixed name unique per test,
-    (2) server-generated run UUIDs, (3) per-test teardown cancelling runs
-    scoped to ``git_repo.name``. Don't assert on global ``/api/runs`` counts;
-    reference your run only by the ``id`` you received.
+Each test gets its own FastAPI app and in-memory database; ``create_app`` is
+cheap because compiled routes are cached and grafted onto every new app. No
+cross-test naming discipline is needed here — hardcoded names and global
+collection assertions are safe. See ``tests/integration/conftest.py``.
 """
 
 from collections.abc import AsyncGenerator

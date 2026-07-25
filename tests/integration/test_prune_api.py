@@ -6,13 +6,10 @@ Tests POST /api/runs/{run_id}/review/prune/preview,
 
 Uses real git repos via tmp_path fixtures; no mocking.
 
-WARNING — shared fixture:
-    The ``_shared_app_fixture`` defined below (module scope) reuses one
-    FastAPI app + in-memory DB across every test in this file. Isolation
-    relies on each test getting a uniquely-named ``git_repo`` (counter
-    suffix) and on server-generated run UUIDs. Don't assert on global
-    ``/api/runs`` counts; reference your run only by the ``id`` you
-    received.
+Each test gets its own FastAPI app and in-memory database; ``create_app`` is
+cheap because compiled routes are cached and grafted onto every new app. No
+cross-test naming discipline is needed here — hardcoded names and global
+collection assertions are safe. See ``tests/integration/conftest.py``.
 """
 
 import shutil
@@ -39,14 +36,13 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 async def _shared_app_fixture(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> AsyncGenerator[tuple[AsyncClient, DrainFn, Path, Path], None]:
-    """Shared FastAPI app + in-memory DB for all tests in this module.
+    """A fresh FastAPI app + in-memory DB per test, built from cached routes.
 
-    Each test creates its own git repo inside ``repos_dir`` (unique name),
-    so the shared database accumulates multiple runs safely without conflicts.
+    See ``tests/integration/conftest.py`` for the isolation model.
     """
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 

@@ -23,11 +23,14 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 _repo_counter = 0
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 async def _shared_app_fixture(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> AsyncGenerator[tuple[AsyncClient, DrainFn, Path, Path], None]:
-    """Shared FastAPI app + in-memory DB for all tests in this module."""
+    """A fresh FastAPI app + in-memory DB per test, built from cached routes.
+
+    See ``tests/integration/conftest.py`` for the isolation model.
+    """
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
     base = tmp_path_factory.mktemp("branch_ops_shared")

@@ -6,14 +6,10 @@ Tests cover:
 - Per-block conflict resolution via POST /review/conflicts/{path}/resolve
 - Revert of a back-merge via POST /review/revert-back-merge
 
-WARNING — shared fixture:
-    The ``client_with_repo`` / ``git_repo`` / ``_shared_app_fixture`` fixtures
-    come from ``tests/integration/conftest.py`` and reuse a single FastAPI app
-    + in-memory DB across every test in this file (module scope). Isolation
-    relies on: (1) ``git_repo`` having a UUID-suffixed name unique per test,
-    (2) server-generated run UUIDs, (3) per-test teardown cancelling runs
-    scoped to ``git_repo.name``. Don't assert on global ``/api/runs`` counts;
-    reference your run only by the ``id`` you received.
+Each test gets its own FastAPI app and in-memory database; ``create_app`` is
+cheap because compiled routes are cached and grafted onto every new app. No
+cross-test naming discipline is needed here — hardcoded names and global
+collection assertions are safe. See ``tests/integration/conftest.py``.
 """
 
 from pathlib import Path

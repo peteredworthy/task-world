@@ -1,21 +1,9 @@
 """Integration tests for task API endpoints.
 
-WARNING — shared fixture:
-    The ``client_and_drain`` / ``client`` fixtures in this module reuse a
-    single FastAPI app + in-memory DB across every test in the file (module
-    scope). Isolation is the test author's responsibility:
-
-    - Pass the ``repo_name`` fixture to ``_setup_active_run`` (and any direct
-      ``POST /api/runs``). It returns a unique per-test value (UUID-suffixed).
-    - Don't assert on global ``/api/runs`` counts — filter by ``repo_name``.
-    - Run/task IDs returned from the API are server-generated UUIDs and
-      cannot collide across tests.
-    - Teardown cancels non-terminal runs for this test's ``repo_name`` so a
-      mid-test failure cannot leak executor work into siblings.
-
-    ``db_backed_client_and_consumer`` is a separate per-test fixture (only
-    one test uses it); it builds its own ``SignalConsumer`` and is isolated
-    from the shared app on purpose.
+Each test gets its own FastAPI app and in-memory database; ``create_app`` is
+cheap because compiled routes are cached and grafted onto every new app. No
+cross-test naming discipline is needed here — hardcoded names and global
+collection assertions are safe. See ``tests/integration/conftest.py``.
 """
 
 from pathlib import Path

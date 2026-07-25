@@ -1,20 +1,9 @@
 """Integration tests for run API endpoints.
 
-WARNING — shared fixture:
-    The ``client_and_drain`` / ``client`` fixtures in this module reuse a
-    single FastAPI app + in-memory DB across every test in the file (module
-    scope). Isolation is the test author's responsibility:
-
-    - Use the ``repo_name`` fixture for *every* ``repo_name`` field you send.
-      It returns a unique per-test value (UUID-suffixed); hardcoded names
-      collide across tests.
-    - For tests that list runs, filter by your own ``repo_name`` — never
-      assert on global counts. Other tests' runs are visible in the same DB.
-    - Run IDs returned from ``POST /api/runs`` are server-generated UUIDs and
-      cannot collide; reference your run only by the ``id`` you received.
-    - On teardown, non-terminal runs for this test's ``repo_name`` are
-      cancelled (see ``cleanup_runs_for_repo``), so a mid-test failure
-      cannot leak executor work into siblings.
+Each test gets its own FastAPI app and in-memory database; ``create_app`` is
+cheap because compiled routes are cached and grafted onto every new app. No
+cross-test naming discipline is needed here — hardcoded names and global
+collection assertions are safe. See ``tests/integration/conftest.py``.
 """
 
 import json

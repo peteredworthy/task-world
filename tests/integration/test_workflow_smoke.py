@@ -18,7 +18,7 @@ from tests.integration.signal_helpers import DrainFn, make_drain_fn
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 async def api_client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
     signal_transport = InMemorySignalTransport()
     app = create_app(
