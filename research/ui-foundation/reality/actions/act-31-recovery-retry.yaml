@@ -1,7 +1,7 @@
 id: ACT-31
 title: Retry legacy recovering task
-definition: Completes recovery with retry, creates the next attempt, and returns the recovering task to
-  building.
+definition: Completes recovery with retry, creates the next attempt, and returns the
+  recovering task to building.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -19,8 +19,8 @@ required_input:
 validation:
 - complete-recovery outcome retry
 - recovering-task state validation
-durable_effect: Records recovery notes, creates an attempt, changes the task to building, and may separately
-  resume a paused run.
+durable_effect: Records recovery notes, creates an attempt, changes the task to building,
+  and may separately resume a paused run.
 resulting_state_id: STA-9
 failure_modes:
 - 404 run or task identity
@@ -45,8 +45,9 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-31 records recovery notes, creates attempt, builds, and may resume.
-  test: The exact service test asserts attempt, task, run, events, and replay.
+  implementation: ACT-31 records recovery notes, creates attempt, builds, and may
+    resume.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_workflow_service.py::test_complete_recovery_retry_projects_attempts_and_resumes_without_save_run'
   documentation: ACT-31 recovery retry is documented.
   capability: One retry path does not define canonical retry count/delta.
   epistemic: ACT-31 is observed by EVD-14.
@@ -54,3 +55,4 @@ implementation_locators:
 - src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_retry
 test_locators:
 - tests/integration/test_workflow_service.py::test_complete_recovery_retry_projects_attempts_and_resumes_without_save_run
+bounded_test_locators: []

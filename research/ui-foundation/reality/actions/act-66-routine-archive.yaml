@@ -40,7 +40,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-66 synchronously sets routine archive metadata.
-  test: The endpoint test archives and asserts metadata/visibility effect.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_routines.py::test_archive_routine'
   documentation: ACT-66 archive action is documented.
   capability: Metadata mutation is not a broader product capability.
   epistemic: ACT-66 is observed by EVD-32.
@@ -48,3 +48,4 @@ implementation_locators:
 - src/orchestrator/api/routers/routines.py::archive_routine
 test_locators:
 - tests/integration/test_api_routines.py::test_archive_routine
+bounded_test_locators: []

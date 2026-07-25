@@ -1,7 +1,7 @@
 id: ACT-9
 title: Delete run
-definition: Synchronously delete an ordinary eligible legacy run, return the deleted-response carrier,
-  and leave later row absence separately observable.
+definition: Synchronously delete an ordinary eligible legacy run, return the deleted-response
+  carrier, and leave later row absence separately observable.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -18,8 +18,8 @@ required_input:
   run_id: required
 validation:
 - status-limited deletion
-durable_effect: Deletes the eligible run row and owned records; the synchronous response confirms deletion,
-  while later readback observes absence.
+durable_effect: Deletes the eligible run row and owned records; the synchronous response
+  confirms deletion, while later readback observes absence.
 resulting_state_id: STA-58
 failure_modes:
 - 404 missing
@@ -49,8 +49,9 @@ later_absence_transition:
   - EVD-43
 enforced_authentication: Optional global valid-bearer gate; disabled by default.
 enforced_authorization: absent
-domain_eligibility: Ordinary route eligibility is draft, stopping, completed, failed, or cancelled. This
-  contract does not delete an ordinary paused row; the qualified paused startup-orphan path is ACT-22.
+domain_eligibility: Ordinary route eligibility is draft, stopping, completed, failed,
+  or cancelled. This contract does not delete an ordinary paused row; the qualified
+  paused startup-orphan path is ACT-22.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
@@ -59,7 +60,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-9 synchronously deletes an eligible run and owned rows.
-  test: The API test deletes and verifies subsequent absence.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_runs.py::test_delete_run'
   documentation: ACT-9 delete contract is documented.
   capability: One exercised route does not prove every cleanup side effect.
   epistemic: ACT-9 is observed by EVD-43/EVD-38-40.
@@ -67,3 +68,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::delete_run
 test_locators:
 - tests/integration/test_api_runs.py::test_delete_run
+bounded_test_locators: []

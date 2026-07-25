@@ -40,7 +40,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-64 synchronously copies snapshot files to caller target.
-  test: The API test asserts copied files and target content.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_envfile_revert.py::test_copy_back_api'
   documentation: ACT-64 snapshot copy-back is documented.
   capability: One managed file set does not prove arbitrary filesystem copy.
   epistemic: ACT-64 is observed by EVD-31.
@@ -48,3 +48,4 @@ implementation_locators:
 - src/orchestrator/api/routers/envfiles.py::copy_back_env_files
 test_locators:
 - tests/integration/test_envfile_revert.py::test_copy_back_api
+bounded_test_locators: []

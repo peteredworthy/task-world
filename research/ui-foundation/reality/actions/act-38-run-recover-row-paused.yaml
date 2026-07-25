@@ -1,6 +1,7 @@
 id: ACT-38
 title: Park recovered legacy run row as paused
-definition: Run recovery moves a failed row to paused and preserves an already paused row as paused.
+definition: Run recovery moves a failed row to paused and preserves an already paused
+  row as paused.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -23,15 +24,17 @@ validation:
 - failed-or-paused run validation
 - target task validation
 - additional attempt and reset strategy validation
-durable_effect: Sets the recovered run row to paused with pause_reason recovered; target and downstream
-  task effects are separate contracts.
+durable_effect: Sets the recovered run row to paused with pause_reason recovered;
+  target and downstream task effects are separate contracts.
 resulting_state_id: STA-4
 failure_modes:
 - 404 run or target task identity
 - 409 run is neither failed nor paused
 - 409 worktree reset failure
-stale_state_behavior: No expected version; concurrent run progression can invalidate recovery eligibility.
-idempotency: No idempotency key; recovery rewrites target/downstream state and appends an attempt.
+stale_state_behavior: No expected version; concurrent run progression can invalidate
+  recovery eligibility.
+idempotency: No idempotency key; recovery rewrites target/downstream state and appends
+  an attempt.
 retry_behavior: Refresh run, target task, and worktree state before retrying.
 reversibility: Recovery rewind does not restore files or external effects.
 audit_evidence_ids:
@@ -58,7 +61,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-38 sets recovered run row paused with recovered reason.
-  test: The recovery API test asserts paused and pause_reason recovered.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_runs_recover.py::test_recover_happy_path_sets_paused_and_rewinds'
   documentation: ACT-38 run-row effect is documented separately.
   capability: One compensation path is not a complete recovery capability.
   epistemic: ACT-38 is observed by EVD-45.
@@ -66,3 +69,4 @@ implementation_locators:
 - src/orchestrator/workflow/service.py::WorkflowService.recover_run
 test_locators:
 - tests/integration/test_api_runs_recover.py::test_recover_happy_path_sets_paused_and_rewinds
+bounded_test_locators: []

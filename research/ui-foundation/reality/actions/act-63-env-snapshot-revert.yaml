@@ -40,7 +40,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-63 synchronously restores managed environment files.
-  test: The API test asserts the restored filesystem content.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_envfile_revert.py::test_revert_env_files_api'
   documentation: ACT-63 environment revert is documented.
   capability: One managed file set does not prove arbitrary filesystem restore.
   epistemic: ACT-63 is observed by EVD-31.
@@ -48,3 +48,4 @@ implementation_locators:
 - src/orchestrator/api/routers/envfiles.py::revert_env_files
 test_locators:
 - tests/integration/test_envfile_revert.py::test_revert_env_files_api
+bounded_test_locators: []

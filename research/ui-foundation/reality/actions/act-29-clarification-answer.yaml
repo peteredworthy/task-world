@@ -1,7 +1,7 @@
 id: ACT-29
 title: Answer legacy clarification
-definition: Records non-skipped answers for a pending legacy clarification and returns the eligible task
-  to building.
+definition: Records non-skipped answers for a pending legacy clarification and returns
+  the eligible task to building.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -21,16 +21,17 @@ required_input:
 validation:
 - clarification response schema
 - clarification task transition validation
-durable_effect: Persists the response and config delta, appends the Q&A artifact, clears the clarification
-  wait, and changes the task to building.
+durable_effect: Persists the response and config delta, appends the Q&A artifact,
+  clears the clarification wait, and changes the task to building.
 resulting_state_id: STA-9
 failure_modes:
 - 404 request or task identity
 - 409 stale task/request relationship
 - 422 malformed answer payload
-stale_state_behavior: A stale response can clear its stale pending marker without reopening an already
-  advanced task.
-idempotency: No idempotency key; artifact content can duplicate before a database conflict settles.
+stale_state_behavior: A stale response can clear its stale pending marker without
+  reopening an already advanced task.
+idempotency: No idempotency key; artifact content can duplicate before a database
+  conflict settles.
 retry_behavior: Refresh request and task state before retrying an uncertain response.
 reversibility: No answer-revision or undo command.
 audit_evidence_ids:
@@ -48,8 +49,9 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-29 persists answer/config/artifact, clears wait, and resumes building.
-  test: The full cycle asserts all those persisted and task effects.
+  implementation: ACT-29 persists answer/config/artifact, clears wait, and resumes
+    building.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_clarification_workflow.py::test_full_clarification_cycle'
   documentation: ACT-29 clarification answer is documented.
   capability: The carrier does not prove a complete decision packet/UI.
   epistemic: ACT-29 is observed by EVD-13.
@@ -57,3 +59,4 @@ implementation_locators:
 - src/orchestrator/workflow/service.py::WorkflowService.respond_to_clarification
 test_locators:
 - tests/integration/test_clarification_workflow.py::test_full_clarification_cycle
+bounded_test_locators: []

@@ -1,7 +1,7 @@
 id: ACT-6
 title: Create run
-definition: Synchronously create a legacy run from absent identity, return the created-response carrier,
-  and persist a distinct draft row.
+definition: Synchronously create a legacy run from absent identity, return the created-response
+  carrier, and persist a distinct draft row.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -21,8 +21,8 @@ required_input:
 validation:
 - CreateRunRequest schema
 - runner selection validation
-durable_effect: Creates a run row and creation events; the synchronous response confirms creation, and
-  the durable row is draft.
+durable_effect: Creates a run row and creation events; the synchronous response confirms
+  creation, and the durable row is draft.
 resulting_state_id: STA-57
 failure_modes:
 - 422 malformed request
@@ -47,8 +47,8 @@ created_draft_transition:
   - EVD-43
 enforced_authentication: Optional global valid-bearer gate; disabled by default.
 enforced_authorization: absent
-domain_eligibility: No pre-existing source row for this creation; exactly one routine source, selectable
-  runner, valid configuration, and request schema.
+domain_eligibility: No pre-existing source row for this creation; exactly one routine
+  source, selectable runner, valid configuration, and request schema.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
@@ -57,7 +57,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-6 creates a draft run and creation evidence.
-  test: The API test asserts successful creation and returned draft identity.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_runs.py::test_create_run'
   documentation: ACT-6 create contract is documented.
   capability: Creation does not prove subsequent runner availability.
   epistemic: ACT-6 is observed by EVD-43/EVD-38-40.
@@ -65,3 +65,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::create_run
 test_locators:
 - tests/integration/test_api_runs.py::test_create_run
+bounded_test_locators: []

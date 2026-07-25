@@ -46,7 +46,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-71 synchronously restores system_prompt from default_prompt.
-  test: The reset test mutates then asserts exact default restoration.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_agent_configs.py::TestResetPrompt::test_reset_restores_default_prompt'
   documentation: ACT-71 reset action is documented.
   capability: Configuration reset does not prove runner behavior.
   epistemic: ACT-71 is observed by EVD-33.
@@ -54,3 +54,4 @@ implementation_locators:
 - src/orchestrator/api/routers/agents.py::reset_prompt
 test_locators:
 - tests/integration/test_api_agent_configs.py::TestResetPrompt::test_reset_restores_default_prompt
+bounded_test_locators: []

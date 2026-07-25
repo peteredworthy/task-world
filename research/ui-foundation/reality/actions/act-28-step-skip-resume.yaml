@@ -1,7 +1,7 @@
 id: ACT-28
 title: Skip manual-gate step and resume legacy run
-definition: Skips the current manual-gate step and performs the immediate paused-to-active legacy run
-  transition before later progression evaluation.
+definition: Skips the current manual-gate step and performs the immediate paused-to-active
+  legacy run transition before later progression evaluation.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -19,17 +19,20 @@ required_input:
 validation:
 - manual-gate paused-run validation
 - current actionable-step validation
-durable_effect: Records StepSkipped, completes the skipped step, advances its index, and records the immediate
-  run resume; later progression can independently pause at another manual gate.
+durable_effect: Records StepSkipped, completes the skipped step, advances its index,
+  and records the immediate run resume; later progression can independently pause
+  at another manual gate.
 resulting_state_id: STA-2
 failure_modes:
 - 404 run or step identity
 - 409 run is not manual-gate paused
 - 409 target is not the current actionable step
 stale_state_behavior: A changed run pause reason or actionable step is rejected.
-idempotency: No idempotency key; a completed or non-current step cannot be skipped again.
+idempotency: No idempotency key; a completed or non-current step cannot be skipped
+  again.
 retry_behavior: Refresh run and current-step state before retrying.
-reversibility: No exact undo; transition-back does not restore all file or external effects.
+reversibility: No exact undo; transition-back does not restore all file or external
+  effects.
 audit_evidence_ids:
 - EVD-7
 - EVD-12
@@ -46,8 +49,9 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-28 records StepSkipped, advances index, and records immediate resume.
-  test: The exact API test asserts event-store and activity evidence for skip/resume.
+  implementation: ACT-28 records StepSkipped, advances index, and records immediate
+    resume.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_runs.py::test_skip_step_writes_step_skipped_to_events_v2_and_activity'
   documentation: ACT-28 step skip is documented.
   capability: One skip path is not a complete workflow-control capability.
   epistemic: ACT-28 is observed by EVD-7/EVD-12.
@@ -55,3 +59,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::skip_step
 test_locators:
 - tests/integration/test_api_runs.py::test_skip_step_writes_step_skipped_to_events_v2_and_activity
+bounded_test_locators: []

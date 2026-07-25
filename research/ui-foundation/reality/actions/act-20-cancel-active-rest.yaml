@@ -1,7 +1,7 @@
 id: ACT-20
 title: Cancel active run through REST
-definition: Accept cancellation from an active legacy row while preserving that row until later consumer
-  application.
+definition: Accept cancellation from an active legacy row while preserving that row
+  until later consumer application.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -19,21 +19,23 @@ required_input:
 validation:
 - legacy lifecycle state validation
 - executor cancellation and signal enqueue
-durable_effect: Cancels registered execution and appends cancellation signal acceptance evidence while
-  the row remains active; the consumer later applies active to cancelled. Graph mode separately performs
-  graph-local cancellation before row cancellation.
+durable_effect: Cancels registered execution and appends cancellation signal acceptance
+  evidence while the row remains active; the consumer later applies active to cancelled.
+  Graph mode separately performs graph-local cancellation before row cancellation.
 resulting_state_id: STA-2
 failure_modes:
 - 404 missing run
 - 409 stopping or illegal transition
 - executor cancellation failure
-stale_state_behavior: Accepted CANCEL preserves active until consumer application; redelivery can encounter
-  an already-applied or stale transition and is acknowledged or discarded without a typed result receipt.
-idempotency: State-validated; no idempotency key. A repeat after row cancellation is ineligible.
-retry_behavior: Refresh row status and activity before retrying; do not treat 202 acceptance as cancellation
-  completion.
-reversibility: Cancellation has no direct uncancel; recovery is a separate compensating capability and
-  does not reverse cancellation.
+stale_state_behavior: Accepted CANCEL preserves active until consumer application;
+  redelivery can encounter an already-applied or stale transition and is acknowledged
+  or discarded without a typed result receipt.
+idempotency: State-validated; no idempotency key. A repeat after row cancellation
+  is ineligible.
+retry_behavior: Refresh row status and activity before retrying; do not treat 202
+  acceptance as cancellation completion.
+reversibility: Cancellation has no direct uncancel; recovery is a separate compensating
+  capability and does not reverse cancellation.
 audit_evidence_ids:
 - EVD-7
 - EVD-11
@@ -52,8 +54,8 @@ eventual_applied_transition:
   - EVD-11
 enforced_authentication: Optional global valid-bearer gate; disabled by default.
 enforced_authorization: absent
-domain_eligibility: Legacy row must be active; graph cancellation ordering is a separate mode-specific
-  effect.
+domain_eligibility: Legacy row must be active; graph cancellation ordering is a separate
+  mode-specific effect.
 proposed_role_policy: null
 conflict_ids:
 - CON-7
@@ -65,8 +67,9 @@ limitations:
 documentation_status: conflicting
 epistemic_status: observed
 status_basis:
-  implementation: ACT-20 accepts active-run cancellation and consumer later applies cancelled.
-  test: The queue test asserts 202 then cancelled after drain.
+  implementation: ACT-20 accepts active-run cancellation and consumer later applies
+    cancelled.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_signal_queue.py::test_cancel_active_run_via_queue'
   documentation: ACT-20 remains qualified by legacy/graph and stopping-source differences.
   capability: One active path does not prove every cancellation race.
   epistemic: ACT-20 is observed by EVD-7/EVD-11/EVD-20/EVD-38-40.
@@ -74,3 +77,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::cancel_run
 test_locators:
 - tests/integration/test_signal_queue.py::test_cancel_active_run_via_queue
+bounded_test_locators: []

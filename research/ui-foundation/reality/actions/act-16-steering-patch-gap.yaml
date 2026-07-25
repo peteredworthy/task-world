@@ -2,12 +2,16 @@ id: ACT-16
 implementation_status: absent
 capability_status: gap
 executable: false
-required_outcome: Represent a human steering proposal with provenance and validated effect.
+required_outcome: Represent a human steering proposal with provenance and validated
+  effect.
 source_demand_ids:
 - decisions.apply-steering-patch
-implementation_constraints: Raw patch and agent macro do not form a typed human steering contract.
-required_evidence: Future proposal, decision, topology, validation, and delivery-binding evidence.
-unresolved_command_decisions: All executable semantics require separately approved design.
+implementation_constraints: Raw patch and agent macro do not form a typed human steering
+  contract.
+required_evidence: Future proposal, decision, topology, validation, and delivery-binding
+  evidence.
+unresolved_command_decisions: All executable semantics require separately approved
+  design.
 conflict_ids: []
 question_ids: []
 test_status: unexercised
@@ -15,9 +19,10 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-16 is an explicit typed steering-patch absence contract.
-  test: No executable steering-patch command exists to exercise.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-16 records the required missing contract.
   capability: Typed steering patch is a confirmed gap despite raw ACT-13.
   epistemic: Absence is observed in approved action/authority audits.
 implementation_locators: []
 test_locators: []
+bounded_test_locators: []

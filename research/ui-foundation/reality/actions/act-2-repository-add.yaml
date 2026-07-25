@@ -42,10 +42,11 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-2 implements clone/symlink/registration.
-  test: Repository tests cover validation and forced clone failure, not a successful add effect.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-2 add contract is documented.
   capability: Availability remains unknown without an exercised success path.
   epistemic: ACT-2 implementation is observed by EVD-35.
 implementation_locators:
 - src/orchestrator/api/routers/repos.py::add_repository
 test_locators: []
+bounded_test_locators: []

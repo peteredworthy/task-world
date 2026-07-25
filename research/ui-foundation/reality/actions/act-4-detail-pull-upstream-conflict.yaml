@@ -40,10 +40,11 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-4 preserves a detail pull-upstream conflict for resolution.
-  test: Conflict tests do not identify the detail pull-upstream route variant.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-4 conflict outcome is documented.
   capability: A source-inspected route is not proven available.
   epistemic: ACT-4 is observed by EVD-29.
 implementation_locators:
 - src/orchestrator/api/routers/runs.py::back_merge_endpoint
 test_locators: []
+bounded_test_locators: []

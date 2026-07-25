@@ -1,6 +1,7 @@
 id: ACT-26
 title: Force accept legacy task
-definition: Bypasses grade evaluation and completes one legacy task from its qualified source-state set.
+definition: Bypasses grade evaluation and completes one legacy task from its qualified
+  source-state set.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -18,13 +19,14 @@ required_input:
 validation:
 - legacy execution mode
 - qualified force-accept source-state validation
-durable_effect: Completes the task without grade evaluation, records an override ApprovalDecision, and
-  runs the normal step/run completion cascade.
+durable_effect: Completes the task without grade evaluation, records an override ApprovalDecision,
+  and runs the normal step/run completion cascade.
 resulting_state_id: STA-14
 failure_modes:
 - 404 run or task identity
 - 409 source task is not failed, building, or verifying
-stale_state_behavior: An advanced or ineligible task is rejected by the force-accept transition check.
+stale_state_behavior: An advanced or ineligible task is rejected by the force-accept
+  transition check.
 idempotency: No idempotency key; a completed task is not a legal force-accept source.
 retry_behavior: Refresh task and run state before retrying an uncertain response.
 reversibility: No force-accept undo; transition-back is not an exact inverse.
@@ -38,7 +40,8 @@ transition:
   to_state_id: STA-14
 enforced_authentication: Optional global valid-bearer gate
 enforced_authorization: absent
-domain_eligibility: Legacy force-accept transition from failed, building, or verifying only.
+domain_eligibility: Legacy force-accept transition from failed, building, or verifying
+  only.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
@@ -46,11 +49,13 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-26 force-completes without grades and declares the normal completion cascade.
-  test: Transition unit tests do not establish the full route, override record, and step/run cascade proposition.
+  implementation: ACT-26 force-completes without grades and declares the normal completion
+    cascade.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-26 force-accept boundary is documented.
   capability: Availability remains unknown at the full action boundary.
   epistemic: ACT-26 implementation is observed by EVD-16.
 implementation_locators:
 - src/orchestrator/workflow/engine/transitions.py::transition_force_accept
 test_locators: []
+bounded_test_locators: []

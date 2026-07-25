@@ -41,7 +41,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-61 returns a non-mutating prune diff/count preview.
-  test: The test snapshots the worktree and asserts preview does not mutate it.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree'
   documentation: ACT-61 preview contract is documented.
   capability: One preview mode does not prove all prune selection modes.
   epistemic: ACT-61 is observed by EVD-28.
@@ -49,3 +49,4 @@ implementation_locators:
 - src/orchestrator/git/ops/prune_ops.py::preview_prune
 test_locators:
 - tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree
+bounded_test_locators: []

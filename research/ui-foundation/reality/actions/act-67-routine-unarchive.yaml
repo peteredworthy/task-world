@@ -40,7 +40,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-67 synchronously clears routine archive metadata.
-  test: The endpoint test unarchives and asserts restored visibility.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_routines.py::test_unarchive_routine'
   documentation: ACT-67 unarchive action is documented.
   capability: Metadata mutation is not a broader product capability.
   epistemic: ACT-67 is observed by EVD-32.
@@ -48,3 +48,4 @@ implementation_locators:
 - src/orchestrator/api/routers/routines.py::unarchive_routine
 test_locators:
 - tests/integration/test_api_routines.py::test_unarchive_routine
+bounded_test_locators: []

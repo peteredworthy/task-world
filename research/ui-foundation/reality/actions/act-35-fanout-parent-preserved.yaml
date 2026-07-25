@@ -1,7 +1,7 @@
 id: ACT-35
 title: Preserve fan-out parent running state on child retry
-definition: Fan-out retry separately preserves the parent task's fan-out-running carrier while its failed
-  child is reset.
+definition: Fan-out retry separately preserves the parent task's fan-out-running carrier
+  while its failed child is reset.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -20,13 +20,15 @@ validation:
 - legacy execution mode
 - fan-out child and parent identity validation
 - failed child status validation
-durable_effect: Preserves the parent task in fan-out-running while the paired child-reset effect is applied.
+durable_effect: Preserves the parent task in fan-out-running while the paired child-reset
+  effect is applied.
 resulting_state_id: STA-13
 failure_modes:
 - 404 run, child, or parent identity
 - 409 child is not failed or parent is not fan-out running
 stale_state_behavior: Targeted update avoids clobbering concurrent fan-out child sessions.
-idempotency: No idempotency key; parent preservation is paired with the one-time child reset.
+idempotency: No idempotency key; parent preservation is paired with the one-time child
+  reset.
 retry_behavior: Refresh the child and parent fan-out state before retrying.
 reversibility: No direct undo for the paired child reset or parent preservation.
 audit_evidence_ids:
@@ -45,16 +47,16 @@ domain_eligibility: Parent of a failed legacy fan-out child.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: exercised
+test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-35 preserves fan-out-running parent during child reset.
-  test: The same retry test separately asserts parent remains fan_out_running.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-35 parent preservation is documented as paired, not transitional.
   capability: One child retry does not prove all fan-out recovery.
   epistemic: ACT-35 is observed by EVD-44.
 implementation_locators:
 - src/orchestrator/workflow/service.py::WorkflowService.retry_fan_out_child
-test_locators:
-- tests/integration/test_fan_out.py::TestChildTaskStateManagement::test_retry_fan_out_child_records_retry_generation
+test_locators: []
+bounded_test_locators: []

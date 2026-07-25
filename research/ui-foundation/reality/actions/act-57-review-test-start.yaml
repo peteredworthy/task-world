@@ -17,8 +17,8 @@ required_input:
 validation:
 - configured commands
 - single running test
-durable_effect: Accepts asynchronous test start, returns running test_run_id, and emits start/completion
-  evidence.
+durable_effect: Accepts asynchronous test start, returns running test_run_id, and
+  emits start/completion evidence.
 resulting_state_id: STA-39
 failure_modes:
 - 422 no commands
@@ -44,7 +44,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-57 accepts async test start and emits completion evidence.
-  test: The test starts the job, waits, and asserts completed results.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_completes_with_results'
   documentation: ACT-57 review-test action is documented.
   capability: One local command run does not prove all configured test environments.
   epistemic: ACT-57 is observed by EVD-47.
@@ -52,3 +52,4 @@ implementation_locators:
 - src/orchestrator/api/routers/review.py::start_test_run
 test_locators:
 - tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_completes_with_results
+bounded_test_locators: []

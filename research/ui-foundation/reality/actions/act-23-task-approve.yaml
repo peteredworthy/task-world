@@ -1,6 +1,7 @@
 id: ACT-23
 title: Approve legacy task awaiting approval
-definition: Approves one legacy task in pending-user-action approval state and completes that task.
+definition: Approves one legacy task in pending-user-action approval state and completes
+  that task.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -18,7 +19,8 @@ required_input:
 validation:
 - legacy execution mode
 - task approval transition validation
-durable_effect: Records an ApprovalDecision and changes the task from pending user action to completed.
+durable_effect: Records an ApprovalDecision and changes the task from pending user
+  action to completed.
 resulting_state_id: STA-14
 failure_modes:
 - 404 run or task identity
@@ -43,7 +45,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-23 records approval and completes pending-user-action task.
-  test: The test invokes approval and asserts persisted completed task.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_approval_workflow.py::test_approve_task_transitions_to_completed'
   documentation: ACT-23 task approval is documented.
   capability: Approval attribution is not product-role authorization.
   epistemic: ACT-23 is observed by EVD-12.
@@ -51,3 +53,4 @@ implementation_locators:
 - src/orchestrator/api/routers/tasks.py::approve_task
 test_locators:
 - tests/integration/test_approval_workflow.py::test_approve_task_transitions_to_completed
+bounded_test_locators: []

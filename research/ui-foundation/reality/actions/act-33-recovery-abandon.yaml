@@ -44,7 +44,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-33 records failed recovery and changes task to failed.
-  test: The exact service test asserts failed task/attempt events and replay.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_workflow_service.py::test_complete_recovery_abandon_projects_failed_attempt_without_save_run'
   documentation: ACT-33 recovery abandon is documented.
   capability: One recovery path is not a complete recovery capability.
   epistemic: ACT-33 is observed by EVD-14.
@@ -52,3 +52,4 @@ implementation_locators:
 - src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_abandon
 test_locators:
 - tests/integration/test_workflow_service.py::test_complete_recovery_abandon_projects_failed_attempt_without_save_run
+bounded_test_locators: []

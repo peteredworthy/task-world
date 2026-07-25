@@ -37,16 +37,17 @@ domain_eligibility: PER-7 git prerequisites
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: exercised
+test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-54 clean-merges source into run through review route.
-  test: The conflict API test invokes that review route and asserts clean merge.
+  test: 'Bounded partial test locator(s): tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean'
   documentation: ACT-54 review back-merge is documented.
   capability: One clean merge does not prove every conflict policy.
   epistemic: ACT-54 is observed by EVD-29.
 implementation_locators:
 - src/orchestrator/git/ops/branch_ops.py::back_merge
-test_locators:
+test_locators: []
+bounded_test_locators:
 - tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean

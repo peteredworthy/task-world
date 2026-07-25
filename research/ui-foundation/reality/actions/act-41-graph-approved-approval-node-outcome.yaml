@@ -3,33 +3,37 @@ implementation_status: present
 capability_status: unknown
 executable: true
 command_id: CMD-11
-actor: Caller-supplied decider recorded by ACT-10; no authenticated-subject authorization is enforced.
+actor: Caller-supplied decider recorded by ACT-10; no authenticated-subject authorization
+  is enforced.
 permission_requirements:
 - PER-1
 - PER-2
 - PER-4
 preconditions:
 - ACT-10's eligible approved approval decision has been recorded.
-- The target approval gate remains eligible for the command's accepted completion effect.
-expected_source_version: This is the node-projection consequence of the same current-position decision
-  command; no client graph position exists.
+- The target approval gate remains eligible for the command's accepted completion
+  effect.
+expected_source_version: This is the node-projection consequence of the same current-position
+  decision command; no client graph position exists.
 required_input:
   decision_type: approval
   value: approved
   target_node_id: required
 validation:
-- The preceding RecordDecisionCommand approval target/value and graph-state validation succeeds.
+- The preceding RecordDecisionCommand approval target/value and graph-state validation
+  succeeds.
 - PER-4 applies the command's target and state eligibility checks.
-durable_effect: The accepted approved decision binds its DecisionRecord where applicable, releases the
-  scoped lease where present, and projects the approval-gate node completed.
+durable_effect: The accepted approved decision binds its DecisionRecord where applicable,
+  releases the scoped lease where present, and projects the approval-gate node completed.
 resulting_state_id: STA-33
 failure_modes:
 - 409 when the decision command is rejected or loses its append race
 - 422 when the underlying approval payload is invalid
-stale_state_behavior: No independent client version applies; a decision-command conflict prevents this
-  node outcome rather than moving a row carrier.
+stale_state_behavior: No independent client version applies; a decision-command conflict
+  prevents this node outcome rather than moving a row carrier.
 idempotency: No separate idempotency key exists for this data-dependent command consequence.
-retry_behavior: Inspect the decision and node projections; do not independently replay the node outcome.
+retry_behavior: Inspect the decision and node projections; do not independently replay
+  the node outcome.
 reversibility: No decision reversal or node-completion undo is established.
 audit_evidence_ids:
 - EVD-27
@@ -49,8 +53,9 @@ carrier_relationship:
     from_state_id: STA-36
     to_state_id: STA-37
   command_id: CMD-11
-  ordering: RecordDecisionCommand accepts any nonterminal target; decision recording and node completion
-    are parallel carrier-local effects of one discriminated command, not a cross-carrier transition.
+  ordering: RecordDecisionCommand accepts any nonterminal target; decision recording
+    and node completion are parallel carrier-local effects of one discriminated command,
+    not a cross-carrier transition.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-4 accepted approval-decision and target-node eligibility.
@@ -61,8 +66,9 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-41 binds approved DecisionRecord, releases lease, and completes approval node.
-  test: The endpoint test asserts those node-specific effects.
+  implementation: ACT-41 binds approved DecisionRecord, releases lease, and completes
+    approval node.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor'
   documentation: ACT-41 is separated from the decision-record carrier.
   capability: Node outcome is not enforced authorization.
   epistemic: ACT-41 is observed by EVD-27.
@@ -70,3 +76,4 @@ implementation_locators:
 - src/orchestrator/graph/_commands.py::_apply_record_decision
 test_locators:
 - tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor
+bounded_test_locators: []

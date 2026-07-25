@@ -20,8 +20,8 @@ required_input:
 validation:
 - current actionable-step validation
 - human-approval-gate validation
-durable_effect: Records StepHumanApprovalRecorded on the step-approval carrier; an eligible paused run
-  may separately resume.
+durable_effect: Records StepHumanApprovalRecorded on the step-approval carrier; an
+  eligible paused run may separately resume.
 resulting_state_id: STA-53
 failure_modes:
 - 404 run or step identity
@@ -47,7 +47,7 @@ documentation_status: conflicting
 epistemic_status: observed
 status_basis:
   implementation: ACT-27 records step approval and may separately permit resume.
-  test: The endpoint test asserts identity/comment/timestamp persistence.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_human_approval.py::test_approve_step_endpoint'
   documentation: ACT-27 conflicts on incomplete summary/comment guarantees.
   capability: The test does not prove enforced human authorization.
   epistemic: ACT-27 is observed by EVD-36.
@@ -55,3 +55,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::approve_step
 test_locators:
 - tests/integration/test_api_human_approval.py::test_approve_step_endpoint
+bounded_test_locators: []

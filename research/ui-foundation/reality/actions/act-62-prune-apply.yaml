@@ -17,8 +17,8 @@ required_input:
 validation:
 - selection
 - base SHA
-durable_effect: Synchronously creates prune commit effects and emits PruneApplied; returned UUID is not
-  durable event identity.
+durable_effect: Synchronously creates prune commit effects and emits PruneApplied;
+  returned UUID is not durable event identity.
 resulting_state_id: STA-42
 failure_modes:
 - 400 empty selection
@@ -43,7 +43,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-62 applies selected prune effects and creates commit evidence.
-  test: The real-repo test asserts a new prune commit is created.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit'
   documentation: ACT-62 apply contract is documented.
   capability: One apply mode does not prove all prune safety.
   epistemic: ACT-62 is observed by EVD-28.
@@ -51,3 +51,4 @@ implementation_locators:
 - src/orchestrator/git/ops/prune_ops.py::apply_prune
 test_locators:
 - tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit
+bounded_test_locators: []

@@ -1,6 +1,7 @@
 id: ACT-36
 title: Preserve legacy run carrier during transition-back
-definition: Transition-back preserves the legacy run row carrier while it rewinds current-step position.
+definition: Transition-back preserves the legacy run row carrier while it rewinds
+  current-step position.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -19,16 +20,19 @@ validation:
 - legacy execution mode
 - target step index bounds validation
 - earlier-step validation
-durable_effect: Records RunStepBackward and preserves the run carrier while changing current_step_index;
-  paired task-reset effects are separate contracts.
+durable_effect: Records RunStepBackward and preserves the run carrier while changing
+  current_step_index; paired task-reset effects are separate contracts.
 resulting_state_id: STA-2
 failure_modes:
 - 404 run identity
 - 409 target is current, forward, or out of bounds
-stale_state_behavior: No expected version; concurrent step progression can make the requested target invalid.
-idempotency: No idempotency key; repeating the same backward target is rejected once it is no longer earlier.
+stale_state_behavior: No expected version; concurrent step progression can make the
+  requested target invalid.
+idempotency: No idempotency key; repeating the same backward target is rejected once
+  it is no longer earlier.
 retry_behavior: Refresh run status and current_step_index before retrying.
-reversibility: A later forward progression is not an inverse and does not restore external effects.
+reversibility: A later forward progression is not an inverse and does not restore
+  external effects.
 audit_evidence_ids:
 - EVD-45
 transition:
@@ -45,16 +49,17 @@ domain_eligibility: Legacy run with an earlier in-bounds target step.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
-test_status: exercised
+test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-36 preserves the run while rewinding current_step_index.
-  test: The API test asserts unchanged run identity and rewound step index.
+  test: 'Bounded partial test locator(s): tests/integration/test_api_backward_transitions.py::test_transition_backward_basic'
   documentation: ACT-36 run-preservation effect is documented separately.
   capability: Legacy rewind is not typed graph steering.
   epistemic: ACT-36 is observed by EVD-45.
 implementation_locators:
 - src/orchestrator/api/routers/runs.py::transition_back
-test_locators:
+test_locators: []
+bounded_test_locators:
 - tests/integration/test_api_backward_transitions.py::test_transition_backward_basic

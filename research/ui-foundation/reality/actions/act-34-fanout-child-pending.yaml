@@ -18,13 +18,14 @@ validation:
 - legacy execution mode
 - fan-out child identity validation
 - failed child status validation
-durable_effect: Resets the addressed child task from failed to pending and records task-status evidence.
+durable_effect: Resets the addressed child task from failed to pending and records
+  task-status evidence.
 resulting_state_id: STA-8
 failure_modes:
 - 404 run or child identity
 - 409 task is not a failed fan-out child
-stale_state_behavior: Targeted update rejects an ineligible child rather than overwriting concurrent child
-  work.
+stale_state_behavior: Targeted update rejects an ineligible child rather than overwriting
+  concurrent child work.
 idempotency: No idempotency key; a pending child is no longer a legal retry source.
 retry_behavior: Refresh the child and parent fan-out state before retrying.
 reversibility: No direct undo restores the failed child attempt.
@@ -49,7 +50,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-34 resets the addressed failed child to pending with retry evidence.
-  test: The class method retries a real child and asserts pending plus generation evidence.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_fan_out.py::TestChildTaskStateManagement::test_retry_fan_out_child_records_retry_generation'
   documentation: ACT-34 child-reset action is documented.
   capability: One child retry does not define canonical retry count.
   epistemic: ACT-34 is observed by EVD-44.
@@ -57,3 +58,4 @@ implementation_locators:
 - src/orchestrator/workflow/service.py::WorkflowService.retry_fan_out_child
 test_locators:
 - tests/integration/test_fan_out.py::TestChildTaskStateManagement::test_retry_fan_out_child_records_retry_generation
+bounded_test_locators: []

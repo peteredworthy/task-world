@@ -44,7 +44,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-53 merges the run branch into the source branch.
-  test: The real-repo endpoint test exercises merge strategy and asserts source result.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_merge_readiness.py::test_merge_back_with_strategy_merge'
   documentation: ACT-53 final merge-back is documented.
   capability: One strategy path does not prove every merge policy.
   epistemic: ACT-53 is observed by EVD-29.
@@ -52,3 +52,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::merge_back_endpoint
 test_locators:
 - tests/integration/test_merge_readiness.py::test_merge_back_with_strategy_merge
+bounded_test_locators: []

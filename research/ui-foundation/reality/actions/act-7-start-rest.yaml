@@ -21,7 +21,8 @@ durable_effect: Appends SignalEnqueued(RUN_START); consumer later applies start.
 resulting_state_id: STA-1
 failure_modes:
 - 409 illegal transition
-stale_state_behavior: 202 may leave run draft; stale redelivery is discarded or idempotently handled.
+stale_state_behavior: 202 may leave run draft; stale redelivery is discarded or idempotently
+  handled.
 idempotency: State-validated; no request key.
 retry_behavior: Poll signal/activity before retry.
 reversibility: Pause or cancel are separate actions.
@@ -46,7 +47,7 @@ documentation_status: conflicting
 epistemic_status: observed
 status_basis:
   implementation: ACT-7 enqueues RUN_START and consumer later applies active.
-  test: The queue test asserts 202, source preservation before drain, then active.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_signal_queue.py::test_run_start_signal_consumed_draft_to_active'
   documentation: ACT-7 conflicts with queue/direct historical wording.
   capability: The in-memory drain does not prove production runner availability.
   epistemic: ACT-7 is observed by EVD-7/EVD-38-40.
@@ -54,3 +55,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::start_run
 test_locators:
 - tests/integration/test_signal_queue.py::test_run_start_signal_consumed_draft_to_active
+bounded_test_locators: []

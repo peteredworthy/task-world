@@ -41,7 +41,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-5 leaves a review back-merge conflict in progress.
-  test: The review conflict endpoint test creates a real conflict and asserts conflicts status.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status'
   documentation: ACT-5 conflict outcome is documented.
   capability: One exercised variant does not prove all merge policy.
   epistemic: ACT-5 is observed by EVD-29.
@@ -49,3 +49,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::back_merge_endpoint
 test_locators:
 - tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status
+bounded_test_locators: []

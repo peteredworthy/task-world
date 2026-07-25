@@ -104,6 +104,36 @@ def issue_codes(result: subprocess.CompletedProcess[str]) -> list[str]:
     return [line.split(":", 1)[0] for line in result.stderr.splitlines()]
 
 
+def validate_status_reviews(root: Path) -> set[str]:
+    validator = load_validator()
+    package = validator.load_foundation(root)
+    scope = package.documents["catalog/status-scope.yaml"]["items"]
+    records = {}
+    for item in scope:
+        document = package.documents[item["path"]]
+        record = (
+            document
+            if document.get("id") == item["id"]
+            else next(value for value in document["items"] if value["id"] == item["id"])
+        )
+        records[item["id"]] = (item["path"], record)
+    active = validator._active_snapshot(package.documents["catalog/evidence.yaml"])
+    return {
+        issue.code
+        for issue in validator._validate_status_evidence_reviews(package, records, active["id"])
+    }
+
+
+def status_review_catalog(root: Path) -> dict[str, object]:
+    return yaml.safe_load(
+        (root / "catalog/status-evidence-reviews.yaml").read_text(encoding="utf-8")
+    )
+
+
+def write_status_review_catalog(root: Path, value: dict[str, object]) -> None:
+    write_yaml(root / "catalog/status-evidence-reviews.yaml", value)
+
+
 def load_validator() -> ModuleType:
     spec = importlib.util.spec_from_file_location("ui_foundation_validate", VALIDATOR)
     assert spec and spec.loader
@@ -403,6 +433,100 @@ def test_status_locator_rejects_stale_active_snapshot_hash(tmp_path: Path) -> No
     )
 
 
+def test_status_evidence_reviews_enforce_partitions_statuses_and_metadata(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    reviews = catalog["reviews"]
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(reviews, list) and isinstance(summaries, list)
+
+    catalog["metadata"]["scope_manifest_digest"] = f"sha256:{'0' * 64}"
+    summaries.pop()
+    first_test = next(review for review in reviews if review["dimension"] == "test")
+    first_test["verdict"] = "does-not-prove"
+    first_test["admission"] = "admitted"
+    first_implementation = next(
+        review for review in reviews if review["dimension"] == "implementation"
+    )
+    first_implementation["locator"] = "reality/relationships.yaml::items"
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_REVIEW_METADATA_MISMATCH" in codes
+    assert "STATUS_EVIDENCE_DIMENSION_SUMMARY_MISSING" in codes
+    assert "STATUS_EVIDENCE_TEST_ADMISSION_INVALID" in codes
+    assert "STATUS_EVIDENCE_LOCATOR_PARTITION_INVALID" in codes
+
+
+def test_status_evidence_reviews_reject_active_rejected_and_wrong_partitions(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    reviews = catalog["reviews"]
+    assert isinstance(reviews, list)
+    test_review = next(review for review in reviews if review["dimension"] == "test")
+    record_id, locator = test_review["record_id"], test_review["locator"]
+    test_review["admission"] = "rejected"
+    test_review["verdict"] = "does-not-prove"
+    summary = next(
+        value
+        for value in catalog["dimension_reviews"]
+        if value["record_id"] == record_id and value["dimension"] == "test"
+    )
+    summary["admitted_locators"].remove(test_review["review_id"])
+    summary["rejected_locators"].append(test_review["review_id"])
+    scope = yaml.safe_load((root / "catalog/status-scope.yaml").read_text(encoding="utf-8"))
+    path = next(item["path"] for item in scope["items"] if item["id"] == record_id)
+    document_path = root / path
+    document = yaml.safe_load(document_path.read_text(encoding="utf-8"))
+    record = (
+        document
+        if document.get("id") == record_id
+        else next(item for item in document["items"] if item["id"] == record_id)
+    )
+    record["test_locators"] = [locator]
+    record["test_status"] = "exercised"
+    write_yaml(document_path, document)
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_REJECTED_LOCATOR_ACTIVE" in codes
+    assert "STATUS_EVIDENCE_CANONICAL_TEST_PARTITION_MISMATCH" in codes
+
+
+def test_status_evidence_reviews_reject_partial_test_left_exact_and_wrong_summary_status(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    reviews = catalog["reviews"]
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(reviews, list) and isinstance(summaries, list)
+    partial = next(
+        review
+        for review in reviews
+        if review["dimension"] == "test" and review["verdict"] == "partially-proves"
+    )
+    summary = next(
+        value
+        for value in summaries
+        if value["record_id"] == partial["record_id"] and value["dimension"] == "test"
+    )
+    summary["admitted_locators"] = [partial["review_id"]]
+    summary["bounded_locators"] = []
+    summary["combined_verdict"] = "proves"
+    summary["compatible_status"] = "exercised"
+    write_status_review_catalog(root, catalog)
+
+    codes = validate_status_reviews(root)
+
+    assert "STATUS_EVIDENCE_SUMMARY_STATUS_INVALID" in codes
+    assert "STATUS_EVIDENCE_CANONICAL_TEST_PARTITION_MISMATCH" in codes
+
+
 def test_status_scope_rejects_missing_record(tmp_path: Path) -> None:
     root = copy_foundation_with_source(tmp_path)
     items = status_scope_items(root)
@@ -602,11 +726,11 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
         records[item["id"]] = item
 
     expected_test_statuses = {
-        "REL": {"exercised": 23, "unexercised": 12},
-        "STA": {"exercised": 67, "unexercised": 5},
-        "ACT": {"exercised": 58, "unexercised": 13},
-        "EVI": {"exercised": 5, "unexercised": 4},
-        "INV": {"exercised": 6},
+        "REL": {"exercised": 13, "unexercised": 22},
+        "STA": {"exercised": 56, "unexercised": 16},
+        "ACT": {"exercised": 46, "unexercised": 25},
+        "EVI": {"exercised": 1, "unexercised": 8},
+        "INV": {"exercised": 3, "unexercised": 3},
     }
     family_ids = {
         "REL": {f"REL-{number}" for number in range(1, 36)},
@@ -633,7 +757,9 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
         "INV-2": "tests/integration/test_graph_dynamic_e2e.py::test_dynamic_run_does_not_complete_while_final_invariant_check_fails",
     }
     for identifier, locator in representatives.items():
-        assert locator in records[identifier]["test_locators"]
+        assert locator in (
+            records[identifier]["test_locators"] + records[identifier]["bounded_test_locators"]
+        )
 
     exact_locators = {
         locator
@@ -642,7 +768,7 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
         for field in ("test_locators", "bounded_test_locators")
         for locator in records[identifier].get(field, [])
     }
-    assert len(exact_locators) == 113
+    assert len(exact_locators) == 104
 
 
 def test_exercised_status_rejects_empty_exact_test_locators(tmp_path: Path) -> None:

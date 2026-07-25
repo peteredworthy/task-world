@@ -20,8 +20,8 @@ validation:
 - conflicts
 - runner selection
 - dispatch
-durable_effect: Synchronously accepts background conflict-agent dispatch, emits AgentFixStarted, and returns
-  dispatched job_id.
+durable_effect: Synchronously accepts background conflict-agent dispatch, emits AgentFixStarted,
+  and returns dispatched job_id.
 resulting_state_id: STA-39
 failure_modes:
 - 409 no conflicts/dispatch unavailable
@@ -46,11 +46,13 @@ test_status: unexercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-59 dispatches a background conflict-resolution agent and returns job_id.
-  test: No exact route test asserts AgentFixStarted plus dispatched job_id.
+  implementation: ACT-59 dispatches a background conflict-resolution agent and returns
+    job_id.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-59 dispatch contract is documented.
   capability: Source-inspected dispatch is not proven available.
   epistemic: ACT-59 is observed by EVD-48.
 implementation_locators:
 - src/orchestrator/api/routers/review.py::agent_resolve_conflicts
 test_locators: []
+bounded_test_locators: []

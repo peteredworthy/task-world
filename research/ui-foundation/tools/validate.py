@@ -506,6 +506,61 @@ class SchemaBoundary(BaseModel):
     properties: dict[str, dict[str, JsonValue]]
 
 
+class StatusEvidenceReviewMetadata(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_version: Literal["1"]
+    scope_manifest_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    active_snapshot_id: str = Field(min_length=1)
+    reviewer_model: str = Field(min_length=1)
+    reviewer_role: str = Field(min_length=1)
+    reviewed_at: str = Field(min_length=1)
+
+
+class StatusEvidenceLocatorReview(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    review_id: str = Field(pattern=r"^SER-[0-9]{4}$")
+    record_id: str = Field(pattern=r"^(?:REL|STA|ACT|EVI|INV)-[0-9]+$")
+    dimension: Literal["implementation", "test"]
+    locator_kind: str = Field(min_length=1)
+    locator: str | None
+    record_proposition: str = Field(min_length=1)
+    observed_source_or_test_fact: str = Field(min_length=1)
+    boundary: str = Field(min_length=1)
+    verdict: Literal["proves", "partially-proves", "does-not-prove", "contradicts"]
+    status_compatibility: Literal["present", "partial", "absent", "exercised", "unexercised"]
+    review_rationale: str = Field(min_length=1)
+    reviewer: str = Field(min_length=1)
+    reviewed_at: str = Field(min_length=1)
+    admission: Literal["admitted", "bounded", "rejected"]
+
+
+class StatusEvidenceDimensionReview(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    review_id: str = Field(pattern=r"^SDR-[0-9]{4}$")
+    record_id: str = Field(pattern=r"^(?:REL|STA|ACT|EVI|INV)-[0-9]+$")
+    dimension: Literal["implementation", "test"]
+    combined_verdict: Literal["proves", "partially-proves", "absent", "unexercised"]
+    compatible_status: Literal["present", "partial", "absent", "exercised", "unexercised"]
+    admitted_locators: list[str]
+    bounded_locators: list[str]
+    rejected_locators: list[str]
+    uncovered_boundary: str = Field(min_length=1)
+    rationale: str = Field(min_length=1)
+    reviewer: str = Field(min_length=1)
+    reviewed_at: str = Field(min_length=1)
+
+
+class StatusEvidenceReviewCatalog(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    metadata: StatusEvidenceReviewMetadata
+    reviews: list[StatusEvidenceLocatorReview]
+    dimension_reviews: list[StatusEvidenceDimensionReview]
+
+
 def _issue(code: str, path: Path | str, message: object) -> ValidationIssue:
     return ValidationIssue(code, str(path), " ".join(str(message).splitlines()))
 
@@ -2970,6 +3025,208 @@ def _reciprocal_unresolved_issue(
     )
 
 
+def _validate_status_evidence_reviews(
+    package: FoundationPackage,
+    records: dict[str, tuple[str, dict[str, JsonValue]]],
+    active_snapshot_id: str,
+) -> list[ValidationIssue]:
+    """Mechanically bind every status claim to its independently reviewed locator rows."""
+    path = package.root / "catalog/status-evidence-reviews.yaml"
+    raw = package.documents.get("catalog/status-evidence-reviews.yaml")
+    issues: list[ValidationIssue] = []
+    try:
+        catalog = StatusEvidenceReviewCatalog.model_validate(raw)
+    except ValidationError as error:
+        return [_issue("STATUS_EVIDENCE_REVIEW_CATALOG_INVALID", path, error)]
+
+    expected_digest = f"sha256:{hashlib.sha256((package.root / 'catalog/status-scope.yaml').read_bytes()).hexdigest()}"
+    if catalog.metadata.scope_manifest_digest != expected_digest:
+        issues.append(_issue("STATUS_EVIDENCE_REVIEW_METADATA_MISMATCH", path, "scope digest"))
+    if catalog.metadata.active_snapshot_id != active_snapshot_id:
+        issues.append(_issue("STATUS_EVIDENCE_REVIEW_METADATA_MISMATCH", path, "active snapshot"))
+
+    review_ids = [review.review_id for review in catalog.reviews]
+    summary_ids = [summary.review_id for summary in catalog.dimension_reviews]
+    if len(review_ids) != len(set(review_ids)):
+        issues.append(_issue("STATUS_EVIDENCE_REVIEW_ID_INVALID", path, "SER ids"))
+    if len(summary_ids) != len(set(summary_ids)):
+        issues.append(_issue("STATUS_EVIDENCE_DIMENSION_ID_INVALID", path, "SDR ids"))
+
+    rows_by_key: dict[tuple[str, str], list[StatusEvidenceLocatorReview]] = {}
+    for row in catalog.reviews:
+        key = (row.record_id, row.dimension)
+        rows_by_key.setdefault(key, []).append(row)
+        if row.record_id not in records:
+            issues.append(_issue("STATUS_EVIDENCE_REVIEW_UNKNOWN_RECORD", path, row.review_id))
+        if row.dimension == "test":
+            if row.admission == "admitted" and row.verdict != "proves":
+                issues.append(_issue("STATUS_EVIDENCE_TEST_ADMISSION_INVALID", path, row.review_id))
+            if row.admission == "bounded" and row.verdict != "partially-proves":
+                issues.append(_issue("STATUS_EVIDENCE_TEST_BOUNDARY_INVALID", path, row.review_id))
+            if row.admission == "rejected" and row.verdict not in {"does-not-prove", "contradicts"}:
+                issues.append(_issue("STATUS_EVIDENCE_TEST_REJECTION_INVALID", path, row.review_id))
+        elif row.admission == "admitted" and row.verdict not in {"proves", "partially-proves"}:
+            issues.append(
+                _issue("STATUS_EVIDENCE_IMPLEMENTATION_ADMISSION_INVALID", path, row.review_id)
+            )
+
+    summaries_by_key: dict[tuple[str, str], StatusEvidenceDimensionReview] = {}
+    for summary in catalog.dimension_reviews:
+        key = (summary.record_id, summary.dimension)
+        if summary.record_id not in records:
+            issues.append(
+                _issue("STATUS_EVIDENCE_DIMENSION_UNKNOWN_RECORD", path, summary.review_id)
+            )
+        if key in summaries_by_key:
+            issues.append(
+                _issue("STATUS_EVIDENCE_DIMENSION_SUMMARY_DUPLICATE", path, summary.record_id)
+            )
+        summaries_by_key[key] = summary
+
+    for identifier, (record_path, record) in records.items():
+        location = package.root / record_path
+        for dimension in ("implementation", "test"):
+            key = (identifier, dimension)
+            summary = summaries_by_key.get(key)
+            rows = rows_by_key.get(key, [])
+            if summary is None:
+                issues.append(
+                    _issue("STATUS_EVIDENCE_DIMENSION_SUMMARY_MISSING", location, identifier)
+                )
+                continue
+            expected_locators = (
+                _string_list(record.get("implementation_locators"))
+                if dimension == "implementation"
+                else _string_list(record.get("test_locators"))
+                + _string_list(record.get("bounded_test_locators"))
+            )
+            expected_row_keys = {(identifier, dimension, locator) for locator in expected_locators}
+            expected_row_keys.update(
+                (identifier, dimension, row.locator)
+                for row in rows
+                if row.admission == "rejected" and row.locator is not None
+            )
+            if dimension == "implementation" and record.get("implementation_status") == "absent":
+                expected_row_keys.add((identifier, dimension, None))
+            actual_row_keys = {(row.record_id, row.dimension, row.locator) for row in rows}
+            if actual_row_keys != expected_row_keys or len(rows) != len(actual_row_keys):
+                issues.append(
+                    _issue("STATUS_EVIDENCE_LOCATOR_PARTITION_INVALID", location, identifier)
+                )
+
+            row_by_id = {row.review_id: row for row in rows}
+            listed = (
+                summary.admitted_locators + summary.bounded_locators + summary.rejected_locators
+            )
+            if len(listed) != len(set(listed)) or set(listed) != set(row_by_id):
+                issues.append(
+                    _issue("STATUS_EVIDENCE_SUMMARY_PARTITION_INVALID", location, identifier)
+                )
+            for admission, values in (
+                ("admitted", summary.admitted_locators),
+                ("bounded", summary.bounded_locators),
+                ("rejected", summary.rejected_locators),
+            ):
+                if any(
+                    row_by_id.get(value) is None or row_by_id[value].admission != admission
+                    for value in values
+                ):
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_SUMMARY_PARTITION_INVALID", location, identifier)
+                    )
+                    break
+
+            admitted = [
+                row_by_id[value] for value in summary.admitted_locators if value in row_by_id
+            ]
+            bounded = [row_by_id[value] for value in summary.bounded_locators if value in row_by_id]
+            rejected = [
+                row_by_id[value] for value in summary.rejected_locators if value in row_by_id
+            ]
+            if dimension == "test":
+                admitted_proving = [row for row in admitted if row.verdict == "proves"]
+                active_rejected = [row for row in rejected if row.locator in expected_locators]
+                expected_status = (
+                    "exercised" if admitted_proving and not active_rejected else "unexercised"
+                )
+                if summary.compatible_status != expected_status or (
+                    summary.combined_verdict != "proves"
+                    if expected_status == "exercised"
+                    else summary.combined_verdict != "unexercised"
+                ):
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_SUMMARY_STATUS_INVALID", location, identifier)
+                    )
+                if any(row.locator in _string_list(record.get("test_locators")) for row in bounded):
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_TEST_PARTIAL_EXACT", location, identifier)
+                    )
+                if rejected and any(row.locator in expected_locators for row in rejected):
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_REJECTED_LOCATOR_ACTIVE", location, identifier)
+                    )
+                if record.get("test_status") != summary.compatible_status:
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_CANONICAL_STATUS_MISMATCH", location, identifier)
+                    )
+                admitted_locators = [row.locator for row in admitted if row.locator is not None]
+                bounded_locators = [row.locator for row in bounded if row.locator is not None]
+                if (
+                    _string_list(record.get("test_locators")) != admitted_locators
+                    or _string_list(record.get("bounded_test_locators")) != bounded_locators
+                ):
+                    issues.append(
+                        _issue(
+                            "STATUS_EVIDENCE_CANONICAL_TEST_PARTITION_MISMATCH",
+                            location,
+                            identifier,
+                        )
+                    )
+            else:
+                canonical_status = record.get("implementation_status")
+                canonical_paths = {locator.partition("::")[0] for locator in expected_locators}
+                if record_path in canonical_paths:
+                    issues.append(_issue("STATUS_EVIDENCE_SELF_PROOF", location, identifier))
+                if canonical_status == "absent":
+                    if not (
+                        summary.combined_verdict == "absent"
+                        and summary.compatible_status == "absent"
+                        and len(rows) == 1
+                        and rows[0].locator is None
+                    ):
+                        issues.append(
+                            _issue(
+                                "STATUS_EVIDENCE_IMPLEMENTATION_ABSENCE_INVALID",
+                                location,
+                                identifier,
+                            )
+                        )
+                elif canonical_status == "present":
+                    if not (
+                        summary.combined_verdict == "proves"
+                        and summary.compatible_status == "present"
+                        and admitted
+                        and summary.rationale.strip()
+                    ):
+                        issues.append(
+                            _issue("STATUS_EVIDENCE_SUMMARY_STATUS_INVALID", location, identifier)
+                        )
+                elif canonical_status == "partial" and not (
+                    summary.combined_verdict == "partially-proves"
+                    and summary.compatible_status == "partial"
+                    and (admitted or bounded)
+                    and summary.uncovered_boundary.strip()
+                ):
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_SUMMARY_STATUS_INVALID", location, identifier)
+                    )
+                if canonical_status != summary.compatible_status:
+                    issues.append(
+                        _issue("STATUS_EVIDENCE_CANONICAL_STATUS_MISMATCH", location, identifier)
+                    )
+    return issues
+
+
 def _validate_status_scope(
     package: FoundationPackage,
     active_snapshot_hashes: dict[str, str],
@@ -3049,6 +3306,7 @@ def _validate_status_scope(
 
     repository_root = package.root.parents[1]
     family_records: dict[str, list[dict[str, JsonValue]]] = {}
+    status_records: dict[str, tuple[str, dict[str, JsonValue]]] = {}
     exercised_locators: set[str] = set()
     permitted_locators: set[str] = set()
     for identifier, path, record in declarations:
@@ -3062,6 +3320,7 @@ def _validate_status_scope(
         if manifest.get(identifier) != path:
             issues.append(_issue("STATUS_SCOPE_WRONG_PATH", location, identifier))
         family_records.setdefault(identifier.split("-", 1)[0], []).append(record)
+        status_records[identifier] = (path, record)
 
         basis = record.get("status_basis")
         if (
@@ -3162,6 +3421,9 @@ def _validate_status_scope(
     active_snapshot = _active_snapshot(evidence) if isinstance(evidence, dict) else None
     active_snapshot_id = active_snapshot.get("id") if isinstance(active_snapshot, dict) else None
     if isinstance(active_snapshot_id, str):
+        issues.extend(
+            _validate_status_evidence_reviews(package, status_records, active_snapshot_id)
+        )
         issues.extend(
             _validate_status_test_manifest(
                 package,

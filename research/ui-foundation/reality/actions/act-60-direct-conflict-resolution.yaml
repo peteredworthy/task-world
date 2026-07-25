@@ -43,7 +43,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-60 writes/stages direct resolution and emits evidence.
-  test: The route test submits manual content and asserts the exact written resolution.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_manual_writes_custom_content'
   documentation: ACT-60 direct resolution is documented.
   capability: One file resolution does not prove all merge completion.
   epistemic: ACT-60 is observed by EVD-30.
@@ -51,3 +51,4 @@ implementation_locators:
 - src/orchestrator/git/ops/conflict_ops.py::resolve_conflict
 test_locators:
 - tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_manual_writes_custom_content
+bounded_test_locators: []

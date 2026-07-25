@@ -30,7 +30,8 @@ audit_evidence_ids:
 transition:
   from_state_id: STA-1
   to_state_id: STA-2
-enforced_authentication: No REST bearer gate; local CLI process directly applies the workflow transition.
+enforced_authentication: No REST bearer gate; local CLI process directly applies the
+  workflow transition.
 enforced_authorization: absent
 domain_eligibility: Legacy row must be draft.
 proposed_role_policy: null
@@ -43,10 +44,11 @@ documentation_status: conflicting
 epistemic_status: observed
 status_basis:
   implementation: ACT-8 directly applies start from the CLI implementation.
-  test: No command-level pytest invokes the direct CLI start action.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-8 conflicts with queue-first lifecycle descriptions.
   capability: Source presence does not prove CLI availability.
   epistemic: ACT-8 is observed by EVD-7/EVD-40.
 implementation_locators:
 - src/orchestrator/cli/runs.py::start_run
 test_locators: []
+bounded_test_locators: []

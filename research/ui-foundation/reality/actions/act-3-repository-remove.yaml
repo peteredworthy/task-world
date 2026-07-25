@@ -39,10 +39,11 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-3 implements symlink unlink or recursive removal.
-  test: No test invokes remove and verifies the destructive effect.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-3 remove contract is documented.
   capability: Availability remains unknown without an exercised destructive path.
   epistemic: ACT-3 implementation is observed by EVD-35.
 implementation_locators:
 - src/orchestrator/api/routers/repos.py::remove_repository
 test_locators: []
+bounded_test_locators: []

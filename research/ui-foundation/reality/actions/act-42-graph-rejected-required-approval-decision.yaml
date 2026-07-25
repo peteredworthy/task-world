@@ -12,8 +12,8 @@ preconditions:
 - A graph exists and is not cancelled or failed.
 - The target is an eligible nonterminal required approval gate.
 - The request value is rejected.
-expected_source_version: No client graph position; current-position controller/append checks expose races
-  as 409.
+expected_source_version: No client graph position; current-position controller/append
+  checks expose races as 409.
 required_input:
   decision_type: approval
   value: rejected
@@ -30,14 +30,15 @@ command_variant:
 validation:
 - Strict RecordDecisionCommand approval type/value/target validation
 - PER-4 graph state, terminality, and actor/context validation
-durable_effect: Appends approval_decision_recorded and projects the rejected required approval as a DecisionRecord
-  before its separate node-failure consequence.
+durable_effect: Appends approval_decision_recorded and projects the rejected required
+  approval as a DecisionRecord before its separate node-failure consequence.
 resulting_state_id: STA-37
 failure_modes:
 - 404 when no graph exists
 - 409 for stale append or command rejection
 - 422 for invalid approval input
-stale_state_behavior: A race returns 409 without manufacturing a generic rejection carrier.
+stale_state_behavior: A race returns 409 without manufacturing a generic rejection
+  carrier.
 idempotency: No REST idempotency key; duplicate behavior is command/state dependent.
 retry_behavior: Refresh the decision and node projections before any retry.
 reversibility: No decision-reversal command exists.
@@ -59,11 +60,12 @@ carrier_relationship:
     - STA-31
     - STA-32
     to_state_id: STA-34
-  ordering: One CMD-11 command records the rejected decision and separately projects required-node failure;
-    this is not a STA-37-to-node edge.
+  ordering: One CMD-11 command records the rejected decision and separately projects
+    required-node failure; this is not a STA-37-to-node edge.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
-domain_eligibility: PER-4 required approval target, value, graph-state, and actor/context validation.
+domain_eligibility: PER-4 required approval target, value, graph-state, and actor/context
+  validation.
 proposed_role_policy: null
 conflict_ids: []
 question_ids: []
@@ -72,7 +74,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-42 records the rejected required approval before node failure.
-  test: The test asserts durable rejected decision event/reason and no accepted output.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_graph_decisions_api.py::test_record_rejected_approval_is_durable_and_dead_inputs_successor'
   documentation: ACT-42 decision effect is documented separately.
   capability: Decision attribution is not enforced authorization.
   epistemic: ACT-42 is observed by EVD-26/EVD-27.
@@ -80,3 +82,4 @@ implementation_locators:
 - src/orchestrator/graph/_commands.py::_apply_record_decision
 test_locators:
 - tests/integration/test_graph_decisions_api.py::test_record_rejected_approval_is_durable_and_dead_inputs_successor
+bounded_test_locators: []

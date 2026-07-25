@@ -1,7 +1,7 @@
 id: ACT-18
 title: Pause run through REST
-definition: Accept a REST pause request by visibly moving the legacy row from active to stopping; consumer
-  application to paused is later and separate.
+definition: Accept a REST pause request by visibly moving the legacy row from active
+  to stopping; consumer application to paused is later and separate.
 implementation_status: present
 capability_status: unknown
 executable: true
@@ -19,20 +19,22 @@ required_input:
 validation:
 - legacy lifecycle state validation
 - active executor cancellation before pause enqueue
-durable_effect: Synchronously persists active to stopping, appends pause signal acceptance evidence, and
-  queues PAUSE; the consumer later applies stopping to paused.
+durable_effect: Synchronously persists active to stopping, appends pause signal acceptance
+  evidence, and queues PAUSE; the consumer later applies stopping to paused.
 resulting_state_id: STA-3
 failure_modes:
 - 404 missing run
 - 409 stopping or illegal transition
 - executor cancellation failure
-stale_state_behavior: A concurrent lifecycle change can make the request reject; after acceptance, redelivery
-  handles stale or already-applied PAUSE without a typed result receipt.
-idempotency: State-validated; no idempotency key. A second pause from stopping is rejected.
-retry_behavior: Refresh row status and activity before retrying; do not infer paused until the consumer
-  applies the queued signal.
-reversibility: Resume is a separate action after paused; it does not restore work interrupted by executor
-  cancellation.
+stale_state_behavior: A concurrent lifecycle change can make the request reject; after
+  acceptance, redelivery handles stale or already-applied PAUSE without a typed result
+  receipt.
+idempotency: State-validated; no idempotency key. A second pause from stopping is
+  rejected.
+retry_behavior: Refresh row status and activity before retrying; do not infer paused
+  until the consumer applies the queued signal.
+reversibility: Resume is a separate action after paused; it does not restore work
+  interrupted by executor cancellation.
 audit_evidence_ids:
 - EVD-7
 - EVD-8
@@ -59,7 +61,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-18 writes stopping, enqueues PAUSE, then consumer applies paused.
-  test: The test asserts every acceptance/application state around drain.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused'
   documentation: ACT-18 lifecycle timing is documented.
   capability: In-memory queue exercise does not prove cross-process delivery.
   epistemic: ACT-18 is observed by EVD-7/EVD-8/EVD-38-40.
@@ -67,3 +69,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::pause_run
 test_locators:
 - tests/integration/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused
+bounded_test_locators: []

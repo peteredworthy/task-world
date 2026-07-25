@@ -2,9 +2,9 @@ schema_version: '1'
 phase_status: complete
 completion_phase: 1
 key_namespace: canonical
-cardinality_convention: source_min/source_max is the number of source entities at one target endpoint;
-  target_min/target_max is the number of target entities at one source endpoint. All relationship cardinalities
-  use this endpoint convention.
+cardinality_convention: source_min/source_max is the number of source entities at
+  one target endpoint; target_min/target_max is the number of target entities at one
+  source endpoint. All relationship cardinalities use this endpoint convention.
 items:
 - source: ENT-1
   target: ENT-3
@@ -35,13 +35,14 @@ items:
   definition: ENT-1 template-lineage ENT-3.
   status_basis:
     implementation: REL-1 has routine lineage fields, but no runtime ownership claim.
-    test: No test asserts the template-to-step lineage cardinality.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-1 template-lineage is documented without a linked conflict.
     capability: REL-1 alone establishes no product capability.
     epistemic: REL-1 is observed by EVD-49.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::RunModel.routine_id
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-2
   target: ENT-3
   relationship_type: owns
@@ -56,7 +57,7 @@ items:
   epistemic_status: observed
   id: REL-2
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -72,16 +73,18 @@ items:
   definition: ENT-2 owns ENT-3.
   status_basis:
     implementation: REL-2 is the non-null run FK plus delete-orphan steps relation.
-    test: The tests persist, reload, and cascade-delete owned steps.
+    test: 'Bounded partial test locator(s): tests/integration/test_database.py::test_cascade_delete,
+      tests/integration/test_database.py::test_crud_with_steps_and_tasks'
     documentation: REL-2 run ownership is documented without conflict.
     capability: REL-2 alone establishes no product capability.
     epistemic: REL-2 is directly observed in ORM and DB behavior.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::RunModel.steps
   - src/orchestrator/db/orm/models.py::StepModel.run_id
-  test_locators:
-  - tests/integration/test_database.py::test_crud_with_steps_and_tasks
+  test_locators: []
+  bounded_test_locators:
   - tests/integration/test_database.py::test_cascade_delete
+  - tests/integration/test_database.py::test_crud_with_steps_and_tasks
 - source: ENT-3
   target: ENT-4
   relationship_type: owns
@@ -96,7 +99,7 @@ items:
   epistemic_status: observed
   id: REL-3
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -114,16 +117,18 @@ items:
   definition: ENT-3 owns ENT-4.
   status_basis:
     implementation: REL-3 is the non-null step FK plus delete-orphan tasks relation.
-    test: The tests persist, reload, and cascade-delete owned tasks.
+    test: 'Bounded partial test locator(s): tests/integration/test_database.py::test_cascade_delete,
+      tests/integration/test_database.py::test_crud_with_steps_and_tasks'
     documentation: REL-3 documents the fan-out qualification through Q-2.
     capability: REL-3 alone establishes no product capability.
     epistemic: REL-3 is directly observed in ORM and DB behavior.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::StepModel.tasks
   - src/orchestrator/db/orm/models.py::TaskModel.step_id
-  test_locators:
-  - tests/integration/test_database.py::test_crud_with_steps_and_tasks
+  test_locators: []
+  bounded_test_locators:
   - tests/integration/test_database.py::test_cascade_delete
+  - tests/integration/test_database.py::test_crud_with_steps_and_tasks
 - source: ENT-4
   target: ENT-5
   relationship_type: owns
@@ -138,7 +143,7 @@ items:
   epistemic_status: observed
   id: REL-4
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: conflicting
   capability_status: unknown
   confidence: medium
@@ -157,17 +162,18 @@ items:
   definition: ENT-4 owns ENT-5.
   status_basis:
     implementation: REL-4 is the non-null task FK plus delete-orphan attempts relation.
-    test: The tests persist, reload, and cascade-delete owned attempts; they do not prove attempt-number
-      uniqueness.
+    test: 'Bounded partial test locator(s): tests/integration/test_database.py::test_cascade_delete,
+      tests/integration/test_database.py::test_crud_with_steps_and_tasks'
     documentation: REL-4 conflicts on canonical attempt identity via CON-1/Q-1.
     capability: REL-4 alone establishes no product capability.
     epistemic: REL-4 ownership is observed while ordinal identity remains qualified.
   implementation_locators:
-  - src/orchestrator/db/orm/models.py::TaskModel.attempts
   - src/orchestrator/db/orm/models.py::AttemptModel.task_id
-  test_locators:
-  - tests/integration/test_database.py::test_crud_with_steps_and_tasks
+  - src/orchestrator/db/orm/models.py::TaskModel.attempts
+  test_locators: []
+  bounded_test_locators:
   - tests/integration/test_database.py::test_cascade_delete
+  - tests/integration/test_database.py::test_crud_with_steps_and_tasks
 - source: ENT-7
   target: ENT-8
   relationship_type: transforms-to-projection
@@ -198,7 +204,7 @@ items:
   definition: ENT-7 transforms-to-projection ENT-8.
   status_basis:
     implementation: REL-5 copies requirement IDs and priorities into checklist projections.
-    test: The exact factory test asserts both projected rows and their fields.
+    test: 'Admitted proving exact test locator(s): tests/unit/test_run_factory.py::test_create_checklist_from_requirements'
     documentation: REL-5's cross-mode limit is documented without conflict.
     capability: REL-5 alone establishes no product capability.
     epistemic: REL-5 is observed in the factory and EVD-55.
@@ -206,6 +212,7 @@ items:
   - src/orchestrator/state/factory.py::create_checklist_from_requirements
   test_locators:
   - tests/unit/test_run_factory.py::test_create_checklist_from_requirements
+  bounded_test_locators: []
 - source: ENT-5
   target: ENT-6
   relationship_type: owns-historical-snapshot
@@ -220,7 +227,7 @@ items:
   epistemic_status: observed
   id: REL-6
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -236,14 +243,14 @@ items:
   definition: ENT-5 owns-historical-snapshot ENT-6.
   status_basis:
     implementation: REL-6 stores an attempt-local historical grade snapshot.
-    test: The lifecycle restart test writes and reloads the attempt grade snapshot.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-6 snapshot ownership is documented without conflict.
     capability: REL-6 alone establishes no product capability.
     epistemic: REL-6 is observed in persistence and EVD-55.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::AttemptModel.grade_snapshot
-  test_locators:
-  - tests/integration/test_full_persistence.py::test_full_lifecycle_survives_restart
+  test_locators: []
+  bounded_test_locators: []
 - source: ENT-9
   target: ENT-10
   relationship_type: stores-payload
@@ -258,7 +265,7 @@ items:
   epistemic_status: observed
   id: REL-7
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -273,14 +280,15 @@ items:
   definition: ENT-9 stores-payload ENT-10.
   status_basis:
     implementation: REL-7 stores typed workflow-event content in events_v2 payload.
-    test: The wiring test emits and reads the persisted payload row.
+    test: 'Bounded partial test locator(s): tests/integration/test_event_store_wiring.py::test_emit_writes_events_v2_row'
     documentation: REL-7 payload storage is documented without conflict.
     capability: REL-7 alone establishes no product capability.
     epistemic: REL-7 is observed by EVD-56.
   implementation_locators:
-  - src/orchestrator/db/orm/models.py::EventV2Model.payload
   - src/orchestrator/db/access/event_store_v2.py::SqliteEventStore.append
-  test_locators:
+  - src/orchestrator/db/orm/models.py::EventV2Model.payload
+  test_locators: []
+  bounded_test_locators:
   - tests/integration/test_event_store_wiring.py::test_emit_writes_events_v2_row
 - source: ENT-9
   target: ENT-11
@@ -312,7 +320,7 @@ items:
   definition: ENT-9 stores-payload ENT-11.
   status_basis:
     implementation: REL-8 stores graph EventEnvelope payloads in the graph stream.
-    test: The round-trip test compares appended and read graph events.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_graph_event_store.py::test_append_read_round_trip'
     documentation: REL-8 payload storage is documented without conflict.
     capability: REL-8 alone establishes no product capability.
     epistemic: REL-8 is observed by EVD-56.
@@ -321,6 +329,7 @@ items:
   - src/orchestrator/graph_runtime/store.py::GraphEventStore.append_events
   test_locators:
   - tests/integration/test_graph_event_store.py::test_append_read_round_trip
+  bounded_test_locators: []
 - source: ENT-2
   target: ENT-10
   relationship_type: aggregate-stream-association
@@ -351,7 +360,7 @@ items:
   definition: ENT-2 aggregate-stream-association ENT-10.
   status_basis:
     implementation: REL-9 associates workflow events with a run aggregate stream.
-    test: The test inserts two run-1 aggregate events and queries that ordered stream.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_database.py::test_event_v2_insert_and_query'
     documentation: REL-9 aggregate association is documented without conflict.
     capability: REL-9 alone establishes no product capability.
     epistemic: REL-9 is observed by EVD-57/EVD-62.
@@ -360,6 +369,7 @@ items:
   - src/orchestrator/db/orm/models.py::EventV2Model.version
   test_locators:
   - tests/integration/test_database.py::test_event_v2_insert_and_query
+  bounded_test_locators: []
 - source: ENT-2
   target: ENT-11
   relationship_type: graph-aggregate-stream-association
@@ -391,15 +401,16 @@ items:
   definition: ENT-2 graph-aggregate-stream-association ENT-11.
   status_basis:
     implementation: REL-10 namespaces the graph aggregate by run ID.
-    test: The coexistence test distinguishes and reads graph and legacy streams for one run.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_graph_event_store.py::test_graph_stream_coexists_with_legacy_workflow_events'
     documentation: REL-10 graph-stream association is documented without conflict.
     capability: REL-10 alone establishes no product capability.
     epistemic: REL-10 is observed by EVD-56/EVD-58.
   implementation_locators:
-  - src/orchestrator/graph_runtime/store.py::graph_aggregate_id
   - src/orchestrator/graph_runtime/store.py::GraphEventStore.read_run
+  - src/orchestrator/graph_runtime/store.py::graph_aggregate_id
   test_locators:
   - tests/integration/test_graph_event_store.py::test_graph_stream_coexists_with_legacy_workflow_events
+  bounded_test_locators: []
 - source: ENT-11
   target: ENT-12
   relationship_type: reduces-into
@@ -431,7 +442,7 @@ items:
   definition: ENT-11 reduces-into ENT-12.
   status_basis:
     implementation: REL-11 reduces graph events into disposable graph read models.
-    test: The synchronization test asserts event append and resulting projection rows.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized'
     documentation: REL-11 reduction is documented without conflict.
     capability: REL-11 alone establishes no product capability.
     epistemic: REL-11 is observed by EVD-58/EVD-68.
@@ -440,6 +451,7 @@ items:
   - src/orchestrator/graph_runtime/store.py::GraphEventStore.append_events
   test_locators:
   - tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized
+  bounded_test_locators: []
 - source: ENT-2
   target: ENT-12
   relationship_type: projection-association
@@ -471,7 +483,7 @@ items:
   definition: ENT-2 projection-association ENT-12.
   status_basis:
     implementation: REL-12 keys each disposable graph projection by run ID.
-    test: The synchronization test reads the run-keyed snapshot produced by append.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized'
     documentation: REL-12 projection association is documented as non-FK.
     capability: REL-12 alone establishes no product capability.
     epistemic: REL-12 is observed by EVD-59/EVD-62.
@@ -480,6 +492,7 @@ items:
   - src/orchestrator/graph_runtime/store.py::GraphEventStore.read_projection_snapshot
   test_locators:
   - tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized
+  bounded_test_locators: []
 - source: ENT-12
   target: ENT-13
   relationship_type: materializes-member
@@ -510,7 +523,7 @@ items:
   definition: ENT-12 materializes-member ENT-13.
   status_basis:
     implementation: REL-13 materializes run graph nodes in the run projection.
-    test: The synchronization test appends node state and asserts run projection membership.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized'
     documentation: REL-13 node membership is documented without conflict.
     capability: REL-13 alone establishes no product capability.
     epistemic: REL-13 is observed by EVD-58.
@@ -519,6 +532,7 @@ items:
   - src/orchestrator/graph/projections.py::GraphProjection.node_states
   test_locators:
   - tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized
+  bounded_test_locators: []
 - source: ENT-12
   target: ENT-14
   relationship_type: materializes-member
@@ -548,13 +562,14 @@ items:
   definition: ENT-12 materializes-member ENT-14.
   status_basis:
     implementation: REL-14 has graph edge carriers.
-    test: No exact test asserts the graph-to-edge endpoint cardinality.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-14 edge membership is documented without conflict.
     capability: REL-14 alone establishes no product capability.
     epistemic: REL-14 is observed by EVD-58.
   implementation_locators:
   - src/orchestrator/graph/models.py::EdgeModel
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-14
   target: ENT-13
   relationship_type: has-source-port-on
@@ -584,7 +599,7 @@ items:
   definition: ENT-14 has-source-port-on ENT-13.
   status_basis:
     implementation: REL-15 stores an edge's source node and source port.
-    test: Model round trips do not assert that the named source port exists on exactly one node.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-15 source-port relation is documented without conflict.
     capability: REL-15 alone establishes no product capability.
     epistemic: REL-15 is observed by EVD-58.
@@ -592,6 +607,7 @@ items:
   - src/orchestrator/graph/models.py::EdgeModel.from_node_id
   - src/orchestrator/graph/models.py::EdgeModel.from_port
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-14
   target: ENT-13
   relationship_type: has-target-port-on
@@ -621,7 +637,7 @@ items:
   definition: ENT-14 has-target-port-on ENT-13.
   status_basis:
     implementation: REL-16 stores an edge's target node and target port.
-    test: Model round trips do not assert that the named target port exists on exactly one node.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-16 target-port relation is documented without conflict.
     capability: REL-16 alone establishes no product capability.
     epistemic: REL-16 is observed by EVD-58.
@@ -629,6 +645,7 @@ items:
   - src/orchestrator/graph/models.py::EdgeModel.to_node_id
   - src/orchestrator/graph/models.py::EdgeModel.to_port
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-13
   target: ENT-15
   relationship_type: produces-at-port
@@ -643,7 +660,7 @@ items:
   epistemic_status: observed
   id: REL-17
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -660,15 +677,17 @@ items:
   title: produces at port
   definition: ENT-13 produces-at-port ENT-15.
   status_basis:
-    implementation: REL-17 attributes accepted output records to producer node and port.
-    test: The callback test accepts producer output and binds its record downstream.
+    implementation: REL-17 attributes accepted output records to producer node and
+      port.
+    test: 'Bounded partial test locator(s): tests/unit/test_graph_commands.py::test_callback_accepts_output_records_and_binds_downstream_inputs'
     documentation: REL-17 producer-port relation is documented without conflict.
     capability: REL-17 alone establishes no product capability.
     epistemic: REL-17 is observed by EVD-56/EVD-58/EVD-64.
   implementation_locators:
-  - src/orchestrator/graph/models.py::OutputRecord.producer_node_id
   - src/orchestrator/graph/models.py::OutputRecord.port
-  test_locators:
+  - src/orchestrator/graph/models.py::OutputRecord.producer_node_id
+  test_locators: []
+  bounded_test_locators:
   - tests/unit/test_graph_commands.py::test_callback_accepts_output_records_and_binds_downstream_inputs
 - source: ENT-16
   target: ENT-15
@@ -684,7 +703,7 @@ items:
   epistemic_status: observed
   id: REL-18
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -699,15 +718,15 @@ items:
   definition: ENT-16 selects-input ENT-15.
   status_basis:
     implementation: REL-18 stores selected record IDs on a target input binding.
-    test: The test persists and reads the selected candidate record binding.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-18 input selection is documented without conflict.
     capability: REL-18 alone establishes no product capability.
     epistemic: REL-18 is observed by EVD-58.
   implementation_locators:
   - src/orchestrator/graph/models.py::InputBinding.record_ids
   - src/orchestrator/graph/models.py::InputBinding.to_port
-  test_locators:
-  - tests/integration/test_graph_event_store.py::test_append_events_stores_durable_input_binding_position
+  test_locators: []
+  bounded_test_locators: []
 - source: ENT-14
   target: ENT-16
   relationship_type: realizes-input-binding
@@ -722,7 +741,7 @@ items:
   epistemic_status: observed
   id: REL-19
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -738,15 +757,15 @@ items:
   definition: ENT-14 realizes-input-binding ENT-16.
   status_basis:
     implementation: REL-19 links an input binding to the realizing edge ID.
-    test: The durable binding test persists edge-candidate with its target and records.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-19 edge-binding relation is documented without conflict.
     capability: REL-19 alone establishes no product capability.
     epistemic: REL-19 is observed by EVD-58.
   implementation_locators:
-  - src/orchestrator/graph/models.py::InputBinding.edge_id
   - src/orchestrator/graph/models.py::EdgeModel.edge_id
-  test_locators:
-  - tests/integration/test_graph_event_store.py::test_append_events_stores_durable_input_binding_position
+  - src/orchestrator/graph/models.py::InputBinding.edge_id
+  test_locators: []
+  bounded_test_locators: []
 - source: ENT-13
   target: ENT-17
   relationship_type: scheduled-by
@@ -780,7 +799,7 @@ items:
   definition: ENT-13 scheduled-by ENT-17.
   status_basis:
     implementation: REL-20 schedules a node through a node-attributed lease.
-    test: The schedule-tick test grants and projects a lease for the eligible node.
+    test: 'Admitted proving exact test locator(s): tests/unit/test_graph_commands.py::test_schedule_tick_grants_leases'
     documentation: REL-20 scheduling relation is documented without conflict.
     capability: REL-20 alone establishes no product capability.
     epistemic: REL-20 is observed by EVD-58.
@@ -789,6 +808,7 @@ items:
   - src/orchestrator/graph/scheduler.py::schedule
   test_locators:
   - tests/unit/test_graph_commands.py::test_schedule_tick_grants_leases
+  bounded_test_locators: []
 - source: ENT-11
   target: ENT-18
   relationship_type: creates-selected-side-effect-intent
@@ -820,7 +840,7 @@ items:
   definition: ENT-11 creates-selected-side-effect-intent ENT-18.
   status_basis:
     implementation: REL-21 creates selected event-linked outbox intents transactionally.
-    test: The crash-point test asserts event and outbox rollback/commit atomicity.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_graph_outbox_crash_points.py::test_events_and_outbox_rows_commit_atomically_on_outbox_failure'
     documentation: REL-21 selected-side-effect scope is documented without conflict.
     capability: REL-21 alone establishes no product capability.
     epistemic: REL-21 is observed by EVD-60/EVD-58.
@@ -829,6 +849,7 @@ items:
   - src/orchestrator/graph_runtime/store.py::GraphEventStore.append_events
   test_locators:
   - tests/integration/test_graph_outbox_crash_points.py::test_events_and_outbox_rows_commit_atomically_on_outbox_failure
+  bounded_test_locators: []
 - source: ENT-2
   target: ENT-19
   relationship_type: owns
@@ -860,15 +881,16 @@ items:
   definition: ENT-2 owns ENT-19.
   status_basis:
     implementation: REL-22 gives each clarification request a non-null run FK.
-    test: The repository test persists and isolates requests owned by different runs.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_clarification_repository.py::test_multiple_clarifications_for_different_runs'
     documentation: REL-22 clarification ownership is documented without conflict.
     capability: REL-22 alone establishes no product capability.
     epistemic: REL-22 is observed by EVD-62/EVD-68.
   implementation_locators:
-  - src/orchestrator/db/orm/models.py::ClarificationRequestModel.run_id
   - src/orchestrator/db/orm/models.py::ClarificationRequestModel.run
+  - src/orchestrator/db/orm/models.py::ClarificationRequestModel.run_id
   test_locators:
   - tests/integration/test_clarification_repository.py::test_multiple_clarifications_for_different_runs
+  bounded_test_locators: []
 - source: ENT-19
   target: ENT-20
   relationship_type: owns
@@ -883,7 +905,7 @@ items:
   epistemic_status: observed
   id: REL-23
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -900,14 +922,15 @@ items:
   definition: ENT-19 owns ENT-20.
   status_basis:
     implementation: REL-23 is a unique one-to-one request/response FK relation.
-    test: The repository test saves a response and reads it through its request.
+    test: 'Bounded partial test locator(s): tests/integration/test_clarification_repository.py::test_save_clarification_response'
     documentation: REL-23 response ownership is documented without conflict.
     capability: REL-23 alone establishes no product capability.
     epistemic: REL-23 is observed by EVD-61/EVD-62.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::ClarificationRequestModel.response
   - src/orchestrator/db/orm/models.py::ClarificationResponseModel.request_id
-  test_locators:
+  test_locators: []
+  bounded_test_locators:
   - tests/integration/test_clarification_repository.py::test_save_clarification_response
 - source: ENT-2
   target: ENT-21
@@ -940,13 +963,14 @@ items:
   definition: ENT-2 required-foreign-key-attribution ENT-21.
   status_basis:
     implementation: REL-24 is a non-null cost-to-run FK.
-    test: Cost row tests assert values but do not test FK rejection/cardinality.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-24 run attribution is documented without conflict.
     capability: REL-24 alone establishes no product capability.
     epistemic: REL-24 is observed by EVD-62/EVD-64.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::CostRecordModel.run_id
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-4
   target: ENT-21
   relationship_type: required-foreign-key-attribution
@@ -977,13 +1001,14 @@ items:
   definition: ENT-4 required-foreign-key-attribution ENT-21.
   status_basis:
     implementation: REL-25 is a non-null cost-to-task FK.
-    test: Cost row tests assert values but do not test FK rejection/cardinality.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-25 task attribution is documented without conflict.
     capability: REL-25 alone establishes no product capability.
     epistemic: REL-25 is observed by EVD-62.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::CostRecordModel.task_id
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-21
   target: ENT-5
   relationship_type: optional-primary-key-reference
@@ -1017,13 +1042,14 @@ items:
   definition: ENT-21 optional-primary-key-reference ENT-5.
   status_basis:
     implementation: REL-26 is a nullable cost-to-attempt FK using attempts.id.
-    test: No test exercises populated and null attempt_id FK behavior.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-26 conflicts on attempt identity via CON-1/Q-1.
     capability: REL-26 alone establishes no product capability.
     epistemic: REL-26 is observed in schema, with identity qualification.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::CostRecordModel.attempt_id
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-2
   target: ENT-22
   relationship_type: required-foreign-key-attribution
@@ -1055,13 +1081,14 @@ items:
   definition: ENT-2 required-foreign-key-attribution ENT-22.
   status_basis:
     implementation: REL-27 is a non-null interaction-log-to-run FK.
-    test: Interaction tests assert values but do not test FK rejection/cardinality.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-27 run attribution is documented without conflict.
     capability: REL-27 alone establishes no product capability.
     epistemic: REL-27 is observed by EVD-56/EVD-62.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::InteractionLogArtifactModel.run_id
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-4
   target: ENT-22
   relationship_type: required-foreign-key-attribution
@@ -1092,13 +1119,14 @@ items:
   definition: ENT-4 required-foreign-key-attribution ENT-22.
   status_basis:
     implementation: REL-28 is a non-null interaction-log-to-task FK.
-    test: Interaction tests assert values but do not test FK rejection/cardinality.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-28 task attribution is documented without conflict.
     capability: REL-28 alone establishes no product capability.
     epistemic: REL-28 is observed by EVD-62.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::InteractionLogArtifactModel.task_id
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-22
   target: ENT-5
   relationship_type: optional-primary-key-reference
@@ -1132,13 +1160,14 @@ items:
   definition: ENT-22 optional-primary-key-reference ENT-5.
   status_basis:
     implementation: REL-29 is a nullable interaction-log-to-attempt FK using attempts.id.
-    test: No test exercises populated and null attempt_id FK behavior.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-29 conflicts on attempt identity via CON-1/Q-1.
     capability: REL-29 alone establishes no product capability.
     epistemic: REL-29 is observed in schema, with identity qualification.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::InteractionLogArtifactModel.attempt_id
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-15
   target: ENT-23
   relationship_type: may-reference-verified-content
@@ -1169,14 +1198,15 @@ items:
   definition: ENT-15 may-reference-verified-content ENT-23.
   status_basis:
     implementation: REL-30 allows accepted records to carry verified CAS references.
-    test: CAS and record tests are separate; no exact test proves this relationship end to end.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-30 limits integrity to verified CAS references.
     capability: REL-30 alone establishes no product capability.
     epistemic: REL-30 is observed by EVD-56.
   implementation_locators:
-  - src/orchestrator/graph/models.py::StoredArtifactRef
   - src/orchestrator/artifacts/store.py::FilesystemArtifactStore.read
+  - src/orchestrator/graph/models.py::StoredArtifactRef
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-15
   target: ENT-24
   relationship_type: may-declare-path-reference
@@ -1208,13 +1238,14 @@ items:
   definition: ENT-15 may-declare-path-reference ENT-24.
   status_basis:
     implementation: REL-31 permits a declared artifact path/URI reference.
-    test: Schema round trips do not prove declaration cardinality or path existence.
+    test: No admitted proving exact test locator supports exercised status.
     documentation: REL-31 explicitly documents that declaration is not existence.
     capability: REL-31 alone establishes no product capability.
     epistemic: REL-31 is observed by EVD-56/EVD-65.
   implementation_locators:
   - src/orchestrator/graph/models.py::ArtifactReferenceRecord
   test_locators: []
+  bounded_test_locators: []
 - source: ENT-27
   target: ENT-28
   relationship_type: selects-default-or-override
@@ -1245,15 +1276,16 @@ items:
   definition: ENT-27 selects-default-or-override ENT-28.
   status_basis:
     implementation: REL-32 resolves a profile default before its fallback override.
-    test: The exact unit test asserts profile-default precedence over fallback.
+    test: 'Admitted proving exact test locator(s): tests/unit/test_model_profiles.py::TestResolveModelForProfile::test_profile_default_takes_precedence_over_fallback'
     documentation: REL-32 selection and historical-retention limit are documented.
     capability: REL-32 alone establishes no product capability.
     epistemic: REL-32 is observed by EVD-49.
   implementation_locators:
-  - src/orchestrator/runners/detection/profile_resolution.py::resolve_model_for_profile
   - src/orchestrator/db/orm/models.py::AgentRunnerModelProfileDefaultModel
+  - src/orchestrator/runners/detection/profile_resolution.py::resolve_model_for_profile
   test_locators:
   - tests/unit/test_model_profiles.py::TestResolveModelForProfile::test_profile_default_takes_precedence_over_fallback
+  bounded_test_locators: []
 - source: ENT-29
   target: ENT-30
   relationship_type: references
@@ -1268,7 +1300,7 @@ items:
   epistemic_status: observed
   id: REL-33
   implementation_status: present
-  test_status: exercised
+  test_status: unexercised
   documentation_status: documented
   capability_status: unknown
   confidence: medium
@@ -1287,14 +1319,15 @@ items:
   definition: ENT-29 references ENT-30.
   status_basis:
     implementation: REL-33 records the copied DB path in backup metadata.
-    test: The test asserts the copied DB and matching metadata file.
+    test: 'Bounded partial test locator(s): tests/unit/test_backup.py::test_create_backup_copies_db_and_writes_metadata'
     documentation: REL-33 backup reference is documented without conflict.
     capability: REL-33 alone establishes no live-WAL guarantee.
     epistemic: REL-33 is observed by EVD-66/EVD-62.
   implementation_locators:
   - src/orchestrator/db/recovery/backup.py::BackupMetadata.db_path
   - src/orchestrator/db/recovery/backup.py::create_backup
-  test_locators:
+  test_locators: []
+  bounded_test_locators:
   - tests/unit/test_backup.py::test_create_backup_copies_db_and_writes_metadata
 - source: ENT-29
   target: ENT-31
@@ -1329,7 +1362,7 @@ items:
   definition: ENT-29 records-one-path-and-scalar-marker-observation ENT-31.
   status_basis:
     implementation: REL-34 records one journal path and scalar marker observation.
-    test: The test asserts path, max marker, and notes in metadata.
+    test: 'Admitted proving exact test locator(s): tests/unit/test_backup.py::test_create_backup_with_journal_captures_sequence'
     documentation: REL-34 marker semantics are documented without conflict.
     capability: REL-34 alone establishes no live-WAL guarantee.
     epistemic: REL-34 is observed by EVD-66/EVD-62.
@@ -1338,6 +1371,7 @@ items:
   - src/orchestrator/db/recovery/backup.py::BackupMetadata.journal_sequence_marker
   test_locators:
   - tests/unit/test_backup.py::test_create_backup_with_journal_captures_sequence
+  bounded_test_locators: []
 - source: ENT-31
   target: ENT-9
   relationship_type: conditionally-imports-into
@@ -1373,7 +1407,7 @@ items:
   definition: ENT-31 conditionally-imports-into ENT-9.
   status_basis:
     implementation: REL-35 conditionally imports journal segments into empty SQL state.
-    test: The bootstrap test replays archived and active segments in global order.
+    test: 'Admitted proving exact test locator(s): tests/integration/test_jsonl_rotation_recovery.py::test_bootstrap_replays_archives_and_active_in_global_position_order'
     documentation: REL-35 conflicts with JSONL-first authority claims.
     capability: REL-35 alone establishes no general recovery capability.
     epistemic: REL-35 is observed by EVD-67 with CON-8 qualification.
@@ -1381,3 +1415,4 @@ items:
   - src/orchestrator/db/bootstrap.py::bootstrap_from_jsonl
   test_locators:
   - tests/integration/test_jsonl_rotation_recovery.py::test_bootstrap_replays_archives_and_active_in_global_position_order
+  bounded_test_locators: []

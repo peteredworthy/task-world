@@ -44,10 +44,11 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-56 is the distinct review final-merge route.
-  test: Merge-back tests do not identify this review final-merge action variant.
+  test: No admitted proving exact test locator supports exercised status.
   documentation: ACT-56 review final merge is documented.
   capability: Source inspection does not prove route availability.
   epistemic: ACT-56 is observed by EVD-29.
 implementation_locators:
 - src/orchestrator/api/routers/runs.py::merge_back_endpoint
 test_locators: []
+bounded_test_locators: []

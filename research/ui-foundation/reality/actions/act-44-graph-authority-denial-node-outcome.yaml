@@ -3,16 +3,18 @@ implementation_status: present
 capability_status: unknown
 executable: true
 command_id: CMD-11
-actor: Caller-supplied decider recorded by ACT-11; no authenticated-subject authorization is enforced.
+actor: Caller-supplied decider recorded by ACT-11; no authenticated-subject authorization
+  is enforced.
 permission_requirements:
 - PER-1
 - PER-2
 - PER-4
 preconditions:
 - ACT-11's eligible authority denial has been recorded.
-- The authority_request target remains eligible for the command's accepted completion effect.
-expected_source_version: This is a node-projection consequence of the current-position authority decision
-  command; no client graph position exists.
+- The authority_request target remains eligible for the command's accepted completion
+  effect.
+expected_source_version: This is a node-projection consequence of the current-position
+  authority decision command; no client graph position exists.
 required_input:
   decision_type: authority
   value: denied
@@ -24,16 +26,18 @@ command_variant:
 validation:
 - The preceding RecordDecisionCommand authority target/value validation succeeds.
 - PER-4 applies authority-request target and state eligibility.
-durable_effect: The accepted AuthorityDecisionRecord is bound where applicable, its scoped lease is released
-  where present, and the authority_request graph node is projected completed.
+durable_effect: The accepted AuthorityDecisionRecord is bound where applicable, its
+  scoped lease is released where present, and the authority_request graph node is
+  projected completed.
 resulting_state_id: STA-33
 failure_modes:
 - 409 when authority decision append is rejected or races
 - 422 for invalid authority input
-stale_state_behavior: A conflict prevents the node completion consequence and does not alter a legacy
-  row or task.
+stale_state_behavior: A conflict prevents the node completion consequence and does
+  not alter a legacy row or task.
 idempotency: No separate idempotency key exists for this data-dependent command consequence.
-retry_behavior: Refresh authority decision and node projections before retrying the decision command.
+retry_behavior: Refresh authority decision and node projections before retrying the
+  decision command.
 reversibility: No authority-decision or node-completion reversal command exists.
 audit_evidence_ids:
 - EVD-27
@@ -54,8 +58,9 @@ carrier_relationship:
     to_state_id: STA-37
   command_id: CMD-11
   deferred_downstream_node_state_id: STA-71
-  ordering: The authority request is any eligible nonterminal node before the command; the authority decision
-    and request-node completion are separate carrier-local effects of one discriminated command.
+  ordering: The authority request is any eligible nonterminal node before the command;
+    the authority decision and request-node completion are separate carrier-local
+    effects of one discriminated command.
 enforced_authentication: PER-1 optional global valid-bearer gate.
 enforced_authorization: absent
 domain_eligibility: PER-4 accepted authority-request decision eligibility.
@@ -66,10 +71,9 @@ test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
-  implementation: ACT-44 binds denied AuthorityDecisionRecord, releases lease, and completes authority
-    node.
-  test: FR-08 asserts the bound record, released lease, completed authority node, and deferred downstream
-    node.
+  implementation: ACT-44 binds denied AuthorityDecisionRecord, releases lease, and
+    completes authority node.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks'
   documentation: ACT-44 node outcome is documented separately from denial decision.
   capability: Caller-supplied decider is not enforced authorization.
   epistemic: ACT-44 is directly observed by EVD-27.
@@ -77,3 +81,4 @@ implementation_locators:
 - src/orchestrator/graph/_commands.py::_apply_record_decision
 test_locators:
 - tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks
+bounded_test_locators: []

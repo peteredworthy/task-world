@@ -41,7 +41,7 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: ACT-52 clean-merges source into the run branch.
-  test: The API branch test performs the real routed clean back-merge and asserts branch result.
+  test: 'Admitted proving exact test locator(s): tests/integration/test_api_branch_ops.py::test_back_merge'
   documentation: ACT-52 clean detail pull is documented.
   capability: One clean merge does not prove every git topology.
   epistemic: ACT-52 is observed by EVD-29.
@@ -49,3 +49,4 @@ implementation_locators:
 - src/orchestrator/api/routers/runs.py::back_merge_endpoint
 test_locators:
 - tests/integration/test_api_branch_ops.py::test_back_merge
+bounded_test_locators: []
