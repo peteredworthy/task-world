@@ -12,15 +12,18 @@ validation: [scope-exposure, handler-and-grade-validation]
 durable_effect: Dispatches public MCP grade update to the workflow boundary.
 resulting_state_id: STA-10
 failure_modes: [tool unavailable, handler error, transition error]
-stale_state_behavior: Handler applies current task state.
+stale_state_behavior: Explicitly rejects PENDING (STA-8), BUILDING (STA-9), PENDING_USER_ACTION (STA-11), RECOVERING (STA-12), and FAN_OUT_RUNNING (STA-13).
 idempotency: Same accepted grade converges.
 retry_behavior: Re-read requirement before retry.
 reversibility: Later eligible grade update supersedes it.
-audit_evidence_ids: [EVD-126, EVD-127, EVD-128]
-transition: {from_state_id: STA-10, to_state_id: STA-10}
+audit_evidence_ids: [EVD-126, EVD-127, EVD-128, EVD-138]
+transition_variants:
+- {carrier: task, from_state_id: STA-10, to_state_id: STA-10, eligibility_precondition: 'active run and task status is exactly VERIFYING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
+- {carrier: task, from_state_id: STA-14, to_state_id: STA-14, eligibility_precondition: 'active run and task status is exactly COMPLETED', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
+- {carrier: task, from_state_id: STA-15, to_state_id: STA-15, eligibility_precondition: 'active run and task status is exactly FAILED', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-138]}
 carrier_relationship:
   affected_carrier: checklist item grade and grade_reason while the representative VERIFYING task status is preserved
-  caveat: This is a field-mutation carrier self-loop, not a task lifecycle transition; paused escalation returns a no-op result.
+  caveat: This contract covers accepted grade mutations; non-mutating paused tail work is outside this action effect.
 enforced_authentication: optional JWT
 enforced_authorization: absent
 domain_eligibility: PER-5 scoped exposure plus PER-3 grade eligibility
@@ -33,23 +36,23 @@ epistemic_status: observed
 status_basis:
   implementation: 'ACT-82 implementation status present: ACT-82 Dispatches public MCP grade update to
     the workflow boundary. is present: SER rows SER-0472, SER-0479 inspect src/orchestrator/api/mcp/server.py::OrchestratorMCPServer._register_tools.orchestrator_set_grade,
-    src/orchestrator/api/mcp/tools.py::ToolHandler._set_grade and establish the record proposition under
-    EVD-126, EVD-127.'
+    src/orchestrator/api/mcp/tools.py::ToolHandler._set_grade, and SER-0511 inspects exact WorkflowService eligibility under EVD-126, EVD-127, EVD-138.'
   test: 'ACT-82 test status exercised: admitted SER row SER-0492 directly calls orchestrator_set_grade
     through the verifier MCP server and asserts the returned applied grade at tests/integration/test_mcp_server.py::test_full_workflow_through_mcp_server.'
   documentation: 'ACT-82 documentation status documented: ACT-82 Dispatches public MCP grade update to
-    the workflow boundary. is documented at reality/actions/act-82-grade-update-mcp.yaml and by EVD-126, EVD-127, EVD-128;
+    the workflow boundary. is documented at reality/actions/act-82-grade-update-mcp.yaml and by EVD-126, EVD-127, EVD-128, EVD-138;
     any listed question (Q-5 (open: Define product-role authorization before treating actor text as authority))
     is explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
   capability: 'ACT-82 capability status unknown: ACT-82 Dispatches public MCP grade update to the workflow
-    boundary. remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-126, EVD-127, EVD-128 establish
+    boundary. remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-126, EVD-127, EVD-128, EVD-138 establish
     the record carrier but no relevant CAP authority classifies this record as current or derived.'
   epistemic: 'ACT-82 epistemic status observed: ACT-82 Dispatches public MCP grade update to the workflow
-    boundary. is observed from direct implementation/test authority EVD-126, EVD-127, EVD-128,
+    boundary. is observed from direct implementation/test authority EVD-126, EVD-127, EVD-128, EVD-138,
     qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/mcp/tools.py::ToolHandler._set_grade
 - src/orchestrator/api/mcp/server.py::OrchestratorMCPServer._register_tools.orchestrator_set_grade
+- src/orchestrator/workflow/service.py::WorkflowService.set_grade
 test_locators:
 - tests/integration/test_mcp_server.py::test_full_workflow_through_mcp_server
 bounded_test_locators: []

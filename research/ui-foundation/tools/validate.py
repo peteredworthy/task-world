@@ -126,6 +126,10 @@ SEMANTIC_COLLECTIONS = {
 }
 
 
+def _normalized_list_value(value: str) -> str:
+    return " ".join(value.split()).casefold()
+
+
 @dataclass(frozen=True)
 class ValidationIssue:
     code: str
@@ -436,10 +440,43 @@ class ActionTransition(BaseModel):
 
     @model_validator(mode="after")
     def require_nonempty_sides(self) -> ActionTransition:
+        if self.from_state_id is not None and self.from_state_ids is not None:
+            raise ValueError("transition cannot define both singular and plural from states")
+        if self.to_state_id is not None and self.to_state_ids is not None:
+            raise ValueError("transition cannot define both singular and plural to states")
         starts = self.from_state_ids or ([self.from_state_id] if self.from_state_id else [])
         ends = self.to_state_ids or ([self.to_state_id] if self.to_state_id else [])
         if not starts or not ends:
             raise ValueError("transition requires nonempty from and to states")
+        for name, values in (("from_state_ids", starts), ("to_state_ids", ends)):
+            if len(values) != len({_normalized_list_value(value) for value in values}):
+                raise ValueError(f"{name} contains normalized duplicates")
+        return self
+
+
+class ActionTransitionVariant(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    carrier: Literal["task", "run", "result", "file", "projection"]
+    from_state_id: str = Field(pattern=r"^STA-[0-9]+$")
+    to_state_id: str = Field(pattern=r"^STA-[0-9]+$")
+    eligibility_precondition: str = Field(min_length=1)
+    effect_kind: Literal["state-change", "self-loop-field-mutation", "accepted-no-op"]
+    evidence_ids: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_effect_and_evidence(self) -> ActionTransitionVariant:
+        is_self_loop = self.from_state_id == self.to_state_id
+        if self.effect_kind == "state-change" and is_self_loop:
+            raise ValueError("state-change variant must change state")
+        if self.effect_kind != "state-change" and not is_self_loop:
+            raise ValueError(f"{self.effect_kind} variant must be a self-loop")
+        if any(not re.fullmatch(r"EVD-[0-9]+", value) for value in self.evidence_ids):
+            raise ValueError("variant evidence_ids must use the EVD namespace")
+        if len(self.evidence_ids) != len(
+            {_normalized_list_value(value) for value in self.evidence_ids}
+        ):
+            raise ValueError("variant evidence_ids contains normalized duplicates")
         return self
 
 
@@ -487,9 +524,44 @@ class ActionContract(BaseModel):
     reversibility: str | None = None
     audit_evidence_ids: list[str] | None = None
     transition: ActionTransition | None = None
+    transition_variants: list[ActionTransitionVariant] | None = None
+    implementation_locators: list[str] | None = None
+    test_locators: list[str] | None = None
+    bounded_test_locators: list[str] | None = None
 
     @model_validator(mode="after")
     def require_present_contract(self) -> ActionContract:
+        if self.transition is not None and self.transition_variants is not None:
+            raise ValueError("action cannot define both transition and transition_variants")
+        for field in (
+            "permission_requirements",
+            "preconditions",
+            "validation",
+            "failure_modes",
+            "audit_evidence_ids",
+            "implementation_locators",
+            "test_locators",
+            "bounded_test_locators",
+        ):
+            values = getattr(self, field)
+            if values is not None and len(values) != len(
+                {_normalized_list_value(value) for value in values}
+            ):
+                raise ValueError(f"{field} contains normalized duplicates")
+        if self.transition_variants is not None:
+            normalized_variants = {
+                (
+                    variant.carrier,
+                    variant.from_state_id,
+                    variant.to_state_id,
+                    _normalized_list_value(variant.eligibility_precondition),
+                    variant.effect_kind,
+                    tuple(sorted(_normalized_list_value(value) for value in variant.evidence_ids)),
+                )
+                for variant in self.transition_variants
+            }
+            if len(normalized_variants) != len(self.transition_variants):
+                raise ValueError("transition_variants contains normalized duplicates")
         if self.implementation_status != "present":
             return self
         required = (
@@ -508,9 +580,10 @@ class ActionContract(BaseModel):
             "retry_behavior",
             "reversibility",
             "audit_evidence_ids",
-            "transition",
         )
         missing = [field for field in required if getattr(self, field) in (None, "", [])]
+        if self.transition is None and not self.transition_variants:
+            missing.append("transition or transition_variants")
         if missing:
             raise ValueError(f"present action fields missing: {', '.join(missing)}")
         return self
@@ -3820,6 +3893,16 @@ def _validate_status_scope(
         ):
             issues.append(_issue("STATUS_BASIS_GENERIC", location, identifier))
 
+        for field in (
+            "implementation_locators",
+            "test_locators",
+            "bounded_test_locators",
+        ):
+            values = record.get(field)
+            if isinstance(values, list) and all(isinstance(value, str) for value in values):
+                if len(values) != len({_normalized_list_value(value) for value in values}):
+                    issues.append(_issue("STATUS_LOCATOR_DUPLICATE", location, field))
+
         implementation_status = record.get("implementation_status")
         implementation_locators = record.get("implementation_locators")
         has_implementation_locators = isinstance(implementation_locators, list) and bool(
@@ -4196,6 +4279,55 @@ def _validate_actions(
                     if isinstance(evidence_id, str) and evidence_id not in evidence:
                         issues.append(_issue("ACTION_AUDIT_EVIDENCE_UNRESOLVED", path, evidence_id))
             transition = action.get("transition")
+            transition_variants = action.get("transition_variants")
+            if isinstance(transition_variants, list):
+                typed_variants: list[ActionTransitionVariant] = []
+                for variant in transition_variants:
+                    try:
+                        typed_variants.append(ActionTransitionVariant.model_validate(variant))
+                    except ValidationError:
+                        continue
+                variant_states = {
+                    state
+                    for variant in typed_variants
+                    for state in (variant.from_state_id, variant.to_state_id)
+                }
+                for state in variant_states:
+                    if state not in states:
+                        issues.append(_issue("STATE_UNKNOWN", path, state))
+                for variant in typed_variants:
+                    if (variant.from_state_id, variant.to_state_id) not in legal:
+                        issues.append(
+                            _issue(
+                                "ACTION_TRANSITION_UNREACHABLE",
+                                path,
+                                f"{variant.carrier}:{variant.from_state_id}->{variant.to_state_id}",
+                            )
+                        )
+                    for evidence_id in variant.evidence_ids:
+                        if evidence_id not in evidence:
+                            issues.append(
+                                _issue("ACTION_AUDIT_EVIDENCE_UNRESOLVED", path, evidence_id)
+                            )
+                        if (
+                            isinstance(audit_evidence_ids, list)
+                            and evidence_id not in audit_evidence_ids
+                        ):
+                            issues.append(
+                                _issue("ACTION_VARIANT_EVIDENCE_NOT_AUDITED", path, evidence_id)
+                            )
+                resulting_state = action.get("resulting_state_id")
+                if not isinstance(resulting_state, str) or resulting_state not in {
+                    variant.to_state_id for variant in typed_variants
+                }:
+                    issues.append(
+                        _issue(
+                            "ACTION_RESULT_STATE_MISMATCH",
+                            path,
+                            "resulting_state_id must be a transition variant target",
+                        )
+                    )
+                continue
             if not isinstance(transition, dict):
                 issues.append(_issue("ACTION_TRANSITION_MISSING", path, "transition"))
                 continue

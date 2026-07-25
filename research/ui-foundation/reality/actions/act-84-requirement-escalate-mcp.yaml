@@ -16,7 +16,7 @@ stale_state_behavior: Handler applies current task state.
 idempotency: State-validated, not keyed.
 retry_behavior: Re-read task and escalation evidence.
 reversibility: Resolve separately through an eligible action.
-audit_evidence_ids: [EVD-116]
+audit_evidence_ids: [EVD-131, EVD-132, EVD-133, EVD-116]
 transition: {from_state_id: STA-2, to_state_id: STA-4}
 carrier_relationship:
   affected_carrier: legacy run lifecycle; paired checklist fields mutate without a task lifecycle transition
@@ -27,7 +27,7 @@ domain_eligibility: PER-5 scoped exposure plus PER-3 escalation eligibility
 proposed_role_policy: null
 conflict_ids: []
 question_ids: [Q-5]
-test_status: unexercised
+test_status: exercised
 documentation_status: documented
 epistemic_status: observed
 status_basis:
@@ -36,28 +36,27 @@ status_basis:
     is preserved. is present: SER rows SER-0474, SER-0481, SER-0507 inspect src/orchestrator/api/mcp/server.py::OrchestratorMCPServer._register_tools.orchestrator_escalate_requirement,
     src/orchestrator/api/mcp/tools.py::ToolHandler._escalate_requirement, src/orchestrator/workflow/engine/engine.py::WorkflowEngine.escalate_requirement
     and establish the record proposition
-    under EVD-116.'
-  test: 'ACT-84 test status unexercised: ACT-84 Calls the workflow escalation synchronously, marking the
-    checklist requirement escalated and changing the active legacy run to paused; task status is preserved.
-    remains unexercised: bounded SER rows SER-0494 cover tests/integration/test_mcp_server.py::test_tool_names
-    but do not assert the complete record proposition.'
+    under MCP EVD-131, EVD-132 and engine EVD-116.'
+  test: 'ACT-84 test status exercised: tests/integration/test_mcp_server.py::test_escalate_requirement_through_mcp_server
+    invokes the registered MCP tool and asserts the paused escalation result under EVD-133.'
   documentation: 'ACT-84 documentation status documented: ACT-84 Calls the workflow escalation synchronously,
     marking the checklist requirement escalated and changing the active legacy run to paused; task status
-    is preserved. is documented at reality/actions/act-84-requirement-escalate-mcp.yaml and by EVD-116;
+    is preserved. is documented at reality/actions/act-84-requirement-escalate-mcp.yaml and by EVD-131, EVD-132, EVD-133, EVD-116;
     any listed question (Q-5 (open: Define product-role authorization before treating actor text as authority))
     is explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
   capability: 'ACT-84 capability status unknown: ACT-84 Calls the workflow escalation synchronously, marking
     the checklist requirement escalated and changing the active legacy run to paused; task status is preserved.
-    remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-116 establishes the
+    remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-131, EVD-132, EVD-133, EVD-116 establish the
     record carrier but no relevant CAP authority classifies this record as current or derived.'
   epistemic: 'ACT-84 epistemic status observed: ACT-84 Calls the workflow escalation synchronously, marking
     the checklist requirement escalated and changing the active legacy run to paused; task status is preserved.
-    is observed from direct/audit authority EVD-116 (EVD-116 (implementation: src/orchestrator/workflow/engine/engine.py)),
+    is observed from direct MCP authority EVD-131, EVD-132, EVD-133 and engine authority EVD-116,
     qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/mcp/tools.py::ToolHandler._escalate_requirement
 - src/orchestrator/api/mcp/server.py::OrchestratorMCPServer._register_tools.orchestrator_escalate_requirement
 - src/orchestrator/workflow/engine/engine.py::WorkflowEngine.escalate_requirement
-test_locators: []
+test_locators:
+- tests/integration/test_mcp_server.py::test_escalate_requirement_through_mcp_server
 bounded_test_locators:
 - tests/integration/test_mcp_server.py::test_tool_names

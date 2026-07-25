@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-25-task-15-test-final
+active_snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -3384,11 +3384,13 @@ items:
   snapshot_id: snapshot-2026-07-24-phase-1
   snapshot_path: src/orchestrator/api/routers/tasks.py
   evidence_ids:
+  - EVD-129
   - EVD-116
   question_ids:
   - Q-5
-  test_evidence_ids: []
-  test_status: unexercised
+  test_evidence_ids:
+  - EVD-130
+  test_status: exercised
 - id: CMD-49
   source_kind: command
   implementation_status: present
@@ -3450,11 +3452,12 @@ items:
   registration_path: src/orchestrator/api/mcp/server.py
   registration_symbol: OrchestratorMCPServer._register_tools
   evidence_ids:
-  - EVD-110
+  - EVD-134
   question_ids:
   - Q-5
   test_evidence_ids:
-  - EVD-110
+  - EVD-135
+  - EVD-136
   test_status: exercised
 - id: CMD-52
   source_kind: command
@@ -3521,11 +3524,14 @@ items:
   registration_path: src/orchestrator/api/mcp/server.py
   registration_symbol: OrchestratorMCPServer._register_tools
   evidence_ids:
+  - EVD-131
+  - EVD-132
   - EVD-116
   question_ids:
   - Q-5
-  test_evidence_ids: []
-  test_status: unexercised
+  test_evidence_ids:
+  - EVD-133
+  test_status: exercised
 - id: CMD-55
   source_kind: command
   implementation_status: present
@@ -4900,6 +4906,137 @@ items:
   - requirement grade
   supported_command_identities:
   - mcp.task-grade-update
+- id: EVD-129
+  source_kind: implementation
+  path: src/orchestrator/api/routers/tasks.py
+  symbol: escalate_requirement
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/api/routers/tasks.py
+  provenance_role: direct
+  supported_semantic_types:
+  - REST requirement escalation request and response
+  supported_command_identities:
+  - rest.requirement-escalation
+- id: EVD-130
+  source_kind: test
+  path: tests/integration/test_api_escalation.py
+  symbol: test_escalate_pauses_run_and_marks_requirement
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: tests/integration/test_api_escalation.py
+  provenance_role: direct
+  supported_semantic_types:
+  - REST requirement escalation transport and engine effect
+  supported_command_identities:
+  - rest.requirement-escalation
+- id: EVD-131
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/server.py
+  symbol: OrchestratorMCPServer._register_tools.orchestrator_escalate_requirement
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/api/mcp/server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP requirement escalation registration
+  supported_command_identities:
+  - mcp.requirement-escalation
+- id: EVD-132
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._escalate_requirement
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP requirement escalation result
+  supported_command_identities:
+  - mcp.requirement-escalation
+- id: EVD-133
+  source_kind: test
+  path: tests/integration/test_mcp_server.py
+  symbol: test_escalate_requirement_through_mcp_server
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
+  snapshot_path: tests/integration/test_mcp_server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - public MCP requirement escalation transport and engine effect
+  supported_command_identities:
+  - mcp.requirement-escalation
+- id: EVD-134
+  source_kind: implementation
+  path: src/orchestrator/api/mcp/tools.py
+  symbol: ToolHandler._submit
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/api/mcp/tools.py
+  provenance_role: direct
+  supported_semantic_types:
+  - MCP task submission state change
+  - paused-run accepted no-op without task mutation
+  supported_command_identities:
+  - mcp.task-submit
+- id: EVD-135
+  source_kind: test
+  path: tests/integration/test_mcp_server.py
+  symbol: test_full_workflow_through_mcp_server
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
+  snapshot_path: tests/integration/test_mcp_server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - MCP BUILDING to VERIFYING task submission
+  supported_command_identities:
+  - mcp.task-submit
+- id: EVD-136
+  source_kind: test
+  path: tests/integration/test_mcp_server.py
+  symbol: test_escalate_requirement_through_mcp_server
+  reachable: true
+  test_status: exercised
+  snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
+  snapshot_path: tests/integration/test_mcp_server.py
+  provenance_role: direct
+  supported_semantic_types:
+  - paused-run accepted no-op without task mutation
+  supported_command_identities:
+  - mcp.task-submit
+- id: EVD-137
+  source_kind: implementation
+  path: src/orchestrator/workflow/service.py
+  symbol: WorkflowService.update_checklist_item
+  reachable: true
+  test_status: unexercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/workflow/service.py
+  provenance_role: direct
+  supported_semantic_types:
+  - exact checklist update TaskStatus eligibility
+  supported_command_identities:
+  - task.checklist-update
+- id: EVD-138
+  source_kind: implementation
+  path: src/orchestrator/workflow/service.py
+  symbol: WorkflowService.set_grade
+  reachable: true
+  test_status: unexercised
+  snapshot_id: snapshot-2026-07-24-snapshot-lineage-validated
+  snapshot_path: src/orchestrator/workflow/service.py
+  provenance_role: direct
+  supported_semantic_types:
+  - exact grade update TaskStatus eligibility
+  supported_command_identities:
+  - task.grade-update
 snapshots:
 - id: snapshot-2026-07-23-phase-0
   immutable: true
@@ -16486,3 +16623,24 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: 9a2799aebbac28c1b74f5e1ff73646487d86abc90325fc8d0afd53f9b4181471
     audited_at: '2026-07-25T12:10:00Z'
+- id: snapshot-2026-07-25-task-15-actions-evidence
+  parent_snapshot_id: snapshot-2026-07-25-task-15-test-final
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: f280687e9a1802176225025c92b0552f35a38fb813d3f4006c913439694416b8
+    audited_at: '2026-07-25T12:00:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 83bd56000f4cb8a752e539f89dfc81bf80f43e7f7618247f127dc21cafd1f6dc
+    audited_at: '2026-07-25T12:00:00Z'
+  - path: research/ui-foundation/reality/state-model.yaml
+    sha256: 73f846592efaa0854e706901d963cd11b272f29074b89ab59a1a5e2aba646ac4
+    audited_at: '2026-07-25T12:00:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 434ccac67e329f1c9cf4f4327757e1af69583998c6c212e70979c21d3aa93b91
+    audited_at: '2026-07-25T12:00:00Z'
+  - path: tests/integration/test_mcp_server.py
+    sha256: 08ac0d320f559199c1a451fde4b3729754c99e5356fb57048b51d2ff42367585
+    audited_at: '2026-07-25T12:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: b53408bbfc74d375fdad363f9b95cbef8a92ec46e0a6acef16f15d888ee68b86
+    audited_at: '2026-07-25T12:00:00Z'

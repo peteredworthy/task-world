@@ -3059,8 +3059,16 @@ transitions:
   to_state_id: STA-2
 - from_state_id: STA-4
   to_state_id: STA-7
+- from_state_id: STA-4
+  to_state_id: STA-4
+  mechanism: MCP submission accepted no-op while paused for requirement escalation or clarification; no task mutation.
+  evidence_ids: [EVD-134, EVD-136]
 - from_state_id: STA-6
   to_state_id: STA-4
+- from_state_id: STA-8
+  to_state_id: STA-8
+  mechanism: Checklist-field mutation preserves PENDING.
+  evidence_ids: [EVD-137]
 - from_state_id: STA-8
   to_state_id: STA-9
 - from_state_id: STA-8
@@ -3070,7 +3078,7 @@ transitions:
 - from_state_id: STA-9
   to_state_id: STA-9
   mechanism: Carrier self-loop for accepted submission signals or checklist-field writes that preserve BUILDING; not a lifecycle transition.
-  evidence_ids: [EVD-119, EVD-124]
+  evidence_ids: [EVD-119, EVD-124, EVD-137]
   limitations:
   - The self-loop does not claim that ACTIVITY_COMPLETED has been consumed.
 - from_state_id: STA-9
@@ -3082,7 +3090,7 @@ transitions:
 - from_state_id: STA-10
   to_state_id: STA-10
   mechanism: Carrier self-loop for accepted verification signals or grade-field writes that preserve VERIFYING; not a lifecycle transition.
-  evidence_ids: [EVD-121, EVD-127]
+  evidence_ids: [EVD-121, EVD-127, EVD-138]
   limitations:
   - The self-loop does not claim that ACTIVITY_VERIFIED has been consumed.
 - from_state_id: STA-10
@@ -3095,12 +3103,20 @@ transitions:
   to_state_id: STA-14
 - from_state_id: STA-11
   to_state_id: STA-15
+- from_state_id: STA-11
+  to_state_id: STA-11
+  mechanism: Checklist-field mutation preserves PENDING_USER_ACTION.
+  evidence_ids: [EVD-137]
 - from_state_id: STA-12
   to_state_id: STA-9
 - from_state_id: STA-12
   to_state_id: STA-14
 - from_state_id: STA-12
   to_state_id: STA-15
+- from_state_id: STA-12
+  to_state_id: STA-12
+  mechanism: Checklist-field mutation preserves RECOVERING.
+  evidence_ids: [EVD-137]
 - from_state_id: STA-13
   to_state_id: STA-10
 - from_state_id: STA-13
@@ -3125,8 +3141,18 @@ transitions:
   to_state_id: STA-8
 - from_state_id: STA-13
   to_state_id: STA-13
+  mechanism: Checklist-field mutation preserves FAN_OUT_RUNNING.
+  evidence_ids: [EVD-137]
 - from_state_id: STA-14
   to_state_id: STA-8
+- from_state_id: STA-14
+  to_state_id: STA-14
+  mechanism: Grade-field mutation preserves COMPLETED while the run remains active.
+  evidence_ids: [EVD-138]
+- from_state_id: STA-15
+  to_state_id: STA-15
+  mechanism: Grade-field mutation preserves FAILED while the run remains active.
+  evidence_ids: [EVD-138]
 - from_state_id: STA-16
   to_state_id: STA-17
 - from_state_id: STA-17

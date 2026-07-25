@@ -225,3 +225,76 @@ async def test_full_workflow_through_mcp_server(
     # 7. Complete verification (via service — not an MCP tool)
     result = await service.complete_verification("run-1", "task-1")
     assert result.new_status == TaskStatus.COMPLETED
+
+
+async def test_escalate_requirement_through_mcp_server(
+    server: OrchestratorMCPServer,
+    service: WorkflowService,
+) -> None:
+    now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    run = Run(
+        id="run-escalation",
+        repo_name="proj-1",
+        source_branch="main",
+        status=RunStatus.ACTIVE,
+        routine_id="test-routine",
+        routine_source=RoutineSource.LOCAL,
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S-01",
+                tasks=[
+                    TaskState(
+                        id="task-1",
+                        config_id="T-01",
+                        status=TaskStatus.BUILDING,
+                        checklist=[
+                            ChecklistItem(
+                                req_id="R1",
+                                desc="Blocked requirement",
+                                priority=Priority.CRITICAL,
+                            )
+                        ],
+                        max_attempts=3,
+                    )
+                ],
+            )
+        ],
+        created_at=now,
+        updated_at=now,
+    )
+    await service.create_run(run)
+
+    raw = await server.mcp.call_tool(
+        "orchestrator_escalate_requirement",
+        {
+            "run_id": run.id,
+            "task_id": "task-1",
+            "requirement_id": "R1",
+            "reason": "External dependency unavailable",
+        },
+    )
+    escalation = _parse_mcp_result(raw)
+    assert escalation["status"] == "paused"
+    assert escalation["pause_reason"] == "requirement_escalated"
+    assert escalation["next_action"] == "stop"
+
+    raw = await server.mcp.call_tool(
+        "orchestrator_submit",
+        {"run_id": run.id, "task_id": "task-1"},
+    )
+    submission = _parse_mcp_result(raw)
+    assert submission == {
+        "success": True,
+        "new_status": "paused",
+        "error": None,
+        "run_paused": True,
+        "pause_reason": "requirement_escalated",
+        "skipped": True,
+        "message": (
+            "Run is paused for human review; submission deferred. "
+            "Stop calling tools and exit cleanly."
+        ),
+    }
+    persisted = await service.get_run(run.id)
+    assert persisted.steps[0].tasks[0].status == TaskStatus.BUILDING

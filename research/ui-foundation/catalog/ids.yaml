@@ -2833,6 +2833,56 @@ items:
   provisional_key: evidence.test.mcp.grade-update
   title: MCP grade update test
   status: active
+- namespace: EVD
+  canonical_id: EVD-129
+  provisional_key: evidence.implementation.rest.requirement-escalation
+  title: REST requirement escalation route implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-130
+  provisional_key: evidence.test.rest.requirement-escalation
+  title: REST requirement escalation exact test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-131
+  provisional_key: evidence.implementation.mcp.requirement-escalation-registration
+  title: MCP requirement escalation registration implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-132
+  provisional_key: evidence.implementation.mcp.requirement-escalation-handler
+  title: MCP requirement escalation handler implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-133
+  provisional_key: evidence.test.mcp.requirement-escalation
+  title: MCP requirement escalation and paused-submit exact test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-134
+  provisional_key: evidence.implementation.mcp.task-submit-handler
+  title: MCP task submit handler implementation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-135
+  provisional_key: evidence.test.mcp.task-submit
+  title: MCP task submit state-change exact test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-136
+  provisional_key: evidence.test.mcp.paused-task-submit
+  title: MCP paused task submit accepted-no-op exact test
+  status: active
+- namespace: EVD
+  canonical_id: EVD-137
+  provisional_key: evidence.implementation.workflow.checklist-update-eligibility
+  title: Workflow checklist update exact task-status eligibility
+  status: active
+- namespace: EVD
+  canonical_id: EVD-138
+  provisional_key: evidence.implementation.workflow.grade-update-eligibility
+  title: Workflow grade update exact task-status eligibility
+  status: active
 - namespace: DRV
   provisional_key: last-event-age
   title: Last-event age

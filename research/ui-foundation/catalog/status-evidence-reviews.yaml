@@ -1,7 +1,7 @@
 metadata:
   schema_version: '1'
   scope_manifest_digest: sha256:abb735f9c5b1d08f2c80a46193dc466c76d24de65d1dfb9bfc87e301cbb552f6
-  active_snapshot_id: snapshot-2026-07-25-task-15-test-final
+  active_snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
   reviewer_model: openai/gpt-5.6-sol
   reviewer_role: independent-semantic-evidence-reviewer
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -9847,8 +9847,8 @@ reviews:
   record_proposition: ACT-78 exposes REST requirement escalation and delegates to
     the workflow service.
   observed_source_or_test_fact: Exact route delegates escalation.
-  boundary: The route proves delegation only; task/run/checklist effects require SER-0506
-    and EVD-116.
+  boundary: EVD-129 proves REST delegation only; task/run/checklist effects require
+    SER-0506 and engine-only EVD-116.
   verdict: partially-proves
   status_compatibility: partial
   review_rationale: This admitted delegation fragment combines with the effect-bearing
@@ -9934,8 +9934,8 @@ reviews:
   locator: src/orchestrator/api/mcp/server.py::OrchestratorMCPServer._register_tools.orchestrator_escalate_requirement
   record_proposition: ACT-84 registers public MCP requirement escalation.
   observed_source_or_test_fact: Exact MCP closure dispatches orchestrator_escalate_requirement.
-  boundary: The MCP closure proves registration/delegation only; task/run/checklist
-    effects require SER-0507 and EVD-116.
+  boundary: EVD-131 proves MCP registration/delegation only; task/run/checklist effects
+    require SER-0507 and engine-only EVD-116.
   verdict: partially-proves
   status_compatibility: partial
   review_rationale: This admitted registration fragment combines with handler SER-0481
@@ -10048,8 +10048,8 @@ reviews:
     registration and ToolHandler dispatch.
   observed_source_or_test_fact: ToolHandler._escalate_requirement calls escalate_requirement
     and returns paused run and requirement fields.
-  boundary: This handler proves workflow-service delegation and response shaping only;
-    task/run/checklist effects require SER-0507 and EVD-116.
+  boundary: EVD-132 proves handler delegation and response shaping only; task/run/checklist
+    effects require SER-0507 and engine-only EVD-116.
   verdict: partially-proves
   status_compatibility: partial
   review_rationale: This admitted delegation fragment combines with registration SER-0474
@@ -10223,12 +10223,12 @@ reviews:
   boundary: It does not exercise ACT-81's separately documented paused-human-review
     no-op branch.
   verdict: partially-proves
-  status_compatibility: unexercised
-  review_rationale: The locator proves this named ACT-81 fragment but not every clause
-    of the full carrier proposition.
+  status_compatibility: partial
+  review_rationale: This admitted normal-path fragment composes with SER-0512's exact
+    paused accepted-no-op assertions.
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
-  admission: bounded
+  admission: admitted
 - review_id: SER-0492
   record_id: ACT-82
   dimension: test
@@ -10493,8 +10493,8 @@ reviews:
   observed_source_or_test_fact: The exact engine symbol updates checklist status and
     note, emits ChecklistItemUpdated, changes the run from ACTIVE to PAUSED with pause_reason
     requirement_escalated, and does not mutate task status.
-  boundary: The engine symbol proves the task/run/checklist effects under EVD-116;
-    SER-0468 remains bounded to REST delegation.
+  boundary: Engine-only EVD-116 proves task/run/checklist effects; SER-0468 and EVD-129
+    separately prove REST delegation.
   verdict: proves
   status_compatibility: present
   review_rationale: EVD-116 directly supports the effect-bearing engine partition
@@ -10512,14 +10512,126 @@ reviews:
   observed_source_or_test_fact: The exact engine symbol updates checklist status and
     note, emits ChecklistItemUpdated, changes the run from ACTIVE to PAUSED with pause_reason
     requirement_escalated, and does not mutate task status.
-  boundary: The engine symbol proves the task/run/checklist effects under EVD-116;
-    SER-0474 and SER-0481 remain bounded to MCP registration and delegation.
+  boundary: Engine-only EVD-116 proves task/run/checklist effects; EVD-131 and EVD-132
+    separately prove MCP registration and handler delegation.
   verdict: proves
   status_compatibility: present
   review_rationale: EVD-116 directly supports the effect-bearing engine partition
     for ACT-84.
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
+  admission: admitted
+- review_id: SER-0508
+  record_id: ACT-75
+  dimension: implementation
+  locator_kind: python-symbol
+  locator: src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item
+  record_proposition: ACT-75 accepts checklist field mutation exactly for PENDING,
+    BUILDING, PENDING_USER_ACTION, RECOVERING, and FAN_OUT_RUNNING tasks and rejects
+    VERIFYING, COMPLETED, and FAILED tasks.
+  observed_source_or_test_fact: WorkflowService.update_checklist_item explicitly rejects
+    VERIFYING, COMPLETED, and FAILED and accepts every other TaskStatus while the
+    run is active.
+  boundary: EVD-137 proves exact task-status eligibility and field mutation; REST
+    transport remains SER-0465.
+  verdict: proves
+  status_compatibility: present
+  review_rationale: The explicit enum guard proves the complete accepted and rejected
+    status partition.
+  reviewer: openai/gpt-5.6-sol (action finding remediation)
+  reviewed_at: '2026-07-25T12:00:00Z'
+  admission: admitted
+- review_id: SER-0509
+  record_id: ACT-76
+  dimension: implementation
+  locator_kind: python-symbol
+  locator: src/orchestrator/workflow/service.py::WorkflowService.set_grade
+  record_proposition: ACT-76 accepts grade field mutation exactly for VERIFYING, COMPLETED,
+    and FAILED tasks and rejects all other task statuses.
+  observed_source_or_test_fact: WorkflowService.set_grade uses an explicit three-status
+    allowlist before persisting grade and grade_reason.
+  boundary: EVD-138 proves exact task-status eligibility and field mutation; REST
+    transport remains SER-0466.
+  verdict: proves
+  status_compatibility: present
+  review_rationale: The explicit enum allowlist proves the complete accepted and rejected
+    status partition.
+  reviewer: openai/gpt-5.6-sol (action finding remediation)
+  reviewed_at: '2026-07-25T12:00:00Z'
+  admission: admitted
+- review_id: SER-0510
+  record_id: ACT-80
+  dimension: implementation
+  locator_kind: python-symbol
+  locator: src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item
+  record_proposition: ACT-80 reaches checklist field mutation with the exact TaskStatus
+    partition represented by ACT-75.
+  observed_source_or_test_fact: The MCP handler delegates to WorkflowService.update_checklist_item,
+    whose explicit guard accepts five statuses and rejects VERIFYING, COMPLETED, and
+    FAILED.
+  boundary: EVD-137 proves shared workflow eligibility; EVD-123 and EVD-124 separately
+    prove MCP registration and handler dispatch.
+  verdict: proves
+  status_compatibility: present
+  review_rationale: The handler delegation and exact workflow guard jointly prove
+    the MCP variants.
+  reviewer: openai/gpt-5.6-sol (action finding remediation)
+  reviewed_at: '2026-07-25T12:00:00Z'
+  admission: admitted
+- review_id: SER-0511
+  record_id: ACT-82
+  dimension: implementation
+  locator_kind: python-symbol
+  locator: src/orchestrator/workflow/service.py::WorkflowService.set_grade
+  record_proposition: ACT-82 reaches grade field mutation exactly for VERIFYING, COMPLETED,
+    and FAILED task carriers.
+  observed_source_or_test_fact: The MCP handler delegates to WorkflowService.set_grade,
+    whose explicit allowlist rejects every other TaskStatus.
+  boundary: EVD-138 proves shared workflow eligibility; EVD-126 and EVD-127 separately
+    prove MCP registration and handler dispatch.
+  verdict: proves
+  status_compatibility: present
+  review_rationale: The handler delegation and exact workflow allowlist jointly prove
+    the MCP variants.
+  reviewer: openai/gpt-5.6-sol (action finding remediation)
+  reviewed_at: '2026-07-25T12:00:00Z'
+  admission: admitted
+- review_id: SER-0512
+  record_id: ACT-81
+  dimension: test
+  locator_kind: pytest-node
+  locator: tests/integration/test_mcp_server.py::test_escalate_requirement_through_mcp_server
+  record_proposition: ACT-81 accepts submission as a run-carrier no-op only while
+    PAUSED for requirement_escalated or awaiting_clarification and does not mutate
+    task status.
+  observed_source_or_test_fact: The exact MCP test pauses by escalation, submits,
+    asserts the skipped accepted result and pause reason, then reads the task as BUILDING.
+  boundary: EVD-136 proves the requirement_escalated branch; the implementation's
+    exact two-reason predicate is established by EVD-134.
+  verdict: partially-proves
+  status_compatibility: partial
+  review_rationale: This admitted paused-path fragment composes with SER-0491's normal
+    state-change assertions.
+  reviewer: openai/gpt-5.6-sol (action finding remediation)
+  reviewed_at: '2026-07-25T12:00:00Z'
+  admission: admitted
+- review_id: SER-0513
+  record_id: ACT-84
+  dimension: test
+  locator_kind: pytest-node
+  locator: tests/integration/test_mcp_server.py::test_escalate_requirement_through_mcp_server
+  record_proposition: ACT-84 invokes public MCP requirement escalation and returns
+    the paused requirement_escalated result after applying the engine effect.
+  observed_source_or_test_fact: The exact FastMCP call asserts paused status, pause
+    reason, and stop instruction after ToolHandler delegates to the workflow service.
+  boundary: EVD-133 proves MCP transport through engine effect for one active legacy
+    requirement.
+  verdict: proves
+  status_compatibility: exercised
+  review_rationale: The exact registered tool invocation and paused response prove
+    the bounded ACT-84 proposition.
+  reviewer: openai/gpt-5.6-sol (action finding remediation)
+  reviewed_at: '2026-07-25T12:00:00Z'
   admission: admitted
 dimension_reviews:
 - review_id: SDR-0173
@@ -33599,6 +33711,7 @@ dimension_reviews:
   evidence_ids:
   - EVD-119
   - EVD-120
+  - EVD-137
   conflict_ids: []
   question_ids:
   - Q-5
@@ -33608,6 +33721,7 @@ dimension_reviews:
   compatible_status: present
   admitted_locators:
   - SER-0465
+  - SER-0508
   bounded_locators: []
   rejected_locators: []
   observed_fact: Exact route calls workflow checklist update.
@@ -33651,6 +33765,7 @@ dimension_reviews:
   evidence_ids:
   - EVD-119
   - EVD-120
+  - EVD-137
   conflict_ids: []
   question_ids:
   - Q-5
@@ -33676,6 +33791,7 @@ dimension_reviews:
   evidence_ids:
   - EVD-119
   - EVD-120
+  - EVD-137
   conflict_ids: []
   question_ids:
   - Q-5
@@ -33699,6 +33815,7 @@ dimension_reviews:
   evidence_ids:
   - EVD-119
   - EVD-120
+  - EVD-137
   conflict_ids: []
   question_ids:
   - Q-5
@@ -33721,6 +33838,7 @@ dimension_reviews:
   evidence_ids:
   - EVD-121
   - EVD-122
+  - EVD-138
   conflict_ids: []
   question_ids:
   - Q-5
@@ -33730,6 +33848,7 @@ dimension_reviews:
   compatible_status: present
   admitted_locators:
   - SER-0466
+  - SER-0509
   bounded_locators: []
   rejected_locators: []
   observed_fact: Exact route calls workflow grade update.
@@ -33774,6 +33893,7 @@ dimension_reviews:
   evidence_ids:
   - EVD-121
   - EVD-122
+  - EVD-138
   conflict_ids: []
   question_ids:
   - Q-5
@@ -33799,6 +33919,7 @@ dimension_reviews:
   evidence_ids:
   - EVD-121
   - EVD-122
+  - EVD-138
   conflict_ids: []
   question_ids:
   - Q-5
@@ -33822,6 +33943,7 @@ dimension_reviews:
   evidence_ids:
   - EVD-121
   - EVD-122
+  - EVD-138
   conflict_ids: []
   question_ids:
   - Q-5
@@ -33962,6 +34084,7 @@ dimension_reviews:
   record_id: ACT-78
   dimension: implementation
   evidence_ids:
+  - EVD-129
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -33979,19 +34102,20 @@ dimension_reviews:
   observed_fact: The REST route delegates escalation; WorkflowEngine.escalate_requirement
     updates the checklist and synchronously pauses the active run while preserving
     task status.
-  boundary: SER-0468 is bounded to REST delegation; SER-0506 and EVD-116 supply the
-    exact effect-bearing engine partition.
+  boundary: SER-0468 and EVD-129 prove REST delegation; SER-0506 and EVD-116 separately
+    supply the exact effect-bearing engine partition.
   rationale: 'ACT-78 Marks the checklist requirement escalated and synchronously changes
     the active legacy run to paused with pause_reason requirement_escalated; task
     status is preserved. is present: SER rows SER-0468, SER-0506 inspect src/orchestrator/api/routers/tasks.py::escalate_requirement
     and src/orchestrator/workflow/engine/engine.py::WorkflowEngine.escalate_requirement
-    and jointly establish the record proposition under EVD-116.'
+    and jointly establish the record proposition under EVD-129 and EVD-116.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
 - review_id: SDR-0400
   record_id: ACT-78
   dimension: test
   evidence_ids:
+  - EVD-130
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34020,6 +34144,8 @@ dimension_reviews:
   record_id: ACT-78
   dimension: documentation
   evidence_ids:
+  - EVD-129
+  - EVD-130
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34030,7 +34156,7 @@ dimension_reviews:
   combined_verdict: proves
   compatible_status: documented
   observed_fact: 'Canonical record reality/actions/act-78-requirement-escalate-rest.yaml;
-    evidence EVD-116 (implementation: src/orchestrator/workflow/engine/engine.py);
+    REST evidence EVD-129, EVD-130 and engine evidence EVD-116;
     issue authority Q-5 (open: Define product-role authorization before treating actor
     text as authority).'
   boundary: Documentation status for ACT-78 is limited to the cited canonical record,
@@ -34038,7 +34164,7 @@ dimension_reviews:
   rationale: 'ACT-78 Marks the checklist requirement escalated and synchronously changes
     the active legacy run to paused with pause_reason requirement_escalated; task
     status is preserved. is documented at reality/actions/act-78-requirement-escalate-rest.yaml
-    and by EVD-116; any listed question (Q-5 (open: Define product-role authorization
+    and by EVD-129, EVD-130, EVD-116; any listed question (Q-5 (open: Define product-role authorization
     before treating actor text as authority)) is explicitly disclosed and does not
     create contradictory documentation for this bounded proposition.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
@@ -34047,6 +34173,8 @@ dimension_reviews:
   record_id: ACT-78
   dimension: capability
   evidence_ids:
+  - EVD-129
+  - EVD-130
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34057,13 +34185,13 @@ dimension_reviews:
   combined_verdict: unknown
   compatible_status: unknown
   observed_fact: 'Capability registry relation for ACT-78: no CAP implementation_carrier_binding;
-    carrier evidence EVD-116 (implementation: src/orchestrator/workflow/engine/engine.py).'
+    REST carrier evidence EVD-129, EVD-130 and engine carrier evidence EVD-116.'
   boundary: ACT-78 carrier implementation is not promoted to user capability without
     a relevant CAP current/derived classification; Q/conflict authority remains ['Q-5'].
   rationale: 'ACT-78 Marks the checklist requirement escalated and synchronously changes
     the active legacy run to paused with pause_reason requirement_escalated; task
     status is preserved. remains unknown as a user capability: no CAP implementation_carrier_binding;
-    EVD-116 establishes the record carrier but no relevant CAP authority classifies
+    EVD-129, EVD-130, EVD-116 establish the record carriers but no relevant CAP authority classifies
     this record as current or derived.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -34071,6 +34199,8 @@ dimension_reviews:
   record_id: ACT-78
   dimension: epistemic
   evidence_ids:
+  - EVD-129
+  - EVD-130
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34080,14 +34210,13 @@ dimension_reviews:
     requirement_escalated; task status is preserved.'
   combined_verdict: proves
   compatible_status: observed
-  observed_fact: 'Evidence authority for ACT-78: EVD-116 (implementation: src/orchestrator/workflow/engine/engine.py);
+  observed_fact: 'Evidence authority for ACT-78: REST EVD-129, EVD-130 and engine EVD-116;
     qualified by conflicts/questions [''Q-5''].'
   boundary: The ACT-78 epistemic classification does not infer causality, completeness,
     authorization, or user capability beyond the cited direct/audit evidence.
   rationale: 'ACT-78 Marks the checklist requirement escalated and synchronously changes
     the active legacy run to paused with pause_reason requirement_escalated; task
-    status is preserved. is observed from direct/audit authority EVD-116 (EVD-116
-    (implementation: src/orchestrator/workflow/engine/engine.py)), qualified by conflicts/questions
+    status is preserved. is observed from REST EVD-129, EVD-130 and engine EVD-116, qualified by conflicts/questions
     [''Q-5'']; only the bounded record proposition is observed.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -34221,6 +34350,7 @@ dimension_reviews:
   - EVD-123
   - EVD-124
   - EVD-125
+  - EVD-137
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34231,6 +34361,7 @@ dimension_reviews:
   admitted_locators:
   - SER-0470
   - SER-0477
+  - SER-0510
   bounded_locators: []
   rejected_locators: []
   observed_fact: Exact MCP closure dispatches orchestrator_update_checklist. ToolHandler._update_checklist
@@ -34280,6 +34411,7 @@ dimension_reviews:
   - EVD-123
   - EVD-124
   - EVD-125
+  - EVD-137
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34306,6 +34438,7 @@ dimension_reviews:
   - EVD-123
   - EVD-124
   - EVD-125
+  - EVD-137
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34330,6 +34463,7 @@ dimension_reviews:
   - EVD-123
   - EVD-124
   - EVD-125
+  - EVD-137
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34351,7 +34485,7 @@ dimension_reviews:
   record_id: ACT-81
   dimension: implementation
   evidence_ids:
-  - EVD-110
+  - EVD-134
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34369,50 +34503,51 @@ dimension_reviews:
     handles the disclosed paused no-op branch or calls submit_for_verification and
     returns its transition result.
   boundary: ACT-81 is limited to src/orchestrator/api/mcp/server.py::orchestrator_submit,
-    src/orchestrator/api/mcp/tools.py::ToolHandler._submit; evidence EVD-110 does
-    not extend Calls submit_for_verification synchronously through ToolHandler and
-    applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
-    returns a no-op success. beyond those inspected carriers.
+    src/orchestrator/api/mcp/tools.py::ToolHandler._submit; EVD-134 does not extend
+    Calls submit_for_verification synchronously through ToolHandler and applies BUILDING
+    to VERIFYING when gates pass; a paused human-review run instead returns a no-op
+    success. beyond those inspected carriers.
   rationale: 'ACT-81 Calls submit_for_verification synchronously through ToolHandler
     and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
     returns a no-op success. is present: SER rows SER-0471, SER-0478 inspect src/orchestrator/api/mcp/server.py::orchestrator_submit,
     src/orchestrator/api/mcp/tools.py::ToolHandler._submit and establish the record
-    proposition under EVD-110.'
+    proposition under EVD-134.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
 - review_id: SDR-0406
   record_id: ACT-81
   dimension: test
   evidence_ids:
-  - EVD-110
+  - EVD-135
+  - EVD-136
   conflict_ids: []
   question_ids:
   - Q-5
   record_proposition: 'ACT-81 test proposition: Calls submit_for_verification synchronously
     through ToolHandler and applies BUILDING to VERIFYING when gates pass; a paused
     human-review run instead returns a no-op success.'
-  combined_verdict: unexercised
-  compatible_status: unexercised
-  admitted_locators: []
-  bounded_locators:
+  combined_verdict: proves
+  compatible_status: exercised
+  admitted_locators:
   - SER-0491
+  - SER-0512
+  bounded_locators: []
   rejected_locators: []
-  observed_fact: The MCP server workflow calls orchestrator_submit and asserts normal-path
-    success and VERIFYING.
-  boundary: ACT-81 test authority is exactly partitioned across tests/integration/test_mcp_server.py::test_full_workflow_through_mcp_server;
-    bounded or absent coverage cannot be promoted to full-carrier exercise.
-  rationale: 'ACT-81 Calls submit_for_verification synchronously through ToolHandler
-    and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
-    returns a no-op success. remains unexercised: bounded SER rows SER-0491 cover
-    tests/integration/test_mcp_server.py::test_full_workflow_through_mcp_server but
-    do not assert the complete record proposition.'
+  observed_fact: SER-0491 asserts BUILDING to VERIFYING; SER-0512 asserts accepted
+    paused submission and unchanged BUILDING task status.
+  boundary: The two exact MCP tests separately prove the state-change and accepted-no-op
+    variants.
+  rationale: Complementary admitted SER-0491 and SER-0512 prove both ACT-81 transition
+    variants.
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
 - review_id: SDR-0988
   record_id: ACT-81
   dimension: documentation
   evidence_ids:
-  - EVD-110
+  - EVD-134
+  - EVD-135
+  - EVD-136
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34421,15 +34556,15 @@ dimension_reviews:
     pass; a paused human-review run instead returns a no-op success.'
   combined_verdict: proves
   compatible_status: documented
-  observed_fact: 'Canonical record reality/actions/act-81-task-submit-mcp.yaml; evidence
-    EVD-110 (test: tests/integration/test_idempotency.py); issue authority Q-5 (open:
+  observed_fact: 'Canonical record reality/actions/act-81-task-submit-mcp.yaml; direct
+    evidence EVD-134 (implementation), EVD-135 and EVD-136 (tests); issue authority Q-5 (open:
     Define product-role authorization before treating actor text as authority).'
   boundary: Documentation status for ACT-81 is limited to the cited canonical record,
     evidence paths, and reciprocal issue rows.
   rationale: 'ACT-81 Calls submit_for_verification synchronously through ToolHandler
     and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
     returns a no-op success. is documented at reality/actions/act-81-task-submit-mcp.yaml
-    and by EVD-110; any listed question (Q-5 (open: Define product-role authorization
+    and by EVD-134, EVD-135, EVD-136; any listed question (Q-5 (open: Define product-role authorization
     before treating actor text as authority)) is explicitly disclosed and does not
     create contradictory documentation for this bounded proposition.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
@@ -34438,7 +34573,9 @@ dimension_reviews:
   record_id: ACT-81
   dimension: capability
   evidence_ids:
-  - EVD-110
+  - EVD-134
+  - EVD-135
+  - EVD-136
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34448,13 +34585,13 @@ dimension_reviews:
   combined_verdict: unknown
   compatible_status: unknown
   observed_fact: 'Capability registry relation for ACT-81: no CAP implementation_carrier_binding;
-    carrier evidence EVD-110 (test: tests/integration/test_idempotency.py).'
+    carrier evidence EVD-134, EVD-135, EVD-136.'
   boundary: ACT-81 carrier implementation is not promoted to user capability without
     a relevant CAP current/derived classification; Q/conflict authority remains ['Q-5'].
   rationale: 'ACT-81 Calls submit_for_verification synchronously through ToolHandler
     and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
     returns a no-op success. remains unknown as a user capability: no CAP implementation_carrier_binding;
-    EVD-110 establishes the record carrier but no relevant CAP authority classifies
+    EVD-134, EVD-135, EVD-136 establish the record carrier but no relevant CAP authority classifies
     this record as current or derived.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -34462,7 +34599,9 @@ dimension_reviews:
   record_id: ACT-81
   dimension: epistemic
   evidence_ids:
-  - EVD-110
+  - EVD-134
+  - EVD-135
+  - EVD-136
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34471,14 +34610,13 @@ dimension_reviews:
     pass; a paused human-review run instead returns a no-op success.'
   combined_verdict: proves
   compatible_status: observed
-  observed_fact: 'Evidence authority for ACT-81: EVD-110 (test: tests/integration/test_idempotency.py);
+  observed_fact: 'Evidence authority for ACT-81: EVD-134 (implementation), EVD-135 and EVD-136 (tests);
     qualified by conflicts/questions [''Q-5''].'
   boundary: The ACT-81 epistemic classification does not infer causality, completeness,
     authorization, or user capability beyond the cited direct/audit evidence.
   rationale: 'ACT-81 Calls submit_for_verification synchronously through ToolHandler
     and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead
-    returns a no-op success. is observed from direct/audit authority EVD-110 (EVD-110
-    (test: tests/integration/test_idempotency.py)), qualified by conflicts/questions
+    returns a no-op success. is observed from direct authority EVD-134, EVD-135, EVD-136, qualified by conflicts/questions
     [''Q-5'']; only the bounded record proposition is observed.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -34489,6 +34627,7 @@ dimension_reviews:
   - EVD-126
   - EVD-127
   - EVD-128
+  - EVD-138
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34499,6 +34638,7 @@ dimension_reviews:
   admitted_locators:
   - SER-0472
   - SER-0479
+  - SER-0511
   bounded_locators: []
   rejected_locators: []
   observed_fact: Exact MCP closure dispatches orchestrator_set_grade. ToolHandler._set_grade
@@ -34547,6 +34687,7 @@ dimension_reviews:
   - EVD-126
   - EVD-127
   - EVD-128
+  - EVD-138
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34573,6 +34714,7 @@ dimension_reviews:
   - EVD-126
   - EVD-127
   - EVD-128
+  - EVD-138
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34597,6 +34739,7 @@ dimension_reviews:
   - EVD-126
   - EVD-127
   - EVD-128
+  - EVD-138
   conflict_ids: []
   question_ids:
   - Q-5
@@ -34741,6 +34884,8 @@ dimension_reviews:
   record_id: ACT-84
   dimension: implementation
   evidence_ids:
+  - EVD-131
+  - EVD-132
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34759,19 +34904,20 @@ dimension_reviews:
   observed_fact: The MCP closure and handler register/delegate escalation; WorkflowEngine.escalate_requirement
     updates the checklist and synchronously pauses the active run while preserving
     task status.
-  boundary: SER-0474 and SER-0481 are bounded to registration/delegation; SER-0507
-    and EVD-116 supply the exact effect-bearing engine partition.
+  boundary: EVD-131 and EVD-132 prove MCP registration and handler delegation; SER-0507
+    and EVD-116 separately supply the exact effect-bearing engine partition.
   rationale: 'ACT-84 Calls the workflow escalation synchronously, marking the checklist
     requirement escalated and changing the active legacy run to paused; task status
     is preserved. is present: SER rows SER-0474, SER-0481, SER-0507 inspect MCP registration/delegation
     and src/orchestrator/workflow/engine/engine.py::WorkflowEngine.escalate_requirement,
-    jointly establishing the record proposition under EVD-116.'
+    jointly establishing the record proposition under EVD-131, EVD-132, EVD-116.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
 - review_id: SDR-0412
   record_id: ACT-84
   dimension: test
   evidence_ids:
+  - EVD-133
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34779,26 +34925,27 @@ dimension_reviews:
   record_proposition: 'ACT-84 test proposition: Calls the workflow escalation synchronously,
     marking the checklist requirement escalated and changing the active legacy run
     to paused; task status is preserved.'
-  combined_verdict: unexercised
-  compatible_status: unexercised
-  admitted_locators: []
+  combined_verdict: proves
+  compatible_status: exercised
+  admitted_locators:
+  - SER-0513
   bounded_locators:
   - SER-0494
   rejected_locators: []
-  observed_fact: The MCP server registration test asserts orchestrator_escalate_requirement
-    is listed.
-  boundary: ACT-84 test authority is exactly partitioned across tests/integration/test_mcp_server.py::test_tool_names;
-    bounded or absent coverage cannot be promoted to full-carrier exercise.
-  rationale: 'ACT-84 Calls the workflow escalation synchronously, marking the checklist
-    requirement escalated and changing the active legacy run to paused; task status
-    is preserved. remains unexercised: bounded SER rows SER-0494 cover tests/integration/test_mcp_server.py::test_tool_names
-    but do not assert the complete record proposition.'
+  observed_fact: SER-0513 invokes the registered MCP escalation tool and asserts its
+    paused result; SER-0494 remains bounded to registration.
+  boundary: EVD-133 proves the exact MCP transport and engine-effect result; EVD-116
+    remains engine-only.
+  rationale: Admitted SER-0513 directly proves the bounded ACT-84 test proposition.
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
 - review_id: SDR-0997
   record_id: ACT-84
   dimension: documentation
   evidence_ids:
+  - EVD-131
+  - EVD-132
+  - EVD-133
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34809,7 +34956,7 @@ dimension_reviews:
   combined_verdict: proves
   compatible_status: documented
   observed_fact: 'Canonical record reality/actions/act-84-requirement-escalate-mcp.yaml;
-    evidence EVD-116 (implementation: src/orchestrator/workflow/engine/engine.py);
+    MCP evidence EVD-131, EVD-132, EVD-133 and engine evidence EVD-116;
     issue authority Q-5 (open: Define product-role authorization before treating actor
     text as authority).'
   boundary: Documentation status for ACT-84 is limited to the cited canonical record,
@@ -34817,7 +34964,7 @@ dimension_reviews:
   rationale: 'ACT-84 Calls the workflow escalation synchronously, marking the checklist
     requirement escalated and changing the active legacy run to paused; task status
     is preserved. is documented at reality/actions/act-84-requirement-escalate-mcp.yaml
-    and by EVD-116; any listed question (Q-5 (open: Define product-role authorization
+    and by EVD-131, EVD-132, EVD-133, EVD-116; any listed question (Q-5 (open: Define product-role authorization
     before treating actor text as authority)) is explicitly disclosed and does not
     create contradictory documentation for this bounded proposition.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
@@ -34826,6 +34973,9 @@ dimension_reviews:
   record_id: ACT-84
   dimension: capability
   evidence_ids:
+  - EVD-131
+  - EVD-132
+  - EVD-133
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34836,13 +34986,13 @@ dimension_reviews:
   combined_verdict: unknown
   compatible_status: unknown
   observed_fact: 'Capability registry relation for ACT-84: no CAP implementation_carrier_binding;
-    carrier evidence EVD-116 (implementation: src/orchestrator/workflow/engine/engine.py).'
+    MCP carrier evidence EVD-131, EVD-132, EVD-133 and engine carrier evidence EVD-116.'
   boundary: ACT-84 carrier implementation is not promoted to user capability without
     a relevant CAP current/derived classification; Q/conflict authority remains ['Q-5'].
   rationale: 'ACT-84 Calls the workflow escalation synchronously, marking the checklist
     requirement escalated and changing the active legacy run to paused; task status
     is preserved. remains unknown as a user capability: no CAP implementation_carrier_binding;
-    EVD-116 establishes the record carrier but no relevant CAP authority classifies
+    EVD-131, EVD-132, EVD-133, EVD-116 establish the record carriers but no relevant CAP authority classifies
     this record as current or derived.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -34850,6 +35000,9 @@ dimension_reviews:
   record_id: ACT-84
   dimension: epistemic
   evidence_ids:
+  - EVD-131
+  - EVD-132
+  - EVD-133
   - EVD-116
   conflict_ids: []
   question_ids:
@@ -34859,14 +35012,13 @@ dimension_reviews:
     legacy run to paused; task status is preserved.'
   combined_verdict: proves
   compatible_status: observed
-  observed_fact: 'Evidence authority for ACT-84: EVD-116 (implementation: src/orchestrator/workflow/engine/engine.py);
+  observed_fact: 'Evidence authority for ACT-84: MCP EVD-131, EVD-132, EVD-133 and engine EVD-116;
     qualified by conflicts/questions [''Q-5''].'
   boundary: The ACT-84 epistemic classification does not infer causality, completeness,
     authorization, or user capability beyond the cited direct/audit evidence.
   rationale: 'ACT-84 Calls the workflow escalation synchronously, marking the checklist
     requirement escalated and changing the active legacy run to paused; task status
-    is preserved. is observed from direct/audit authority EVD-116 (EVD-116 (implementation:
-    src/orchestrator/workflow/engine/engine.py)), qualified by conflicts/questions
+    is preserved. is observed from MCP EVD-131, EVD-132, EVD-133 and engine EVD-116, qualified by conflicts/questions
     [''Q-5'']; only the bounded record proposition is observed.'
   reviewer: openai/gpt-5.6-sol (independent semantic evidence reviewer)
   reviewed_at: '2026-07-25T04:10:20Z'

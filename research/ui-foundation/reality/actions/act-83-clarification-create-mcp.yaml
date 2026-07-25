@@ -50,8 +50,6 @@ status_basis:
 implementation_locators:
 - src/orchestrator/api/mcp/tools.py::ToolHandler._request_clarification
 - src/orchestrator/api/mcp/server.py::orchestrator_request_clarification
-- src/orchestrator/api/mcp/tools.py::ToolHandler._request_clarification
-- src/orchestrator/api/mcp/server.py::orchestrator_request_clarification
 test_locators: []
 bounded_test_locators:
 - tests/integration/test_mcp_server.py::test_tool_names

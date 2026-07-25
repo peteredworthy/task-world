@@ -41,6 +41,14 @@ REL 23/12, STA 67/5, ACT 58/13, EVI 5/4, and INV 6/0 exercised/unexercised.
 
 Independently re-review canonical statuses and validator enforcement without editing the immutable verifier report.
 
+## Action/evidence findings 2 and 3 remediation
+
+In progress: ACT-75/76/80/81/82 now use typed carrier-specific transition variants,
+including exact accepted/rejected TaskStatus partitions and ACT-81's PAUSED run-carrier
+accepted no-op without task mutation. EVD-116 remains engine-only; REST and MCP
+escalation registration/handler/test evidence has distinct direct IDs. Broad projection
+text cleanup remains deferred to the final pass; this handoff does not claim closure.
+
 ## Status
 
 Task 15 remains **IN PROGRESS** pending independent re-review. Structural findings SV-001 through SV-008 are

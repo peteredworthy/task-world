@@ -829,7 +829,7 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
     expected_test_statuses = {
         "REL": {"exercised": 13, "unexercised": 22},
         "STA": {"exercised": 57, "unexercised": 17},
-        "ACT": {"exercised": 56, "unexercised": 30},
+        "ACT": {"exercised": 58, "unexercised": 28},
         "EVI": {"exercised": 2, "unexercised": 7},
         "INV": {"exercised": 6},
     }
@@ -869,7 +869,7 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
         for field in ("test_locators", "bounded_test_locators")
         for locator in records[identifier].get(field, [])
     }
-    assert len(exact_locators) == 117
+    assert len(exact_locators) == 118
 
 
 def test_exercised_status_rejects_empty_exact_test_locators(tmp_path: Path) -> None:
@@ -1832,6 +1832,237 @@ def test_implemented_action_accepts_resolved_command_and_singular_legal_transiti
         "STATE_UNKNOWN",
         "ACTION_TRANSITION_UNREACHABLE",
     } & set(issue_codes(result))
+
+
+def test_implemented_action_accepts_typed_transition_variants(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    state = {
+        "id": "STA-01",
+        "title": "Ready",
+        "definition": "Ready state",
+        "implementation_status": "present",
+        "test_status": "exercised",
+        "documentation_status": "documented",
+        "confidence": 1,
+        "confidence_basis": "Evidence",
+        "evidence_ids": [],
+        "conflict_ids": [],
+        "question_ids": [],
+        "limitations": [],
+        "prohibited_interpretations": [],
+    }
+    write_yaml(
+        root / "reality/state-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [state, state | {"id": "STA-02", "title": "Done"}],
+            "transitions": [
+                {"from_state_id": "STA-01", "to_state_id": "STA-02"},
+                {"from_state_id": "STA-02", "to_state_id": "STA-02"},
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "CMD-01",
+                    "source_kind": "command",
+                    "implementation_status": "present",
+                    "reachable": True,
+                },
+                {"id": "EVD-01", "source_kind": "implementation", "reachable": True},
+            ],
+        },
+    )
+    action = present_action("CMD-01", {})
+    action.pop("transition")
+    action["transition_variants"] = [
+        {
+            "carrier": "task",
+            "from_state_id": "STA-01",
+            "to_state_id": "STA-02",
+            "eligibility_precondition": "task status is exactly pending",
+            "effect_kind": "state-change",
+            "evidence_ids": ["EVD-01"],
+        },
+        {
+            "carrier": "result",
+            "from_state_id": "STA-02",
+            "to_state_id": "STA-02",
+            "eligibility_precondition": "task status is exactly completed",
+            "effect_kind": "self-loop-field-mutation",
+            "evidence_ids": ["EVD-01"],
+        },
+    ]
+    write_yaml(root / "reality/actions/ACT-01.yaml", action)
+
+    result = run_validator(root, phase=0)
+
+    assert not {
+        "ACTION_CONTRACT_INVALID",
+        "ACTION_TRANSITION_MISSING",
+        "ACTION_TRANSITION_UNREACHABLE",
+        "ACTION_RESULT_STATE_MISMATCH",
+    } & set(issue_codes(result))
+
+
+def test_action_rejects_normalized_duplicate_transition_variants(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    action = present_action("CMD-01", {})
+    action.pop("transition")
+    variant = {
+        "carrier": "task",
+        "from_state_id": "STA-01",
+        "to_state_id": "STA-02",
+        "eligibility_precondition": "task status is exactly pending",
+        "effect_kind": "state-change",
+        "evidence_ids": ["EVD-01"],
+    }
+    action["transition_variants"] = [
+        variant,
+        variant
+        | {
+            "eligibility_precondition": "  TASK status is exactly PENDING ",
+        },
+    ]
+    write_yaml(root / "reality/actions/ACT-01.yaml", action)
+
+    result = run_validator(root, phase=0)
+
+    assert "ACTION_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_action_rejects_normalized_duplicate_locator_lists(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    action = present_action("CMD-01", {"from_state_id": "STA-01", "to_state_id": "STA-02"})
+    action["implementation_locators"] = [
+        "src/example.py::carrier",
+        " SRC/example.py::carrier ",
+    ]
+    action["test_locators"] = [
+        "tests/test_example.py::test_carrier",
+        " tests/test_example.py::TEST_carrier ",
+    ]
+    action["bounded_test_locators"] = ["bounded", " BOUNDED "]
+    write_yaml(root / "reality/actions/ACT-01.yaml", action)
+
+    result = run_validator(root, phase=0)
+
+    assert "ACTION_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_task15_action_variants_encode_exact_eligibility_and_paused_no_op() -> None:
+    action_root = REPO_ROOT / "research/ui-foundation/reality/actions"
+
+    def variants(action_id: int, slug: str) -> list[dict[str, object]]:
+        action = yaml.safe_load((action_root / f"act-{action_id}-{slug}.yaml").read_text())
+        assert "transition" not in action
+        return action["transition_variants"]
+
+    for action_id, slug in (
+        (75, "checklist-update-rest"),
+        (80, "checklist-update-mcp"),
+    ):
+        values = variants(action_id, slug)
+        assert {
+            (value["carrier"], value["from_state_id"], value["to_state_id"], value["effect_kind"])
+            for value in values
+        } == {
+            ("task", state, state, "self-loop-field-mutation")
+            for state in ("STA-8", "STA-9", "STA-11", "STA-12", "STA-13")
+        }
+        assert not {"STA-10", "STA-14", "STA-15"} & {value["from_state_id"] for value in values}
+
+    for action_id, slug in ((76, "grade-update-rest"), (82, "grade-update-mcp")):
+        values = variants(action_id, slug)
+        assert {
+            (value["carrier"], value["from_state_id"], value["to_state_id"], value["effect_kind"])
+            for value in values
+        } == {
+            ("task", state, state, "self-loop-field-mutation")
+            for state in ("STA-10", "STA-14", "STA-15")
+        }
+        assert not {"STA-8", "STA-9", "STA-11", "STA-12", "STA-13"} & {
+            value["from_state_id"] for value in values
+        }
+
+    submit = variants(81, "task-submit-mcp")
+    assert {
+        (value["carrier"], value["from_state_id"], value["to_state_id"], value["effect_kind"])
+        for value in submit
+    } == {
+        ("task", "STA-9", "STA-10", "state-change"),
+        ("run", "STA-4", "STA-4", "accepted-no-op"),
+    }
+    paused = next(value for value in submit if value["carrier"] == "run")
+    assert paused["eligibility_precondition"] == (
+        "run status is exactly PAUSED and pause_reason is exactly "
+        "requirement_escalated or awaiting_clarification; task is not mutated"
+    )
+
+
+def test_task15_escalation_evidence_separates_transports_from_engine() -> None:
+    evidence = yaml.safe_load(
+        (REPO_ROOT / "research/ui-foundation/catalog/evidence.yaml").read_text()
+    )["items"]
+    by_id = {item["id"]: item for item in evidence}
+    assert (by_id["EVD-116"]["path"], by_id["EVD-116"]["symbol"]) == (
+        "src/orchestrator/workflow/engine/engine.py",
+        "WorkflowEngine.escalate_requirement",
+    )
+    expected = {
+        "EVD-129": (
+            "src/orchestrator/api/routers/tasks.py",
+            "escalate_requirement",
+        ),
+        "EVD-130": (
+            "tests/integration/test_api_escalation.py",
+            "test_escalate_pauses_run_and_marks_requirement",
+        ),
+        "EVD-131": (
+            "src/orchestrator/api/mcp/server.py",
+            "OrchestratorMCPServer._register_tools.orchestrator_escalate_requirement",
+        ),
+        "EVD-132": (
+            "src/orchestrator/api/mcp/tools.py",
+            "ToolHandler._escalate_requirement",
+        ),
+        "EVD-133": (
+            "tests/integration/test_mcp_server.py",
+            "test_escalate_requirement_through_mcp_server",
+        ),
+    }
+    assert {
+        evidence_id: (by_id[evidence_id]["path"], by_id[evidence_id]["symbol"])
+        for evidence_id in expected
+    } == expected
+
+    actions = {
+        action_id: yaml.safe_load(path.read_text())
+        for action_id, path in (
+            (
+                78,
+                REPO_ROOT
+                / "research/ui-foundation/reality/actions/act-78-requirement-escalate-rest.yaml",
+            ),
+            (
+                84,
+                REPO_ROOT
+                / "research/ui-foundation/reality/actions/act-84-requirement-escalate-mcp.yaml",
+            ),
+        )
+    }
+    assert actions[78]["audit_evidence_ids"] == ["EVD-129", "EVD-130", "EVD-116"]
+    assert actions[84]["audit_evidence_ids"] == [
+        "EVD-131",
+        "EVD-132",
+        "EVD-133",
+        "EVD-116",
+    ]
 
 
 def test_absent_intervention_requires_complete_requirement_record(tmp_path: Path) -> None:

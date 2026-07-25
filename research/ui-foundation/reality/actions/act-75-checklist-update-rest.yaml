@@ -12,12 +12,17 @@ validation: [checklist-status, task-eligibility]
 durable_effect: Updates checklist status and note through the workflow service.
 resulting_state_id: STA-9
 failure_modes: ['404', '409', validation error]
-stale_state_behavior: Terminal or verifying task update is rejected.
+stale_state_behavior: Explicitly rejects VERIFYING (STA-10), COMPLETED (STA-14), and FAILED (STA-15).
 idempotency: Repeating the same status and note converges.
 retry_behavior: Re-read checklist item before retrying.
 reversibility: A later eligible checklist update may supersede the value.
-audit_evidence_ids: [EVD-119, EVD-120]
-transition: {from_state_id: STA-9, to_state_id: STA-9}
+audit_evidence_ids: [EVD-119, EVD-120, EVD-137]
+transition_variants:
+- {carrier: task, from_state_id: STA-8, to_state_id: STA-8, eligibility_precondition: 'active run and task status is exactly PENDING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {carrier: task, from_state_id: STA-9, to_state_id: STA-9, eligibility_precondition: 'active run and task status is exactly BUILDING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {carrier: task, from_state_id: STA-11, to_state_id: STA-11, eligibility_precondition: 'active run and task status is exactly PENDING_USER_ACTION', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {carrier: task, from_state_id: STA-12, to_state_id: STA-12, eligibility_precondition: 'active run and task status is exactly RECOVERING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
+- {carrier: task, from_state_id: STA-13, to_state_id: STA-13, eligibility_precondition: 'active run and task status is exactly FAN_OUT_RUNNING', effect_kind: self-loop-field-mutation, evidence_ids: [EVD-137]}
 carrier_relationship:
   affected_carrier: checklist item status and note while the representative BUILDING task status is preserved
   caveat: This is a field-mutation carrier self-loop, not a task lifecycle transition.
@@ -32,23 +37,25 @@ documentation_status: documented
 epistemic_status: observed
 status_basis:
   implementation: 'ACT-75 implementation status present: ACT-75 Updates checklist status and note through
-    the workflow service. is present: SER rows SER-0465 inspect src/orchestrator/api/routers/tasks.py::update_checklist_item
-    and establish the record proposition under EVD-119.'
+    the workflow service across exact accepted and rejected TaskStatus carriers. is present: SER rows SER-0465, SER-0508 inspect the REST route and WorkflowService.update_checklist_item
+    under EVD-119, EVD-137.'
   test: 'ACT-75 test status exercised: ACT-75 Updates checklist status and note through the workflow service.
     is exercised because admitted SER rows SER-0485 contain direct assertions at tests/integration/test_api_tasks.py::test_full_task_lifecycle;
     no active rejected locator defeats that proof.'
   documentation: 'ACT-75 documentation status documented: ACT-75 Updates checklist status and note through
-    the workflow service. is documented at reality/actions/act-75-checklist-update-rest.yaml and by EVD-119, EVD-120;
+    the workflow service. is documented at reality/actions/act-75-checklist-update-rest.yaml and by EVD-119, EVD-120, EVD-137;
     any listed question (Q-5 (open: Define product-role authorization before treating actor text as authority))
     is explicitly disclosed and does not create contradictory documentation for this bounded proposition.'
   capability: 'ACT-75 capability status unknown: ACT-75 Updates checklist status and note through the
-    workflow service. remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-119, EVD-120
+    workflow service. remains unknown as a user capability: no CAP implementation_carrier_binding; EVD-119, EVD-120, EVD-137
     establishes the record carrier but no relevant CAP authority classifies this record as current or
     derived.'
   epistemic: 'ACT-75 epistemic status observed: ACT-75 Updates checklist status and note through the workflow
-    service. is observed from direct implementation/test authority EVD-119, EVD-120,
+    service. is observed from direct implementation/test authority EVD-119, EVD-120, EVD-137,
     qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
-implementation_locators: [src/orchestrator/api/routers/tasks.py::update_checklist_item]
+implementation_locators:
+- src/orchestrator/api/routers/tasks.py::update_checklist_item
+- src/orchestrator/workflow/service.py::WorkflowService.update_checklist_item
 test_locators:
 - tests/integration/test_api_tasks.py::test_full_task_lifecycle
 bounded_test_locators: []

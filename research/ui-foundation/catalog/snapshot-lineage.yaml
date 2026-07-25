@@ -94,5 +94,11 @@ entries:
   parent_snapshot_id: snapshot-2026-07-25-task-15-validator-final
   snapshot_digest: 715eb034f13d4247f3b3c2c93186c10ac103d369148bdb424e198112bebbce43
   predecessor_lineage_digest: 58c44170e4255e1d002d74889cd43a9d2605eb45151a7c783baab4f9f1a36832
+  status: historical
+  lineage_entry_digest: a1e36f0888d3b9c5488b5650ddaf8afe80f8d07a20472898d97403b01ad4f025
+- snapshot_id: snapshot-2026-07-25-task-15-actions-evidence
+  parent_snapshot_id: snapshot-2026-07-25-task-15-test-final
+  snapshot_digest: 379f47438708d938e761d4deff91ddc15bc1299693158b754cd610526dfb97ec
+  predecessor_lineage_digest: a1e36f0888d3b9c5488b5650ddaf8afe80f8d07a20472898d97403b01ad4f025
   status: active
-  lineage_entry_digest: def385183cd8f12b08f5db5ebdb1ffc0f43f130bbb1087d6ccae9ae62c253ab0
+  lineage_entry_digest: b3bb8f806a2afa30492f0a43d55d7a429a5539487d30a449e554a51d59faa8e8

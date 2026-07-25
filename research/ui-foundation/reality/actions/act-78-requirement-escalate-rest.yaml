@@ -16,7 +16,7 @@ stale_state_behavior: Current active/task eligibility is rechecked by the servic
 idempotency: Repeating escalation is state-validated, not keyed.
 retry_behavior: Re-read task and escalation evidence.
 reversibility: Resolve through separately eligible human/workflow action.
-audit_evidence_ids: [EVD-116]
+audit_evidence_ids: [EVD-129, EVD-130, EVD-116]
 transition: {from_state_id: STA-2, to_state_id: STA-4}
 carrier_relationship:
   affected_carrier: legacy run lifecycle; paired checklist fields mutate without a task lifecycle transition
@@ -35,25 +35,25 @@ status_basis:
     and synchronously changes the active legacy run to paused with pause_reason requirement_escalated;
     task status is preserved. is present: SER rows SER-0468, SER-0506 inspect src/orchestrator/api/routers/tasks.py::escalate_requirement,
     src/orchestrator/workflow/engine/engine.py::WorkflowEngine.escalate_requirement and establish the record
-    proposition under EVD-116.'
+    proposition under REST EVD-129 and engine EVD-116.'
   test: 'ACT-78 test status exercised: ACT-78 Marks the checklist requirement escalated and synchronously
     changes the active legacy run to paused with pause_reason requirement_escalated; task status is preserved.
     is exercised because admitted SER rows SER-0488 contain direct assertions at tests/integration/test_api_escalation.py::test_escalate_pauses_run_and_marks_requirement;
-    no active rejected locator defeats that proof.'
+    no active rejected locator defeats that proof under EVD-130.'
   documentation: 'ACT-78 documentation status documented: ACT-78 Marks the checklist requirement escalated
     and synchronously changes the active legacy run to paused with pause_reason requirement_escalated;
     task status is preserved. is documented at reality/actions/act-78-requirement-escalate-rest.yaml and
-    by EVD-116; any listed question (Q-5 (open: Define product-role authorization before treating actor
+    by EVD-129, EVD-130, EVD-116; any listed question (Q-5 (open: Define product-role authorization before treating actor
     text as authority)) is explicitly disclosed and does not create contradictory documentation for this
     bounded proposition.'
   capability: 'ACT-78 capability status unknown: ACT-78 Marks the checklist requirement escalated and
     synchronously changes the active legacy run to paused with pause_reason requirement_escalated; task
     status is preserved. remains unknown as a user capability: no CAP implementation_carrier_binding;
-    EVD-116 establishes the record carrier but no relevant CAP authority classifies this record as current
+    EVD-129, EVD-130, EVD-116 establish the transport and engine carriers but no relevant CAP authority classifies this record as current
     or derived.'
   epistemic: 'ACT-78 epistemic status observed: ACT-78 Marks the checklist requirement escalated and synchronously
     changes the active legacy run to paused with pause_reason requirement_escalated; task status is preserved.
-    is observed from direct/audit authority EVD-116 (EVD-116 (implementation: src/orchestrator/workflow/engine/engine.py)),
+    is observed from direct REST authority EVD-129, EVD-130 and engine authority EVD-116,
     qualified by conflicts/questions [''Q-5'']; only the bounded record proposition is observed.'
 implementation_locators:
 - src/orchestrator/api/routers/tasks.py::escalate_requirement
