@@ -785,9 +785,10 @@ def test_phase_two_allows_no_semantic_closure_while_task15_is_in_progress(tmp_pa
     assert "PHASE_TWO_SEMANTIC_CLOSURE_REQUIRED" not in codes
 
 
-@pytest.mark.parametrize(
-    ("mutation", "expected_code"),
-    [
+def test_passed_phase_two_semantic_closure_rejects_stale_or_false_evidence(
+    tmp_path: Path,
+) -> None:
+    cases = [
         (
             lambda closure: closure["artifact_digests"].__setitem__(
                 "catalog/status-scope.yaml", f"sha256:{'0' * 64}"
@@ -822,27 +823,22 @@ def test_phase_two_allows_no_semantic_closure_while_task15_is_in_progress(tmp_pa
             lambda closure: closure["commands"][0].__setitem__("exit_code", 1),
             "PHASE_TWO_SEMANTIC_CLOSURE_EXECUTION_INVALID",
         ),
-    ],
-)
-def test_passed_phase_two_semantic_closure_rejects_stale_or_false_evidence(
-    tmp_path: Path, mutation: object, expected_code: str
-) -> None:
+    ]
     root = copy_foundation_with_source(tmp_path)
     mark_task15_complete(root)
-    closure = phase_two_closure(root)
-    assert callable(mutation)
-    mutation(closure)
-    write_yaml(root / "verifications/phase-2-semantic-closure-001.yaml", closure)
+    base_closure = phase_two_closure(root)
+    closure_path = "verifications/phase-2-semantic-closure-001.yaml"
+    write_yaml(root / closure_path, base_closure)
     validator = load_validator()
+    package = validator.load_foundation(root)
 
-    codes = {
-        issue.code
-        for issue in validator._validate_phase_two_semantic_closures(
-            validator.load_foundation(root)
-        )
-    }
+    for mutation, expected_code in cases:
+        closure = deepcopy(base_closure)
+        mutation(closure)
+        package.documents[closure_path] = closure
+        codes = {issue.code for issue in validator._validate_phase_two_semantic_closures(package)}
 
-    assert expected_code in codes
+        assert expected_code in codes
 
 
 def test_phase_two_semantic_closure_rejects_predecessor_hash_mismatch(tmp_path: Path) -> None:
@@ -2750,6 +2746,71 @@ def test_snapshot_resolver_rejects_duplicate_registered_snapshot_id() -> None:
 
     with pytest.raises(ValueError, match="SNAPSHOT_ID_DUPLICATE"):
         resolver.snapshots_from_evidence(evidence)
+
+
+@pytest.mark.parametrize(
+    ("registered", "error"),
+    [
+        (
+            [{"id": "detached", "parent_snapshot_id": "missing", "files": []}],
+            "SNAPSHOT_PARENT_UNKNOWN",
+        ),
+        (
+            [
+                {"id": "detached-a", "parent_snapshot_id": "detached-b", "files": []},
+                {"id": "detached-b", "parent_snapshot_id": "detached-a", "files": []},
+            ],
+            "SNAPSHOT_PARENT_CYCLE",
+        ),
+        (
+            [{"id": "detached", "files": [{"path": "missing"}]}],
+            "SNAPSHOT_FILE_INVALID",
+        ),
+        (
+            [
+                {
+                    "id": "detached",
+                    "parent_snapshot_id": "root",
+                    "files": [{"path": "missing", "tombstone": True}],
+                }
+            ],
+            "INVALID_TOMBSTONE:missing",
+        ),
+    ],
+)
+def test_snapshot_resolver_validates_detached_registered_branches(
+    registered: list[dict[str, object]], error: str
+) -> None:
+    resolver = load_snapshot_resolver()
+    evidence = {
+        "snapshot": {"id": "root", "files": []},
+        "snapshots": registered,
+        "active_snapshot_id": "root",
+    }
+
+    with pytest.raises(ValueError, match=error):
+        resolver.resolve_effective_snapshot(evidence)
+
+
+def test_snapshot_resolver_validates_reserved_self_tombstones() -> None:
+    resolver = load_snapshot_resolver()
+    evidence = {
+        "snapshot": {
+            "id": "root",
+            "files": [
+                {
+                    "path": "research/ui-foundation/catalog/evidence.yaml",
+                    "tombstone": True,
+                }
+            ],
+        }
+    }
+
+    with pytest.raises(
+        ValueError,
+        match="INVALID_TOMBSTONE:research/ui-foundation/catalog/evidence.yaml",
+    ):
+        resolver.resolve_effective_snapshot(evidence)
 
 
 def test_effective_snapshot_rejects_unknown_parent_and_cycle(tmp_path: Path) -> None:

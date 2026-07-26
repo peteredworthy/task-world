@@ -181,6 +181,70 @@ def test_collector_rejects_drift_for_unreferenced_active_file(tmp_path: Path) ->
             ),
             "SNAPSHOT_ID_DUPLICATE",
         ),
+        (
+            lambda evidence: evidence.update(
+                {
+                    "active_snapshot_id": "snapshot-active",
+                    "snapshots": [
+                        {
+                            "id": "detached",
+                            "parent_snapshot_id": "missing",
+                            "files": [],
+                        }
+                    ],
+                }
+            ),
+            "SNAPSHOT_PARENT_UNKNOWN",
+        ),
+        (
+            lambda evidence: evidence.update(
+                {
+                    "active_snapshot_id": "snapshot-active",
+                    "snapshots": [
+                        {"id": "detached-a", "parent_snapshot_id": "detached-b", "files": []},
+                        {"id": "detached-b", "parent_snapshot_id": "detached-a", "files": []},
+                    ],
+                }
+            ),
+            "SNAPSHOT_PARENT_CYCLE",
+        ),
+        (
+            lambda evidence: evidence.update(
+                {
+                    "active_snapshot_id": "snapshot-active",
+                    "snapshots": [{"id": "detached", "files": [{"path": "missing"}]}],
+                }
+            ),
+            "SNAPSHOT_FILE_INVALID",
+        ),
+        (
+            lambda evidence: evidence.update(
+                {
+                    "active_snapshot_id": "snapshot-active",
+                    "snapshots": [
+                        {
+                            "id": "detached",
+                            "parent_snapshot_id": "snapshot-active",
+                            "files": [{"path": "missing", "tombstone": True}],
+                        }
+                    ],
+                }
+            ),
+            "INVALID_TOMBSTONE:missing",
+        ),
+        (
+            lambda evidence: evidence["snapshot"].update(
+                {
+                    "files": [
+                        {
+                            "path": "research/ui-foundation/catalog/evidence.yaml",
+                            "tombstone": True,
+                        }
+                    ]
+                }
+            ),
+            "INVALID_TOMBSTONE:research/ui-foundation/catalog/evidence.yaml",
+        ),
     ],
 )
 def test_collector_rejects_invalid_snapshot_graph_without_replacing_output(

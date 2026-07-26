@@ -14,7 +14,7 @@ manifest contains 119 bases and concrete nodes. Qualifying collected test-covera
 classifications, not test-execution results, are REL 13/22, STA 57/17, ACT 56/30,
 EVI 2/7, and INV 6/0 exercised/unexercised. 62 actions retain the Q-5 boundary.
 The projected bounded post-Phase1 remediation snapshot is
-`snapshot-2026-07-26-task-15-review-remediation-fix`.
+`snapshot-2026-07-26-task-15-closure-test-final`.
 
 The validator now rejects duplicate or incomplete partial-clause compositions,
 bounded evidence promoted as exercise, question-only documentation contradictions,
@@ -67,7 +67,7 @@ In progress: ACT-75/76/80/81/82 now use typed carrier-specific transition varian
 including exact accepted/rejected TaskStatus partitions and ACT-81's PAUSED run-carrier
 accepted no-op without task mutation. EVD-116 remains engine-only; REST and MCP
 escalation registration/handler/test evidence has distinct direct IDs. Snapshot
-`snapshot-2026-07-26-task-15-review-remediation-fix` will record the remediated source boundary;
+`snapshot-2026-07-26-task-15-closure-test-final` will record the remediated source boundary;
 this handoff remains pending independent closure review.
 
 ## Status

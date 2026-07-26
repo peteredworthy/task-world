@@ -16,7 +16,7 @@ are complete; Phase 3 is pending.
 
 ## Task 15 active semantic-status snapshot
 
-`snapshot-2026-07-26-task-15-review-remediation-fix` is the projected bounded post-Phase1 remediation
+`snapshot-2026-07-26-task-15-closure-test-final` is the projected bounded post-Phase1 remediation
 child snapshot for the 210-record Task 15 status-evidence scope. The current projection
 contains 513 SER rows (455 admitted, 50 bounded, 8 rejected), 1,050 SDR rows, 138 exact and
 50 bounded test locators, and a 119-base/119-node collected-test manifest. These are qualifying

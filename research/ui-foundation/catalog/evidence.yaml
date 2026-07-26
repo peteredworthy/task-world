@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-26-task-15-review-remediation-fix
+active_snapshot_id: snapshot-2026-07-26-task-15-closure-test-final
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -17467,3 +17467,117 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: 1fae5f43b320c526d3e06141b2eb0563ff2a5661ebd8a76dd4f05ee5a57ba875
     audited_at: '2026-07-26T00:45:00Z'
+- id: snapshot-2026-07-26-task-15-resolver-fix
+  parent_snapshot_id: snapshot-2026-07-26-task-15-review-remediation-fix
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: f69dc3e3ab002a36686215950b066ca1434b0c7485fb251704a384b027abc274
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 873746105597e99248c85bac64c12907e4ab53dce1a5518e1dd870fae6e9ee20
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 4548207995d9970c41f10ba9053ef24fbfe3f29fb67884ccc4d6c196a7644566
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 83d118542073d6bddca786f3353b78ead98dc1baf9ef24ff1bd2c1c9b9ae3384
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: f777f596919dff2b8ff60d7c315d71bf134f3ea7a9f5ce6e4506f12f73287e53
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: 648ab5b2b67c8651bbd0c01c8502d427512ad09d18b4b64123f4e3b1dce58432
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: 4288dd03c1cfa95ff42d2b73f98652142e448350caac35b834e213c501ce329b
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: research/ui-foundation/tools/snapshot_resolver.py
+    sha256: c89bedef321a05acb73d7a53aefbc6d2b8afe7d57f043503bb4c2e78b6786ced
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: tests/integration/test_status_test_nodes.py
+    sha256: 0dfac0f326603920c8ee55dbb8a1c889fd226e2e6e11dc8c9145a29d29b9dd70
+    audited_at: '2026-07-26T01:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 1b86b3d48dd2ff165fb5e21daa1d1b0d7acd6904dcb437edca6ef218151b6f76
+    audited_at: '2026-07-26T01:00:00Z'
+- id: snapshot-2026-07-26-task-15-test-optimization
+  parent_snapshot_id: snapshot-2026-07-26-task-15-resolver-fix
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: f5ff5cdc5bc4daaef90f7bde47c45f8c5fdc0168629e654e4f2b0002d289bb35
+    audited_at: '2026-07-26T01:15:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 0e864c9ebf05f44c56f69c43a25403bc6aa78b7e07fb41ab2821f6ea4c03b3ad
+    audited_at: '2026-07-26T01:15:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 33f71efcc502a9c6649aeceefdecee21e687c4b7e33fe0d3fae83b43f33d0284
+    audited_at: '2026-07-26T01:15:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: e0bc2e2c07f6fdaccd92f61b874c021be7ccc58239a8ea1b5646918f0b9b5c5b
+    audited_at: '2026-07-26T01:15:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: 09c5ca12d09ef5eeb4a7d7716bf3d7d506064039139a24c35863d1193b03262d
+    audited_at: '2026-07-26T01:15:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: b7fc01fce5be8072dfa25d4c172a368efa065e7ee931b28eb8d3549a8cc52ad2
+    audited_at: '2026-07-26T01:15:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: 00712f8487d231fb2e01d7cc9f5d4365e6661fcd0cf65256216cd7dde0298cc1
+    audited_at: '2026-07-26T01:15:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 86523c04db4cb1d260c4fb0c3b16074d73fc31fe7892c772301a3ae11fab36c5
+    audited_at: '2026-07-26T01:15:00Z'
+- id: snapshot-2026-07-26-task-15-format-final
+  parent_snapshot_id: snapshot-2026-07-26-task-15-test-optimization
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: 7bf3aa24d2aaefff424d96670e3117c94a64db3e9ed4d3bbf2d4aaf684c2cd3e
+    audited_at: '2026-07-26T01:20:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: d8d756e970b83d5c11ef38e4478d62997584f0931c30a1d486f6d11c9d552d67
+    audited_at: '2026-07-26T01:20:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 142c9bec09f5196455af43b908232fc766b8e0487c8014f90ad43d2302d5ffab
+    audited_at: '2026-07-26T01:20:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 66330bbb13e63b616634639fbcf329bf9544eba8992c6ac6447482800d4b53be
+    audited_at: '2026-07-26T01:20:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: 458feb92b450fcb57cc5f4cf284f11454fc50a62d6d13946cf5348ac507d0972
+    audited_at: '2026-07-26T01:20:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: b2c83b540027b3388e48873c68957dbfcab168559afe4042c990754846446ad1
+    audited_at: '2026-07-26T01:20:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: 687a328985a6e57a1b298b92f00ccdc46e68f4b74a4ffedbdb774dd8bd2cb8e7
+    audited_at: '2026-07-26T01:20:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: f577aeb04ccdf44a16dd729aaf886d783dbaed920abc2121d08656be9f71ae8b
+    audited_at: '2026-07-26T01:20:00Z'
+- id: snapshot-2026-07-26-task-15-closure-test-final
+  parent_snapshot_id: snapshot-2026-07-26-task-15-format-final
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: 355f6ca6ed4f388bdfdec6c2b8f1b6947b97b33e44c836d78dcb456e15f03c67
+    audited_at: '2026-07-26T01:30:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: a2f6a299a6be68b1506a1ac381f020971a0c29ef1ad82a5a390b39eadcc075a4
+    audited_at: '2026-07-26T01:30:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: c4719f2f5df8bef38f8da8abb37a6eca3d8d771cd0014c3bbe32e1eef8cddf13
+    audited_at: '2026-07-26T01:30:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 447f15939aa5afa13fa8450cf16dd1495972307109f37c73907d8e59a56d580f
+    audited_at: '2026-07-26T01:30:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: f9fb5bd352c9fea545354df9ba9c318323d5354992a2ea63dfe81b2d8e258427
+    audited_at: '2026-07-26T01:30:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: 2efbdba1fe8f2d41d2ae4b5bfbfa8fa923e564fe6061f0dac0f523adb7abeb50
+    audited_at: '2026-07-26T01:30:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: 68f7cf73933aa822bd64b36fa5b32e31a033b816b68a10517c890e9aaa1b91f9
+    audited_at: '2026-07-26T01:30:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 449ebab44736031f589661cd80955f808ea2a4d2371bce57cb41d61174006cec
+    audited_at: '2026-07-26T01:30:00Z'
