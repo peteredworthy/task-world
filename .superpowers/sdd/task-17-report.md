@@ -60,3 +60,15 @@ The Task 16 and Task 17 ledger entries are deferred to Task 18 final publication
 The shared ledger is hash-tracked by frozen Task 15 evidence, so Task 17 leaves it
 exactly at HEAD and does not modify any Task 15 artifact or snapshot. UI
 lint/typecheck and targeted Ruff/Pyright pass.
+
+## Important findings remediation
+
+- Feedback activated with Space or Enter now records history, rerenders, and restores
+  focus to the same newly rendered response control rather than leaving focus on the
+  document body. The new Playwright coverage uses real Tab and Space interaction and
+  verifies the response, persisted history, and active response control.
+- Copy ID now awaits the Clipboard API, falls back to a selected temporary textarea
+  with `document.execCommand('copy')` after unavailable or rejected clipboard access,
+  and announces a truthful clipboard, fallback, or failure result in the live region.
+  Keyboard-driven Playwright coverage verifies the exact ID and the functional method
+  outcome, reading clipboard contents when the browser exposes that capability.

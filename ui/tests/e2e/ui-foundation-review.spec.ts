@@ -77,6 +77,45 @@ test.describe('Phase 3 grounded review checkpoint', () => {
     expect((await textDownload).suggestedFilename()).toMatch(/phase-3-01-feedback\.txt$/);
   });
 
+  test('keeps keyboard focus on the chosen response after recording a keyboard decision', async ({ page }) => {
+    await openReview(page);
+
+    for (let index = 0; index < 10; index += 1) await page.keyboard.press('Tab');
+    const accept = page.locator('[data-review-item="Q-5"]').getByRole('button', { name: 'accept' });
+    await expect(accept).toBeFocused();
+    await page.keyboard.press('Space');
+
+    await expect(page.locator('[data-review-item="Q-5"]')).toHaveAttribute('data-response', 'accept');
+    await expect(page.locator('[data-review-item="Q-5"]').getByRole('button', { name: 'accept' })).toBeFocused();
+    await expect
+      .poll(() => page.evaluate(() => {
+        const key = Object.keys(localStorage).find((candidate) => candidate.includes('review-feedback.v1.phase-3-01'));
+        return key === undefined ? undefined : JSON.parse(localStorage.getItem(key) ?? '{}').history?.length;
+      }))
+      .toBe(1);
+  });
+
+  test('copies an item ID through a keyboard activation with an honest clipboard or fallback outcome', async ({ page }) => {
+    await openReview(page);
+
+    for (let index = 0; index < 9; index += 1) await page.keyboard.press('Tab');
+    const copy = page.locator('[data-review-item="Q-5"]').getByRole('button', { name: 'Copy Q-5' });
+    await expect(copy).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    const status = page.locator('[data-status]');
+    await expect(status).toContainText('Q-5');
+    const method = await status.getAttribute('data-copy-method');
+    expect(['clipboard', 'fallback', 'failed']).toContain(method);
+    if (method === 'clipboard') {
+      await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('Q-5');
+    } else if (method === 'fallback') {
+      await expect(status).toContainText('fallback');
+    } else {
+      await expect(status).toContainText('could not be copied');
+    }
+  });
+
   test('fails closed with a readable initialization error when generated review data is invalid', async ({ page }) => {
     await openReview(page);
     await page.evaluate(() => {
