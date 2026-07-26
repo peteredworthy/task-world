@@ -1,7 +1,7 @@
 metadata:
   schema_version: '2'
   scope_manifest_digest: sha256:abb735f9c5b1d08f2c80a46193dc466c76d24de65d1dfb9bfc87e301cbb552f6
-  active_snapshot_id: snapshot-2026-07-26-task-15-closure-test-final
+  active_snapshot_id: snapshot-2026-07-26-task-15-complete
   reviewers:
   - reviewer_id: sol-independent
     model: openai/gpt-5.6-sol

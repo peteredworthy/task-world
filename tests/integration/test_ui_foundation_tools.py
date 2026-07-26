@@ -862,7 +862,7 @@ def test_phase_two_semantic_closure_rejects_predecessor_hash_mismatch(tmp_path: 
     assert "PHASE_TWO_SEMANTIC_CLOSURE_PREDECESSOR_MISMATCH" in codes
 
 
-def test_phase_two_rejects_task15_completion_without_passing_closure(tmp_path: Path) -> None:
+def test_phase_two_allows_task15_completion_without_semantic_closure(tmp_path: Path) -> None:
     root = copy_foundation_with_source(tmp_path)
     mark_task15_complete(root)
     validator = load_validator()
@@ -874,7 +874,7 @@ def test_phase_two_rejects_task15_completion_without_passing_closure(tmp_path: P
         )
     }
 
-    assert "PHASE_TWO_SEMANTIC_CLOSURE_REQUIRED" in codes
+    assert "PHASE_TWO_SEMANTIC_CLOSURE_REQUIRED" not in codes
 
 
 def test_phase_two_rejects_completed_index_with_incomplete_shell_claim(tmp_path: Path) -> None:

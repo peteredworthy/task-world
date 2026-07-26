@@ -49,9 +49,9 @@ and patch-defer commands have qualifying evidence.
 ## Result
 
 Classification counts are **1 current, 0 derived, 25 proposed, 49 gap, and 57
-unknown**. This earlier checkpoint adjudicated SV-001 and SV-002 only. Task 15
-remains **IN PROGRESS**; the follow-on adjudication handoff records SV-003
-through SV-006 without modifying the immutable verifier report.
+unknown**. This earlier checkpoint adjudicated SV-001 and SV-002 only. The
+follow-on adjudication handoff records SV-003 through SV-006 without modifying
+the immutable verifier report.
 
 ## Current Task 15 closure checkpoint (2026-07-25)
 
@@ -60,16 +60,16 @@ closure checkpoint covers 210 status-evidence records (35 REL, 74 STA, 86 ACT, 9
 EVI, 6 INV), with 513 SER and 1,050 SDR rows (455 admitted, 50 bounded, 8
 rejected). It records 138 exact and 50 bounded test locators and a regenerated
 119-base/119-node collection manifest. The projected bounded post-Phase1 remediation
-snapshot is `snapshot-2026-07-26-task-15-closure-test-final`. Qualifying collected
+snapshot is `snapshot-2026-07-26-task-15-complete`. Qualifying collected
 test-coverage classifications, not test-execution results, are REL 13/22, STA 57/17,
 ACT 56/30, EVI 2/7, INV 6/0 exercised/unexercised; 62 actions retain Q-5.
 
 The fail-closed validator now requires clause-complete admitted test evidence,
 current documentation evidence or typed stale/undocumented boundaries, reciprocal
 unresolved CON authority for a documentation contradiction, status-matching
-capability authority, and typed epistemic proof. Task 15 remains **IN PROGRESS**
-until final independent review; this checkpoint does not alter Phase 1 or the
-immutable verifier report.
+capability authority, and typed epistemic proof. Task 15 is **COMPLETE** following
+material independent semantic review and a full passing verification gate; this
+closure does not alter Phase 1 or the immutable verifier report.
 
 ## Post-adjudication source refresh
 

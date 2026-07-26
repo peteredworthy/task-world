@@ -13,8 +13,8 @@ bounded canonical test-locator counts are 138 and 50; the regenerated collected
 manifest contains 119 bases and concrete nodes. Qualifying collected test-coverage
 classifications, not test-execution results, are REL 13/22, STA 57/17, ACT 56/30,
 EVI 2/7, and INV 6/0 exercised/unexercised. 62 actions retain the Q-5 boundary.
-The projected bounded post-Phase1 remediation snapshot is
-`snapshot-2026-07-26-task-15-closure-test-final`.
+The active bounded post-Phase1 remediation snapshot is
+`snapshot-2026-07-26-task-15-complete`.
 
 The validator now rejects duplicate or incomplete partial-clause compositions,
 bounded evidence promoted as exercise, question-only documentation contradictions,
@@ -36,7 +36,7 @@ The record-level audit is applied without family-wide downgrades. Its 113 unique
 
 ## Important uncertainties
 
-Task 15 remains pending independent re-review; unexercised boundaries remain conservative.
+Task 15 is complete; unexercised boundaries remain conservative.
 
 ## Conflicts found
 
@@ -44,7 +44,7 @@ Existing canonical documentation conflicts remain recorded on their affected rec
 
 ## Decisions required
 
-No new product decision is required; independent re-review is required before closure.
+No new product decision is required.
 
 ## Artifact paths
 
@@ -59,27 +59,26 @@ EVI 2/7, and INV 6/0 exercised/unexercised.
 
 ## Recommended next delegation
 
-Independently re-review canonical statuses and validator enforcement without editing the immutable verifier report.
+Proceed to Task 16 without editing the immutable verifier report.
 
 ## Action/evidence findings 2 and 3 remediation
 
-In progress: ACT-75/76/80/81/82 now use typed carrier-specific transition variants,
+Complete: ACT-75/76/80/81/82 now use typed carrier-specific transition variants,
 including exact accepted/rejected TaskStatus partitions and ACT-81's PAUSED run-carrier
 accepted no-op without task mutation. EVD-116 remains engine-only; REST and MCP
 escalation registration/handler/test evidence has distinct direct IDs. Snapshot
-`snapshot-2026-07-26-task-15-closure-test-final` will record the remediated source boundary;
-this handoff remains pending independent closure review.
+`snapshot-2026-07-26-task-15-complete` records the remediated source boundary.
 
 ## Status
 
-Task 15 remains **IN PROGRESS** pending independent re-review. Structural findings SV-001 through SV-008 are
-corrected in this pass; SV-008 canonical status locators were re-adjudicated against current source. The
+Task 15 is **COMPLETE** following material independent semantic review and a full
+passing verification gate. Structural findings SV-001 through SV-008 are corrected;
+SV-008 canonical status locators were re-adjudicated against current source. The
 immutable `research/ui-foundation/agent-reports/11-semantic-verification.md`
 was not modified.
 
-Snapshot-lineage follow-up remains in progress: `snapshot-2026-07-23-phase-0` is a detached historical root,
-the active adjudication chain must root at `snapshot-2026-07-24-phase-1`, and the only supported bounded delta
-recorder is `research/ui-foundation/tools/record_snapshot_lineage.py`.
+The active adjudication chain roots at `snapshot-2026-07-24-phase-1`; the only
+supported bounded delta recorder is `research/ui-foundation/tools/record_snapshot_lineage.py`.
 
 ## Accepted corrections
 
@@ -144,11 +143,11 @@ and the immutable verifier report were not changed.
 
 ## Verification handoff
 
-Phase 2 validation and focused foundation tests have passed for bounded mechanical unit 1. Ruff,
-Pyright, and hooks are part of its commit gate. The historical Task 15 status audit is
+Phase 1 and Phase 2 validation, Ruff format/check, Pyright, and focused closure tests
+pass as the full Task 15 gate. The historical Task 15 status audit is
 noncanonical reviewed evidence only and is not parsed by shipped tools or used
-as a regeneration input. Independent re-review must assess this application
-without changing the immutable verifier report.
+as a regeneration input. Material independent semantic review is recorded without
+changing the immutable verifier report.
 
 ## Bounded mechanical unit 2
 

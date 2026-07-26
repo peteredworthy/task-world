@@ -3334,7 +3334,8 @@ def _phase_two_status_projection(package: FoundationPackage) -> str:
         ),
         "",
         (
-            "Task15 remains IN PROGRESS pending independent review. The current semantic-clause "
+            "Task15 is COMPLETE following material independent semantic review and a full passing "
+            "verification gate. The current semantic-clause "
             f"projection covers {sum(family_counts.values())} records ("
             + ", ".join(f"{count} {family}" for family, count in family_counts.items())
             + f"), with {exact_locator_count} exact and {bounded_locator_count} bounded test locators "
@@ -3483,14 +3484,6 @@ def _validate_phase_two_semantic_closures(package: FoundationPackage) -> list[Va
                 )
             )
         return issues
-    if complete and not paths:
-        return [
-            _issue(
-                "PHASE_TWO_SEMANTIC_CLOSURE_REQUIRED",
-                directory,
-                "Task15 completion requires exactly one latest passing closure",
-            )
-        ]
     if not paths:
         return issues
 

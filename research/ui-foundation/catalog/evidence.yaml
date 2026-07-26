@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-26-task-15-closure-test-final
+active_snapshot_id: snapshot-2026-07-26-task-15-complete
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -17581,3 +17581,33 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: 449ebab44736031f589661cd80955f808ea2a4d2371bce57cb41d61174006cec
     audited_at: '2026-07-26T01:30:00Z'
+- id: snapshot-2026-07-26-task-15-complete
+  parent_snapshot_id: snapshot-2026-07-26-task-15-closure-test-final
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: 3f52fd025308b008322b770d859cb4f38584a4b093c6fc8a178ecad0d4487072
+    audited_at: '2026-07-26T02:00:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 1bc93386f9ea3ebecd8c744f0f1d5f9bdd3c7f4a6af869d41faf53e39422f536
+    audited_at: '2026-07-26T02:00:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 7e6f41253fcc40db40782dec9c6c65b66b4d1a2df213889a133a10c071102fee
+    audited_at: '2026-07-26T02:00:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: c653fa3575ef73f3ecabeeb501f187d53b747705f050e6fdf41e15fec1c5cd5d
+    audited_at: '2026-07-26T02:00:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: 82d0bdc0a2487b942cc9f9744f1ca8b04c8a52dcb79a698ae813f56d8f4df0a2
+    audited_at: '2026-07-26T02:00:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: 4df151c92ab3718f75033c3b6e007a9db7341d7eae1653cf381880f8af0e5453
+    audited_at: '2026-07-26T02:00:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: e8dbf9412980a2cda903d3e06c0f2a865eabfd9cab7b5a0a08ba107549fd323e
+    audited_at: '2026-07-26T02:00:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 908825b1148c3f8c70ec015bee456ec70ef83a051a87a6502034da367e3962a3
+    audited_at: '2026-07-26T02:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: eec1d9765a429a03dfe370949f3a68d094a1b4b9a77c3bec7d8804086c77ce53
+    audited_at: '2026-07-26T02:00:00Z'
