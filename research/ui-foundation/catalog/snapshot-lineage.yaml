@@ -214,5 +214,11 @@ entries:
   parent_snapshot_id: snapshot-2026-07-26-task-15-closure-test-final
   snapshot_digest: 8bdfc590d00398441167575f64d9afb5e525432b7c3353c04a6c3772d008cd39
   predecessor_lineage_digest: 910f932ec0f12952593dbff62550674cf9df3d8181423961fdaf540dbdcab3ee
+  status: historical
+  lineage_entry_digest: 5049c4a19d0b281ffbed12ac223f8a3212e658029a4841a5245ca3ea8749bb1f
+- snapshot_id: snapshot-2026-07-26-task-18-phase-3-final
+  parent_snapshot_id: snapshot-2026-07-26-task-15-complete
+  snapshot_digest: 9afbc84bc7312689fe528ca701183c67b332ecb4525edcdf1f2107a0f6ea7a07
+  predecessor_lineage_digest: 5049c4a19d0b281ffbed12ac223f8a3212e658029a4841a5245ca3ea8749bb1f
   status: active
-  lineage_entry_digest: b5cab26b279afac73a9ff81c4c2892120747471913f365c61557fa72c13572aa
+  lineage_entry_digest: 0342d0022d31afdbda3d7865679817d07c766ef0cd1a49292c6593db05fb7d64

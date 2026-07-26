@@ -86,6 +86,7 @@ def write_review_foundation(
         root / "catalog/review-priorities.yaml",
         {"schema_version": "1", "methodology": "Test methodology.", "items": priority_items},
     )
+    write_yaml(root / "catalog/claims.yaml", {"schema_version": "1", "items": []})
     write_yaml(root / "catalog/conflicts.yaml", {"schema_version": "1", "items": []})
     write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": []})
     schemas = root / "schemas"
@@ -458,6 +459,52 @@ def test_build_review_rejects_unresolved_conflict_evidence_without_a_catalog_rec
 
     with pytest.raises(ValueError, match="^REVIEW_EVIDENCE_MISSING:EVD-404$"):
         load_tool("build_review").build_review(root)
+
+
+def test_build_review_projects_linked_claim_evidence_when_question_has_no_conflict(
+    tmp_path: Path,
+) -> None:
+    root = write_review_foundation(
+        tmp_path,
+        [
+            {
+                "id": "Q-01",
+                "blocking": True,
+                "status": "open",
+                "affected_ids": ["ENT-5"],
+                "downstream_dependency_count": 1,
+                "authority_risk": 1,
+                "capability_impact": 1,
+            }
+        ],
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "active_snapshot_id": "snapshot-test",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "EVD-1",
+                    "source_label": "claim source",
+                    "path": "source.py",
+                    "symbol": "source",
+                }
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/claims.yaml",
+        {
+            "schema_version": "1",
+            "items": [{"id": "CAP-1", "question_ids": ["Q-01"], "evidence_ids": ["EVD-1"]}],
+        },
+    )
+
+    path = load_tool("build_review").build_review(root)[0]
+
+    assert "EVD-1" in path.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("status", ["invented", None])

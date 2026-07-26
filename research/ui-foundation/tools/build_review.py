@@ -176,6 +176,7 @@ def _validate_review_catalog_vocabulary(
 def _review_data(root: Path, batch: list[ReviewItem], snapshot: str, number: int) -> dict[str, Any]:
     questions = _catalog_records(root, "catalog/questions.yaml", "ITEM")
     priorities = _review_priorities(root)
+    claims = _catalog_records(root, "catalog/claims.yaml", "CLAIM")
     conflicts = _catalog_records(root, "catalog/conflicts.yaml", "CONFLICT")
     capabilities = _catalog_records(root, "capabilities/registry.yaml", "CAPABILITY")
     evidence = _catalog_records(root, "catalog/evidence.yaml", "EVIDENCE")
@@ -227,6 +228,20 @@ def _review_data(root: Path, batch: list[ReviewItem], snapshot: str, number: int
                 if evidence_record is None:
                     raise ValueError(f"REVIEW_EVIDENCE_MISSING:{evidence_id}")
                 evidence_details.append(_evidence_detail(evidence_record, evidence_id))
+        if not evidence_details:
+            for claim_id, claim in claims.items():
+                question_ids = _string_list(
+                    claim.get("question_ids"), f"REVIEW_CLAIM_QUESTION_IDS_INVALID:{claim_id}"
+                )
+                if item.id not in question_ids:
+                    continue
+                for evidence_id in _string_list(
+                    claim.get("evidence_ids"), f"REVIEW_CLAIM_EVIDENCE_INVALID:{claim_id}"
+                ):
+                    evidence_record = evidence.get(evidence_id)
+                    if evidence_record is None:
+                        raise ValueError(f"REVIEW_EVIDENCE_MISSING:{evidence_id}")
+                    evidence_details.append(_evidence_detail(evidence_record, evidence_id))
         capability_details: list[str] = []
         capability_statuses: list[str] = []
         capability_confidences: list[str] = []

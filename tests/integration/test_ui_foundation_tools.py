@@ -3943,6 +3943,33 @@ def test_phase_three_rejects_review_batch_without_items(tmp_path: Path) -> None:
     assert "REVIEW_ITEMS_MISSING" in issue_codes(result)
 
 
+def test_phase_three_accepts_generated_review_data_with_canonical_evidence(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    root.joinpath("catalog/evidence.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": "1",
+                "snapshot": {"id": "snapshot-1", "files": []},
+                "items": [{"id": "EVD-1"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    batch = root / "reviews/phase-3-reality-capability-01.html"
+    batch.write_text(
+        '<script type="application/json" data-review-data>'
+        '{"items":[{"id":"CAP-1","evidence_paths":["EVD-1 — source"]}]}'
+        "</script>",
+        encoding="utf-8",
+    )
+
+    result = run_validator(root, phase=3)
+
+    assert "REVIEW_ITEMS_MISSING" not in issue_codes(result)
+    assert "REVIEW_EVIDENCE_MISSING" not in issue_codes(result)
+    assert {"REVIEW_REFERENCE_UNRESOLVED", "REVIEW_EVIDENCE_UNRESOLVED"} <= set(issue_codes(result))
+
+
 def test_report_headings_must_match_exactly(tmp_path: Path) -> None:
     report = tmp_path / "report.md"
     report.write_text("## Purposeful\n", encoding="utf-8")

@@ -4,6 +4,7 @@ import argparse
 import ast
 from dataclasses import dataclass
 import hashlib
+from html import unescape
 from html.parser import HTMLParser
 import json
 from pathlib import Path
@@ -6417,15 +6418,49 @@ class ReviewItemParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.items: list[tuple[str, tuple[str, ...]]] = []
+        self._review_data_parts: list[str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = dict(attrs)
+        if tag == "script" and "data-review-data" in attributes:
+            self._review_data_parts = []
         identifier = attributes.get("data-item-id")
         if identifier is None:
             return
         evidence = attributes.get("data-evidence-ids")
         evidence_ids = tuple(evidence.split()) if evidence else ()
         self.items.append((identifier, evidence_ids))
+
+    def handle_data(self, data: str) -> None:
+        if self._review_data_parts is not None:
+            self._review_data_parts.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "script" or self._review_data_parts is None:
+            return
+        try:
+            review_data = json.loads(unescape("".join(self._review_data_parts)))
+            raw_items = review_data.get("items") if isinstance(review_data, dict) else None
+            if not isinstance(raw_items, list):
+                return
+            for raw_item in raw_items:
+                if not isinstance(raw_item, dict):
+                    continue
+                identifier = raw_item.get("id")
+                evidence_paths = raw_item.get("evidence_paths")
+                if not isinstance(identifier, str) or not isinstance(evidence_paths, list):
+                    continue
+                evidence_ids = tuple(
+                    evidence_id
+                    for path in evidence_paths
+                    if isinstance(path, str)
+                    for evidence_id in re.findall(r"\bEVD-\d+\b", path)
+                )
+                self.items.append((identifier, evidence_ids))
+        except json.JSONDecodeError:
+            pass
+        finally:
+            self._review_data_parts = None
 
 
 def validate_review_references(package: FoundationPackage, phase: int) -> list[ValidationIssue]:

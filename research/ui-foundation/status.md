@@ -2,7 +2,7 @@
 
 Phase 2 is complete with 132 one-to-one scope-demand classifications and 132 projected claims.
 
-Task15 is COMPLETE following material independent semantic review and a full passing verification gate. The current semantic-clause projection covers 210 records (35 REL, 74 STA, 86 ACT, 9 EVI, 6 INV), with 138 exact and 50 bounded test locators in a 119-base/119-concrete-node collected manifest under `snapshot-2026-07-26-task-15-complete`. Test distributions are REL 13/22, STA 57/17, ACT 56/30, EVI 2/7, and INV 6/0 exercised/unexercised; 62 actions retain Q-5.
+Task15 is COMPLETE following material independent semantic review and a full passing verification gate. The current semantic-clause projection covers 210 records (35 REL, 74 STA, 86 ACT, 9 EVI, 6 INV), with 138 exact and 50 bounded test locators in a 119-base/119-concrete-node collected manifest under `snapshot-2026-07-26-task-18-phase-3-final`. Test distributions are REL 13/22, STA 57/17, ACT 56/30, EVI 2/7, and INV 6/0 exercised/unexercised; 62 actions retain Q-5.
 
 - **current (1)**: `CAP-69`
 - **derived (0)**: none
