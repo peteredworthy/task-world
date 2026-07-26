@@ -34,7 +34,8 @@ test.describe('Phase 3 grounded review checkpoint', () => {
     const disclosure = page.locator('details').first();
     await expect(disclosure).toBeVisible();
     await disclosure.locator('summary').click();
-    await expect(disclosure).toContainText('catalog/questions.yaml');
+    await expect(disclosure).toContainText('EVD-63');
+    await expect(disclosure).toContainText('research/ui-foundation/agent-reports/04-api-actions-authority.md#key-findings');
     expect(externalRequests).toEqual([]);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
@@ -106,13 +107,12 @@ test.describe('Phase 3 grounded review checkpoint', () => {
     const status = page.locator('[data-status]');
     await expect(status).toContainText('Q-5');
     const method = await status.getAttribute('data-copy-method');
-    expect(['clipboard', 'fallback', 'failed']).toContain(method);
+    expect(['clipboard', 'fallback']).toContain(method);
+    await expect(status).toHaveAttribute('data-copy-value', 'Q-5');
     if (method === 'clipboard') {
       await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('Q-5');
-    } else if (method === 'fallback') {
-      await expect(status).toContainText('fallback');
     } else {
-      await expect(status).toContainText('could not be copied');
+      await expect(status).toContainText('fallback');
     }
   });
 

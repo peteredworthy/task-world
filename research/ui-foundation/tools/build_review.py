@@ -121,31 +121,122 @@ def select_review_items(root: Path) -> list[list[ReviewItem]]:
     return [selected[index : index + BATCH_SIZE] for index in range(0, len(selected), BATCH_SIZE)]
 
 
+def _catalog_records(root: Path, relative: str, code: str) -> dict[str, dict[str, Any]]:
+    raw_items = _load_yaml(root / relative).get("items")
+    if not isinstance(raw_items, list):
+        raise ValueError(f"REVIEW_{code}_INVALID")
+    records: dict[str, dict[str, Any]] = {}
+    for raw_item in cast(list[Any], raw_items):
+        if not isinstance(raw_item, dict):
+            raise ValueError(f"REVIEW_{code}_INVALID")
+        item = cast(dict[str, Any], raw_item)
+        identifier = item.get("id")
+        if not isinstance(identifier, str) or not identifier:
+            raise ValueError(f"REVIEW_{code}_INVALID")
+        if identifier in records:
+            raise ValueError(f"REVIEW_{code}_DUPLICATE:{identifier}")
+        records[identifier] = item
+    return records
+
+
+def _string_list(value: object, code: str) -> list[str]:
+    if not isinstance(value, list):
+        raise ValueError(code)
+    values = cast(list[Any], value)
+    if not all(isinstance(item, str) and item for item in values):
+        raise ValueError(code)
+    return [cast(str, item) for item in values]
+
+
+def _evidence_detail(evidence: dict[str, Any], identifier: str) -> str:
+    label = evidence.get("source_label")
+    path = evidence.get("path")
+    symbol = evidence.get("symbol")
+    if not all(isinstance(value, str) and value for value in (label, path, symbol)):
+        raise ValueError(f"REVIEW_EVIDENCE_INVALID:{identifier}")
+    return f"{identifier} — {label} — {path} — {symbol}"
+
+
 def _review_data(root: Path, batch: list[ReviewItem], snapshot: str, number: int) -> dict[str, Any]:
-    raw_questions = _load_yaml(root / "catalog/questions.yaml").get("items")
+    questions = _catalog_records(root, "catalog/questions.yaml", "ITEM")
     priorities = _review_priorities(root)
-    if not isinstance(raw_questions, list):
-        raise ValueError("REVIEW_ITEMS_INVALID")
-    by_id: dict[str, dict[str, Any]] = {}
-    for raw_question in cast(list[Any], raw_questions):
-        if not isinstance(raw_question, dict):
-            continue
-        question = cast(dict[str, Any], raw_question)
-        identifier = question.get("id")
-        if isinstance(identifier, str):
-            by_id[identifier] = question
+    conflicts = _catalog_records(root, "catalog/conflicts.yaml", "CONFLICT")
+    capabilities = _catalog_records(root, "capabilities/registry.yaml", "CAPABILITY")
+    evidence = _catalog_records(root, "catalog/evidence.yaml", "EVIDENCE")
     items: list[dict[str, Any]] = []
     for item in batch:
-        question = by_id.get(item.id)
+        question = questions.get(item.id)
         if question is None:
             raise ValueError(f"REVIEW_ITEM_MISSING:{item.id}")
         priority = priorities[item.id]
-        raw_affected = question.get("affected_ids", [])
-        affected = (
-            [value for value in cast(list[Any], raw_affected) if isinstance(value, str)]
-            if isinstance(raw_affected, list)
-            else []
+        affected = _string_list(
+            question.get("affected_ids"), f"REVIEW_AFFECTED_IDS_INVALID:{item.id}"
         )
+        related_conflicts = [
+            conflict
+            for conflict in conflicts.values()
+            if conflict.get("status") == "unresolved"
+            and set(affected).intersection(
+                _string_list(
+                    conflict.get("affected_ids"),
+                    f"REVIEW_CONFLICT_AFFECTED_IDS_INVALID:{conflict['id']}",
+                )
+            )
+        ]
+        evidence_details: list[str] = []
+        conflict_titles: list[str] = []
+        competing_claims: list[str] = []
+        for conflict in related_conflicts:
+            conflict_id = cast(str, conflict["id"])
+            title = conflict.get("title")
+            if not isinstance(title, str) or not title:
+                raise ValueError(f"REVIEW_CONFLICT_INVALID:{conflict_id}")
+            conflict_titles.append(title)
+            raw_claims = conflict.get("claims")
+            if not isinstance(raw_claims, list):
+                raise ValueError(f"REVIEW_CONFLICT_CLAIMS_INVALID:{conflict_id}")
+            for raw_claim in cast(list[Any], raw_claims):
+                if not isinstance(raw_claim, dict):
+                    raise ValueError(f"REVIEW_CONFLICT_CLAIMS_INVALID:{conflict_id}")
+                proposition = cast(dict[str, Any], raw_claim).get("proposition")
+                if not isinstance(proposition, str) or not proposition:
+                    raise ValueError(f"REVIEW_CONFLICT_CLAIMS_INVALID:{conflict_id}")
+                competing_claims.append(proposition)
+            for evidence_id in _string_list(
+                conflict.get("decisive_evidence_ids"),
+                f"REVIEW_CONFLICT_EVIDENCE_INVALID:{conflict_id}",
+            ):
+                evidence_record = evidence.get(evidence_id)
+                if evidence_record is None:
+                    raise ValueError(f"REVIEW_EVIDENCE_MISSING:{evidence_id}")
+                evidence_details.append(_evidence_detail(evidence_record, evidence_id))
+        capability_details: list[str] = []
+        capability_statuses: list[str] = []
+        capability_confidences: list[str] = []
+        for capability_id in (
+            identifier for identifier in affected if identifier.startswith("CAP-")
+        ):
+            capability = capabilities.get(capability_id)
+            if capability is None:
+                raise ValueError(f"REVIEW_CAPABILITY_MISSING:{capability_id}")
+            title = capability.get("title")
+            status = capability.get("capability_status")
+            definition = capability.get("definition")
+            confidence = capability.get("confidence")
+            if (
+                not isinstance(title, str)
+                or not title
+                or not isinstance(status, str)
+                or not status
+                or not isinstance(definition, str)
+                or not definition
+                or not isinstance(confidence, str)
+                or not confidence
+            ):
+                raise ValueError(f"REVIEW_CAPABILITY_INVALID:{capability_id}")
+            capability_details.append(f"{capability_id} {title} — {status}: {definition}")
+            capability_statuses.append(status)
+            capability_confidences.append(confidence)
         items.append(
             {
                 "id": item.id,
@@ -155,20 +246,28 @@ def _review_data(root: Path, batch: list[ReviewItem], snapshot: str, number: int
                 "interpretation": question.get(
                     "settlement_method", "No settlement method recorded."
                 ),
-                "support": f"Priority evidence: {priority.basis}",
-                "uncertainty": "This remains open; acceptance does not convert it into observed implementation evidence.",
-                "consequence": f"Affects: {', '.join(affected) if affected else 'recorded canonical contracts'}.",
-                "evidence_paths": [
-                    "catalog/questions.yaml",
-                    "catalog/review-priorities.yaml",
-                    "catalog/evidence.yaml",
-                ],
+                "support": "; ".join(evidence_details) if evidence_details else priority.basis,
+                "uncertainty": (
+                    f"{' ; '.join(conflict_titles)} — competing claims: {' ; '.join(competing_claims)}"
+                    if competing_claims
+                    else "No unresolved canonical conflict intersects this question's affected IDs."
+                ),
+                "consequence": f"Affects: {', '.join(affected)}.",
+                "evidence_paths": evidence_details,
                 "technical_details": (
                     f"Ranked with dependency count {item.downstream_dependency_count}, "
-                    f"authority risk {item.authority_risk}, and capability impact {item.capability_impact}."
+                    f"authority risk {item.authority_risk}, and capability impact {item.capability_impact}. "
+                    f"Canonical capability impact: {'; '.join(capability_details) if capability_details else 'none'}."
                 ),
-                "capability_status": "unknown",
-                "confidence": "review required",
+                "capability_status": ", ".join(sorted(set(capability_statuses)))
+                if capability_statuses
+                else "not applicable",
+                "confidence": ", ".join(sorted(set(capability_confidences)))
+                if capability_confidences
+                else "not applicable",
+                "capability_impact": "; ".join(capability_details)
+                if capability_details
+                else "No affected canonical capability IDs.",
             }
         )
     return {
@@ -206,7 +305,7 @@ def _render_batch(data: dict[str, Any]) -> str:
  const render=()=>{{const filter=document.querySelector('[data-filter][aria-pressed="true"]').dataset.filter; ledger.innerHTML=data.items.map(item=>{{const response=state.latest[item.id] || ''; const visible=filter==='all'||(filter==='unresolved'?!response:response===filter); return `<article data-review-item="${{esc(item.id)}}" data-response="${{esc(response)}}"${{visible?'':' hidden'}}><div class="item-head"><h2>${{esc(item.id)}} · ${{esc(item.title)}}</h2><button type="button" aria-label="Copy ${{esc(item.id)}}" data-copy="${{esc(item.id)}}">copy ID</button></div><p><span class="tag">${{item.blocking?'blocking':'non-blocking'}}</span> <span class="tag">capability: ${{esc(item.capability_status)}}</span> <span class="tag">confidence: ${{esc(item.confidence)}}</span></p><dl><dt>Why this matters</dt><dd>${{esc(item.importance)}}</dd><dt>Proposed interpretation</dt><dd>${{esc(item.interpretation)}}</dd><dt>What supports it</dt><dd>${{esc(item.support)}}</dd><dt>What remains uncertain</dt><dd>${{esc(item.uncertainty)}}</dd><dt>Consequence of accepting</dt><dd>${{esc(item.consequence)}}</dd><dt>Options</dt><dd>Accept the proposed settlement, reject it, request a revision, or retain explicit uncertainty.</dd></dl><div class="response-row" aria-label="Feedback for ${{esc(item.id)}}">${{['accept','reject','revise','uncertain'].map(choice=>`<button type="button" data-response-choice="${{choice}}" data-item="${{esc(item.id)}}" aria-pressed="${{String(response===choice)}}">${{choice}}</button>`).join('')}}</div><label>Note for ${{esc(item.id)}}<textarea aria-label="Note for ${{esc(item.id)}}" data-note="${{esc(item.id)}}">${{esc(state.notes[item.id]||'')}}</textarea></label><details><summary>Evidence paths and technical details</summary><p><strong>Paths:</strong> ${{item.evidence_paths.map(esc).join(', ')}}</p><p>${{esc(item.technical_details)}}</p></details></article>`;}}).join('');}};
  const record=(id,response)=>{{const note=state.notes[id]||''; const event={{item_id:id,response,note,recorded_at:new Date().toISOString()}}; state.history.push(event); state.latest[id]=response; save(); delete status.dataset.copyMethod; status.textContent=`${{id}} marked ${{responseLabel(response)}} locally.`; render(); queueMicrotask(()=>ledger.querySelector(`[data-item="${{id}}"][data-response-choice="${{response}}"]`)?.focus());}};
  const fallbackCopy=(value)=>{{const control=document.createElement('textarea'); control.value=value; control.setAttribute('aria-hidden','true'); control.style.cssText='position:fixed;opacity:0'; document.body.append(control); control.select(); const copied=document.execCommand('copy'); control.remove(); return copied;}};
- const copyId=async(id)=>{{try{{if(!navigator.clipboard?.writeText)throw Error('Clipboard API unavailable.'); await navigator.clipboard.writeText(id); status.dataset.copyMethod='clipboard'; status.textContent=`${{id}} copied to clipboard.`;}}catch(_error){{if(fallbackCopy(id)){{status.dataset.copyMethod='fallback'; status.textContent=`${{id}} copied using fallback.`;}}else{{status.dataset.copyMethod='failed'; status.textContent=`${{id}} could not be copied. Select the ID and copy it manually.`;}}}}}};
+ const copyId=async(id)=>{{try{{if(!navigator.clipboard?.writeText)throw Error('Clipboard API unavailable.'); await navigator.clipboard.writeText(id); status.dataset.copyMethod='clipboard'; status.dataset.copyValue=id; status.textContent=`${{id}} copied to clipboard.`;}}catch(_error){{if(fallbackCopy(id)){{status.dataset.copyMethod='fallback'; status.dataset.copyValue=id; status.textContent=`${{id}} copied using fallback.`;}}else{{delete status.dataset.copyMethod; delete status.dataset.copyValue; status.textContent=`${{id}} could not be copied. Select the ID and copy it manually.`;}}}}}};
  const exportFeedback=(kind)=>{{const payload={{schema_version:data.schema_version,review_version:data.review_version,batch_id:data.batch_id,source_snapshot:data.source_snapshot,exported_at:new Date().toISOString(),response_history:state.history}}; const text=kind==='json'?JSON.stringify(payload,null,2):state.history.map(event=>`${{event.item_id}} | ${{event.response}} | ${{event.note}}`).join('\\n'); const blob=new Blob([text],{{type:kind==='json'?'application/json':'text/plain'}}); const link=document.createElement('a'); link.href=URL.createObjectURL(blob); link.download=`phase-3-${{data.batch_id}}-feedback.${{kind==='json'?'json':'txt'}}`; link.click(); setTimeout(()=>URL.revokeObjectURL(link.href),0);}};
  window.foundationReview={{initialize}};
  function initialize() {{ try {{ data=JSON.parse(document.querySelector('[data-review-data]').textContent); if(!data || data.schema_version!=='1'||!Array.isArray(data.items)||!data.batch_id) throw Error('Required schema fields are missing.'); const key=`${{keyPrefix}}${{data.schema_version}}.${{data.review_version}}.${{data.batch_id}}`; state={{key, ...load(key)}}; ledger=document.querySelector('[data-ledger]'); status=document.querySelector('[data-status]'); render(); document.addEventListener('click', event=>{{const target=event.target.closest('button'); if(!target)return; if(target.dataset.responseChoice) record(target.dataset.item,target.dataset.responseChoice); if(target.dataset.filter){{document.querySelectorAll('[data-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button===target)));render();}} if(target.dataset.copy) copyId(target.dataset.copy); if(target.dataset.export) exportFeedback(target.dataset.export);}}); document.addEventListener('input', event=>{{const target=event.target; if(target.matches('[data-note]')){{state.notes[target.dataset.note]=target.value;save();}}}}); }} catch(error) {{ fail(error instanceof Error ? error.message : 'Unknown initialization error.'); }} }} initialize();

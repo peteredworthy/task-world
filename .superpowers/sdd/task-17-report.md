@@ -72,3 +72,19 @@ lint/typecheck and targeted Ruff/Pyright pass.
   and announces a truthful clipboard, fallback, or failure result in the live region.
   Keyboard-driven Playwright coverage verifies the exact ID and the functional method
   outcome, reading clipboard contents when the browser exposes that capability.
+
+## Re-review findings remediation
+
+- The file-origin Copy ID test now requires `clipboard` or a successful `fallback`
+  method, records the exact copied ID in `data-copy-value`, and rejects the prior
+  `failed` outcome. Clipboard-capable runs also read back the exact value.
+- Review generation now joins unresolved canonical conflicts to selected questions by
+  affected-ID intersection, resolves their decisive evidence to canonical labels,
+  paths, and symbols, and projects affected `CAP-*` records with their actual title,
+  status, definition, and confidence. Missing or malformed referenced catalog records
+  fail closed. The focused generator tests prove conflict/evidence/capability edits
+  alter the generated output and reject unresolved evidence IDs.
+
+Current verification: the exact Playwright command reports **5 passed** and focused
+Task 16 review-tool tests report **15 passed**. The final commit checks below record
+the current Phase 2 validator, UI lint/typecheck, Ruff, and Pyright results.

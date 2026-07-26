@@ -55,8 +55,9 @@ def write_review_foundation(
             "items": [],
         },
     )
-    questions = [
-        {
+    questions = []
+    for item in items:
+        question = {
             key: value
             for key, value in item.items()
             if key
@@ -66,8 +67,8 @@ def write_review_foundation(
                 "capability_impact",
             }
         }
-        for item in items
-    ]
+        question.setdefault("affected_ids", [])
+        questions.append(question)
     priority_items = priorities
     if priority_items is None:
         priority_items = [
@@ -85,6 +86,7 @@ def write_review_foundation(
         root / "catalog/review-priorities.yaml",
         {"schema_version": "1", "methodology": "Test methodology.", "items": priority_items},
     )
+    write_yaml(root / "catalog/conflicts.yaml", {"schema_version": "1", "items": []})
     write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": []})
     schemas = root / "schemas"
     schemas.mkdir(exist_ok=True)
@@ -327,6 +329,135 @@ def test_build_review_writes_one_static_projection_per_selected_batch(tmp_path: 
     ]
     assert all(path.is_file() for path in paths)
     assert "snapshot-test" in paths[0].read_text(encoding="utf-8")
+
+
+def test_build_review_projects_canonical_conflict_evidence_and_capability(tmp_path: Path) -> None:
+    root = write_review_foundation(
+        tmp_path,
+        [
+            {
+                "id": "Q-01",
+                "title": "Resolve canonical identity",
+                "blocking": True,
+                "status": "open",
+                "affected_ids": ["ENT-5", "CAP-1"],
+                "settlement_method": "Adopt one identity.",
+                "downstream_dependency_count": 1,
+                "authority_risk": 1,
+                "capability_impact": 1,
+            }
+        ],
+    )
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["items"] = [
+        {
+            "id": "EVD-1",
+            "source_label": "Attempt persistence audit",
+            "path": "agent-reports/01-domain-persistence.md#identity",
+            "symbol": "Attempt.id",
+        }
+    ]
+    write_yaml(evidence_path, evidence)
+    write_yaml(
+        root / "catalog/conflicts.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "id": "CON-1",
+                    "title": "Attempt identities disagree",
+                    "status": "unresolved",
+                    "affected_ids": ["ENT-5"],
+                    "claims": [
+                        {"proposition": "Use persisted id."},
+                        {"proposition": "Use public attempt id."},
+                    ],
+                    "decisive_evidence_ids": ["EVD-1"],
+                }
+            ],
+        },
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "id": "CAP-1",
+                    "title": "Attempt identity",
+                    "capability_status": "gap",
+                    "definition": "No canonical identity conversion exists.",
+                    "confidence": "medium",
+                }
+            ],
+        },
+    )
+
+    content = load_tool("build_review").build_review(root)[0].read_text(encoding="utf-8")
+
+    assert "Attempt identities disagree" in content
+    assert "Use persisted id." in content
+    assert "Attempt persistence audit" in content
+    assert "agent-reports/01-domain-persistence.md#identity" in content
+    assert "Attempt.id" in content
+    assert "Attempt identity" in content
+    assert '"capability_status": "gap"' in content
+    assert "No canonical identity conversion exists." in content
+
+    conflicts = yaml.safe_load((root / "catalog/conflicts.yaml").read_text(encoding="utf-8"))
+    conflicts["items"][0]["title"] = "Revised attempt identity conflict"
+    write_yaml(root / "catalog/conflicts.yaml", conflicts)
+    evidence["items"][0]["source_label"] = "Revised persistence audit"
+    write_yaml(evidence_path, evidence)
+    capabilities = yaml.safe_load((root / "capabilities/registry.yaml").read_text(encoding="utf-8"))
+    capabilities["items"][0]["title"] = "Revised attempt identity"
+    write_yaml(root / "capabilities/registry.yaml", capabilities)
+
+    changed_content = load_tool("build_review").build_review(root)[0].read_text(encoding="utf-8")
+
+    assert "Revised attempt identity conflict" in changed_content
+    assert "Revised persistence audit" in changed_content
+    assert "Revised attempt identity" in changed_content
+    assert "Attempt identities disagree" not in changed_content
+
+
+def test_build_review_rejects_unresolved_conflict_evidence_without_a_catalog_record(
+    tmp_path: Path,
+) -> None:
+    root = write_review_foundation(
+        tmp_path,
+        [
+            {
+                "id": "Q-01",
+                "blocking": True,
+                "status": "open",
+                "affected_ids": ["ENT-5"],
+                "downstream_dependency_count": 1,
+                "authority_risk": 1,
+                "capability_impact": 1,
+            }
+        ],
+    )
+    write_yaml(
+        root / "catalog/conflicts.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "id": "CON-1",
+                    "title": "Attempt identities disagree",
+                    "status": "unresolved",
+                    "affected_ids": ["ENT-5"],
+                    "claims": [{"proposition": "Use persisted id."}],
+                    "decisive_evidence_ids": ["EVD-404"],
+                }
+            ],
+        },
+    )
+
+    with pytest.raises(ValueError, match="^REVIEW_EVIDENCE_MISSING:EVD-404$"):
+        load_tool("build_review").build_review(root)
 
 
 def test_build_review_removes_only_obsolete_managed_batches(tmp_path: Path) -> None:
