@@ -43,14 +43,14 @@ the minimal generator and artifact implementation.
 - [x] Existing Task 16 reconciliation coverage now asserts named Phase 3 batches,
   obsolete batch removal, and generated index links.
 
-## Verification
+## Historical initial verification
 
 ```text
 npm --prefix ui run test:e2e -- tests/e2e/ui-foundation-review.spec.ts
-3 passed
+3 passed (superseded by the current verification below)
 
 uv run pytest tests/integration/test_ui_foundation_review_tools.py -v
-13 passed
+13 passed (superseded by the current verification below)
 
 uv run python research/ui-foundation/tools/validate.py
 Deferred until the final post-publication ledger update.
@@ -85,6 +85,24 @@ lint/typecheck and targeted Ruff/Pyright pass.
   fail closed. The focused generator tests prove conflict/evidence/capability edits
   alter the generated output and reject unresolved evidence IDs.
 
-Current verification: the exact Playwright command reports **5 passed** and focused
-Task 16 review-tool tests report **15 passed**. The final commit checks below record
-the current Phase 2 validator, UI lint/typecheck, Ruff, and Pyright results.
+## Current verification
+
+```text
+npm --prefix ui run test:e2e -- tests/e2e/ui-foundation-review.spec.ts
+5 passed
+
+uv run pytest tests/integration/test_ui_foundation_review_tools.py -v
+21 passed
+
+uv run python research/ui-foundation/tools/validate.py --phase 2
+exit 0
+
+npm --prefix ui run lint && npm --prefix ui run typecheck
+exit 0
+
+uv run ruff check research/ui-foundation/tools/build_review.py tests/integration/test_ui_foundation_review_tools.py
+All checks passed!
+
+uv run pyright research/ui-foundation/tools/build_review.py tests/integration/test_ui_foundation_review_tools.py
+0 errors, 0 warnings, 0 informations
+```

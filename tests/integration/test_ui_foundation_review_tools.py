@@ -460,6 +460,88 @@ def test_build_review_rejects_unresolved_conflict_evidence_without_a_catalog_rec
         load_tool("build_review").build_review(root)
 
 
+@pytest.mark.parametrize("status", ["invented", None])
+def test_build_review_rejects_invalid_or_missing_conflict_status(
+    tmp_path: Path, status: str | None
+) -> None:
+    root = write_review_foundation(
+        tmp_path,
+        [
+            {
+                "id": "Q-01",
+                "blocking": True,
+                "status": "open",
+                "affected_ids": ["ENT-5"],
+                "downstream_dependency_count": 1,
+                "authority_risk": 1,
+                "capability_impact": 1,
+            }
+        ],
+    )
+    conflict = {
+        "id": "CON-1",
+        "title": "Invalid conflict status",
+        "affected_ids": ["ENT-5"],
+        "claims": [{"proposition": "A claim."}],
+        "decisive_evidence_ids": [],
+    }
+    if status is not None:
+        conflict["status"] = status
+    write_yaml(
+        root / "catalog/conflicts.yaml",
+        {
+            "schema_version": "1",
+            "items": [conflict],
+        },
+    )
+
+    with pytest.raises(ValueError, match="^REVIEW_CONFLICT_STATUS_INVALID:CON-1$"):
+        load_tool("build_review").build_review(root)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("capability_status", "invented", "REVIEW_CAPABILITY_STATUS_INVALID:CAP-1"),
+        ("capability_status", None, "REVIEW_CAPABILITY_STATUS_INVALID:CAP-1"),
+        ("confidence", "certain", "REVIEW_CAPABILITY_CONFIDENCE_INVALID:CAP-1"),
+        ("confidence", None, "REVIEW_CAPABILITY_CONFIDENCE_INVALID:CAP-1"),
+    ],
+)
+def test_build_review_rejects_invalid_capability_classification_and_confidence(
+    tmp_path: Path, field: str, value: str | None, expected: str
+) -> None:
+    root = write_review_foundation(
+        tmp_path,
+        [
+            {
+                "id": "Q-01",
+                "blocking": True,
+                "status": "open",
+                "affected_ids": ["CAP-1"],
+                "downstream_dependency_count": 1,
+                "authority_risk": 1,
+                "capability_impact": 1,
+            }
+        ],
+    )
+    capability = {
+        "id": "CAP-1",
+        "title": "Capability",
+        "capability_status": "gap",
+        "definition": "A canonical capability.",
+        "confidence": "medium",
+    }
+    if value is None:
+        del capability[field]
+    else:
+        capability[field] = value
+    write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": [capability]})
+
+    with pytest.raises(ValueError, match=f"^{expected}$"):
+        load_tool("build_review").build_review(root)
+
+
 def test_build_review_removes_only_obsolete_managed_batches(tmp_path: Path) -> None:
     items = [
         {

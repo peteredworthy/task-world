@@ -11,6 +11,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 BATCH_SIZE = 12
+CONFLICT_STATUSES = frozenset({"unresolved", "resolved"})
+CAPABILITY_STATUSES = frozenset({"current", "derived", "proposed", "gap", "unknown"})
+CAPABILITY_CONFIDENCES = frozenset({"high", "medium", "low"})
 
 
 class ReviewItem(BaseModel):
@@ -157,12 +160,26 @@ def _evidence_detail(evidence: dict[str, Any], identifier: str) -> str:
     return f"{identifier} — {label} — {path} — {symbol}"
 
 
+def _validate_review_catalog_vocabulary(
+    conflicts: dict[str, dict[str, Any]], capabilities: dict[str, dict[str, Any]]
+) -> None:
+    for identifier, conflict in conflicts.items():
+        if conflict.get("status") not in CONFLICT_STATUSES:
+            raise ValueError(f"REVIEW_CONFLICT_STATUS_INVALID:{identifier}")
+    for identifier, capability in capabilities.items():
+        if capability.get("capability_status") not in CAPABILITY_STATUSES:
+            raise ValueError(f"REVIEW_CAPABILITY_STATUS_INVALID:{identifier}")
+        if capability.get("confidence") not in CAPABILITY_CONFIDENCES:
+            raise ValueError(f"REVIEW_CAPABILITY_CONFIDENCE_INVALID:{identifier}")
+
+
 def _review_data(root: Path, batch: list[ReviewItem], snapshot: str, number: int) -> dict[str, Any]:
     questions = _catalog_records(root, "catalog/questions.yaml", "ITEM")
     priorities = _review_priorities(root)
     conflicts = _catalog_records(root, "catalog/conflicts.yaml", "CONFLICT")
     capabilities = _catalog_records(root, "capabilities/registry.yaml", "CAPABILITY")
     evidence = _catalog_records(root, "catalog/evidence.yaml", "EVIDENCE")
+    _validate_review_catalog_vocabulary(conflicts, capabilities)
     items: list[dict[str, Any]] = []
     for item in batch:
         question = questions.get(item.id)
