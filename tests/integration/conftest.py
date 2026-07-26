@@ -1,21 +1,24 @@
 """Shared fixtures for integration tests.
 
-# Isolation model for the shared-app pattern
+# Isolation model
 
-Tests that share a module-scoped FastAPI app + in-memory DB must not interfere
-with each other, even when one dies mid-execution. The guarantees:
+Every test gets its own app and its own database. ``create_app`` is cheap
+because it caches *compiled routes* and grafts them onto each new app (see
+``set_route_cache_enabled``, enabled for the whole suite in
+``tests/conftest.py``) — route compilation dominates the factory and depends
+only on the auth config, never on the database. Each app still gets its own
+state, engine, managers and MCP mounts, so apps built from the cache are
+independent; ``tests/integration/test_route_cache_isolation.py`` pins that.
 
-1. **Unique repo names per test** — ``git_repo`` uses ``uuid.uuid4().hex[:8]``,
-   so filesystem paths and ``repo_name`` API keys never collide across tests
-   or xdist workers.
-2. **Server-generated run IDs** — every ``POST /api/runs`` returns a fresh
-   UUID. No test can reference another test's run.
-3. **Per-test cleanup** — ``client_with_repo``'s teardown lists runs by this
-   test's unique ``repo_name`` and cancels any non-terminal ones. Background
-   executor tasks from a failing test cannot leak CPU/DB-pool work into
-   subsequent tests in the same module.
-4. **Module-scoped, not session-scoped** — a poisoned app instance is bounded
-   to one test file, never the whole suite.
+That gives ordinary per-test isolation with no discipline required from test
+authors: hardcoded ``repo_name`` values, ``len(...) == N`` assertions, and
+unfiltered collection GETs are all safe, because no other test's rows exist.
+Prefer function-scoped app fixtures for that reason — a module-scoped one is
+*safe*, but it reintroduces within-file DB sharing, which is what the old
+UUID-naming discipline existed to work around.
+
+``client_with_repo``'s teardown cancels this test's non-terminal runs so a
+leaked background executor task cannot outlive the engine it was using.
 
 The shared base repo (``_base_repo``) is session-scoped and read-only:
 ``git_repo`` copies it with ``shutil.copytree``. Reads from the shared base
@@ -66,16 +69,15 @@ def _base_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return repo
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 async def _shared_app_fixture(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> AsyncGenerator[tuple[AsyncClient, DrainFn, Path, Path, Any], None]:
-    """Module-scoped FastAPI app + in-memory DB.
+    """A fresh FastAPI app + in-memory DB per test, built from cached routes.
 
-    One app instance per test file (module scope, NOT session). A bad test
-    in file A cannot poison the app used by file B. Within a module,
-    isolation comes from unique repo names + server-generated run UUIDs +
-    per-test teardown cleanup in ``client_with_repo``.
+    Function-scoped, so each test is fully isolated and needs no cross-test
+    naming discipline. Cheap because route compilation is cached; see the
+    isolation notes in this module's docstring.
 
     Yields ``(client, drain, repos_dir, worktrees_dir, app)``.
     """

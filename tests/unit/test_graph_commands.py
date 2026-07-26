@@ -8795,3 +8795,43 @@ def test_schedule_tick_marks_dead_required_input_when_required_source_failed_unb
             {"node_id": "worker-1", "reason": "dead_required_input:candidate:producer-1"},
         )
     ]
+
+
+def test_apply_command_does_not_mutate_the_projection_it_is_given() -> None:
+    """The kernel must treat its projection argument as read-only.
+
+    Callers hold the projection across the call: ``GraphController`` keeps the
+    one it loaded at the expected position while applying a command against it.
+    A handler that mutated in place would leave callers holding state that has
+    silently drifted ahead of the position it claims to describe, which is the
+    kind of aliasing bug that only shows up as a corrupt checkpoint much later.
+    """
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "ready"}, 1),
+        _event("node_created", {"node_id": "worker-2", "kind": "worker", "state": "ready"}, 2),
+    ]
+    commands: list[tuple[str, dict[str, Any]]] = [
+        ("schedule_tick", {"lease_seconds": 300, "max_grants": 10}),
+        ("reconcile", {}),
+        ("complete", {}),
+        ("pause", {}),
+        ("cancel", {}),
+        ("unknown_command_type", {}),
+    ]
+
+    for command_type, payload in commands:
+        projection = _project(events)
+        before = projection_to_checkpoint(projection)
+
+        apply_graph_command(
+            projection,
+            events,
+            command_type,
+            payload,
+            _default_context(events, command_type),
+            FakeClock(),
+            SequentialIdGenerator(),
+        )
+
+        assert projection_to_checkpoint(projection) == before, command_type

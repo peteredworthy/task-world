@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.routing import APIRoute
 from fastapi.staticfiles import StaticFiles
 
 from orchestrator.api.auth import (
@@ -613,52 +614,12 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await app.state.engine.dispose()
 
 
-def create_app(
-    db_path: str | None = None,
-    routine_dirs: list[tuple[Path, RoutineSource]] | None = None,
-    auth_disabled: bool | None = None,
-    jwt_secret: str | None = None,
-    spawn_agents: bool | None = None,
-    global_config: GlobalConfig | None = None,
-    artifact_project_root: Path | None = None,
-) -> FastAPI:
-    """Create and configure the FastAPI application.
+def _resolve_cors_origins() -> list[str]:
+    """Resolve allowed CORS origins.
 
-    Args:
-        db_path: Path to the SQLite database file. Falls back to global config,
-            then ``"orchestrator.db"``.
-        routine_dirs: Directories to scan for routines, with their source type.
-            Falls back to global config ``routines.dirs``.
-        auth_disabled: Whether to disable authentication. Defaults to True.
-        jwt_secret: JWT signing secret. Auto-generated if empty when auth is enabled.
-        spawn_agents: Whether to spawn managed agents when runs start. Defaults to
-            True for production, False when using in-memory SQLite (tests).
-        global_config: Optional pre-built global configuration. Falls back to
-            loading from ``~/.orchestrator/config.yaml``.
-        artifact_project_root: Main project checkout that owns graph artifacts.
-            When omitted, resolve it from the current linked worktree.
+    Defaults to common local frontend origins so localhost/127.0.0.1 host swaps
+    don't trigger false "backend unreachable" errors in development.
     """
-    # Load global config for defaults
-    global_cfg = global_config or load_global_config()
-
-    if db_path is None:
-        db_path = global_cfg.database.path
-
-    if routine_dirs is None and global_cfg.routines.dirs:
-        routine_dirs = [(Path(d), RoutineSource.LOCAL) for d in global_cfg.routines.dirs]
-
-    app = FastAPI(
-        title="Orchestrator",
-        version="0.1.0",
-        lifespan=_lifespan,
-        docs_url="/api/docs",
-        redoc_url="/api/redoc",
-        openapi_url="/api/openapi.json",
-    )
-
-    # CORS
-    # Default to common local frontend origins so localhost/127.0.0.1 host swaps
-    # don't trigger false "backend unreachable" errors in development.
     default_cors_origins = ",".join(
         [
             "http://localhost:5173",
@@ -667,16 +628,30 @@ def create_app(
             "http://127.0.0.1:4173",
         ]
     )
-    cors_origins = os.environ.get("CORS_ORIGINS", default_cors_origins).split(",")
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[o.strip() for o in cors_origins],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    raw = os.environ.get("CORS_ORIGINS", default_cors_origins).split(",")
+    return [o.strip() for o in raw]
 
-    # Store dependencies on app.state (no global state)
+
+def _install_state(
+    app: FastAPI,
+    *,
+    db_path: str,
+    routine_dirs: list[tuple[Path, RoutineSource]] | None,
+    global_cfg: GlobalConfig,
+    auth_config: AuthConfig,
+    spawn_agents: bool | None,
+    artifact_project_root: Path | None,
+) -> None:
+    """Install every request-scoped dependency onto ``app.state``.
+
+    Split out of ``create_app`` so that building an app is cheap once route
+    registration is served from the route cache (see
+    ``set_route_cache_enabled``). Everything here is cheap, and all of it is
+    read late via ``request.app.state``.
+
+    Always called on a freshly constructed app, so it never has to reconcile
+    with pre-existing state.
+    """
     engine = create_engine(db_path)
     app.state.engine = engine
     app.state.session_factory = create_session_factory(engine)
@@ -707,18 +682,7 @@ def create_app(
     # skip lifespan entirely.
     app.state.graph_mcp_registry = GraphMcpExecutionRegistry()
 
-    # Authentication
-    auth_config = resolve_auth_config(auth_disabled=auth_disabled, jwt_secret=jwt_secret)
     app.state.auth_config = auth_config
-
-    if not auth_config.auth_disabled:
-        token = create_token(auth_config)
-        logger.info("Auth enabled. JWT secret: %s", auth_config.jwt_secret)
-        logger.info("Auth enabled. Access token: %s", token)
-
-    # Build auth dependencies
-    require_auth = get_require_auth(auth_config)
-    require_ws_auth = get_require_ws_auth(auth_config)
 
     # Auto-discover agent packages and register their factories
     from orchestrator.runners import discover_agents
@@ -799,11 +763,44 @@ def create_app(
             "WORKER_SEPARATE=true: API will not spawn agents — executor runs in worker process"
         )
 
-    register_error_handlers(app)
 
-    # Register routers with auth dependency
+# Compiled API route objects, keyed by the auth config they were built against.
+# Only populated while the cache is enabled; see ``set_route_cache_enabled``.
+_API_ROUTE_CACHE: dict[tuple[object, ...], list[APIRoute]] = {}
+_route_cache_enabled = False
+
+
+def set_route_cache_enabled(enabled: bool) -> None:
+    """Cache compiled API routes across ``create_app`` calls (test suites only).
+
+    Registering the API routers dominates ``create_app``: FastAPI compiles a
+    dependency graph and a Pydantic field set per route, which costs far more
+    than everything else the factory does. That work depends only on the auth
+    config — never on the database, the cwd, or any other argument — and the
+    resulting ``APIRoute`` objects are not bound to the app they were
+    registered on, because endpoints reach their collaborators through
+    ``request.app.state`` at request time.
+
+    So a suite that builds one app per test can graft the cached routes onto a
+    genuinely fresh ``FastAPI`` instance. Each app keeps its own state, its own
+    database, and its own MCP mounts, and two apps can be alive at once without
+    interfering — the caching is invisible apart from the time saved.
+
+    The live server builds a single app, so this stays off in production.
+    """
+    global _route_cache_enabled
+    _route_cache_enabled = enabled
+    _API_ROUTE_CACHE.clear()
+
+
+def _register_api_routers(app: FastAPI, require_auth: Any) -> None:
+    """Register every API router on ``app``, guarded by ``require_auth``.
+
+    This is the expensive half of ``create_app``: each route gets a compiled
+    dependency graph and Pydantic field set. Kept as its own function so the
+    result can be cached and grafted (see ``set_route_cache_enabled``).
+    """
     from orchestrator.api.routers.agents import router as agents_router
-    from orchestrator.api.routers.runners import router as agent_runners_router
     from orchestrator.api.routers.clarifications import router as clarifications_router
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.cost_rollup import router as cost_rollup_router
@@ -813,6 +810,7 @@ def create_app(
     from orchestrator.api.routers.repos import router as repos_router
     from orchestrator.api.routers.review import router as review_router
     from orchestrator.api.routers.routines import router as routines_router
+    from orchestrator.api.routers.runners import router as agent_runners_router
     from orchestrator.api.routers.runs import router as runs_router
     from orchestrator.api.routers.tasks import router as tasks_router
 
@@ -831,6 +829,114 @@ def create_app(
     app.include_router(cost_rollup_router, dependencies=auth_deps)
     app.include_router(runs_router, dependencies=auth_deps)
     app.include_router(tasks_router, dependencies=auth_deps)
+
+
+def _route_cache_key(auth_config: AuthConfig) -> tuple[object, ...]:
+    """Key on what router registration bakes into the compiled routes.
+
+    Only auth matters: ``include_router`` binds ``Depends(require_auth)`` built
+    from this exact config into every route's dependency graph. CORS origins are
+    middleware and mounts are rebuilt per app, so neither belongs here.
+    """
+    return (
+        auth_config.auth_disabled,
+        auth_config.jwt_secret,
+        auth_config.jwt_algorithm,
+        auth_config.token_expiry_hours,
+    )
+
+
+def create_app(
+    db_path: str | None = None,
+    routine_dirs: list[tuple[Path, RoutineSource]] | None = None,
+    auth_disabled: bool | None = None,
+    jwt_secret: str | None = None,
+    spawn_agents: bool | None = None,
+    global_config: GlobalConfig | None = None,
+    artifact_project_root: Path | None = None,
+) -> FastAPI:
+    """Create and configure the FastAPI application.
+
+    Args:
+        db_path: Path to the SQLite database file. Falls back to global config,
+            then ``"orchestrator.db"``.
+        routine_dirs: Directories to scan for routines, with their source type.
+            Falls back to global config ``routines.dirs``.
+        auth_disabled: Whether to disable authentication. Defaults to True.
+        jwt_secret: JWT signing secret. Auto-generated if empty when auth is enabled.
+        spawn_agents: Whether to spawn managed agents when runs start. Defaults to
+            True for production, False when using in-memory SQLite (tests).
+        global_config: Optional pre-built global configuration. Falls back to
+            loading from ``~/.orchestrator/config.yaml``.
+        artifact_project_root: Main project checkout that owns graph artifacts.
+            When omitted, resolve it from the current linked worktree.
+    """
+    # Load global config for defaults
+    global_cfg = global_config or load_global_config()
+
+    if db_path is None:
+        db_path = global_cfg.database.path
+
+    if routine_dirs is None and global_cfg.routines.dirs:
+        routine_dirs = [(Path(d), RoutineSource.LOCAL) for d in global_cfg.routines.dirs]
+
+    # Authentication. Resolved before the app is built because router
+    # registration binds auth dependencies, so it selects the route table.
+    auth_config = resolve_auth_config(auth_disabled=auth_disabled, jwt_secret=jwt_secret)
+    cors_origins = _resolve_cors_origins()
+
+    app = FastAPI(
+        title="Orchestrator",
+        version="0.1.0",
+        lifespan=_lifespan,
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    _install_state(
+        app,
+        db_path=db_path,
+        routine_dirs=routine_dirs,
+        global_cfg=global_cfg,
+        auth_config=auth_config,
+        spawn_agents=spawn_agents,
+        artifact_project_root=artifact_project_root,
+    )
+
+    if not auth_config.auth_disabled:
+        token = create_token(auth_config)
+        logger.info("Auth enabled. JWT secret: %s", auth_config.jwt_secret)
+        logger.info("Auth enabled. Access token: %s", token)
+
+    # Build auth dependencies
+    require_auth = get_require_auth(auth_config)
+    require_ws_auth = get_require_ws_auth(auth_config)
+
+    register_error_handlers(app)
+
+    cache_key = _route_cache_key(auth_config)
+    cached_routes = _API_ROUTE_CACHE.get(cache_key) if _route_cache_enabled else None
+    if cached_routes is not None:
+        # Compiled routes are not bound to the app they were registered on:
+        # endpoints reach their collaborators via request.app.state. Grafting
+        # them skips the dependency-graph and Pydantic-field compilation that
+        # dominates this factory.
+        app.router.routes.extend(cached_routes)
+    else:
+        _register_api_routers(app, require_auth)
+        if _route_cache_enabled:
+            _API_ROUTE_CACHE[cache_key] = [
+                route for route in app.router.routes if isinstance(route, APIRoute)
+            ]
 
     # Mount MCP SSE transport at /mcp (with auth middleware)
     _mount_mcp_sse(app, auth_config, app.state.graph_mcp_registry)

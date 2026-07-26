@@ -136,6 +136,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 def pytest_configure(config: pytest.Config) -> None:
     """Let --run-slow/--run-e2e relax the default marker expression."""
+    # Compiling the API routes dominates create_app() and depends only on the
+    # auth config, never on the database. Caching the compiled routes lets each
+    # test build a genuinely fresh app — own state, own database, own MCP mounts
+    # — while paying route compilation once per worker process. Done here rather
+    # than in a fixture so it also covers apps built during collection.
+    #
+    # Set TW_NO_ROUTE_CACHE=1 to compile routes on every call, which tells you
+    # in one run whether a failure is caused by the cache.
+    from orchestrator.api.app import set_route_cache_enabled
+
+    set_route_cache_enabled(os.environ.get("TW_NO_ROUTE_CACHE") != "1")
+
     default_markexpr = "not slow and not e2e"
     if config.option.markexpr != default_markexpr:
         return

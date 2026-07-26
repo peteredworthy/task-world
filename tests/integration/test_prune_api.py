@@ -6,13 +6,16 @@ Tests POST /api/runs/{run_id}/review/prune/preview,
 
 Uses real git repos via tmp_path fixtures; no mocking.
 
-WARNING — shared fixture:
-    The ``_shared_app_fixture`` defined below (module scope) reuses one
-    FastAPI app + in-memory DB across every test in this file. Isolation
-    relies on each test getting a uniquely-named ``git_repo`` (counter
-    suffix) and on server-generated run UUIDs. Don't assert on global
-    ``/api/runs`` counts; reference your run only by the ``id`` you
-    received.
+Each test gets its own FastAPI app and in-memory database; ``create_app`` is
+cheap because compiled routes are cached and grafted onto every new app. No
+cross-test naming discipline is needed here — hardcoded names and global
+collection assertions are safe. See ``tests/integration/conftest.py``.
+
+Prune/revert *semantics* are unit-tested against real git in
+``tests/unit/test_prune_ops.py``; these tests pin the API wiring. The
+worktree spawn (create + start + drain) dominates each test's cost, so
+read-only preview facets share one setup, and sequential mutations
+(apply, revert) are chained on one run where they don't interfere.
 """
 
 import shutil
@@ -39,14 +42,13 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture
 async def _shared_app_fixture(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> AsyncGenerator[tuple[AsyncClient, DrainFn, Path, Path], None]:
-    """Shared FastAPI app + in-memory DB for all tests in this module.
+    """A fresh FastAPI app + in-memory DB per test, built from cached routes.
 
-    Each test creates its own git repo inside ``repos_dir`` (unique name),
-    so the shared database accumulates multiple runs safely without conflicts.
+    See ``tests/integration/conftest.py`` for the isolation model.
     """
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
@@ -139,35 +141,62 @@ async def _create_and_start_run(
 
 
 class TestPrunePreview:
-    async def test_preview_file_mode_returns_stats(
+    async def test_preview_file_mode_lifecycle(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        """Preview with file mode returns files_affected, hunks_removed, lines_removed."""
+        """Preview is read-only and returns full stats: an empty selection
+        yields zero stats, a file-mode selection reports counts and excludes
+        the pruned file from resulting_diff, and neither call modifies the
+        worktree."""
         client, repo, drain = client_with_repo
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
-        _commit_file(worktree_path, "feature.py", "x = 1\ny = 2\n", "Add feature.py")
+        _commit_file(worktree_path, "prune_me.py", "x = 1\ny = 2\n", "Add prune_me.py")
+        _commit_file(worktree_path, "keep_me.py", "keep\n", "Add keep_me.py")
+        head_before = _git(["rev-parse", "HEAD"], cwd=worktree_path)
+        content_before = (worktree_path / "prune_me.py").read_text()
 
+        # Empty selection → zero stats, full current diff
+        resp = await client.post(
+            f"/api/runs/{run_id}/review/prune/preview",
+            json={"scope": "aggregate", "files": []},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["files_affected"] == 0
+        assert data["hunks_removed"] == 0
+        assert data["lines_removed"] == 0
+
+        # File-mode selection → stats + schema, pruned file excluded from diff
         resp = await client.post(
             f"/api/runs/{run_id}/review/prune/preview",
             json={
                 "scope": "aggregate",
-                "files": [{"path": "feature.py", "mode": "file"}],
+                "files": [{"path": "prune_me.py", "mode": "file"}],
             },
         )
         assert resp.status_code == 200
         data = resp.json()
+        required = {"resulting_diff", "files_affected", "hunks_removed", "lines_removed"}
+        assert required.issubset(set(data.keys()))
+        assert isinstance(data["resulting_diff"], str)
         assert data["files_affected"] == 1
         assert data["hunks_removed"] >= 1
         assert data["lines_removed"] == 2
-        assert "feature.py" not in data["resulting_diff"]
+        assert "prune_me.py" not in data["resulting_diff"]
+        assert "keep_me.py" in data["resulting_diff"]
 
-    async def test_preview_hunk_mode_returns_stats(
+        # Read-only: HEAD and file content unchanged
+        assert _git(["rev-parse", "HEAD"], cwd=worktree_path) == head_before
+        assert (worktree_path / "prune_me.py").read_text() == content_before
+
+    async def test_preview_hunk_mode_selects_hunks(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        """Preview with hunk mode returns stats for the selected hunks."""
+        """Hunk-mode preview counts lines for exactly the selected hunks;
+        previews are read-only so one two-hunk setup serves both selections."""
         client, repo, drain = client_with_repo
 
         # Add the base file to main so it exists at merge-base (enables multi-hunk diffs)
@@ -178,9 +207,13 @@ class TestPrunePreview:
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
-        # Modify in worktree: two additions far apart → two separate hunks
+        # Additions far apart → two separate hunks (hunk 0: 1 line, hunk 1: 2 lines)
         modified = (
-            base_lines[:1] + ["top_add\n"] + base_lines[1:15] + ["bot_add\n"] + base_lines[15:]
+            base_lines[:1]
+            + ["top_add\n"]
+            + base_lines[1:15]
+            + ["bot_add1\n", "bot_add2\n"]
+            + base_lines[15:]
         )
         (worktree_path / "hunky.py").write_text("".join(modified))
         _git(["add", "hunky.py"], cwd=worktree_path)
@@ -198,6 +231,19 @@ class TestPrunePreview:
         assert data["files_affected"] == 1
         assert data["hunks_removed"] == 1
         assert data["lines_removed"] == 1
+
+        resp = await client.post(
+            f"/api/runs/{run_id}/review/prune/preview",
+            json={
+                "scope": "aggregate",
+                "files": [{"path": "hunky.py", "mode": "hunk", "hunks": [1]}],
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["files_affected"] == 1
+        assert data["hunks_removed"] == 1
+        assert data["lines_removed"] == 2
 
     async def test_preview_line_mode_returns_stats(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
@@ -236,79 +282,6 @@ class TestPrunePreview:
         assert data["files_affected"] == 1
         assert data["lines_removed"] == 1
 
-    async def test_preview_empty_files_returns_zero_stats(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """Empty files list returns zero stats and the full current diff."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "thing.py", "content\n", "Add thing.py")
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/preview",
-            json={"scope": "aggregate", "files": []},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["files_affected"] == 0
-        assert data["hunks_removed"] == 0
-        assert data["lines_removed"] == 0
-
-    async def test_preview_does_not_modify_worktree(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """Preview is read-only: HEAD and file content unchanged after preview."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "ro.py", "readonly content\n", "Add ro.py")
-        head_before = _git(["rev-parse", "HEAD"], cwd=worktree_path)
-        content_before = (worktree_path / "ro.py").read_text()
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/preview",
-            json={
-                "scope": "aggregate",
-                "files": [{"path": "ro.py", "mode": "file"}],
-            },
-        )
-        assert resp.status_code == 200
-
-        assert _git(["rev-parse", "HEAD"], cwd=worktree_path) == head_before
-        assert (worktree_path / "ro.py").read_text() == content_before
-
-    async def test_preview_schema_fields(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """PrunePreviewResponse includes all required fields with correct types."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "schema.py", "v = 1\n", "Add schema.py")
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/preview",
-            json={
-                "scope": "aggregate",
-                "files": [{"path": "schema.py", "mode": "file"}],
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        required = {"resulting_diff", "files_affected", "hunks_removed", "lines_removed"}
-        assert required.issubset(set(data.keys()))
-        assert isinstance(data["resulting_diff"], str)
-        assert isinstance(data["files_affected"], int)
-        assert isinstance(data["hunks_removed"], int)
-        assert isinstance(data["lines_removed"], int)
-
     async def test_preview_run_not_found_returns_404(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
@@ -341,64 +314,6 @@ class TestPrunePreview:
         )
         assert resp.status_code == 409
 
-    async def test_preview_resulting_diff_excludes_pruned_file(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """resulting_diff does not contain the pruned file but keeps other files."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "prune_me.py", "prune\n", "Add prune_me.py")
-        _commit_file(worktree_path, "keep_me.py", "keep\n", "Add keep_me.py")
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/preview",
-            json={
-                "scope": "aggregate",
-                "files": [{"path": "prune_me.py", "mode": "file"}],
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert "prune_me.py" not in data["resulting_diff"]
-        assert "keep_me.py" in data["resulting_diff"]
-
-    async def test_preview_multi_hunk_file_hunk_selection(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """Preview with hunk mode accurately counts lines for selected hunks only."""
-        client, repo, drain = client_with_repo
-
-        # Add base file to main so it exists at merge-base (enables multi-hunk diff)
-        base_lines = [f"ln{i}\n" for i in range(1, 21)]
-        _commit_file(repo, "mh.py", "".join(base_lines), "Add mh.py to main")
-
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        # Two sets of additions far apart → two separate hunks
-        modified = base_lines[:1] + ["A\n"] + base_lines[1:15] + ["B\n", "C\n"] + base_lines[15:]
-        (worktree_path / "mh.py").write_text("".join(modified))
-        _git(["add", "mh.py"], cwd=worktree_path)
-        _git(["commit", "-m", "Two hunks"], cwd=worktree_path)
-
-        # Preview only hunk 1 (B and C)
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/preview",
-            json={
-                "scope": "aggregate",
-                "files": [{"path": "mh.py", "mode": "hunk", "hunks": [1]}],
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["files_affected"] == 1
-        assert data["hunks_removed"] == 1
-        assert data["lines_removed"] == 2  # B and C
-
 
 # ---------------------------------------------------------------------------
 # POST /api/runs/{run_id}/review/prune/apply
@@ -406,38 +321,52 @@ class TestPrunePreview:
 
 
 class TestPruneApply:
-    async def test_apply_file_mode_removes_added_file(
+    async def test_apply_file_mode_lifecycle(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        """File-mode apply removes a newly added file from the worktree."""
+        """File-mode apply over one run: an empty selection is a 400, applying
+        an added file removes it (new commit, correct stats, unselected files
+        untouched), and a follow-up apply restores a modified file to base."""
         client, repo, drain = client_with_repo
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
-        _commit_file(worktree_path, "new_feat.py", "def foo(): pass\n", "Add new_feat.py")
-        assert (worktree_path / "new_feat.py").exists()
+        _commit_file(worktree_path, "f.py", "a\nb\nc\n", "Add f.py")
+        _commit_file(worktree_path, "keep.py", "keep\n", "Add keep.py")
+        head_before = _git(["rev-parse", "HEAD"], cwd=worktree_path)
 
+        # Empty files selection returns 400 (and mutates nothing)
+        resp = await client.post(
+            f"/api/runs/{run_id}/review/prune/apply",
+            json={"scope": "aggregate", "files": []},
+        )
+        assert resp.status_code == 400
+
+        # Apply removes the added file, commits, and reports stats
         resp = await client.post(
             f"/api/runs/{run_id}/review/prune/apply",
             json={
                 "scope": "aggregate",
-                "files": [{"path": "new_feat.py", "mode": "file"}],
+                "files": [{"path": "f.py", "mode": "file"}],
             },
         )
         assert resp.status_code == 200
-        assert not (worktree_path / "new_feat.py").exists()
+        data = resp.json()
+        assert data["files_affected"] == 1
+        assert data["lines_removed"] == 3
+        assert "event_id" in data
+        assert isinstance(data["event_id"], str)
+        head_after = _git(["rev-parse", "HEAD"], cwd=worktree_path)
+        assert head_after != head_before
+        assert data["commit_sha"] == head_after
+        assert len(data["commit_sha"]) == 40
+        assert not (worktree_path / "f.py").exists()
+        # Files not in selection are not modified
+        assert (worktree_path / "keep.py").exists()
+        assert (worktree_path / "keep.py").read_text() == "keep\n"
 
-    async def test_apply_file_mode_restores_modified_file(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """File-mode apply restores a modified file to its base content."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        # Modify README (which exists at base)
+        # Second apply on the same run restores a modified file to base content
         (worktree_path / "README.md").write_text("# Changed Title\nextra line\n")
         _git(["add", "README.md"], cwd=worktree_path)
         _git(["commit", "-m", "Modify README"], cwd=worktree_path)
@@ -453,128 +382,39 @@ class TestPruneApply:
         # README should be restored to "# Test\n"
         assert (worktree_path / "README.md").read_text() == "# Test\n"
 
-    async def test_apply_creates_commit(
+    async def test_apply_hunk_mode_partial_prune(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        """apply creates a new commit on the branch."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "to_prune.py", "content\n", "Add to_prune.py")
-        head_before = _git(["rev-parse", "HEAD"], cwd=worktree_path)
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/apply",
-            json={
-                "scope": "aggregate",
-                "files": [{"path": "to_prune.py", "mode": "file"}],
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        head_after = _git(["rev-parse", "HEAD"], cwd=worktree_path)
-        assert head_after != head_before
-        assert data["commit_sha"] == head_after
-        assert len(data["commit_sha"]) == 40
-
-    async def test_apply_returns_correct_stats(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """apply returns files_affected, hunks_removed, lines_removed."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "f.py", "a\nb\nc\n", "Add f.py")
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/apply",
-            json={
-                "scope": "aggregate",
-                "files": [{"path": "f.py", "mode": "file"}],
-            },
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["files_affected"] == 1
-        assert data["lines_removed"] == 3
-        assert "event_id" in data
-        assert isinstance(data["event_id"], str)
-
-    async def test_apply_empty_selection_returns_400(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """Empty files selection returns 400."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/apply",
-            json={"scope": "aggregate", "files": []},
-        )
-        assert resp.status_code == 400
-
-    async def test_apply_preserves_unselected_files(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """Files not in selection are not modified."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "prune.py", "prune\n", "Add prune.py")
-        _commit_file(worktree_path, "keep.py", "keep\n", "Add keep.py")
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/apply",
-            json={
-                "scope": "aggregate",
-                "files": [{"path": "prune.py", "mode": "file"}],
-            },
-        )
-        assert resp.status_code == 200
-        assert not (worktree_path / "prune.py").exists()
-        assert (worktree_path / "keep.py").exists()
-        assert (worktree_path / "keep.py").read_text() == "keep\n"
-
-    async def test_apply_hunk_mode_removes_selected_hunk(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """Hunk-mode apply removes the selected hunk while keeping others."""
+        """Hunk-mode apply prunes exactly the selected hunk of a multi-hunk
+        file, keeping the other hunk intact."""
         client, repo, drain = client_with_repo
 
         # Add base file to main so it exists at merge-base (enables multi-hunk diff)
-        base_lines = [f"L{i}\n" for i in range(1, 21)]
-        _commit_file(repo, "hunky.py", "".join(base_lines), "Add hunky.py to main")
+        base_lines = [f"x{i}\n" for i in range(1, 25)]
+        _commit_file(repo, "partial.py", "".join(base_lines), "Add partial.py to main")
 
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
-        # Two additions far apart → two separate hunks in the diff
-        modified = (
-            base_lines[:1] + ["top_add\n"] + base_lines[1:15] + ["bot_add\n"] + base_lines[15:]
-        )
-        (worktree_path / "hunky.py").write_text("".join(modified))
-        _git(["add", "hunky.py"], cwd=worktree_path)
-        _git(["commit", "-m", "Two additions"], cwd=worktree_path)
+        # Two additions far apart → two separate hunks
+        modified = base_lines[:1] + ["HUNK0\n"] + base_lines[1:18] + ["HUNK1\n"] + base_lines[18:]
+        (worktree_path / "partial.py").write_text("".join(modified))
+        _git(["add", "partial.py"], cwd=worktree_path)
+        _git(["commit", "-m", "Two hunks"], cwd=worktree_path)
 
+        # Only prune hunk 1 (HUNK1)
         resp = await client.post(
             f"/api/runs/{run_id}/review/prune/apply",
             json={
                 "scope": "aggregate",
-                "files": [{"path": "hunky.py", "mode": "hunk", "hunks": [0]}],
+                "files": [{"path": "partial.py", "mode": "hunk", "hunks": [1]}],
             },
         )
         assert resp.status_code == 200
-        content = (worktree_path / "hunky.py").read_text()
-        assert "top_add" not in content
-        assert "bot_add" in content
+        content = (worktree_path / "partial.py").read_text()
+        assert "HUNK0" in content
+        assert "HUNK1" not in content
 
     async def test_apply_line_mode_removes_selected_lines(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
@@ -612,70 +452,6 @@ class TestPruneApply:
         assert "ADD" not in content
         assert "keep1" in content
         assert "keep2" in content
-
-    async def test_apply_run_not_found_returns_404(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        client, _repo, drain = client_with_repo
-        resp = await client.post(
-            "/api/runs/nonexistent/review/prune/apply",
-            json={"scope": "aggregate", "files": []},
-        )
-        assert resp.status_code == 404
-
-    async def test_apply_no_worktree_returns_409(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        client, repo, drain = client_with_repo
-        resp = await client.post(
-            "/api/runs",
-            json={
-                "routine_id": "simple-routine",
-                "repo_name": repo.name,
-                "branch": "main",
-            },
-        )
-        assert resp.status_code == 201
-        run_id = resp.json()["id"]
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/apply",
-            json={"scope": "aggregate", "files": []},
-        )
-        assert resp.status_code == 409
-
-    async def test_apply_multi_hunk_partial_prune(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """Apply can prune a subset of hunks from a multi-hunk file."""
-        client, repo, drain = client_with_repo
-
-        # Add base file to main so it exists at merge-base (enables multi-hunk diff)
-        base_lines = [f"x{i}\n" for i in range(1, 25)]
-        _commit_file(repo, "partial.py", "".join(base_lines), "Add partial.py to main")
-
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        # Two additions far apart → two separate hunks
-        modified = base_lines[:1] + ["HUNK0\n"] + base_lines[1:18] + ["HUNK1\n"] + base_lines[18:]
-        (worktree_path / "partial.py").write_text("".join(modified))
-        _git(["add", "partial.py"], cwd=worktree_path)
-        _git(["commit", "-m", "Two hunks"], cwd=worktree_path)
-
-        # Only prune hunk 1 (HUNK1)
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/prune/apply",
-            json={
-                "scope": "aggregate",
-                "files": [{"path": "partial.py", "mode": "hunk", "hunks": [1]}],
-            },
-        )
-        assert resp.status_code == 200
-        content = (worktree_path / "partial.py").read_text()
-        assert "HUNK0" in content
-        assert "HUNK1" not in content
 
     async def test_apply_adjacent_line_prune(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
@@ -717,6 +493,37 @@ class TestPruneApply:
         assert "before" in content
         assert "after" in content
 
+    async def test_apply_run_not_found_returns_404(
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
+    ) -> None:
+        client, _repo, drain = client_with_repo
+        resp = await client.post(
+            "/api/runs/nonexistent/review/prune/apply",
+            json={"scope": "aggregate", "files": []},
+        )
+        assert resp.status_code == 404
+
+    async def test_apply_no_worktree_returns_409(
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
+    ) -> None:
+        client, repo, drain = client_with_repo
+        resp = await client.post(
+            "/api/runs",
+            json={
+                "routine_id": "simple-routine",
+                "repo_name": repo.name,
+                "branch": "main",
+            },
+        )
+        assert resp.status_code == 201
+        run_id = resp.json()["id"]
+
+        resp = await client.post(
+            f"/api/runs/{run_id}/review/prune/apply",
+            json={"scope": "aggregate", "files": []},
+        )
+        assert resp.status_code == 409
+
 
 # ---------------------------------------------------------------------------
 # POST /api/runs/{run_id}/review/revert-file
@@ -724,34 +531,46 @@ class TestPruneApply:
 
 
 class TestRevertFileEndpoint:
-    async def test_revert_removes_added_file(
+    async def test_revert_file_lifecycle(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        """revert-file removes a newly added file from the worktree."""
+        """Revert over one run: a body without file_path is a 422, reverting
+        an added file removes it (new commit, full response schema), and a
+        follow-up revert restores a modified file to its base content."""
         client, repo, drain = client_with_repo
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
+        # Missing file_path → 422 (mutates nothing)
+        resp = await client.post(
+            f"/api/runs/{run_id}/review/revert-file",
+            json={},
+        )
+        assert resp.status_code == 422
+
         _commit_file(worktree_path, "fresh.py", "new code\n", "Add fresh.py")
         assert (worktree_path / "fresh.py").exists()
+        head_before = _git(["rev-parse", "HEAD"], cwd=worktree_path)
 
         resp = await client.post(
             f"/api/runs/{run_id}/review/revert-file",
             json={"file_path": "fresh.py"},
         )
         assert resp.status_code == 200
+        data = resp.json()
+        required = {"commit_sha", "file_path", "reverted_to"}
+        assert required.issubset(set(data.keys()))
+        assert data["file_path"] == "fresh.py"
+        assert isinstance(data["reverted_to"], str)
+        assert len(data["reverted_to"]) == 40
+        head_after = _git(["rev-parse", "HEAD"], cwd=worktree_path)
+        assert head_after != head_before
+        assert data["commit_sha"] == head_after
+        assert len(data["commit_sha"]) == 40
         assert not (worktree_path / "fresh.py").exists()
 
-    async def test_revert_restores_modified_file(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """revert-file restores a modified file to its base content."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
+        # Second revert on the same run restores a modified file to base
         (worktree_path / "README.md").write_text("# Modified\nmore lines\n")
         _git(["add", "README.md"], cwd=worktree_path)
         _git(["commit", "-m", "Modify README"], cwd=worktree_path)
@@ -762,66 +581,6 @@ class TestRevertFileEndpoint:
         )
         assert resp.status_code == 200
         assert (worktree_path / "README.md").read_text() == "# Test\n"
-
-    async def test_revert_creates_commit(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """revert-file creates a new commit and returns its SHA."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "torevert.py", "code\n", "Add torevert.py")
-        head_before = _git(["rev-parse", "HEAD"], cwd=worktree_path)
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/revert-file",
-            json={"file_path": "torevert.py"},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        head_after = _git(["rev-parse", "HEAD"], cwd=worktree_path)
-        assert head_after != head_before
-        assert data["commit_sha"] == head_after
-        assert len(data["commit_sha"]) == 40
-
-    async def test_revert_response_schema(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """revert-file response contains commit_sha, file_path, and reverted_to."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-        worktree_path = Path(run_data["worktree_path"])
-
-        _commit_file(worktree_path, "schema.py", "v = 1\n", "Add schema.py")
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/revert-file",
-            json={"file_path": "schema.py"},
-        )
-        assert resp.status_code == 200
-        data = resp.json()
-        required = {"commit_sha", "file_path", "reverted_to"}
-        assert required.issubset(set(data.keys()))
-        assert data["file_path"] == "schema.py"
-        assert isinstance(data["reverted_to"], str)
-        assert len(data["reverted_to"]) == 40
-
-    async def test_revert_missing_file_path_returns_422(
-        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
-    ) -> None:
-        """Request body without file_path returns 422."""
-        client, repo, drain = client_with_repo
-        run_data = await _create_and_start_run(client, repo, drain)
-        run_id = run_data["id"]
-
-        resp = await client.post(
-            f"/api/runs/{run_id}/review/revert-file",
-            json={},
-        )
-        assert resp.status_code == 422
 
     async def test_revert_run_not_found_returns_404(
         self, client_with_repo: tuple[AsyncClient, Path, DrainFn]

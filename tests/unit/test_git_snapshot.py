@@ -6,6 +6,12 @@ import subprocess
 from pathlib import Path
 
 from orchestrator.git import delete_snapshot_ref, restore, snapshot
+from orchestrator.git.snapshot import (
+    SnapshotRef,
+    match_snapshot_by_tree,
+    parse_snapshot_refs,
+)
+from orchestrator.git.snapshot import _run_git as default_run_git
 
 GIT = "/usr/bin/git"
 
@@ -127,6 +133,110 @@ def test_identical_tree_dedup(tmp_path: Path) -> None:
         "refs/orchestrator/snapshots",
     ).stdout.splitlines()
     assert refs == [first.ref]
+
+
+def test_parse_snapshot_refs_reads_tree_from_the_listing() -> None:
+    parsed = parse_snapshot_refs(
+        "refs/orchestrator/snapshots/aa commit-aa tree-aa\n"
+        "refs/orchestrator/snapshots/bb commit-bb tree-bb\n"
+    )
+
+    assert parsed == [
+        SnapshotRef("refs/orchestrator/snapshots/aa", "commit-aa", "tree-aa"),
+        SnapshotRef("refs/orchestrator/snapshots/bb", "commit-bb", "tree-bb"),
+    ]
+
+
+def test_parse_snapshot_refs_tolerates_missing_tree_and_blank_lines() -> None:
+    # A ref that is not a commit reports no %(tree); it must survive parsing so
+    # the caller can resolve it individually rather than be silently dropped.
+    parsed = parse_snapshot_refs(
+        "refs/orchestrator/snapshots/aa commit-aa\n\nrefs/orchestrator/snapshots/bb commit-bb t-bb\n"
+    )
+
+    assert parsed == [
+        SnapshotRef("refs/orchestrator/snapshots/aa", "commit-aa", ""),
+        SnapshotRef("refs/orchestrator/snapshots/bb", "commit-bb", "t-bb"),
+    ]
+
+
+def test_match_snapshot_by_tree_settles_from_the_listing_alone() -> None:
+    refs = [
+        SnapshotRef("refs/orchestrator/snapshots/aa", "commit-aa", "tree-aa"),
+        SnapshotRef("refs/orchestrator/snapshots/bb", "commit-bb", "tree-bb"),
+    ]
+
+    match, unresolved = match_snapshot_by_tree(refs, "tree-bb")
+
+    assert match == refs[1]
+    # Nothing left to resolve: no per-ref git command is warranted.
+    assert unresolved == []
+
+
+def test_match_snapshot_by_tree_reports_only_refs_without_a_tree() -> None:
+    refs = [
+        SnapshotRef("refs/orchestrator/snapshots/aa", "commit-aa", ""),
+        SnapshotRef("refs/orchestrator/snapshots/bb", "commit-bb", "tree-bb"),
+    ]
+
+    match, unresolved = match_snapshot_by_tree(refs, "tree-zz")
+
+    assert match is None
+    assert unresolved == [refs[0]]
+
+
+def test_dedup_lookup_does_not_scale_with_snapshot_count(tmp_path: Path) -> None:
+    """Each capture must cost a constant number of git commands.
+
+    Resolving each existing snapshot's tree with its own `git show` made one
+    capture cost O(snapshots) processes, so a run's captures cost O(snapshots^2)
+    overall. The injected runner records real git calls without patching.
+    """
+    repo = _make_repo(tmp_path)
+    invocations: list[list[str]] = []
+
+    def recording_git(
+        cwd: Path,
+        args: list[str],
+        env: dict[str, str],
+    ) -> subprocess.CompletedProcess[str]:
+        invocations.append(args)
+        return default_run_git(cwd, args, env)
+
+    per_capture: list[int] = []
+    for index in range(4):
+        (repo / "README.md").write_text(f"revision {index}\n", encoding="utf-8")
+        invocations.clear()
+        snapshot(repo, f"capture {index}", run_git=recording_git)
+        per_capture.append(len(invocations))
+
+    assert per_capture == [per_capture[0]] * 4, per_capture
+    assert not [args for args in invocations if args[:2] == ["show", "-s"]]
+
+
+def test_snapshot_uses_the_injected_runner_for_every_git_call(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    seen: list[list[str]] = []
+
+    def recording_git(
+        cwd: Path,
+        args: list[str],
+        env: dict[str, str],
+    ) -> subprocess.CompletedProcess[str]:
+        seen.append(args)
+        return default_run_git(cwd, args, env)
+
+    result = snapshot(repo, "injected", run_git=recording_git)
+
+    assert result.tree_sha
+    # No git call bypasses the seam, so a caller can observe or substitute all of them.
+    assert [args[0] for args in seen] == [
+        "add",
+        "write-tree",
+        "for-each-ref",
+        "commit-tree",
+        "update-ref",
+    ]
 
 
 def test_restore_does_not_touch_head_or_index(tmp_path: Path) -> None:
