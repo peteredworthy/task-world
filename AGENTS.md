@@ -242,9 +242,9 @@ All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_
 
 **Validate all inputs at the API boundary.** Every field that represents a constrained value (enums, strategies, modes, grades) must be validated via Pydantic `Literal`, `field_validator`, or `Field(pattern=...)` on the schema — never via bare enum conversion inside the endpoint body. Invalid values must return 422 with a message listing valid options. Free-form string fields used as filesystem paths, URLs, or identifiers must be sanitized against traversal and injection. Query parameters used for enum filtering get the same treatment.
 
-**Pessimistic locking.** Lock tasks when agent starts working, release on completion.
+**Pessimistic locking.** Lock tasks when agent starts working, release on completion. The lock is in-memory and process-local: a single server process is the supported deployment (two uvicorn processes sharing the DB is a known death loop).
 
-**Event sourcing for recovery.** Log transitions to JSONL first, then update state. Reconstruct from history on startup.
+**Event sourcing for recovery.** SQL events are canonical for normal writes. JSONL is a secondary sink and an empty-DB bootstrap source; reconstruct from history on startup.
 
 **Graph projection models are frozen.** Every Pydantic model stored inside a `GraphProjection` (`EdgeProjection`, `LeaseProjection`, `NodeCreationProjection`, all `TypedRecordBase` records, …) sets `frozen=True`. `_clone_projection` therefore shares model instances between successive projection states instead of deep-copying them, which is what keeps `reduce_event` linear rather than quadratic. Reducers must never mutate a model in place — build a replacement with `model_copy(update={...})` and assign it back into the projection dict. Do not remove `frozen=True` to make an in-place assignment work; the deep copies it would force back cost ~27x on replay.
 
@@ -360,7 +360,7 @@ git -C <worktree_path> log --oneline -5
 ```
 
 **5. Key fields on RunResponse:**
-- `status` — `queued`, `active`, `paused`, `completed`, `failed`
+- `status` — `draft`, `active`, `paused`, `stopping`, `completed`, `failed`, `cancelled`
 - `pause_reason` — why it paused (`server_shutdown`, `gate_blocked`, `agent_execution_error`, `waiting_for_approval`, etc.)
 - `last_error` — detailed error message when paused due to failure
 - `worktree_path` — filesystem path to the run's worktree (null if no worktree)
@@ -384,7 +384,7 @@ In-memory state (sets, dicts, locks) must not be shared between the HTTP request
 `RunWorkflow` and `AgentRunnerExecutor` must not access `app.state` or `request.app.state`. All dependencies (session factory, lock manager, connection manager, etc.) are injected via their constructors. This makes these components testable without a running ASGI app.
 
 **Rule 4 — All lifecycle transitions go through the signal queue.**
-`start`, `pause`, `resume`, and `cancel` transitions must be enacted by enqueuing a signal via `SignalQueue` / `DbSignalTransport`. `WorkflowService` must not directly mutate run status for lifecycle transitions. The signal consumer is the sole writer of lifecycle state in the DB.
+`start`, `pause`, `resume`, and `cancel` transitions must be enacted by enqueuing a signal via `SignalQueue` / `DbSignalTransport`. `WorkflowService` must not directly mutate run status for lifecycle transitions. The signal consumer is the sole writer of lifecycle state in the DB. Documented exception: CLI `runs start` applies the start transition directly (`WorkflowService.apply_start_run`) as a local-operator compatibility path; the REST API is the contract the UI binds to (202 = accepted, not applied).
 
 ## Routine Authoring
 

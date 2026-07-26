@@ -1,6 +1,5 @@
 """SQLAlchemy ORM models for persistent storage."""
 
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -18,23 +17,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orchestrator.db.orm.base import Base
-
-
-@dataclass
-class AttemptRecord:
-    """Canonical attempt record shape, usable across all task types.
-
-    Works for: normal tasks, fan-out children, script tasks, recovery retries.
-    attempt_num provides ordering within a task; attempt_id is globally unique
-    and maps to a Temporal Activity ID.
-    """
-
-    attempt_num: int
-    attempt_id: str
-    task_id: str = ""
-    outcome: str | None = None  # "passed", "revision_needed", "failed"
-    error: str | None = None
-    extra: dict[str, Any] = field(default_factory=lambda: {})
 
 
 class RunModel(Base):
