@@ -10,7 +10,6 @@ expected_source_version: 'None'
 required_input: {run_id: required, task_id: required, req_id: required, status: required, note: optional}
 validation: [scope-exposure, handler-and-workflow-validation]
 durable_effect: Dispatches public MCP checklist update to the mutable workflow boundary.
-resulting_state_id: STA-9
 failure_modes: [tool unavailable, handler error, transition error]
 stale_state_behavior: Explicitly rejects VERIFYING (STA-10), COMPLETED (STA-14), and FAILED (STA-15).
 idempotency: Repeating same update converges where accepted.

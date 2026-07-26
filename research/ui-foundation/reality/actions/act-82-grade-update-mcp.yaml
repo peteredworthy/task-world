@@ -10,7 +10,6 @@ expected_source_version: 'None'
 required_input: {run_id: required, task_id: required, req_id: required, grade: required, grade_reason: optional}
 validation: [scope-exposure, handler-and-grade-validation]
 durable_effect: Applies an eligible grade mutation; requirement_escalated paused tail work is an accepted no-op without grade or task mutation.
-resulting_state_id: STA-10
 failure_modes: [tool unavailable, handler error, transition error]
 stale_state_behavior: Explicitly rejects PENDING (STA-8), BUILDING (STA-9), PENDING_USER_ACTION (STA-11), RECOVERING (STA-12), and FAN_OUT_RUNNING (STA-13).
 idempotency: Same accepted grade converges.

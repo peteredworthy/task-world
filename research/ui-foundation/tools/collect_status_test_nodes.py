@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 from typing import Any, cast
 
 import yaml
 
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+from snapshot_resolver import resolve_effective_snapshot
+
 
 TOOL_SCHEMA = "status-test-nodes/v1"
-RESERVED_SELF_PATHS = frozenset(
-    {
-        "research/ui-foundation/catalog/evidence.yaml",
-        "research/ui-foundation/catalog/snapshot-lineage.yaml",
-    }
-)
 COMMAND = [
     "uv",
     "run",
@@ -40,85 +40,64 @@ def _load_yaml(path: Path) -> dict[str, object]:
 
 def _active_snapshot(root: Path) -> dict[str, object]:
     evidence = _load_yaml(root / "catalog/evidence.yaml")
-    extra_snapshots = evidence.get("snapshots")
-    snapshots: list[object] = [evidence.get("snapshot")]
-    if isinstance(extra_snapshots, list):
-        snapshots.extend(extra_snapshots)
-    active_id = evidence.get("active_snapshot_id")
-    if isinstance(active_id, str):
-        snapshot = next(
-            (item for item in snapshots if isinstance(item, dict) and item.get("id") == active_id),
-            None,
-        )
-    else:
-        snapshot = evidence.get("snapshot")
-    if not isinstance(snapshot, dict) or not isinstance(snapshot.get("id"), str):
-        raise ValueError("ACTIVE_SNAPSHOT_INVALID")
-    by_id = {
-        item["id"]: item
-        for item in snapshots
-        if isinstance(item, dict) and isinstance(item.get("id"), str)
-    }
-    resolved = dict(snapshot)
-    files = {
-        item["path"]: item
-        for item in snapshot.get("files", [])
-        if (
-            isinstance(item, dict)
-            and isinstance(item.get("path"), str)
-            and item["path"] not in RESERVED_SELF_PATHS
-        )
-    }
-    parent = snapshot.get("parent_snapshot_id")
-    visited = {snapshot["id"]}
-    while isinstance(parent, str) and parent in by_id and parent not in visited:
-        visited.add(parent)
-        parent_snapshot = by_id[parent]
-        for item in parent_snapshot.get("files", []):
-            if (
-                isinstance(item, dict)
-                and isinstance(item.get("path"), str)
-                and item["path"] not in RESERVED_SELF_PATHS
-            ):
-                files.setdefault(item["path"], item)
-        parent = parent_snapshot.get("parent_snapshot_id")
-    resolved["files"] = list(files.values())
-    return cast(dict[str, object], resolved)
+    return cast(dict[str, object], resolve_effective_snapshot(cast(dict[str, Any], evidence)))
+
+
+def _atomic_write(path: Path, content: bytes) -> None:
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def _exercised_locators(root: Path) -> list[str]:
     scope = _load_yaml(root / "catalog/status-scope.yaml")
-    items = scope.get("items")
-    if not isinstance(items, list):
+    raw_items = scope.get("items")
+    if not isinstance(raw_items, list):
         raise ValueError("STATUS_SCOPE_INVALID")
     locators: list[str] = []
-    for item in items:
-        if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+    for raw_item in cast(list[Any], raw_items):
+        if not isinstance(raw_item, dict):
             raise ValueError("STATUS_SCOPE_INVALID")
-        document = _load_yaml(root / item["path"])
+        item = cast(dict[str, object], raw_item)
+        path = item.get("path")
         identifier = item.get("id")
+        if not isinstance(path, str):
+            raise ValueError("STATUS_SCOPE_INVALID")
+        document = _load_yaml(root / path)
         record = (
             document
             if document.get("id") == identifier
             else next(
                 (
-                    candidate
-                    for candidate in document.get("items", [])
-                    if isinstance(candidate, dict) and candidate.get("id") == identifier
+                    cast(dict[str, object], candidate)
+                    for candidate in cast(list[Any], document.get("items", []))
+                    if isinstance(candidate, dict)
+                    and cast(dict[str, object], candidate).get("id") == identifier
                 ),
                 None,
             )
         )
         if not isinstance(record, dict):
             raise ValueError(f"STATUS_SCOPE_RECORD_MISSING:{identifier}")
-        values = list(record.get("bounded_test_locators") or [])
+        bounded_values: object = record.get("bounded_test_locators") or []
+        exercised_values: object = record.get("test_locators") or []
+        if not isinstance(bounded_values, list) or not isinstance(exercised_values, list):
+            raise ValueError(f"EXERCISED_TEST_LOCATORS_INVALID:{identifier}")
+        values = list(cast(list[Any], bounded_values))
         if record.get("test_status") == "exercised":
-            values.extend(record.get("test_locators") or [])
+            values.extend(cast(list[Any], exercised_values))
         if not values:
             continue
         if not values or not all(isinstance(value, str) for value in values):
             raise ValueError(f"EXERCISED_TEST_LOCATORS_INVALID:{identifier}")
-        locators.extend(values)
+        locators.extend(cast(list[str], values))
     return sorted(set(locators))
 
 
@@ -134,13 +113,18 @@ def _source_hashes(
     snapshot: dict[str, object], repository: Path, referenced_paths: set[str]
 ) -> dict[str, str]:
     hashes: dict[str, str] = {}
-    for item in snapshot.get("files", []):
+    raw_files = snapshot.get("files", [])
+    if not isinstance(raw_files, list):
+        raise ValueError("SNAPSHOT_FILE_INVALID")
+    for raw_item in cast(list[Any], raw_files):
         if (
-            isinstance(item, dict)
-            and isinstance(item.get("path"), str)
-            and isinstance(item.get("sha256"), str)
+            isinstance(raw_item, dict)
+            and isinstance(cast(dict[str, object], raw_item).get("path"), str)
+            and isinstance(cast(dict[str, object], raw_item).get("sha256"), str)
         ):
-            hashes[item["path"]] = item["sha256"]
+            item = cast(dict[str, object], raw_item)
+            path = cast(str, item["path"])
+            hashes[path] = cast(str, item["sha256"])
     for path, expected in hashes.items():
         candidate = _safe_path(repository, path)
         if not candidate.is_file():
@@ -227,7 +211,7 @@ def main() -> int:
     try:
         value = collect(arguments.root.resolve())
         output = arguments.root / "catalog/status-test-nodes.yaml"
-        output.write_text(yaml.safe_dump(value, sort_keys=False), encoding="utf-8")
+        _atomic_write(output, yaml.safe_dump(value, sort_keys=False).encode())
     except (OSError, ValueError, yaml.YAMLError) as error:
         print(error, file=sys.stderr)
         return 1

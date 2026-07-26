@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import argparse
+import base64
+from contextlib import contextmanager
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 from typing import Any, cast
 
 import yaml
 
-
-RESERVED_SELF_PATHS = frozenset(
-    {
-        "research/ui-foundation/catalog/evidence.yaml",
-        "research/ui-foundation/catalog/snapshot-lineage.yaml",
-    }
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+from snapshot_resolver import (
+    RESERVED_SELF_PATHS,
+    resolve_effective_snapshot,
+    snapshots_from_evidence,
 )
 
 
@@ -36,59 +40,7 @@ def _entry_digest(entry: dict[str, Any]) -> str:
 
 
 def _snapshots(evidence: dict[str, Any]) -> list[dict[str, Any]]:
-    values: list[Any] = [evidence.get("snapshot")]
-    registered = evidence.get("snapshots")
-    if isinstance(registered, list):
-        values.extend(cast(list[Any], registered))
-    if not all(isinstance(value, dict) for value in values):
-        raise ValueError("SNAPSHOT_INVALID")
-    snapshots: list[dict[str, Any]] = []
-    for value in values:
-        value = cast(dict[str, Any], value)
-        if value not in snapshots:
-            snapshots.append(value)
-    return snapshots
-
-
-def _effective(
-    active: dict[str, Any], snapshots: list[dict[str, Any]]
-) -> dict[str, dict[str, Any]]:
-    by_id = {snapshot.get("id"): snapshot for snapshot in snapshots}
-    if len(by_id) != len(snapshots) or not all(isinstance(identifier, str) for identifier in by_id):
-        raise ValueError("SNAPSHOT_ID_DUPLICATE")
-    chain: list[dict[str, Any]] = []
-    current = active
-    visited: set[str] = set()
-    while True:
-        identifier = current.get("id")
-        if not isinstance(identifier, str) or identifier in visited:
-            raise ValueError("SNAPSHOT_PARENT_CYCLE")
-        visited.add(identifier)
-        chain.append(current)
-        parent = current.get("parent_snapshot_id")
-        if parent is None:
-            break
-        if not isinstance(parent, str) or parent not in by_id:
-            raise ValueError("SNAPSHOT_PARENT_UNKNOWN")
-        current = by_id[parent]
-    effective: dict[str, dict[str, Any]] = {}
-    for snapshot in reversed(chain):
-        for raw_record in cast(list[Any], snapshot.get("files", [])):
-            if not isinstance(raw_record, dict):
-                raise ValueError("SNAPSHOT_FILE_INVALID")
-            record = cast(dict[str, Any], raw_record)
-            path = record.get("path")
-            if not isinstance(path, str):
-                raise ValueError("SNAPSHOT_FILE_INVALID")
-            if path in RESERVED_SELF_PATHS:
-                continue
-            if record.get("tombstone") is True:
-                if path not in effective:
-                    raise ValueError(f"INVALID_TOMBSTONE:{path}")
-                effective.pop(path)
-            else:
-                effective[path] = record
-    return effective
+    return snapshots_from_evidence(evidence)
 
 
 def _safe_path(repository: Path, value: str) -> Path:
@@ -99,7 +51,9 @@ def _safe_path(repository: Path, value: str) -> Path:
     return candidate
 
 
-def _dependent_status_bytes(root: Path, snapshot_id: str) -> dict[str, bytes]:
+def _dependent_status_bytes(
+    root: Path, snapshot_id: str, effective: dict[str, dict[str, Any]], declared_paths: set[str]
+) -> dict[str, bytes]:
     repository = root.parents[1].resolve()
     generated: dict[str, bytes] = {}
     for status_path in (
@@ -119,14 +73,102 @@ def _dependent_status_bytes(root: Path, snapshot_id: str) -> dict[str, bytes]:
                 if isinstance(item, dict):
                     item["active_snapshot_id"] = snapshot_id
         final_bytes = yaml.safe_dump(status, sort_keys=False).encode()
-        if final_bytes != status_path.read_bytes():
-            relative = status_path.resolve().relative_to(repository).as_posix()
+        current_bytes = status_path.read_bytes()
+        relative = status_path.resolve().relative_to(repository).as_posix()
+        if final_bytes != current_bytes and (
+            relative in declared_paths
+            or (
+                relative in effective
+                and hashlib.sha256(current_bytes).hexdigest() == effective[relative].get("sha256")
+            )
+        ):
             generated[relative] = final_bytes
     return generated
 
 
+@contextmanager
+def _lock(path: Path) -> Any:
+    import fcntl
+
+    with path.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+class FilesystemPublisher:
+    """Same-directory atomic publisher with rollback recovery for interrupted generations."""
+
+    def __init__(self, marker: Path) -> None:
+        self.marker = marker
+
+    def recover(self) -> None:
+        if not self.marker.exists():
+            return
+        values = json.loads(self.marker.read_text(encoding="utf-8"))
+        for raw_path, encoded in values["before"].items():
+            path = Path(raw_path)
+            previous = base64.b64decode(encoded)
+            self._replace(path, previous)
+        self.marker.unlink()
+
+    def _replace(self, path: Path, content: bytes) -> None:
+        descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    def publish(self, values: dict[Path, bytes], lineage_path: Path) -> None:
+        before = {str(path): base64.b64encode(path.read_bytes()).decode() for path in values}
+        self._replace(self.marker, json.dumps({"before": before}).encode())
+        try:
+            for path, content in values.items():
+                if path != lineage_path:
+                    self._replace(path, content)
+            self._replace(lineage_path, values[lineage_path])
+        except OSError:
+            self.recover()
+            raise
+        self.marker.unlink()
+
+
 def record(
-    root: Path, snapshot_id: str, audited_at: str, paths: list[str], removals: list[str]
+    root: Path,
+    snapshot_id: str,
+    audited_at: str,
+    paths: list[str],
+    removals: list[str],
+    publisher: FilesystemPublisher | None = None,
+) -> None:
+    lock_path = root / "catalog/.snapshot-lineage.lock"
+    with _lock(lock_path):
+        effective_publisher = publisher or FilesystemPublisher(
+            root / "catalog/.snapshot-lineage.transaction.json"
+        )
+        effective_publisher.recover()
+        _record_locked(root, snapshot_id, audited_at, paths, removals, effective_publisher)
+
+
+def _record_locked(
+    root: Path,
+    snapshot_id: str,
+    audited_at: str,
+    paths: list[str],
+    removals: list[str],
+    publisher: FilesystemPublisher,
 ) -> None:
     evidence_path = root / "catalog/evidence.yaml"
     lineage_path = root / "catalog/snapshot-lineage.yaml"
@@ -154,7 +196,7 @@ def record(
     active_entry = next((entry for entry in entries if entry.get("snapshot_id") == active_id), None)
     if not isinstance(active_entry, dict) or active_entry.get("status") != "active":
         raise ValueError("ACTIVE_LINEAGE_INVALID")
-    effective = _effective(active, snapshots)
+    effective = {record["path"]: record for record in resolve_effective_snapshot(evidence)["files"]}
     requested = paths + removals
     if len(requested) != len(set(requested)):
         raise ValueError("DELTA_PATH_DUPLICATE")
@@ -168,13 +210,17 @@ def record(
             changed.add(path)
     if not changed and not any(path not in effective for path in paths) and not removals:
         raise ValueError("NO_OP_DELTA")
-    generated = _dependent_status_bytes(root, snapshot_id)
-    generated_paths = set(generated)
-    expected_requested = changed - generated_paths
-    expected_requested.update(
-        path for path in paths if path not in effective and path not in generated_paths
-    )
-    caller_requested = set(requested) - generated_paths
+    generated = _dependent_status_bytes(root, snapshot_id, effective, set(paths))
+    automatic_generated_paths = {
+        path
+        for path in generated
+        if path in effective
+        and hashlib.sha256(_safe_path(repository, path).read_bytes()).hexdigest()
+        == effective[path].get("sha256")
+    }
+    expected_requested = changed - automatic_generated_paths
+    expected_requested.update(path for path in paths if path not in effective)
+    caller_requested = set(requested) - automatic_generated_paths
     if caller_requested != expected_requested:
         raise ValueError("UNREQUESTED_DRIFT")
     record_bytes: dict[str, bytes] = {}
@@ -213,10 +259,10 @@ def record(
     }
     entry["lineage_entry_digest"] = _entry_digest(entry)
     entries.append(entry)
-    for path, content in generated.items():
-        _safe_path(repository, path).write_bytes(content)
-    evidence_path.write_text(yaml.safe_dump(evidence, sort_keys=False), encoding="utf-8")
-    lineage_path.write_text(yaml.safe_dump(lineage, sort_keys=False), encoding="utf-8")
+    values = {**{_safe_path(repository, path): content for path, content in generated.items()}}
+    values[evidence_path] = yaml.safe_dump(evidence, sort_keys=False).encode()
+    values[lineage_path] = yaml.safe_dump(lineage, sort_keys=False).encode()
+    publisher.publish(values, lineage_path)
 
 
 def main() -> int:

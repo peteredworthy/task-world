@@ -57,11 +57,12 @@ through SV-006 without modifying the immutable verifier report.
 
 This report's earlier SV-001/SV-002 counts are historical chronology. The current
 closure checkpoint covers 210 status-evidence records (35 REL, 74 STA, 86 ACT, 9
-EVI, 6 INV), with 513 SER and 1,050 SDR rows (454 admitted, 51 bounded, 8
+EVI, 6 INV), with 513 SER and 1,050 SDR rows (455 admitted, 50 bounded, 8
 rejected). It records 138 exact and 50 bounded test locators and a regenerated
-119-base/119-node collection manifest. The final bounded post-Phase1 snapshot is
-`snapshot-2026-07-25-task-15-authority-closure-final6`. The exercised/unexercised results are REL 13/22, STA
-57/17, ACT 56/30, EVI 2/7, INV 6/0; 62 actions retain Q-5.
+119-base/119-node collection manifest. The projected bounded post-Phase1 remediation
+snapshot is `snapshot-2026-07-26-task-15-review-remediation-fix`. Qualifying collected
+test-coverage classifications, not test-execution results, are REL 13/22, STA 57/17,
+ACT 56/30, EVI 2/7, INV 6/0 exercised/unexercised; 62 actions retain Q-5.
 
 The fail-closed validator now requires clause-complete admitted test evidence,
 current documentation evidence or typed stale/undocumented boundaries, reciprocal

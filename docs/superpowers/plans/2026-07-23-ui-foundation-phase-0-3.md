@@ -22,6 +22,9 @@
 - Every important claim must have evidence, capability, and epistemic status or an explicit unknown state.
 - Current and target capabilities must remain separate.
 - A temporal sequence must not be labeled causal without an explicit mechanism or qualifying evidence.
+- Focus on delivering the plan's objective. Treat only defects that change canonical correctness, acceptance criteria, or the next user-visible deliverable as blocking; record metadata polish, provenance refinements, and tooling hardening as follow-up work instead of delaying delivery.
+- Batch validation and snapshot refreshes at the end of a task. Do not create repeated repair snapshots or rerun the full repository gate for non-blocking documentation-only changes.
+- Triage review findings by impact on the objective. Fix Critical and Important behavioral/data errors; do not expand scope to perfect incidental audit machinery unless the user explicitly requests it.
 
 ---
 

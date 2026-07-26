@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final6
+active_snapshot_id: snapshot-2026-07-26-task-15-review-remediation-fix
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -4973,7 +4973,8 @@ items:
   snapshot_path: tests/integration/test_mcp_server.py
   provenance_role: direct
   supported_semantic_types:
-  - public MCP requirement escalation transport and engine effect
+  - public MCP requirement escalation transport with direct checklist mutation, paused
+    run, and preserved task readback
   supported_command_identities:
   - mcp.requirement-escalation
 - id: EVD-134
@@ -17376,3 +17377,93 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: dd530f0de7a6faf5bc8ddfbea9c21a979fe5debc0d0f8b67561e3ea51fadb066
     audited_at: '2026-07-25T23:59:58Z'
+- id: snapshot-2026-07-26-task-15-review-remediation
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final6
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: f2c5227e794f18f019f42628800c62046de0bf3b4a668bd9e14388b415446aa1
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 8512dafd8457ed5de644fe79058dabb7d2d05887aa8dcf40438c9124fe180731
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 835e3be4337f76b6de92c812323cfe2c45ab54848259093a5922d290af51fb33
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 44602d44bdbbbcc79d3ddb04b6e4a1e3f417487fe6876b3762b0a4c0cc522156
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: ae89e6bfb10a92489e4381bde3b5caac93dd20d082401f4eae677b4afe4b8e07
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: dac14674576df0e6755454305e9c7794363e0c19cc17bec36d9ec647ea99cc64
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-75-checklist-update-rest.yaml
+    sha256: b37e9a1f4c650008e9334fa049446529d92f4614d9baad8e5ecae8aa466852e3
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-76-grade-update-rest.yaml
+    sha256: bf221802cadc6f02d4acb788f877fbebd335752770834bee63d441ca98ffb77e
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-80-checklist-update-mcp.yaml
+    sha256: 76b69a71f70f1565b1bb290ed8e5b87c1455560ac4b6c679d9f63208f6801bab
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-81-task-submit-mcp.yaml
+    sha256: ae6cfb44bf1ce5ef0abfc0254064f03208a97cb11f8c30081a939044292f0059
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/reality/actions/act-82-grade-update-mcp.yaml
+    sha256: 3485fdedcfdc4227f924781a22ee77bd7586965e2cc8529428fc6244bac71ec5
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: be2a38d1f56ab402654407e29039d9f83ed0e968d159661b97b327dd775ade0a
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/tools/collect_status_test_nodes.py
+    sha256: c1eaab929bd73611ef9a5807f001eb09c04aa58284259439f31f566a9dd0fd9b
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/tools/record_snapshot_lineage.py
+    sha256: 644c586f854d7c5a165abfc1de3608b3b09b8aee1a0544d583246f9d3ce9e671
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/tools/snapshot_resolver.py
+    sha256: 32877614425789112e239ff6c6aa8a7fa913375af83795914f0d61e724e5f0b4
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: research/ui-foundation/tools/validate.py
+    sha256: 4bdc5df0991ebf97d35a01fd9f0f6f31260592d3c10f0049bd84245ff48981da
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: tests/integration/test_mcp_server.py
+    sha256: e06d5becddf7448d4dff36b9b4eb157629149094e79b95389d26116217b12490
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: tests/integration/test_status_test_nodes.py
+    sha256: eeba8ca169a38cab0883b064558e5f7296a994b272ded1019f9a7060f2fffd63
+    audited_at: '2026-07-26T00:30:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: f68df9da0c68f192c8f066639f32d1ceddc938beb02cfc849479f44f56fce651
+    audited_at: '2026-07-26T00:30:00Z'
+- id: snapshot-2026-07-26-task-15-review-remediation-fix
+  parent_snapshot_id: snapshot-2026-07-26-task-15-review-remediation
+  files:
+  - path: .superpowers/sdd/progress.md
+    sha256: 732d879870e7929ad31771dda4e7689765633a1c07c143b4994d049be5e289c7
+    audited_at: '2026-07-26T00:45:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md
+    sha256: 87d4a7c338f60913b9dab182977cb25b0463415d216ea943bc704d61e21f729c
+    audited_at: '2026-07-26T00:45:00Z'
+  - path: .superpowers/sdd/task-15-ui-foundation-report.md
+    sha256: 49ecfcf2f4892aee84ea2334cde24d419e8f67ab6cad307187f3b42319dcd7e9
+    audited_at: '2026-07-26T00:45:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 0f7d77bc65c904c583a8cccefdc6f0a57ffedead879d9f1c87299db4928bde23
+    audited_at: '2026-07-26T00:45:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: e4d36d71afffd37eacfeb6b014e706b4dcdffa4f6d09cc9ae87f2b7bab1d5011
+    audited_at: '2026-07-26T00:45:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: 19f9725e93c232e00c0760f3d7279d73ccf034e0a8e04f18749ffed5dcacbe7e
+    audited_at: '2026-07-26T00:45:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: cdb2d2f8f06804ec20b46189a2597813906e3e275cdfd71984ac4d6d9935aad1
+    audited_at: '2026-07-26T00:45:00Z'
+  - path: research/ui-foundation/tools/record_snapshot_lineage.py
+    sha256: c6ed375fef041d593f896e8f6aa3ce3cd3838458f24bef5a7f3d50530babea29
+    audited_at: '2026-07-26T00:45:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: 1fae5f43b320c526d3e06141b2eb0563ff2a5661ebd8a76dd4f05ee5a57ba875
+    audited_at: '2026-07-26T00:45:00Z'

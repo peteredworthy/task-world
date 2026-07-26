@@ -1,6 +1,7 @@
 import importlib.util
 import hashlib
 import json
+from copy import deepcopy
 from pathlib import Path
 import shutil
 import subprocess
@@ -14,6 +15,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR = REPO_ROOT / "research/ui-foundation/tools/validate.py"
 SNAPSHOT_RECORDER = REPO_ROOT / "research/ui-foundation/tools/record_snapshot_lineage.py"
+SNAPSHOT_RESOLVER = REPO_ROOT / "research/ui-foundation/tools/snapshot_resolver.py"
 
 
 def write_yaml(path: Path, value: object) -> None:
@@ -135,6 +137,115 @@ def write_status_review_catalog(root: Path, value: dict[str, object]) -> None:
     write_yaml(root / "catalog/status-evidence-reviews.yaml", value)
 
 
+def phase_two_closure(root: Path) -> dict[str, object]:
+    catalog = status_review_catalog(root)
+    scope = yaml.safe_load((root / "catalog/status-scope.yaml").read_text(encoding="utf-8"))
+    manifest = yaml.safe_load((root / "catalog/status-test-nodes.yaml").read_text(encoding="utf-8"))
+    records = []
+    for item in scope["items"]:
+        document = yaml.safe_load((root / item["path"]).read_text(encoding="utf-8"))
+        records.append(
+            document
+            if document.get("id") == item["id"]
+            else next(value for value in document["items"] if value["id"] == item["id"])
+        )
+    families = ("REL", "STA", "ACT", "EVI", "INV")
+    return {
+        "schema_version": "1",
+        "status": "passed",
+        "reviewer": {
+            "reviewer_id": "reviewer-independent",
+            "model": "openai/gpt-5.6-sol",
+            "role": "independent-semantic-closure-reviewer",
+        },
+        "independence": {
+            "status": "independent",
+            "basis": "No authorship of the reviewed status or review artifacts.",
+        },
+        "active_snapshot_id": catalog["metadata"]["active_snapshot_id"],
+        "artifact_digests": {
+            relative: f"sha256:{hashlib.sha256((root / relative).read_bytes()).hexdigest()}"
+            for relative in (
+                "catalog/status-scope.yaml",
+                "catalog/status-evidence-reviews.yaml",
+                "catalog/status-test-nodes.yaml",
+            )
+        },
+        "counts": {
+            "status_records": len(records),
+            "status_records_by_family": {
+                family: sum(record["id"].startswith(f"{family}-") for record in records)
+                for family in families
+            },
+            "ser_rows": len(catalog["reviews"]),
+            "ser_admission_counts": {
+                status: sum(row["admission"] == status for row in catalog["reviews"])
+                for status in ("admitted", "bounded", "rejected")
+            },
+            "sdr_rows": len(catalog["dimension_reviews"]),
+            "exact_test_locators": sum(len(record.get("test_locators", [])) for record in records),
+            "bounded_test_locators": sum(
+                len(record.get("bounded_test_locators", [])) for record in records
+            ),
+            "test_manifest_bases": len(manifest["entries"]),
+            "test_manifest_nodes": sum(
+                len(entry["concrete_node_ids"]) for entry in manifest["entries"]
+            ),
+            "test_status_by_family": {
+                family: {
+                    status: sum(
+                        record["id"].startswith(f"{family}-") and record["test_status"] == status
+                        for record in records
+                    )
+                    for status in ("exercised", "unexercised")
+                }
+                for family in families
+            },
+        },
+        "predecessor_report_sha256": None,
+        "findings": [
+            {"finding_id": f"SV-{number:03d}", "status": "resolved", "rationale": "Rechecked."}
+            for number in range(1, 9)
+        ],
+        "blocking_items": [],
+        "commands": [
+            {
+                "argv": [
+                    "uv",
+                    "run",
+                    "python",
+                    "research/ui-foundation/tools/validate.py",
+                    "--phase",
+                    "2",
+                ],
+                "active_snapshot_id": catalog["metadata"]["active_snapshot_id"],
+                "exit_code": 0,
+            },
+            {
+                "argv": ["uv", "run", "pytest", "tests/integration/test_ui_foundation_tools.py"],
+                "active_snapshot_id": catalog["metadata"]["active_snapshot_id"],
+                "exit_code": 0,
+            },
+            {
+                "argv": ["uv", "run", "pytest"],
+                "active_snapshot_id": catalog["metadata"]["active_snapshot_id"],
+                "exit_code": 0,
+            },
+        ],
+    }
+
+
+def mark_task15_complete(root: Path) -> None:
+    status_path = root / "status.md"
+    status_path.write_text(
+        status_path.read_text(encoding="utf-8").replace(
+            "Task15 remains IN PROGRESS pending independent review.",
+            "Task15 is COMPLETE after independent review.",
+        ),
+        encoding="utf-8",
+    )
+
+
 def documentation_summary(
     catalog: dict[str, object], record_id: str = "REL-1"
 ) -> dict[str, object]:
@@ -145,6 +256,22 @@ def documentation_summary(
         for value in summaries
         if value["record_id"] == record_id and value["dimension"] == "documentation"
     )
+
+
+def implementation_summary(catalog: dict[str, object], record_id: str) -> dict[str, object]:
+    summaries = catalog["dimension_reviews"]
+    assert isinstance(summaries, list)
+    return next(
+        value
+        for value in summaries
+        if value["record_id"] == record_id and value["dimension"] == "implementation"
+    )
+
+
+def locator_review(catalog: dict[str, object], review_id: str) -> dict[str, object]:
+    reviews = catalog["reviews"]
+    assert isinstance(reviews, list)
+    return next(value for value in reviews if value["review_id"] == review_id)
 
 
 def capability_summary(catalog: dict[str, object], record_id: str = "REL-1") -> dict[str, object]:
@@ -205,6 +332,17 @@ def load_validator() -> ModuleType:
 def load_snapshot_recorder() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "ui_foundation_snapshot_recorder", SNAPSHOT_RECORDER
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_snapshot_resolver() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "ui_foundation_snapshot_resolver", SNAPSHOT_RESOLVER
     )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -577,6 +715,186 @@ def test_status_evidence_reviews_enforce_partitions_statuses_and_metadata(tmp_pa
     assert "STATUS_EVIDENCE_LOCATOR_PARTITION_INVALID" in codes
 
 
+def test_status_evidence_review_v2_declares_exact_contributors_and_collection_semantics() -> None:
+    catalog = status_review_catalog(REPO_ROOT / "research/ui-foundation")
+    metadata = catalog["metadata"]
+
+    assert metadata["schema_version"] == "2"
+    assert metadata["canonical_test_status_meaning"] == "qualifying-collected-test-coverage"
+    assert metadata["implies_test_execution"] is False
+    assert metadata["collection_manifest_path"] == "catalog/status-test-nodes.yaml"
+    assert "reviewer_model" not in metadata
+    assert "reviewer_role" not in metadata
+    declared_ids = {reviewer["reviewer_id"] for reviewer in metadata["reviewers"]}
+    referenced_ids = {
+        row["reviewer_id"] for key in ("reviews", "dimension_reviews") for row in catalog[key]
+    }
+    assert referenced_ids == declared_ids
+    assert metadata["final_reviewer_id"] in declared_ids
+    assert all(
+        "reviewer" not in row for key in ("reviews", "dimension_reviews") for row in catalog[key]
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        (
+            lambda catalog: catalog["reviews"][0].__setitem__("reviewer_id", "undeclared"),
+            "STATUS_EVIDENCE_REVIEW_CONTRIBUTORS_INVALID",
+        ),
+        (
+            lambda catalog: catalog["metadata"]["reviewers"].append(
+                {"reviewer_id": "unused", "model": "unused/model", "role": "unused"}
+            ),
+            "STATUS_EVIDENCE_REVIEW_CONTRIBUTORS_INVALID",
+        ),
+        (
+            lambda catalog: catalog["metadata"].__setitem__("final_reviewer_id", "undeclared"),
+            "STATUS_EVIDENCE_REVIEW_FINAL_REVIEWER_INVALID",
+        ),
+        (
+            lambda catalog: catalog["metadata"].__setitem__("implies_test_execution", True),
+            "STATUS_EVIDENCE_REVIEW_CATALOG_INVALID",
+        ),
+    ],
+)
+def test_status_evidence_review_v2_rejects_false_provenance(
+    tmp_path: Path, mutation: object, expected_code: str
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    assert callable(mutation)
+    mutation(catalog)
+    write_status_review_catalog(root, catalog)
+
+    assert expected_code in validate_status_reviews(root)
+
+
+def test_phase_two_allows_no_semantic_closure_while_task15_is_in_progress(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    validator = load_validator()
+
+    codes = {
+        issue.code
+        for issue in validator._validate_phase_two_semantic_closures(
+            validator.load_foundation(root)
+        )
+    }
+
+    assert "PHASE_TWO_SEMANTIC_CLOSURE_REQUIRED" not in codes
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_code"),
+    [
+        (
+            lambda closure: closure["artifact_digests"].__setitem__(
+                "catalog/status-scope.yaml", f"sha256:{'0' * 64}"
+            ),
+            "PHASE_TWO_SEMANTIC_CLOSURE_DIGEST_MISMATCH",
+        ),
+        (
+            lambda closure: closure["counts"].__setitem__("ser_rows", 0),
+            "PHASE_TWO_SEMANTIC_CLOSURE_COUNT_MISMATCH",
+        ),
+        (
+            lambda closure: closure.__setitem__("active_snapshot_id", "stale-snapshot"),
+            "PHASE_TWO_SEMANTIC_CLOSURE_SNAPSHOT_MISMATCH",
+        ),
+        (
+            lambda closure: closure["findings"].pop(),
+            "PHASE_TWO_SEMANTIC_CLOSURE_FINDINGS_INVALID",
+        ),
+        (
+            lambda closure: closure["findings"][0].__setitem__("status", "still-blocking"),
+            "PHASE_TWO_SEMANTIC_CLOSURE_FINDINGS_INVALID",
+        ),
+        (
+            lambda closure: closure["blocking_items"].append("SV-001 remains open"),
+            "PHASE_TWO_SEMANTIC_CLOSURE_BLOCKED",
+        ),
+        (
+            lambda closure: closure["commands"][2]["argv"].append("--collect-only"),
+            "PHASE_TWO_SEMANTIC_CLOSURE_EXECUTION_INVALID",
+        ),
+        (
+            lambda closure: closure["commands"][0].__setitem__("exit_code", 1),
+            "PHASE_TWO_SEMANTIC_CLOSURE_EXECUTION_INVALID",
+        ),
+    ],
+)
+def test_passed_phase_two_semantic_closure_rejects_stale_or_false_evidence(
+    tmp_path: Path, mutation: object, expected_code: str
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    mark_task15_complete(root)
+    closure = phase_two_closure(root)
+    assert callable(mutation)
+    mutation(closure)
+    write_yaml(root / "verifications/phase-2-semantic-closure-001.yaml", closure)
+    validator = load_validator()
+
+    codes = {
+        issue.code
+        for issue in validator._validate_phase_two_semantic_closures(
+            validator.load_foundation(root)
+        )
+    }
+
+    assert expected_code in codes
+
+
+def test_phase_two_semantic_closure_rejects_predecessor_hash_mismatch(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    mark_task15_complete(root)
+    latest = phase_two_closure(root)
+    previous = deepcopy(latest)
+    previous["status"] = "failed"
+    write_yaml(root / "verifications/phase-2-semantic-closure-001.yaml", previous)
+    latest["predecessor_report_sha256"] = f"sha256:{'0' * 64}"
+    write_yaml(root / "verifications/phase-2-semantic-closure-002.yaml", latest)
+    validator = load_validator()
+
+    codes = {
+        issue.code
+        for issue in validator._validate_phase_two_semantic_closures(
+            validator.load_foundation(root)
+        )
+    }
+
+    assert "PHASE_TWO_SEMANTIC_CLOSURE_PREDECESSOR_MISMATCH" in codes
+
+
+def test_phase_two_rejects_task15_completion_without_passing_closure(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    mark_task15_complete(root)
+    validator = load_validator()
+
+    codes = {
+        issue.code
+        for issue in validator._validate_phase_two_semantic_closures(
+            validator.load_foundation(root)
+        )
+    }
+
+    assert "PHASE_TWO_SEMANTIC_CLOSURE_REQUIRED" in codes
+
+
+def test_phase_two_rejects_completed_index_with_incomplete_shell_claim(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    index_path = root / "index.md"
+    index_path.write_text(
+        index_path.read_text(encoding="utf-8") + "\nPhase 2 is an incomplete shell.\n",
+        encoding="utf-8",
+    )
+    validator = load_validator()
+
+    issues = validator._validate_phase_two_index_statement(validator.load_foundation(root))
+
+    assert {issue.code for issue in issues} == {"PHASE_TWO_INDEX_STATUS_CONTRADICTION"}
+
+
 def test_status_evidence_reviews_reject_active_rejected_and_wrong_partitions(
     tmp_path: Path,
 ) -> None:
@@ -643,6 +961,139 @@ def test_status_evidence_reviews_reject_partial_test_left_exact_and_wrong_summar
 
     assert "STATUS_EVIDENCE_SUMMARY_STATUS_INVALID" in codes
     assert "STATUS_EVIDENCE_CANONICAL_TEST_PARTITION_MISMATCH" in codes
+
+
+def test_implementation_composition_accepts_simple_admitted_proof(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" not in validate_status_reviews(root)
+
+
+def test_implementation_composition_accepts_complementary_partial_proofs(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = implementation_summary(catalog, "EVI-1")
+    assert summary["combined_verdict"] == "proves"
+    assert all(
+        locator_review(catalog, review_id)["verdict"] == "partially-proves"
+        for review_id in summary["admitted_locators"]
+    )
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" not in validate_status_reviews(root)
+
+
+def test_implementation_composition_accepts_truthful_partial(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = implementation_summary(catalog, "EVI-4")
+    assert summary["compatible_status"] == "partial"
+    assert summary["uncovered_boundary"]
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" not in validate_status_reviews(root)
+
+
+def test_implementation_composition_accepts_rejected_noncanonical_candidate(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    reviews = catalog["reviews"]
+    assert isinstance(reviews, list)
+    reviews.append(
+        {
+            "review_id": "SER-9999",
+            "record_id": "ACT-1",
+            "dimension": "implementation",
+            "locator_kind": "python-symbol",
+            "locator": "src/orchestrator/api/routers/runners.py::unrelated_candidate",
+            "record_proposition": "An exploratory adjacent symbol does not implement ACT-1.",
+            "observed_source_or_test_fact": "The candidate is adjacent but does not replace profile-default rows.",
+            "boundary": "This rejected candidate is not a canonical ACT-1 implementation locator.",
+            "verdict": "does-not-prove",
+            "status_compatibility": "partial",
+            "review_rationale": "The exploratory symbol is retained as negative evidence only.",
+            "reviewer_id": "sol-independent",
+            "reviewed_at": "2026-07-25T00:00:00Z",
+            "admission": "rejected",
+        }
+    )
+    implementation_summary(catalog, "ACT-1")["rejected_locators"].append("SER-9999")
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" not in validate_status_reviews(root)
+
+
+@pytest.mark.parametrize(
+    ("admission", "verdict", "partition"),
+    [
+        ("bounded", "partially-proves", "bounded_locators"),
+        ("rejected", "does-not-prove", "rejected_locators"),
+    ],
+)
+def test_implementation_composition_rejects_nonadmitted_canonical_locator(
+    tmp_path: Path, admission: str, verdict: str, partition: str
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = implementation_summary(catalog, "ACT-1")
+    review_id = summary["admitted_locators"].pop()
+    summary[partition].append(review_id)
+    row = locator_review(catalog, review_id)
+    row["admission"] = admission
+    row["verdict"] = verdict
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" in validate_status_reviews(root)
+
+
+def test_implementation_composition_rejects_present_partial_rows_without_clause_map(
+    tmp_path: Path,
+) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = implementation_summary(catalog, "EVI-1")
+    summary["required_clause_ids"] = []
+    summary["clauses"] = {}
+    for review_id in summary["admitted_locators"]:
+        locator_review(catalog, review_id)["covered_clause_ids"] = []
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" in validate_status_reviews(root)
+
+
+def test_implementation_composition_rejects_unknown_clause_id(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = implementation_summary(catalog, "EVI-1")
+    locator_review(catalog, summary["admitted_locators"][0])["covered_clause_ids"].append(
+        "unknown-clause"
+    )
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" in validate_status_reviews(root)
+
+
+def test_implementation_composition_rejects_uncovered_required_clause(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = implementation_summary(catalog, "EVI-1")
+    locator_review(catalog, summary["admitted_locators"][-1])["covered_clause_ids"] = []
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" in validate_status_reviews(root)
+
+
+def test_implementation_composition_rejects_partial_claiming_full_coverage(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    catalog = status_review_catalog(root)
+    summary = implementation_summary(catalog, "EVI-4")
+    required = summary["required_clause_ids"]
+    locator_review(catalog, summary["admitted_locators"][0])["covered_clause_ids"] = list(required)
+    write_status_review_catalog(root, catalog)
+
+    assert "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID" in validate_status_reviews(root)
 
 
 def test_status_evidence_reviews_rejects_each_dimension_status_mutation(tmp_path: Path) -> None:
@@ -2255,6 +2706,52 @@ def test_effective_snapshot_overlays_delta_and_tombstone_only_from_parent_chain(
     assert {item["path"]: item["sha256"] for item in active["files"]} == {"one.py": "3" * 64}
 
 
+def test_snapshot_resolver_accepts_exact_legacy_alias_and_resolves_effective_snapshot() -> None:
+    resolver = load_snapshot_resolver()
+    root = {
+        "id": "root",
+        "files": [{"path": "one.py", "sha256": "1" * 64, "audited_at": "now"}],
+    }
+    evidence = {
+        "snapshot": root,
+        "snapshots": [
+            dict(root),
+            {
+                "id": "leaf",
+                "parent_snapshot_id": "root",
+                "files": [{"path": "two.py", "sha256": "2" * 64, "audited_at": "now"}],
+            },
+        ],
+        "active_snapshot_id": "leaf",
+    }
+
+    snapshots = resolver.snapshots_from_evidence(evidence)
+    active = resolver.resolve_effective_snapshot(evidence)
+
+    assert [snapshot["id"] for snapshot in snapshots] == ["root", "leaf"]
+    assert {item["path"] for item in active["files"]} == {"one.py", "two.py"}
+
+
+def test_snapshot_resolver_rejects_conflicting_legacy_alias_duplicate() -> None:
+    resolver = load_snapshot_resolver()
+    evidence = {
+        "snapshot": {"id": "root", "files": []},
+        "snapshots": [{"id": "root", "files": [{"path": "one.py"}]}],
+    }
+
+    with pytest.raises(ValueError, match="SNAPSHOT_ID_DUPLICATE"):
+        resolver.snapshots_from_evidence(evidence)
+
+
+def test_snapshot_resolver_rejects_duplicate_registered_snapshot_id() -> None:
+    resolver = load_snapshot_resolver()
+    registered = {"id": "root", "files": []}
+    evidence = {"snapshot": dict(registered), "snapshots": [registered, dict(registered)]}
+
+    with pytest.raises(ValueError, match="SNAPSHOT_ID_DUPLICATE"):
+        resolver.snapshots_from_evidence(evidence)
+
+
 def test_effective_snapshot_rejects_unknown_parent_and_cycle(tmp_path: Path) -> None:
     validator = load_validator()
     unknown = {
@@ -2467,6 +2964,156 @@ def test_snapshot_recorder_hashes_generated_status_manifests_from_final_bytes(
         *dependent_paths,
     }
     assert len(evidence["snapshots"]) == 1
+    assert len(snapshot_lineage(root)["entries"]) == 2
+
+
+def test_snapshot_recorder_transforms_declared_existing_manifest_drift(
+    tmp_path: Path,
+) -> None:
+    root = write_minimal_foundation(tmp_path)
+    status_path = root / "catalog/status-test-nodes.yaml"
+    relative = "research/ui-foundation/catalog/status-test-nodes.yaml"
+    write_yaml(
+        status_path,
+        {
+            "schema_version": "1",
+            "active_snapshot_id": "snapshot-test",
+            "reviewer_note": "original generated bytes",
+            "entries": [{"active_snapshot_id": "snapshot-test"}],
+        },
+    )
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["snapshot"]["files"].append(
+        {
+            "path": relative,
+            "sha256": hashlib.sha256(status_path.read_bytes()).hexdigest(),
+            "audited_at": "2026-07-24T00:00:00Z",
+        }
+    )
+    write_yaml(
+        status_path,
+        {
+            "schema_version": "1",
+            "active_snapshot_id": "snapshot-test",
+            "reviewer_note": "authorized non-ID change",
+            "entries": [{"active_snapshot_id": "snapshot-test"}],
+        },
+    )
+    snapshot_digest = hashlib.sha256(
+        json.dumps(evidence["snapshot"], sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    evidence_path.write_text(yaml.safe_dump(evidence, sort_keys=False), encoding="utf-8")
+    lineage_path = root / "catalog/snapshot-lineage.yaml"
+    lineage = snapshot_lineage(root)
+    lineage["entries"][0]["snapshot_digest"] = snapshot_digest
+    lineage["entries"][0]["lineage_entry_digest"] = hashlib.sha256(
+        json.dumps(
+            {
+                key: value
+                for key, value in lineage["entries"][0].items()
+                if key != "lineage_entry_digest"
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    write_yaml(lineage_path, lineage)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SNAPSHOT_RECORDER),
+            "--root",
+            str(root),
+            "--snapshot-id",
+            "child",
+            "--audited-at",
+            "2026-07-24T01:00:00Z",
+            "--path",
+            relative,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    child_status = yaml.safe_load(status_path.read_text(encoding="utf-8"))
+    assert child_status["active_snapshot_id"] == "child"
+    assert child_status["entries"] == [{"active_snapshot_id": "child"}]
+    assert child_status["reviewer_note"] == "authorized non-ID change"
+    active = load_validator()._active_snapshot(
+        yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    )
+    assert active is not None
+    status_record = next(item for item in active["files"] if item["path"] == relative)
+    assert status_record["sha256"] == hashlib.sha256(status_path.read_bytes()).hexdigest()
+
+
+def test_snapshot_recorder_rejects_tampered_generated_manifest_without_writing(
+    tmp_path: Path,
+) -> None:
+    root = write_minimal_foundation(tmp_path)
+    status_path = root / "catalog/status-test-nodes.yaml"
+    write_yaml(
+        status_path,
+        {"schema_version": "1", "active_snapshot_id": "not-the-active-id", "entries": []},
+    )
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["snapshot"]["files"].append(
+        {
+            "path": "research/ui-foundation/catalog/status-test-nodes.yaml",
+            "sha256": hashlib.sha256(b"original generated bytes").hexdigest(),
+            "audited_at": "2026-07-24T00:00:00Z",
+        }
+    )
+    write_yaml(evidence_path, evidence)
+    before = {
+        path: path.read_bytes()
+        for path in (
+            evidence_path,
+            root / "catalog/snapshot-lineage.yaml",
+            status_path,
+        )
+    }
+
+    with pytest.raises(ValueError, match="UNREQUESTED_DRIFT"):
+        load_snapshot_recorder().record(root, "child", "2026-07-24T01:00:00Z", [], [])
+
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_snapshot_recorder_recovers_injected_publication_failure_before_retry(
+    tmp_path: Path,
+) -> None:
+    root = write_minimal_foundation(tmp_path)
+    source = tmp_path / "source.txt"
+    source.write_text("changed\n", encoding="utf-8")
+    recorder = load_snapshot_recorder()
+    before = {
+        path: path.read_bytes()
+        for path in (root / "catalog/evidence.yaml", root / "catalog/snapshot-lineage.yaml")
+    }
+
+    class FailingPublisher(recorder.FilesystemPublisher):
+        def __init__(self, marker: Path) -> None:
+            super().__init__(marker)
+            self.calls = 0
+
+        def _replace(self, path: Path, content: bytes) -> None:
+            self.calls += 1
+            if self.calls == 2:
+                raise OSError("injected boundary failure")
+            super()._replace(path, content)
+
+    publisher = FailingPublisher(root / "catalog/.snapshot-lineage.transaction.json")
+    with pytest.raises(OSError, match="injected boundary failure"):
+        recorder.record(root, "child", "2026-07-24T01:00:00Z", ["source.txt"], [], publisher)
+
+    assert {path: path.read_bytes() for path in before} == before
+    recorder.record(root, "child", "2026-07-24T01:00:00Z", ["source.txt"], [])
     assert len(snapshot_lineage(root)["entries"]) == 2
 
 
@@ -2958,6 +3605,7 @@ def test_implemented_action_accepts_typed_transition_variants(tmp_path: Path) ->
     )
     action = present_action("CMD-01", {})
     action.pop("transition")
+    action.pop("resulting_state_id")
     action["transition_variants"] = [
         {
             "carrier": "task",
@@ -2986,6 +3634,38 @@ def test_implemented_action_accepts_typed_transition_variants(tmp_path: Path) ->
         "ACTION_TRANSITION_UNREACHABLE",
         "ACTION_RESULT_STATE_MISMATCH",
     } & set(issue_codes(result))
+
+
+def test_action_rejects_resulting_state_alongside_transition_variants(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    action = present_action("CMD-01", {})
+    action.pop("transition")
+    action["transition_variants"] = [
+        {
+            "carrier": "task",
+            "from_state_id": "STA-01",
+            "to_state_id": "STA-02",
+            "eligibility_precondition": "task status is exactly pending",
+            "effect_kind": "state-change",
+            "evidence_ids": ["EVD-01"],
+        }
+    ]
+    write_yaml(root / "reality/actions/ACT-01.yaml", action)
+
+    result = run_validator(root, phase=0)
+
+    assert "ACTION_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_action_rejects_singular_transition_without_resulting_state(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    action = present_action("CMD-01", {"from_state_id": "STA-01", "to_state_id": "STA-02"})
+    action.pop("resulting_state_id")
+    write_yaml(root / "reality/actions/ACT-01.yaml", action)
+
+    result = run_validator(root, phase=0)
+
+    assert "ACTION_CONTRACT_INVALID" in issue_codes(result)
 
 
 def test_action_rejects_normalized_duplicate_transition_variants(tmp_path: Path) -> None:
@@ -3039,6 +3719,7 @@ def test_task15_action_variants_encode_exact_eligibility_and_paused_no_op() -> N
     def variants(action_id: int, slug: str) -> list[dict[str, object]]:
         action = yaml.safe_load((action_root / f"act-{action_id}-{slug}.yaml").read_text())
         assert "transition" not in action
+        assert "resulting_state_id" not in action
         return action["transition_variants"]
 
     for action_id, slug in (

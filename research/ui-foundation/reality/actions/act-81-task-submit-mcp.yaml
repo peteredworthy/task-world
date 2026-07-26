@@ -10,7 +10,6 @@ expected_source_version: 'None'
 required_input: {run_id: required, task_id: required}
 validation: [scope-exposure, handler-and-submission-gates]
 durable_effect: Calls submit_for_verification synchronously through ToolHandler and applies BUILDING to VERIFYING when gates pass; a paused human-review run instead returns a no-op success.
-resulting_state_id: STA-10
 failure_modes: [tool unavailable, handler error, gate failure]
 stale_state_behavior: Handler applies current task state.
 idempotency: State-validated by submit handling.

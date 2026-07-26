@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config import Priority, RoutineSource, RunStatus, TaskStatus
+from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.api import OrchestratorMCPServer
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
@@ -297,4 +297,8 @@ async def test_escalate_requirement_through_mcp_server(
         ),
     }
     persisted = await service.get_run(run.id)
-    assert persisted.steps[0].tasks[0].status == TaskStatus.BUILDING
+    assert persisted.status == RunStatus.PAUSED
+    persisted_task = persisted.steps[0].tasks[0]
+    assert persisted_task.status == TaskStatus.BUILDING
+    assert persisted_task.checklist[0].status == ChecklistStatus.ESCALATED
+    assert persisted_task.checklist[0].note == "External dependency unavailable"

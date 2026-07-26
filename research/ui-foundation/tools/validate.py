@@ -534,6 +534,8 @@ class ActionContract(BaseModel):
     def require_present_contract(self) -> ActionContract:
         if self.transition is not None and self.transition_variants is not None:
             raise ValueError("action cannot define both transition and transition_variants")
+        if self.transition_variants is not None and "resulting_state_id" in self.model_fields_set:
+            raise ValueError("action with transition_variants cannot define resulting_state_id")
         for field in (
             "permission_requirements",
             "preconditions",
@@ -565,7 +567,7 @@ class ActionContract(BaseModel):
                 raise ValueError("transition_variants contains normalized duplicates")
         if self.implementation_status != "present":
             return self
-        required = (
+        required = [
             "command_id",
             "actor",
             "permission_requirements",
@@ -574,14 +576,15 @@ class ActionContract(BaseModel):
             "required_input",
             "validation",
             "durable_effect",
-            "resulting_state_id",
             "failure_modes",
             "stale_state_behavior",
             "idempotency",
             "retry_behavior",
             "reversibility",
             "audit_evidence_ids",
-        )
+        ]
+        if self.transition_variants is None:
+            required.append("resulting_state_id")
         missing = [field for field in required if getattr(self, field) in (None, "", [])]
         if self.transition is None and not self.transition_variants:
             missing.append("transition or transition_variants")
@@ -631,15 +634,26 @@ class SchemaBoundary(BaseModel):
     properties: dict[str, dict[str, JsonValue]]
 
 
+class ReviewContributor(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    reviewer_id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    model: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+
+
 class StatusEvidenceReviewMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    schema_version: Literal["1"]
+    schema_version: Literal["2"]
     scope_manifest_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     active_snapshot_id: str = Field(min_length=1)
-    reviewer_model: str = Field(min_length=1)
-    reviewer_role: str = Field(min_length=1)
+    reviewers: list[ReviewContributor] = Field(min_length=1)
+    final_reviewer_id: str = Field(min_length=1)
     reviewed_at: str = Field(min_length=1)
+    canonical_test_status_meaning: Literal["qualifying-collected-test-coverage"]
+    implies_test_execution: Literal[False]
+    collection_manifest_path: Literal["catalog/status-test-nodes.yaml"]
 
 
 class StatusEvidenceLocatorReview(BaseModel):
@@ -656,7 +670,7 @@ class StatusEvidenceLocatorReview(BaseModel):
     verdict: Literal["proves", "partially-proves", "does-not-prove", "contradicts"]
     status_compatibility: Literal["present", "partial", "absent", "exercised", "unexercised"]
     review_rationale: str = Field(min_length=1)
-    reviewer: str = Field(min_length=1)
+    reviewer_id: str = Field(min_length=1)
     reviewed_at: str = Field(min_length=1)
     admission: Literal["admitted", "bounded", "rejected"]
     covered_clause_ids: list[str] = []
@@ -751,7 +765,7 @@ class StatusEvidenceDimensionReview(BaseModel):
     boundary: str = Field(min_length=1)
     uncovered_boundary: str = ""
     rationale: str = Field(min_length=1)
-    reviewer: str = Field(min_length=1)
+    reviewer_id: str = Field(min_length=1)
     reviewed_at: str = Field(min_length=1)
     required_clause_ids: list[str] = []
     clauses: dict[str, str] = {}
@@ -783,6 +797,68 @@ class StatusEvidenceReviewCatalog(BaseModel):
     metadata: StatusEvidenceReviewMetadata
     reviews: list[StatusEvidenceLocatorReview]
     dimension_reviews: list[StatusEvidenceDimensionReview]
+
+
+class SemanticClosureReviewer(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    reviewer_id: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    role: str = Field(min_length=1)
+
+
+class SemanticClosureIndependence(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    status: Literal["independent"]
+    basis: str = Field(min_length=20)
+
+
+class SemanticClosureCounts(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    status_records: int = Field(ge=0)
+    status_records_by_family: dict[str, int]
+    ser_rows: int = Field(ge=0)
+    ser_admission_counts: dict[str, int]
+    sdr_rows: int = Field(ge=0)
+    exact_test_locators: int = Field(ge=0)
+    bounded_test_locators: int = Field(ge=0)
+    test_manifest_bases: int = Field(ge=0)
+    test_manifest_nodes: int = Field(ge=0)
+    test_status_by_family: dict[str, dict[str, int]]
+
+
+class SemanticClosureFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    finding_id: str = Field(pattern=r"^SV-00[1-8]$")
+    status: Literal["resolved", "still-blocking"]
+    rationale: str = Field(min_length=1)
+
+
+class SemanticClosureCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    argv: list[str] = Field(min_length=1)
+    active_snapshot_id: str = Field(min_length=1)
+    exit_code: int
+
+
+class PhaseTwoSemanticClosure(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_version: Literal["1"]
+    status: Literal["passed", "failed"]
+    reviewer: SemanticClosureReviewer
+    independence: SemanticClosureIndependence
+    active_snapshot_id: str = Field(min_length=1)
+    artifact_digests: dict[str, str]
+    counts: SemanticClosureCounts
+    predecessor_report_sha256: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
+    findings: list[SemanticClosureFinding]
+    blocking_items: list[str]
+    commands: list[SemanticClosureCommand]
 
 
 RESERVED_SELF_PATHS = frozenset(
@@ -3287,6 +3363,267 @@ def _phase_two_status_projection(package: FoundationPackage) -> str:
     return "\n".join(lines)
 
 
+def _task15_status_markers(package: FoundationPackage) -> tuple[bool, bool]:
+    repository = package.root.parents[1]
+    paths = (
+        package.root / "status.md",
+        repository / ".superpowers/sdd/progress.md",
+        repository / ".superpowers/sdd/task-15-ui-foundation-report.md",
+        repository / ".superpowers/sdd/task-15-ui-foundation-adjudication-handoff.md",
+    )
+    complete = False
+    in_progress = False
+    for path in paths:
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError):
+            continue
+        for line in lines:
+            normalized = line.upper().replace("TASK 15", "TASK15")
+            if "TASK15" not in normalized:
+                continue
+            marker = r"TASK15(?:\s+(?:IS|REMAINS))?\s*(?::\s*)?\**{}\b"
+            complete = complete or bool(re.search(marker.format("COMPLETE"), normalized))
+            in_progress = in_progress or bool(re.search(marker.format("IN PROGRESS"), normalized))
+    return complete, in_progress
+
+
+def _phase_two_semantic_closure_counts(package: FoundationPackage) -> dict[str, JsonValue]:
+    records = _status_scope_records(package)
+    catalog = StatusEvidenceReviewCatalog.model_validate(
+        package.documents.get("catalog/status-evidence-reviews.yaml")
+    )
+    manifest = package.documents.get("catalog/status-test-nodes.yaml")
+    entries = manifest.get("entries") if isinstance(manifest, dict) else None
+    manifest_entries = (
+        [entry for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+    )
+    families = ("REL", "STA", "ACT", "EVI", "INV")
+    return {
+        "status_records": len(records),
+        "status_records_by_family": {
+            family: sum(
+                isinstance(record.get("id"), str)
+                and cast(str, record["id"]).startswith(f"{family}-")
+                for record in records
+            )
+            for family in families
+        },
+        "ser_rows": len(catalog.reviews),
+        "ser_admission_counts": {
+            status: sum(row.admission == status for row in catalog.reviews)
+            for status in ("admitted", "bounded", "rejected")
+        },
+        "sdr_rows": len(catalog.dimension_reviews),
+        "exact_test_locators": sum(
+            len(_string_list(record.get("test_locators"))) for record in records
+        ),
+        "bounded_test_locators": sum(
+            len(_string_list(record.get("bounded_test_locators"))) for record in records
+        ),
+        "test_manifest_bases": len(manifest_entries),
+        "test_manifest_nodes": sum(
+            len(_string_list(entry.get("concrete_node_ids"))) for entry in manifest_entries
+        ),
+        "test_status_by_family": {
+            family: {
+                status: sum(
+                    isinstance(record.get("id"), str)
+                    and cast(str, record["id"]).startswith(f"{family}-")
+                    and record.get("test_status") == status
+                    for record in records
+                )
+                for status in ("exercised", "unexercised")
+            }
+            for family in families
+        },
+    }
+
+
+def _validate_phase_two_index_statement(package: FoundationPackage) -> list[ValidationIssue]:
+    registry = package.documents.get("capabilities/registry.yaml")
+    phase_two_complete = (
+        isinstance(registry, dict)
+        and registry.get("phase_status") == "complete"
+        and registry.get("completion_phase") == 2
+    )
+    path = package.root / "index.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return []
+    incomplete_phase_two = bool(
+        re.search(r"Phase(?:s)?\s+(?:1[–-]3|2).*incomplete shell", text, re.IGNORECASE)
+    )
+    return (
+        [
+            _issue(
+                "PHASE_TWO_INDEX_STATUS_CONTRADICTION",
+                path,
+                "completed Phase 2 is not an incomplete shell",
+            )
+        ]
+        if phase_two_complete and incomplete_phase_two
+        else []
+    )
+
+
+def _validate_phase_two_semantic_closures(package: FoundationPackage) -> list[ValidationIssue]:
+    directory = package.root / "verifications"
+    paths = sorted(directory.glob("phase-2-semantic-closure-*.yaml")) if directory.exists() else []
+    complete, in_progress = _task15_status_markers(package)
+    issues: list[ValidationIssue] = []
+    if in_progress and not complete:
+        if paths:
+            issues.append(
+                _issue(
+                    "PHASE_TWO_SEMANTIC_CLOSURE_PREMATURE",
+                    paths[-1],
+                    "Task15 is IN PROGRESS and permits zero closure reports",
+                )
+            )
+        return issues
+    if complete and not paths:
+        return [
+            _issue(
+                "PHASE_TWO_SEMANTIC_CLOSURE_REQUIRED",
+                directory,
+                "Task15 completion requires exactly one latest passing closure",
+            )
+        ]
+    if not paths:
+        return issues
+
+    closures: list[PhaseTwoSemanticClosure] = []
+    for index, path in enumerate(paths):
+        raw = package.documents.get(path.relative_to(package.root).as_posix())
+        try:
+            closure = PhaseTwoSemanticClosure.model_validate(raw)
+        except ValidationError as error:
+            issues.append(_issue("PHASE_TWO_SEMANTIC_CLOSURE_INVALID", path, error))
+            continue
+        expected_predecessor = (
+            None
+            if index == 0
+            else f"sha256:{hashlib.sha256(paths[index - 1].read_bytes()).hexdigest()}"
+        )
+        if closure.predecessor_report_sha256 != expected_predecessor:
+            issues.append(
+                _issue(
+                    "PHASE_TWO_SEMANTIC_CLOSURE_PREDECESSOR_MISMATCH",
+                    path,
+                    "predecessor report hash",
+                )
+            )
+        closures.append(closure)
+    if len(closures) != len(paths):
+        return issues
+
+    latest = closures[-1]
+    latest_path = paths[-1]
+    if complete and (
+        latest.status != "passed" or sum(closure.status == "passed" for closure in closures) != 1
+    ):
+        issues.append(
+            _issue(
+                "PHASE_TWO_SEMANTIC_CLOSURE_REQUIRED",
+                latest_path,
+                "Task15 completion requires exactly one latest passing closure",
+            )
+        )
+    if latest.status != "passed":
+        return issues
+
+    evidence = package.documents.get("catalog/evidence.yaml")
+    active = _active_snapshot(evidence) if isinstance(evidence, dict) else None
+    active_snapshot_id = active.get("id") if isinstance(active, dict) else None
+    if latest.active_snapshot_id != active_snapshot_id:
+        issues.append(
+            _issue("PHASE_TWO_SEMANTIC_CLOSURE_SNAPSHOT_MISMATCH", latest_path, "active snapshot")
+        )
+
+    digest_paths = (
+        "catalog/status-scope.yaml",
+        "catalog/status-evidence-reviews.yaml",
+        "catalog/status-test-nodes.yaml",
+    )
+    expected_digests = {
+        relative: f"sha256:{hashlib.sha256((package.root / relative).read_bytes()).hexdigest()}"
+        for relative in digest_paths
+    }
+    if latest.artifact_digests != expected_digests:
+        issues.append(
+            _issue("PHASE_TWO_SEMANTIC_CLOSURE_DIGEST_MISMATCH", latest_path, "artifact digests")
+        )
+    try:
+        expected_counts = _phase_two_semantic_closure_counts(package)
+    except ValidationError as error:
+        issues.append(_issue("PHASE_TWO_SEMANTIC_CLOSURE_COUNT_MISMATCH", latest_path, error))
+    else:
+        if latest.counts.model_dump() != expected_counts:
+            issues.append(
+                _issue("PHASE_TWO_SEMANTIC_CLOSURE_COUNT_MISMATCH", latest_path, "current counts")
+            )
+
+    expected_findings = {f"SV-{number:03d}" for number in range(1, 9)}
+    finding_ids = [finding.finding_id for finding in latest.findings]
+    if (
+        len(finding_ids) != len(set(finding_ids))
+        or set(finding_ids) != expected_findings
+        or any(finding.status == "still-blocking" for finding in latest.findings)
+    ):
+        issues.append(
+            _issue(
+                "PHASE_TWO_SEMANTIC_CLOSURE_FINDINGS_INVALID", latest_path, "SV-001 through SV-008"
+            )
+        )
+    if latest.blocking_items:
+        issues.append(
+            _issue(
+                "PHASE_TWO_SEMANTIC_CLOSURE_BLOCKED", latest_path, "blocking_items must be empty"
+            )
+        )
+
+    commands_are_current = all(
+        command.active_snapshot_id == active_snapshot_id
+        and command.exit_code == 0
+        and "--collect-only" not in command.argv
+        for command in latest.commands
+    )
+    has_phase_two = any(
+        any(
+            argument.endswith("research/ui-foundation/tools/validate.py")
+            for argument in command.argv
+        )
+        and "--phase" in command.argv
+        and "2" in command.argv
+        for command in latest.commands
+    )
+    has_focused_pytest = any(
+        "pytest" in command.argv and "tests/integration/test_ui_foundation_tools.py" in command.argv
+        for command in latest.commands
+    )
+    has_full_execution = any(
+        (
+            "pytest" in command.argv
+            and not any(argument.startswith("tests/") for argument in command.argv)
+        )
+        or (
+            "pre-commit" in command.argv and "run" in command.argv and "--all-files" in command.argv
+        )
+        for command in latest.commands
+    )
+    if not (commands_are_current and has_phase_two and has_focused_pytest and has_full_execution):
+        issues.append(
+            _issue(
+                "PHASE_TWO_SEMANTIC_CLOSURE_EXECUTION_INVALID",
+                latest_path,
+                "current successful Phase2, focused, and full execution records required",
+            )
+        )
+    return issues
+
+
 def _validate_phase_two_projections(
     package: FoundationPackage, items: list[dict[str, JsonValue]]
 ) -> list[ValidationIssue]:
@@ -3826,6 +4163,29 @@ def _validate_status_evidence_reviews(
     if catalog.metadata.active_snapshot_id != active_snapshot_id:
         issues.append(_issue("STATUS_EVIDENCE_REVIEW_METADATA_MISMATCH", path, "active snapshot"))
 
+    declared_reviewer_ids = [reviewer.reviewer_id for reviewer in catalog.metadata.reviewers]
+    referenced_reviewer_ids = {
+        row.reviewer_id for row in [*catalog.reviews, *catalog.dimension_reviews]
+    }
+    if len(declared_reviewer_ids) != len(
+        set(declared_reviewer_ids)
+    ) or referenced_reviewer_ids != set(declared_reviewer_ids):
+        issues.append(
+            _issue(
+                "STATUS_EVIDENCE_REVIEW_CONTRIBUTORS_INVALID",
+                path,
+                "declared reviewers must exactly equal referenced contributors",
+            )
+        )
+    if catalog.metadata.final_reviewer_id not in set(declared_reviewer_ids):
+        issues.append(
+            _issue(
+                "STATUS_EVIDENCE_REVIEW_FINAL_REVIEWER_INVALID",
+                path,
+                catalog.metadata.final_reviewer_id,
+            )
+        )
+
     review_ids = [review.review_id for review in catalog.reviews]
     summary_ids = [summary.review_id for summary in catalog.dimension_reviews]
     if len(review_ids) != len(set(review_ids)):
@@ -3846,10 +4206,21 @@ def _validate_status_evidence_reviews(
                 issues.append(_issue("STATUS_EVIDENCE_TEST_BOUNDARY_INVALID", path, row.review_id))
             if row.admission == "rejected" and row.verdict not in {"does-not-prove", "contradicts"}:
                 issues.append(_issue("STATUS_EVIDENCE_TEST_REJECTION_INVALID", path, row.review_id))
-        elif row.admission == "admitted" and row.verdict not in {"proves", "partially-proves"}:
-            issues.append(
-                _issue("STATUS_EVIDENCE_IMPLEMENTATION_ADMISSION_INVALID", path, row.review_id)
-            )
+        else:
+            if row.admission == "admitted" and row.verdict not in {
+                "proves",
+                "partially-proves",
+            }:
+                issues.append(
+                    _issue("STATUS_EVIDENCE_IMPLEMENTATION_ADMISSION_INVALID", path, row.review_id)
+                )
+            if row.admission == "rejected" and row.verdict not in {
+                "does-not-prove",
+                "contradicts",
+            }:
+                issues.append(
+                    _issue("STATUS_EVIDENCE_IMPLEMENTATION_ADMISSION_INVALID", path, row.review_id)
+                )
 
     summaries_by_key: dict[tuple[str, str], StatusEvidenceDimensionReview] = {}
     canonical_status_field = {
@@ -4149,25 +4520,62 @@ def _validate_status_evidence_reviews(
                                 identifier,
                             )
                         )
-                elif canonical_status == "present":
-                    if not (
-                        summary.combined_verdict == "proves"
-                        and summary.compatible_status == "present"
-                        and admitted
-                        and summary.rationale.strip()
-                    ):
-                        issues.append(
-                            _issue("STATUS_EVIDENCE_SUMMARY_STATUS_INVALID", location, identifier)
-                        )
-                elif canonical_status == "partial" and not (
-                    summary.combined_verdict == "partially-proves"
-                    and summary.compatible_status == "partial"
-                    and (admitted or bounded)
-                    and (summary.uncovered_boundary.strip() or summary.boundary.strip())
-                ):
-                    issues.append(
-                        _issue("STATUS_EVIDENCE_SUMMARY_STATUS_INVALID", location, identifier)
+                else:
+                    canonical_rows = [row for row in rows if row.locator in expected_locators]
+                    all_canonical_admitted = (
+                        bool(expected_locators)
+                        and len(canonical_rows) == len(expected_locators)
+                        and all(row.admission == "admitted" for row in canonical_rows)
                     )
+                    clauses_required = canonical_status == "partial" or any(
+                        row.verdict == "partially-proves" for row in canonical_rows
+                    )
+                    composition_valid = all_canonical_admitted
+                    if clauses_required:
+                        required_clauses = summary.required_clause_ids
+                        required_clause_set = set(required_clauses)
+                        coverage = set().union(
+                            *(set(row.covered_clause_ids) for row in canonical_rows)
+                        )
+                        composition_valid = composition_valid and (
+                            _nonempty_string_list(required_clauses)
+                            and len(required_clauses) == len(required_clause_set)
+                            and set(summary.clauses) == required_clause_set
+                            and all(value.strip() for value in summary.clauses.values())
+                            and all(
+                                _nonempty_string_list(row.covered_clause_ids)
+                                and set(row.covered_clause_ids) <= required_clause_set
+                                for row in canonical_rows
+                            )
+                        )
+                        if canonical_status == "present":
+                            composition_valid = composition_valid and (
+                                coverage == required_clause_set
+                                and summary.combined_verdict == "proves"
+                                and summary.compatible_status == "present"
+                            )
+                        elif canonical_status == "partial":
+                            composition_valid = composition_valid and (
+                                bool(coverage)
+                                and coverage < required_clause_set
+                                and bool(summary.uncovered_boundary.strip())
+                                and summary.combined_verdict == "partially-proves"
+                                and summary.compatible_status == "partial"
+                            )
+                    elif canonical_status == "present":
+                        composition_valid = composition_valid and (
+                            all(row.verdict == "proves" for row in canonical_rows)
+                            and summary.combined_verdict == "proves"
+                            and summary.compatible_status == "present"
+                        )
+                    if canonical_status in {"present", "partial"} and not composition_valid:
+                        issues.append(
+                            _issue(
+                                "STATUS_EVIDENCE_IMPLEMENTATION_COMPOSITION_INVALID",
+                                location,
+                                identifier,
+                            )
+                        )
                 if canonical_status != summary.compatible_status:
                     issues.append(
                         _issue("STATUS_EVIDENCE_CANONICAL_STATUS_MISMATCH", location, identifier)
@@ -5288,17 +5696,6 @@ def _validate_actions(
                             issues.append(
                                 _issue("ACTION_VARIANT_EVIDENCE_NOT_AUDITED", path, evidence_id)
                             )
-                resulting_state = action.get("resulting_state_id")
-                if not isinstance(resulting_state, str) or resulting_state not in {
-                    variant.to_state_id for variant in typed_variants
-                }:
-                    issues.append(
-                        _issue(
-                            "ACTION_RESULT_STATE_MISMATCH",
-                            path,
-                            "resulting_state_id must be a transition variant target",
-                        )
-                    )
                 continue
             if not isinstance(transition, dict):
                 issues.append(_issue("ACTION_TRANSITION_MISSING", path, "transition"))
@@ -6118,6 +6515,9 @@ def validate_foundation(root: Path, phase: int) -> list[ValidationIssue]:
     issues.extend(validate_semantics(package, phase))
     issues.extend(validate_source_hashes(package, phase))
     issues.extend(validate_review_references(package, phase))
+    if phase >= 2:
+        issues.extend(_validate_phase_two_index_statement(package))
+        issues.extend(_validate_phase_two_semantic_closures(package))
     return issues
 
 

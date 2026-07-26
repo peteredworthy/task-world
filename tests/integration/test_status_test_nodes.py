@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 
@@ -156,6 +157,104 @@ def test_collector_rejects_drift_for_unreferenced_active_file(tmp_path: Path) ->
 
     assert result.returncode == 1
     assert "STALE_ACTIVE_HASH:tests/test_unrelated.py" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error"),
+    [
+        (
+            lambda evidence: evidence["snapshot"].update({"parent_snapshot_id": "missing"}),
+            "SNAPSHOT_PARENT_UNKNOWN",
+        ),
+        (
+            lambda evidence: evidence["snapshot"].update({"parent_snapshot_id": "snapshot-active"}),
+            "SNAPSHOT_PARENT_CYCLE",
+        ),
+        (
+            lambda evidence: evidence.update(
+                {
+                    "snapshots": [
+                        dict(evidence["snapshot"]),
+                        dict(evidence["snapshot"]),
+                    ]
+                }
+            ),
+            "SNAPSHOT_ID_DUPLICATE",
+        ),
+    ],
+)
+def test_collector_rejects_invalid_snapshot_graph_without_replacing_output(
+    tmp_path: Path, mutation: object, error: str
+) -> None:
+    _, root = write_status_repository(
+        tmp_path, "def test_valid():\n    assert True\n", "tests/test_valid.py::test_valid"
+    )
+    output = root / "catalog/status-test-nodes.yaml"
+    output.write_text("sentinel\n", encoding="utf-8")
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    assert callable(mutation)
+    mutation(evidence)
+    write_yaml(evidence_path, evidence)
+
+    result = collect(root)
+
+    assert result.returncode == 1
+    assert error in result.stderr
+    assert output.read_text(encoding="utf-8") == "sentinel\n"
+
+
+def test_collector_resolves_tombstone_then_readded_file(tmp_path: Path) -> None:
+    repository, root = write_status_repository(
+        tmp_path, "def test_valid():\n    assert True\n", "tests/test_valid.py::test_valid"
+    )
+    source = repository / "tests/test_valid.py"
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["snapshot"]["id"] = "root"
+    evidence["snapshots"] = [
+        {
+            "id": "leaf",
+            "parent_snapshot_id": "root",
+            "files": [{"path": "tests/test_valid.py", "tombstone": True}],
+        },
+        {
+            "id": "readded",
+            "parent_snapshot_id": "leaf",
+            "files": [
+                {
+                    "path": "tests/test_valid.py",
+                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+                    "audited_at": "2026-07-24T00:00:00Z",
+                }
+            ],
+        },
+    ]
+    evidence["active_snapshot_id"] = "readded"
+    write_yaml(evidence_path, evidence)
+
+    result = collect(root)
+
+    assert result.returncode == 0, result.stderr
+    assert manifest(root)["active_snapshot_id"] == "readded"
+
+
+def test_collector_rejects_invalid_tombstone_without_replacing_output(tmp_path: Path) -> None:
+    _, root = write_status_repository(
+        tmp_path, "def test_valid():\n    assert True\n", "tests/test_valid.py::test_valid"
+    )
+    output = root / "catalog/status-test-nodes.yaml"
+    output.write_text("sentinel\n", encoding="utf-8")
+    evidence_path = root / "catalog/evidence.yaml"
+    evidence = yaml.safe_load(evidence_path.read_text(encoding="utf-8"))
+    evidence["snapshot"]["files"] = [{"path": "tests/missing.py", "tombstone": True}]
+    write_yaml(evidence_path, evidence)
+
+    result = collect(root)
+
+    assert result.returncode == 1
+    assert "INVALID_TOMBSTONE:tests/missing.py" in result.stderr
+    assert output.read_text(encoding="utf-8") == "sentinel\n"
 
 
 def test_collector_ignores_legacy_self_records_but_not_ordinary_files(tmp_path: Path) -> None:

@@ -172,5 +172,17 @@ entries:
   parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final5
   snapshot_digest: 402ccc6cade198c988da4fcbd3ac98ececdd2139e92b5e5489f87fee2a9b7a8e
   predecessor_lineage_digest: 8cfaf34a1f39d3f2c5890c91f383277cbe214dde82e3986b8affe5e64505bb4c
+  status: historical
+  lineage_entry_digest: 0bc877390e8d722841cffc698f9de8dffba1ef31dc7761204afcf62db1315307
+- snapshot_id: snapshot-2026-07-26-task-15-review-remediation
+  parent_snapshot_id: snapshot-2026-07-25-task-15-authority-closure-final6
+  snapshot_digest: be31c7f5bb8554509f9640105b04a21bafd470d3ec3bcec7af9792c44873230c
+  predecessor_lineage_digest: 0bc877390e8d722841cffc698f9de8dffba1ef31dc7761204afcf62db1315307
+  status: historical
+  lineage_entry_digest: 7426aee8f39bacb70adc3cb99b9b67a32fbf72f5131488e6d7f786d1a7885165
+- snapshot_id: snapshot-2026-07-26-task-15-review-remediation-fix
+  parent_snapshot_id: snapshot-2026-07-26-task-15-review-remediation
+  snapshot_digest: cf314fcd6fc41c6c8c06adf16bb4454aa518839cbc501b6cbff0a0ca80196c6f
+  predecessor_lineage_digest: 7426aee8f39bacb70adc3cb99b9b67a32fbf72f5131488e6d7f786d1a7885165
   status: active
-  lineage_entry_digest: af3b1dad3c673201ec7ad19f9f05614113244b0d3be9c899eb6e279ae2f18b44
+  lineage_entry_digest: 85522c1055277d089e90803817b79693862af6e0e5367d648a08b21dd130f032

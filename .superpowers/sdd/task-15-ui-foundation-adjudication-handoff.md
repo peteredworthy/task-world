@@ -8,12 +8,13 @@ Record the canonical SV-008 adjudication correction while preserving Phase 1 imm
 
 The current, superseding Task 15 projection covers exactly **210** records: 35 REL,
 74 STA, 86 ACT, 9 EVI, and 6 INV. It has 513 SER locator reviews, 1,050 SDR
-dimension reviews, and 454/51/8 admitted/bounded/rejected SER rows. The exact and
+dimension reviews, and 455/50/8 admitted/bounded/rejected SER rows. The exact and
 bounded canonical test-locator counts are 138 and 50; the regenerated collected
-manifest contains 119 bases and concrete nodes. Test distributions are REL 13/22,
-STA 57/17, ACT 56/30, EVI 2/7, and INV 6/0 exercised/unexercised. 62 actions retain
-the Q-5 boundary. The final bounded post-Phase1 snapshot is
-`snapshot-2026-07-25-task-15-authority-closure-final6`.
+manifest contains 119 bases and concrete nodes. Qualifying collected test-coverage
+classifications, not test-execution results, are REL 13/22, STA 57/17, ACT 56/30,
+EVI 2/7, and INV 6/0 exercised/unexercised. 62 actions retain the Q-5 boundary.
+The projected bounded post-Phase1 remediation snapshot is
+`snapshot-2026-07-26-task-15-review-remediation-fix`.
 
 The validator now rejects duplicate or incomplete partial-clause compositions,
 bounded evidence promoted as exercise, question-only documentation contradictions,
@@ -52,8 +53,9 @@ No new product decision is required; independent re-review is required before cl
 ## Evidence pointers
 
 See each record's five-field `status_basis`, `implementation_locators`, `test_locators`, optional
-`bounded_test_locators`, and the active Task 15 snapshot. The resulting test-status distributions are
-REL 23/12, STA 67/5, ACT 58/13, EVI 5/4, and INV 6/0 exercised/unexercised.
+`bounded_test_locators`, and the projected Task 15 snapshot. The resulting qualifying collected
+test-coverage classifications, not test-execution results, are REL 13/22, STA 57/17, ACT 56/30,
+EVI 2/7, and INV 6/0 exercised/unexercised.
 
 ## Recommended next delegation
 
@@ -65,7 +67,7 @@ In progress: ACT-75/76/80/81/82 now use typed carrier-specific transition varian
 including exact accepted/rejected TaskStatus partitions and ACT-81's PAUSED run-carrier
 accepted no-op without task mutation. EVD-116 remains engine-only; REST and MCP
 escalation registration/handler/test evidence has distinct direct IDs. Snapshot
-`snapshot-2026-07-25-task-15-authority-closure-final6` records the final source boundary;
+`snapshot-2026-07-26-task-15-review-remediation-fix` will record the remediated source boundary;
 this handoff remains pending independent closure review.
 
 ## Status

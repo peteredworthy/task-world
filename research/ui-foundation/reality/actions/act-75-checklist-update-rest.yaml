@@ -10,7 +10,6 @@ expected_source_version: 'None'
 required_input: {run_id: required, task_id: required, req_id: required, status: required, note: optional}
 validation: [checklist-status, task-eligibility]
 durable_effect: Updates checklist status and note through the workflow service.
-resulting_state_id: STA-9
 failure_modes: ['404', '409', validation error]
 stale_state_behavior: Explicitly rejects VERIFYING (STA-10), COMPLETED (STA-14), and FAILED (STA-15).
 idempotency: Repeating the same status and note converges.
