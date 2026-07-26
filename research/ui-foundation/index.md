@@ -16,11 +16,11 @@ are complete; Phase 3 is published as `complete-blocked` pending the human check
 
 ## Task 15 active semantic-status snapshot
 
-`snapshot-2026-07-26-task-18-phase-3-final` is the active bounded Phase 3 publication
-child snapshot. It records the final hash audit for the validator and foundation integration
-test plus the required generated status manifests. The current 210-record Task 15 projection
-contains 513 SER rows (455 admitted, 50 bounded, 8 rejected), 1,050 SDR rows, 138 exact and
-50 bounded test locators, and a 119-base/119-node collected-test manifest. These are qualifying
+`snapshot-2026-07-26-post-merge-main` is the active bounded Phase 3 publication child
+snapshot. It records the post-merge hash re-audit, deleted-test and superseded-scratch tombstones,
+and the required generated status manifests. The current 210-record Task 15 projection
+contains 512 SER rows (454 admitted, 50 bounded, 8 rejected), 1,050 SDR rows, 137 exact and
+50 bounded test locators, and a 117-base/117-node collected-test manifest. These are qualifying
 collected coverage records, not evidence of test execution. The canonical
 SER/SDR review catalog and typed action-variant authority catalog are validation inputs.
 Task 15 is COMPLETE following material independent semantic review and a full passing verification gate.

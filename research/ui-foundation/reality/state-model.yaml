@@ -1773,7 +1773,7 @@ items:
       SER-0365 inspect src/orchestrator/git/ops/branch_ops.py::back_merge and establish the record proposition
       under EVD-29.'
     test: 'STA-42 test status unexercised: STA-42 Git merge applied remains unexercised: bounded SER rows
-      SER-0366 cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+      SER-0366 cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state
       but do not assert the complete record proposition.'
     documentation: 'STA-42 documentation status documented: STA-42 Git merge applied is documented at reality/state-model.yaml
       and by EVD-29; any listed question (no canonical unresolved conflict or question) is explicitly disclosed
@@ -1788,7 +1788,7 @@ items:
   - src/orchestrator/git/ops/branch_ops.py::back_merge
   test_locators: []
   bounded_test_locators:
-  - tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+  - tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state
 - id: STA-43
   title: Git conflict unresolved
   definition: Git merge or review conflict carrier requiring resolution.
@@ -1811,7 +1811,7 @@ items:
       rows SER-0367 inspect src/orchestrator/git/errors.py::MergeConflictError and establish the record
       proposition under EVD-30.'
     test: 'STA-43 test status exercised: STA-43 Git conflict unresolved is exercised because admitted SER
-      rows SER-0368 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status;
+      rows SER-0368 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit;
       no active rejected locator defeats that proof.'
     documentation: 'STA-43 documentation status documented: STA-43 Git conflict unresolved is documented
       at reality/state-model.yaml and by EVD-30; any listed question (no canonical unresolved conflict or
@@ -1826,7 +1826,7 @@ items:
   implementation_locators:
   - src/orchestrator/git/errors.py::MergeConflictError
   test_locators:
-  - tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status
+  - tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit
   bounded_test_locators: []
 - id: STA-44
   title: Git conflict resolved
@@ -2465,7 +2465,7 @@ items:
       SER-0410 inspect src/orchestrator/workflow/merge_readiness.py::evaluate_merge_readiness_gates and
       establish the record proposition under EVD-29.'
     test: 'STA-59 test status exercised: STA-59 Git operation ready is exercised because admitted SER rows
-      SER-0411 contain direct assertions at tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass;
+      SER-0411 contain direct assertions at tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass_and_rejects_non_completed;
       no active rejected locator defeats that proof.'
     documentation: 'STA-59 documentation status documented: STA-59 Git operation ready is documented at
       reality/state-model.yaml and by EVD-29; any listed question (no canonical unresolved conflict or question)
@@ -2479,7 +2479,7 @@ items:
   implementation_locators:
   - src/orchestrator/workflow/merge_readiness.py::evaluate_merge_readiness_gates
   test_locators:
-  - tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass
+  - tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass_and_rejects_non_completed
   bounded_test_locators: []
 - id: STA-60
   title: Environment file operation ready
@@ -2628,7 +2628,7 @@ items:
       rows SER-0421 inspect src/orchestrator/api/routers/review.py::prune_preview and establish the record
       proposition under EVD-28.'
     test: 'STA-63 test status exercised: STA-63 Prune preview returned is exercised because admitted SER
-      rows SER-0422 contain direct assertions at tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_returns_stats;
+      rows SER-0422 contain direct assertions at tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_lifecycle;
       no active rejected locator defeats that proof.'
     documentation: 'STA-63 documentation status documented: STA-63 Prune preview returned is documented
       at reality/state-model.yaml and by EVD-28; any listed question (no canonical unresolved conflict or
@@ -2643,7 +2643,7 @@ items:
   implementation_locators:
   - src/orchestrator/api/routers/review.py::prune_preview
   test_locators:
-  - tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_returns_stats
+  - tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_lifecycle
   bounded_test_locators: []
 - id: STA-64
   title: Graph patch submitted

@@ -2,21 +2,21 @@
 
 ## Final state
 
-`complete-blocked`. This is mechanical: 9 canonical conflicts are unresolved, Q-1 through Q-5 are open and blocking, and 57 capability classifications remain `unknown`. No unresolved fact was promoted.
+`complete-blocked`. This is mechanical: 9 canonical conflicts are unresolved, Q-1 through Q-5 are open and blocking, and 57 capability classifications remain `unknown`. The post-merge re-audit refreshed evidence only; no unresolved fact was promoted.
 
 ## Publication
 
 - Review path: `research/ui-foundation/reviews/phase-3-reality-capability-01.html`
 - Review batches: 1
 - Review items: 5, ordered `Q-5`, `Q-4`, `Q-1`, `Q-2`, `Q-3`
-- Active evidence snapshot: `snapshot-2026-07-26-task-18-phase-3-final`
-- Snapshot declaration: one append-only child snapshot after formatting; it records the five stable tracked changes (`.superpowers/sdd/progress.md`, `research/ui-foundation/index.md`, `research/ui-foundation/status.md`, `research/ui-foundation/tools/validate.py`, and `tests/integration/test_ui_foundation_tools.py`) and explicitly includes the required generated manifests `research/ui-foundation/catalog/status-test-nodes.yaml` and `research/ui-foundation/catalog/status-evidence-reviews.yaml`.
+- Active evidence snapshot: `snapshot-2026-07-26-post-merge-main`
+- Snapshot declaration: one append-only post-merge child snapshot after formatting. It refreshes all drifted current source/test hashes, tombstones the intentionally deleted `tests/integration/test_branch_ops.py` and `tests/integration/test_conflict_back_merge.py`, tombstones the two superseded untracked Task 15 scratch notes, and explicitly declares generated manifests `research/ui-foundation/catalog/status-test-nodes.yaml` and `research/ui-foundation/catalog/status-evidence-reviews.yaml`. Reserved self files remain excluded.
 
 ## Counts
 
 - Entities: 30; relationships: 35; states: 74; actions: 86.
 - Capabilities: 132 (1 current, 0 derived, 25 proposed, 49 gap, 57 unknown).
-- Derivations: 0; conflicts: 9 unresolved; questions: 7 total / 5 open blocking; review items: 5.
+- Derivations: 0; conflicts: 9 unresolved; questions: 7 total / 5 open blocking; review items: 5. Post-merge locator mappings: 9 exact consolidated replacements, 2 preserved bounded rows, and 0 capability-classification changes. The collected manifest is 117 bases/nodes with 137 exact and 50 bounded locators.
 
 ## Required human decisions
 
@@ -27,6 +27,8 @@
 5. Reconcile JSONL documentation with executable SQL authority (`Q-3`).
 
 ## Verification
+
+Post-merge verification is recorded after the refreshed snapshot is created. Required gates: Phase 1/2/3 validation, focused foundation and exact review tests, Ruff, Pyright, and UI lint/typecheck.
 
 ```text
 uv run python research/ui-foundation/tools/validate.py --phase 3

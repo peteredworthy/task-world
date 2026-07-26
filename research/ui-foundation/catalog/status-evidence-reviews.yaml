@@ -1,7 +1,7 @@
 metadata:
   schema_version: '2'
   scope_manifest_digest: sha256:abb735f9c5b1d08f2c80a46193dc466c76d24de65d1dfb9bfc87e301cbb552f6
-  active_snapshot_id: snapshot-2026-07-26-task-18-phase-3-final
+  active_snapshot_id: snapshot-2026-07-26-post-merge-main
   reviewers:
   - reviewer_id: sol-independent
     model: openai/gpt-5.6-sol
@@ -1745,12 +1745,13 @@ reviews:
   record_id: ACT-5
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status
+  locator: tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit
   record_proposition: The review conflict endpoint test creates a real conflict and
     asserts conflicts status.
-  observed_source_or_test_fact: 'Exact collected pytest body at lines 164-179; direct
-    assertions first: `assert resp.json()[''status''] == ''conflicts''`; `assert resp.status_code
-    == 200`; `client, repo, drain = client_with_repo`.'
+  observed_source_or_test_fact: 'Exact collected pytest body at lines 123-143; direct
+    assertions first: `assert data[''status''] == ''conflicts''`; `assert ''shared.py''
+    in data[''conflict_files'']`; `assert data[''conflict_count''] == 1`; `assert
+    data[''merge_commit_sha''] is None`.'
   boundary: Assertions establish only this exact collected test path and its represented
     inputs/outcomes.
   verdict: proves
@@ -1959,14 +1960,15 @@ reviews:
   record_id: ACT-54
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+  locator: tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state
   record_proposition: The conflict API test invokes that review route and asserts
     clean merge.
-  observed_source_or_test_fact: 'Exact collected pytest body at lines 88-102; direct
-    assertions first: `assert resp.json()[''status''] == ''clean''`; `assert resp.status_code
-    == 200`; `resp = await client.post(f''/api/runs/{run_id}/back-merge'')`.'
-  boundary: The body asserts a clean response but not the resulting review-route git
-    mutation.
+  observed_source_or_test_fact: 'Exact collected pytest body at lines 89-114; direct
+    assertions first: `assert data[''status''] == ''clean''`; `assert data[''merge_commit_sha'']
+    is not None`; `assert data[''conflict_files''] == []`; `assert head_sha == data[''merge_commit_sha'']`.'
+  boundary: The body proves the clean response and returned worktree HEAD, but does
+    not independently inspect the merged source content for the full review-route
+    proposition.
   verdict: partially-proves
   status_compatibility: unexercised
   review_rationale: 'The body asserts a relevant fragment, but the uncovered clause
@@ -2001,13 +2003,16 @@ reviews:
   record_id: ACT-55
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds
+  locator: tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_resets_head
   record_proposition: The real-repo route test reverts a clean back merge and asserts
     success.
-  observed_source_or_test_fact: 'Exact collected pytest body at lines 530-539; direct
-    assertions first: `assert resp.status_code == 200`; `resp = await client.post(f''/api/runs/{run_id}/review/revert-back-merge'')`.'
-  boundary: The exact body asserts only HTTP 200; it does not inspect the reverted
-    commit or repository state.
+  observed_source_or_test_fact: 'Exact collected pytest body at lines 414-431; direct
+    assertions first: `assert data[''reverted_commit''] == merge_sha`; `assert data[''new_head'']
+    != merge_sha`; `assert len(data[''new_head'']) == 40`; `assert actual_head ==
+    data[''new_head'']`.'
+  boundary: The body proves the returned revert and worktree-HEAD fields, but does
+    not assert the emitted BackMergeReverted evidence required by the full record
+    proposition.
   verdict: partially-proves
   status_compatibility: unexercised
   review_rationale: 'The body asserts a relevant fragment, but the uncovered clause
@@ -2224,7 +2229,7 @@ reviews:
   record_id: ACT-61
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree
+  locator: tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_lifecycle
   record_proposition: The test snapshots the worktree and asserts preview does not
     mutate it.
   observed_source_or_test_fact: 'Exact collected pytest body at lines 260-283; direct
@@ -2265,7 +2270,7 @@ reviews:
   record_id: ACT-62
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit
+  locator: tests/integration/test_prune_api.py::TestPruneApply::test_apply_file_mode_lifecycle
   record_proposition: The real-repo test asserts a new prune commit is created.
   observed_source_or_test_fact: 'Exact collected pytest body at lines 456-480; direct
     assertions first: `assert resp.status_code == 200`; `assert head_after != head_before`;
@@ -8363,13 +8368,14 @@ reviews:
   record_id: STA-42
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+  locator: tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state
   record_proposition: The conflict API test performs a real clean merge and asserts
     clean status.
-  observed_source_or_test_fact: 'Exact collected pytest body at lines 88-102; direct
-    assertions first: `assert resp.json()[''status''] == ''clean''`; `assert resp.status_code
-    == 200`; `resp = await client.post(f''/api/runs/{run_id}/back-merge'')`.'
-  boundary: The body asserts the clean response carrier but not the resulting branch/commit
+  observed_source_or_test_fact: 'Exact collected pytest body at lines 89-114; direct
+    assertions first: `assert data[''status''] == ''clean''`; `assert data[''merge_commit_sha'']
+    is not None`; `assert data[''conflict_files''] == []`; `assert head_sha == data[''merge_commit_sha'']`.'
+  boundary: The body proves the clean response and returned worktree HEAD, but does
+    not independently inspect the merged source content for the full branch/commit
     mutation.
   verdict: partially-proves
   status_compatibility: unexercised
@@ -8402,12 +8408,13 @@ reviews:
   record_id: STA-43
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status
+  locator: tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit
   record_proposition: The real-repo test creates a conflict and asserts conflicts
     status.
-  observed_source_or_test_fact: 'Exact collected pytest body at lines 164-179; direct
-    assertions first: `assert resp.json()[''status''] == ''conflicts''`; `assert resp.status_code
-    == 200`; `client, repo, drain = client_with_repo`.'
+  observed_source_or_test_fact: 'Exact collected pytest body at lines 123-143; direct
+    assertions first: `assert data[''status''] == ''conflicts''`; `assert ''shared.py''
+    in data[''conflict_files'']`; `assert data[''conflict_count''] == 1`; `assert
+    data[''merge_commit_sha''] is None`.'
   boundary: Review job failed
   verdict: proves
   status_compatibility: exercised
@@ -8443,7 +8450,7 @@ reviews:
   locator_kind: pytest-node
   locator: tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_ours_removes_markers
   record_proposition: The test selects ours and asserts conflict markers are removed.
-  observed_source_or_test_fact: 'Exact collected pytest body at lines 355-377; direct
+  observed_source_or_test_fact: 'Exact collected pytest body at lines 244-266; direct
     assertions first: `assert data[''path''] == ''conflict.py''`; `assert resp.status_code
     == 200`; `assert data[''status''] == ''resolved''`; `assert data[''remaining_conflicts'']
     == 0`.'
@@ -9379,7 +9386,7 @@ reviews:
   record_id: STA-59
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass
+  locator: tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass_and_rejects_non_completed
   record_proposition: The real-repo readiness test asserts every gate passes before
     merge.
   observed_source_or_test_fact: 'Exact collected pytest body at lines 93-123; direct
@@ -9607,7 +9614,7 @@ reviews:
   record_id: STA-63
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_returns_stats
+  locator: tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_lifecycle
   record_proposition: The preview test asserts resulting stats and selection counts.
   observed_source_or_test_fact: 'Exact collected pytest body at lines 142-165; direct
     assertions first: `assert resp.status_code == 200`; `assert data[''files_affected'']
@@ -10926,22 +10933,24 @@ reviews:
   record_id: ACT-79
   dimension: test
   locator_kind: pytest-node
-  locator: tests/integration/test_prune_api.py::TestRevertFileEndpoint::test_revert_restores_modified_file
+  locator: tests/integration/test_prune_api.py::TestRevertFileEndpoint::test_revert_file_lifecycle
   record_proposition: 'The exact test establishes the represented test boundary for
     ACT-79: Reverts one worktree file to base state and creates a git commit.'
-  observed_source_or_test_fact: The revert-file endpoint test invokes the REST route
-    for a modified file and asserts restoration to exact base content.
-  boundary: It proves file restoration but does not also assert the route-created
-    commit identity.
-  verdict: partially-proves
-  status_compatibility: partial
-  review_rationale: This row remains bounded to exact base-content restoration; admitted
-    with SER-0499, which proves the complementary route-created commit clause.
+  observed_source_or_test_fact: The consolidated revert-file lifecycle test invokes the
+    REST route, asserts restoration to exact base content, and asserts the returned
+    commit SHA matches the changed worktree HEAD.
+  boundary: Assertions establish only this exact collected lifecycle test and its
+    represented base-restoration and returned-commit outcomes.
+  verdict: proves
+  status_compatibility: exercised
+  review_rationale: The exact locator directly proves both required clauses of the
+    bounded ACT-79 proposition.
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
   admission: admitted
   covered_clause_ids:
   - act-79-file-restored
+  - act-79-revert-commit-created
 - review_id: SER-0490
   record_id: ACT-80
   dimension: test
@@ -11125,27 +11134,6 @@ reviews:
   admission: bounded
   covered_clause_ids:
   - sta-75-projections-regenerated
-- review_id: SER-0499
-  record_id: ACT-79
-  dimension: test
-  locator_kind: pytest-node
-  locator: tests/integration/test_prune_api.py::TestRevertFileEndpoint::test_revert_creates_commit
-  record_proposition: ACT-79 test proposition requires both one-file base restoration
-    and creation/readback of the revert commit.
-  observed_source_or_test_fact: The endpoint test invokes revert-file and asserts
-    a changed HEAD plus a returned 40-character commit SHA matching HEAD.
-  boundary: It proves commit creation/readback but does not also assert restored base
-    content.
-  verdict: partially-proves
-  status_compatibility: partial
-  review_rationale: This row remains bounded to creation/readback of the route-created
-    commit; admitted with SER-0489, which proves the complementary exact base-content
-    restoration clause.
-  reviewer_id: sol-independent
-  reviewed_at: '2026-07-25T04:10:20Z'
-  admission: admitted
-  covered_clause_ids:
-  - act-79-revert-commit-created
 - review_id: SER-0500
   record_id: STA-74
   dimension: implementation
@@ -24371,10 +24359,10 @@ dimension_reviews:
   observed_fact: 'Exact collected pytest body at lines 88-102; direct assertions first:
     `assert resp.json()[''status''] == ''clean''`; `assert resp.status_code == 200`;
     `resp = await client.post(f''/api/runs/{run_id}/back-merge'')`.'
-  boundary: STA-42 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean;
+  boundary: STA-42 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: 'STA-42 Git merge applied remains unexercised: bounded SER rows SER-0366
-    cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+    cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state
     but do not assert the complete record proposition.'
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -24415,7 +24403,7 @@ dimension_reviews:
       path: reality/state-model.yaml
       id: STA-42
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:c1939bc309203bf59c0b707fbc52748fb969b92d469a1b8d8306c59af9bf5851
+      current_sha256: sha256:e3d6f76c3fe58295a3d79e9ddd5056545e56c0d116cc866dab8efe82f4b38052
     evidence_bindings:
     - evidence_id: EVD-29
       expected_source_kind: audit-report
@@ -24522,10 +24510,10 @@ dimension_reviews:
   observed_fact: 'Exact collected pytest body at lines 164-179; direct assertions
     first: `assert resp.json()[''status''] == ''conflicts''`; `assert resp.status_code
     == 200`; `client, repo, drain = client_with_repo`.'
-  boundary: STA-43 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status;
+  boundary: STA-43 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: STA-43 Git conflict unresolved is exercised because admitted SER rows
-    SER-0368 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status;
+    SER-0368 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit;
     no active rejected locator defeats that proof.
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -24564,7 +24552,7 @@ dimension_reviews:
       path: reality/state-model.yaml
       id: STA-43
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:d4ea088b91b3ba243e0010e60fe6d0a59962a693bc05d879ec3de873bc81f0f5
+      current_sha256: sha256:85441af40ca56bd96b7163e1d9462a9240d6f11b11404a2fe267b954bb964bca
     evidence_bindings:
     - evidence_id: EVD-30
       expected_source_kind: audit-report
@@ -27164,10 +27152,10 @@ dimension_reviews:
   observed_fact: 'Exact collected pytest body at lines 93-123; direct assertions first:
     `assert ''name'' in gate`; `assert ''status'' in gate`; `assert ''description''
     in gate`; `assert resp.status_code == 200`.'
-  boundary: STA-59 test authority is exactly partitioned across tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass;
+  boundary: STA-59 test authority is exactly partitioned across tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass_and_rejects_non_completed;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: STA-59 Git operation ready is exercised because admitted SER rows SER-0411
-    contain direct assertions at tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass;
+    contain direct assertions at tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass_and_rejects_non_completed;
     no active rejected locator defeats that proof.
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -27208,7 +27196,7 @@ dimension_reviews:
       path: reality/state-model.yaml
       id: STA-59
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:a6e36d685d0b88a2c04f43e39081ddc8cd5a360c1b63c6337664d45f0b969015
+      current_sha256: sha256:e4f226718bfeb796d9a5b37367a1c098cb7ae7e6d299f10f814a0b673e9cd109
     evidence_bindings:
     - evidence_id: EVD-29
       expected_source_kind: audit-report
@@ -27794,10 +27782,10 @@ dimension_reviews:
   observed_fact: 'Exact collected pytest body at lines 142-165; direct assertions
     first: `assert resp.status_code == 200`; `assert data[''files_affected''] == 1`;
     `assert data[''hunks_removed''] >= 1`; `assert data[''lines_removed''] == 2`.'
-  boundary: STA-63 test authority is exactly partitioned across tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_returns_stats;
+  boundary: STA-63 test authority is exactly partitioned across tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_lifecycle;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: STA-63 Prune preview returned is exercised because admitted SER rows
-    SER-0422 contain direct assertions at tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_returns_stats;
+    SER-0422 contain direct assertions at tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_lifecycle;
     no active rejected locator defeats that proof.
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -27838,7 +27826,7 @@ dimension_reviews:
       path: reality/state-model.yaml
       id: STA-63
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:6dbe092414deb1e16c624fdc7762ea75339cf65014ff6258c419b61bc6956948
+      current_sha256: sha256:a5de35a869fafd1dc5db59640fe983fb5a6735e3c297a19cfd88bc30790868c9
     evidence_bindings:
     - evidence_id: EVD-28
       expected_source_kind: audit-report
@@ -30562,10 +30550,10 @@ dimension_reviews:
   observed_fact: 'Exact collected pytest body at lines 164-179; direct assertions
     first: `assert resp.json()[''status''] == ''conflicts''`; `assert resp.status_code
     == 200`; `client, repo, drain = client_with_repo`.'
-  boundary: ACT-5 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status;
+  boundary: ACT-5 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: ACT-5 Leaves review back-merge conflict in progress. is exercised because
-    admitted SER rows SER-0081 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status;
+    admitted SER rows SER-0081 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit;
     no active rejected locator defeats that proof.
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -30604,7 +30592,7 @@ dimension_reviews:
       path: reality/actions/act-5-review-back-merge-conflict.yaml
       id: ACT-5
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:2a0eb3142c91c5a6f26768bfd3b2fc1891d2c2930e6fe2215db6a3cadd1b6db6
+      current_sha256: sha256:c24f490baf62758d8aaf77deab15f2b6808f86c902bbd8fa8331dae8737eda60
     evidence_bindings:
     - evidence_id: EVD-29
       expected_source_kind: audit-report
@@ -40249,10 +40237,10 @@ dimension_reviews:
   observed_fact: 'Exact collected pytest body at lines 88-102; direct assertions first:
     `assert resp.json()[''status''] == ''clean''`; `assert resp.status_code == 200`;
     `resp = await client.post(f''/api/runs/{run_id}/back-merge'')`.'
-  boundary: ACT-54 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean;
+  boundary: ACT-54 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: 'ACT-54 Synchronously clean-merges source branch into run branch. remains
-    unexercised: bounded SER rows SER-0091 cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+    unexercised: bounded SER rows SER-0091 cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state
     but do not assert the complete record proposition.'
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -40293,7 +40281,7 @@ dimension_reviews:
       path: reality/actions/act-54-review-back-merge.yaml
       id: ACT-54
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:6adb6f6574035db2f8149c8015764c665f1d2cb4a82f29aeeab223b6b1692511
+      current_sha256: sha256:f98ddd2db488b9d27af9b343111a9fa42f97c64351c9384ff532632d79687908
     evidence_bindings:
     - evidence_id: EVD-29
       expected_source_kind: audit-report
@@ -40403,10 +40391,10 @@ dimension_reviews:
   rejected_locators: []
   observed_fact: 'Exact collected pytest body at lines 530-539; direct assertions
     first: `assert resp.status_code == 200`; `resp = await client.post(f''/api/runs/{run_id}/review/revert-back-merge'')`.'
-  boundary: ACT-55 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds;
+  boundary: ACT-55 test authority is exactly partitioned across tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_resets_head;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: 'ACT-55 Synchronously creates qualifying merge revert and emits BackMergeReverted.
-    remains unexercised: bounded SER rows SER-0093 cover tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds
+    remains unexercised: bounded SER rows SER-0093 cover tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_resets_head
     but do not assert the complete record proposition.'
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -40452,7 +40440,7 @@ dimension_reviews:
       path: reality/actions/act-55-review-undo-back-merge.yaml
       id: ACT-55
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:1ddca41ebcea503b610701a0b2b5d0f88ffc6c6ced65516542322319b9a676e9
+      current_sha256: sha256:c454e4615dd216d602527dce529ff6d8a8e9f8e3c9aafe4cc6514de75f0b4292
     evidence_bindings:
     - evidence_id: EVD-29
       expected_source_kind: audit-report
@@ -41381,10 +41369,10 @@ dimension_reviews:
     cwd=worktree_path) == head_before`; `assert (worktree_path / ''ro.py'').read_text()
     == content_before`; `resp = await client.post(f''/api/runs/{run_id}/review/prune/preview'',
     json={''scope'': ''aggregate'', ''files'': [{''path'': ''ro.py'', ''mode'': ''file''}]})`.'
-  boundary: ACT-61 test authority is exactly partitioned across tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree;
+  boundary: ACT-61 test authority is exactly partitioned across tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_lifecycle;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: ACT-61 Synchronously returns non-mutating computed diff/count preview.
-    is exercised because admitted SER rows SER-0104 contain direct assertions at tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree;
+    is exercised because admitted SER rows SER-0104 contain direct assertions at tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_lifecycle;
     no active rejected locator defeats that proof.
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -41423,7 +41411,7 @@ dimension_reviews:
       path: reality/actions/act-61-prune-preview.yaml
       id: ACT-61
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:29555281dec9e6b687c47105d9fdc6765e406d6c38719834c131aa024bbaf545
+      current_sha256: sha256:78142813f0f2701c202ac8a2fdc08637a75ba2f68f289fc847833d492458ae4b
     evidence_bindings:
     - evidence_id: EVD-28
       expected_source_kind: audit-report
@@ -41536,11 +41524,11 @@ dimension_reviews:
   observed_fact: 'Exact collected pytest body at lines 456-480; direct assertions
     first: `assert resp.status_code == 200`; `assert head_after != head_before`; `assert
     data[''commit_sha''] == head_after`; `assert len(data[''commit_sha'']) == 40`.'
-  boundary: ACT-62 test authority is exactly partitioned across tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit;
+  boundary: ACT-62 test authority is exactly partitioned across tests/integration/test_prune_api.py::TestPruneApply::test_apply_file_mode_lifecycle;
     bounded or absent coverage cannot be promoted to full-carrier exercise.
   rationale: ACT-62 Synchronously creates prune commit effects and emits PruneApplied;
     returned UUID is not durable event identity. is exercised because admitted SER
-    rows SER-0106 contain direct assertions at tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit;
+    rows SER-0106 contain direct assertions at tests/integration/test_prune_api.py::TestPruneApply::test_apply_file_mode_lifecycle;
     no active rejected locator defeats that proof.
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
@@ -41585,7 +41573,7 @@ dimension_reviews:
       path: reality/actions/act-62-prune-apply.yaml
       id: ACT-62
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:c95e14190b6023547707a53c9c2e575a9182bb478af8d7e0baac66931e16f989
+      current_sha256: sha256:0547c28282b9cb9a25bbdf7966f0979403b27509c3b33d47966ac9b06948430e
     evidence_bindings:
     - evidence_id: EVD-28
       expected_source_kind: audit-report
@@ -44448,19 +44436,16 @@ dimension_reviews:
   compatible_status: exercised
   admitted_locators:
   - SER-0489
-  - SER-0499
   bounded_locators: []
   rejected_locators: []
   observed_fact: The revert-file endpoint test invokes the REST route for a modified
     file and asserts restoration to exact base content. The endpoint test invokes
     revert-file and asserts a changed HEAD plus a returned 40-character commit SHA
     matching HEAD.
-  boundary: ACT-79 test authority is exactly partitioned across tests/integration/test_prune_api.py::TestRevertFileEndpoint::test_revert_restores_modified_file,
-    tests/integration/test_prune_api.py::TestRevertFileEndpoint::test_revert_creates_commit;
-    each row remains clause-bounded while their admitted assertions jointly prove
-    the conjunction.
-  rationale: Complementary admitted SER rows SER-0489 and SER-0499 jointly prove exact
-    base restoration and route-created commit creation/readback.
+  boundary: ACT-79 test authority is bounded to the exact lifecycle test and its asserted
+    base-restoration and returned-commit fields.
+  rationale: Admitted SER row SER-0489 directly proves exact base restoration and
+    the route-created commit readback within the one collected lifecycle test.
   reviewer_id: sol-independent
   reviewed_at: '2026-07-25T04:10:20Z'
   required_clause_ids:
@@ -44505,7 +44490,7 @@ dimension_reviews:
       path: reality/actions/act-79-review-file-revert-rest.yaml
       id: ACT-79
       hash_scope: exact-yaml-record-block
-      current_sha256: sha256:c554a87f09104cc1f8b789a6a37c551d70ffb5e3cc1c7ad0feb83a6e45254505
+      current_sha256: sha256:51de589b4bdc72e7e079c912a1f368d16e92c2fad6323b94d4273d7fe4541498
     evidence_bindings:
     - evidence_id: EVD-29
       expected_source_kind: audit-report

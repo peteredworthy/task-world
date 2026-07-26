@@ -2725,7 +2725,7 @@ snapshot: &id001
   - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
-active_snapshot_id: snapshot-2026-07-26-task-18-phase-3-final
+active_snapshot_id: snapshot-2026-07-26-post-merge-main
 items:
 - id: EVD-01
   source_kind: product-documentation
@@ -17635,3 +17635,101 @@ snapshots:
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: 97897ca9ca993ae161b0bedf93f82b1181958f19c53afc02e9b34427c0d00c79
     audited_at: '2026-07-26T07:15:00Z'
+- id: snapshot-2026-07-26-post-merge-main
+  parent_snapshot_id: snapshot-2026-07-26-task-18-phase-3-final
+  files:
+  - path: .superpowers/sdd/task-18-report.md
+    sha256: 095f33fd00d78004411bc57a87fb626393b5b8c0ad4d1ce518d2c5af57d35a73
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/catalog/status-evidence-reviews.yaml
+    sha256: 43e4cac5a3b0b3d65e095a06b926d49df81fde5545684d008c8061317fe017d4
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/catalog/status-test-nodes.yaml
+    sha256: bac9ee29fbba12de2a6b6db72f47eda9aa66bbddfe0d64632c8ec420ef2113eb
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/index.md
+    sha256: 2c2f111095dc7426fcbdb10c88e2dd6dc25713404c2355cec9419ca5524332e2
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-5-review-back-merge-conflict.yaml
+    sha256: e28a6ba8adfb4ec23ffced638630a8dd7a123a584bad00570ee8aaa0714fd6cd
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-54-review-back-merge.yaml
+    sha256: 7ffae2e1ec884ea7fdb3fee73d2c1e03d9305abc88ec2083232ad427fbfb6014
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-55-review-undo-back-merge.yaml
+    sha256: ae99bbbf7c92fbea3318e6b33bb34bd1134574e3ffe33e032806f71f42d872ed
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-61-prune-preview.yaml
+    sha256: 29a98e9e7c59c692586f931dbc83d776c77473dfd6888b3119cb3e5c4b060a5a
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-62-prune-apply.yaml
+    sha256: db4c823f506be0bd82b6f847e5181cdfd521d9eccac21b6b7948cc9e5056818f
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/reality/actions/act-79-review-file-revert-rest.yaml
+    sha256: b9727afed6abaec81eb7a29006f33df3bd32953c0b30245526b84678874c4c97
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/reality/state-model.yaml
+    sha256: 48f56ba27824812e76eb346eaf4b751feabb611ea5fef8cb38251916732c8e20
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/reviews/phase-3-reality-capability-01.html
+    sha256: 92d1c2bdb080e3e815fc07a53a622e3cd8ed00a8179f13ae31940d73f85e0fb2
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: research/ui-foundation/status.md
+    sha256: a5817d022f643abe52a529d62b122c70500a6f35124be667844e470a4d460471
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: src/orchestrator/api/app.py
+    sha256: deb334e75a6f66c3d18768e9930a4a679257d9bb6cd9ee9a9cb560c6b30e1cfb
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: src/orchestrator/git/snapshot.py
+    sha256: d9c6be00c3d31cd6674629f6ead5d94b4e3d76f567ebe555f6561a3d2e22f0e5
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/conftest.py
+    sha256: 5a49f729c708bebebdc08b854bc5cf8053a480b8eb2131c7e2a18ba324990ba1
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/conftest.py
+    sha256: df121bd91c93a6b747ee19a1db3ebdf4fc1005997a55fc448771bb36ed1f0f94
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_api_branch_ops.py
+    sha256: fcd02f68162b18ec65436678121d20c2bcb9d6f118be960a3016056c218331b5
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_api_runs.py
+    sha256: dfb181c2a745a67a6ae456a46f82d7eb240d37727cced5042df92e9fcb969e40
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_api_tasks.py
+    sha256: 39ed82cd3d085e07cdf0f8ee13fbfc40de45c2e952b22d1e2daf978ddb9e8f03
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_conflict_api.py
+    sha256: 6f39c2f3e7e1348ae2424a33188a8bb1ba96bcd1785c0adfba67d0b17adbf46e
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_merge_readiness.py
+    sha256: e2430c36fe50aaa858db2d9e4bfcd91ed825fd513d12f2bf498144c100207f64
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_prune_api.py
+    sha256: 81beeafdb7fc3fd5416942001f49c22638b8493f75061167169c9075c65b8330
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_review_api.py
+    sha256: 80a0d0a0c1c0fd49fd6e49d8c3c4b22fd98fe6b1811b3ac77830cfaddad3a72c
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_ui_foundation_tools.py
+    sha256: fc5908f7ea86976c11a243fff2e37155ded2fde3619b0872c5f17d8b23ed81df
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_workflow_smoke.py
+    sha256: 37f54ad59e6c80bad1d182de427998e60f254ec1c6235f96e73d575263d5bf18
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/integration/test_worktree.py
+    sha256: 99172ed72450432a42d0a16a3d44895ebb6cf1f154b7a9824b1cd11ccb12f3c1
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/unit/test_git_snapshot.py
+    sha256: 9dbb7664b0f2210ff01fd22553aaf4598306c8cbbbace8d9334f1a09a7479c81
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: tests/unit/test_graph_commands.py
+    sha256: 1aacdbff0a75261abdb62f199f40c9ec1c706590727f0a5e783b6e11f3aedfb2
+    audited_at: '2026-07-26T00:00:00Z'
+  - path: .superpowers/sdd/task-15-exact-status-evidence.md
+    tombstone: true
+  - path: .superpowers/sdd/task-15-status-adjudication.md
+    tombstone: true
+  - path: tests/integration/test_branch_ops.py
+    tombstone: true
+  - path: tests/integration/test_conflict_back_merge.py
+    tombstone: true

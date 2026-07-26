@@ -45,7 +45,7 @@ status_basis:
     into run branch. is present: SER rows SER-0090 inspect src/orchestrator/git/ops/branch_ops.py::back_merge
     and establish the record proposition under EVD-29.'
   test: 'ACT-54 test status unexercised: ACT-54 Synchronously clean-merges source branch into run branch.
-    remains unexercised: bounded SER rows SER-0091 cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+    remains unexercised: bounded SER rows SER-0091 cover tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state
     but do not assert the complete record proposition.'
   documentation: 'ACT-54 documentation status documented: ACT-54 Synchronously clean-merges source branch
     into run branch. is documented at reality/actions/act-54-review-back-merge.yaml and by EVD-29; any
@@ -61,4 +61,4 @@ implementation_locators:
 - src/orchestrator/git/ops/branch_ops.py::back_merge
 test_locators: []
 bounded_test_locators:
-- tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
+- tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_response_and_worktree_state

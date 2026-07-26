@@ -44,7 +44,7 @@ status_basis:
     revert and emits BackMergeReverted. is present: SER rows SER-0092 inspect src/orchestrator/git/ops/branch_ops.py::revert_back_merge
     and establish the record proposition under EVD-29.'
   test: 'ACT-55 test status unexercised: ACT-55 Synchronously creates qualifying merge revert and emits
-    BackMergeReverted. remains unexercised: bounded SER rows SER-0093 cover tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds
+    BackMergeReverted. remains unexercised: bounded SER rows SER-0093 cover tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_resets_head
     but do not assert the complete record proposition.'
   documentation: 'ACT-55 documentation status documented: ACT-55 Synchronously creates qualifying merge
     revert and emits BackMergeReverted. is documented at reality/actions/act-55-review-undo-back-merge.yaml
@@ -62,4 +62,4 @@ implementation_locators:
 - src/orchestrator/git/ops/branch_ops.py::revert_back_merge
 test_locators: []
 bounded_test_locators:
-- tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds
+- tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_resets_head

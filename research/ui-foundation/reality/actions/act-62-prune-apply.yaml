@@ -48,7 +48,7 @@ status_basis:
     EVD-28.'
   test: 'ACT-62 test status exercised: ACT-62 Synchronously creates prune commit effects and emits PruneApplied;
     returned UUID is not durable event identity. is exercised because admitted SER rows SER-0106 contain
-    direct assertions at tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit;
+    direct assertions at tests/integration/test_prune_api.py::TestPruneApply::test_apply_file_mode_lifecycle;
     no active rejected locator defeats that proof.'
   documentation: 'ACT-62 documentation status documented: ACT-62 Synchronously creates prune commit effects
     and emits PruneApplied; returned UUID is not durable event identity. is documented at reality/actions/act-62-prune-apply.yaml
@@ -66,5 +66,5 @@ status_basis:
 implementation_locators:
 - src/orchestrator/git/ops/prune_ops.py::apply_prune
 test_locators:
-- tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit
+- tests/integration/test_prune_api.py::TestPruneApply::test_apply_file_mode_lifecycle
 bounded_test_locators: []

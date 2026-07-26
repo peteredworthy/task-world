@@ -220,5 +220,11 @@ entries:
   parent_snapshot_id: snapshot-2026-07-26-task-15-complete
   snapshot_digest: 9afbc84bc7312689fe528ca701183c67b332ecb4525edcdf1f2107a0f6ea7a07
   predecessor_lineage_digest: 5049c4a19d0b281ffbed12ac223f8a3212e658029a4841a5245ca3ea8749bb1f
+  status: historical
+  lineage_entry_digest: 1b1b6a49d7622d3a65e4e4ae3d4fd47fd7876f720919ea5ae8171c5d12a90112
+- snapshot_id: snapshot-2026-07-26-post-merge-main
+  parent_snapshot_id: snapshot-2026-07-26-task-18-phase-3-final
+  snapshot_digest: ac8199ff56af1bea2cc1027aac1ab35748c0a837e38e6224e3a43988e1b5974d
+  predecessor_lineage_digest: 1b1b6a49d7622d3a65e4e4ae3d4fd47fd7876f720919ea5ae8171c5d12a90112
   status: active
-  lineage_entry_digest: 0342d0022d31afdbda3d7865679817d07c766ef0cd1a49292c6593db05fb7d64
+  lineage_entry_digest: fe9ae6cfe04af371a07e224e7ab1df5fbc49adb2eb5b13245d68c0e4b1f53d70

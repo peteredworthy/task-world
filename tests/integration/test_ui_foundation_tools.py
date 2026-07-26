@@ -2248,7 +2248,7 @@ def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:
         for field in ("test_locators", "bounded_test_locators")
         for locator in records[identifier].get(field, [])
     }
-    assert len(exact_locators) == 119
+    assert len(exact_locators) == 117
 
 
 def test_exercised_status_rejects_empty_exact_test_locators(tmp_path: Path) -> None:
@@ -6763,8 +6763,8 @@ def test_task15_status_projection_derives_canonical_inputs_and_rejects_stale_sta
 
     projection = validator._phase_two_status_projection(validator.load_foundation(root))
     assert "projection covers 209 records (34 REL, 74 STA, 86 ACT, 9 EVI, 6 INV)" in projection
-    assert "137 exact and 50 bounded test locators" in projection
-    assert "120-base/120-concrete-node collected manifest under `snapshot-mutated`" in projection
+    assert "136 exact and 50 bounded test locators" in projection
+    assert "118-base/118-concrete-node collected manifest under `snapshot-mutated`" in projection
     assert (
         "Test distributions are REL 13/21, STA 57/17, ACT 55/31, EVI 2/7, and INV 6/0" in projection
     )

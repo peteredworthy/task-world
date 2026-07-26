@@ -44,7 +44,7 @@ status_basis:
     is present: SER rows SER-0080 inspect src/orchestrator/api/routers/runs.py::back_merge_endpoint and
     establish the record proposition under EVD-29.'
   test: 'ACT-5 test status exercised: ACT-5 Leaves review back-merge conflict in progress. is exercised
-    because admitted SER rows SER-0081 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status;
+    because admitted SER rows SER-0081 contain direct assertions at tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit;
     no active rejected locator defeats that proof.'
   documentation: 'ACT-5 documentation status documented: ACT-5 Leaves review back-merge conflict in progress.
     is documented at reality/actions/act-5-review-back-merge-conflict.yaml and by EVD-29; any listed question
@@ -59,5 +59,5 @@ status_basis:
 implementation_locators:
 - src/orchestrator/api/routers/runs.py::back_merge_endpoint
 test_locators:
-- tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status
+- tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_reports_files_and_skips_commit
 bounded_test_locators: []
