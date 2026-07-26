@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UI foundation — real decisions</title><style>
+:root { color-scheme: light; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color:#1c2327; background:#f4f1ea; }
+* { box-sizing:border-box; } body { margin:0; padding:clamp(1rem,4vw,3rem); } main { max-width:52rem; margin:auto; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.88em; background:#e9e4d8; padding:.08em .3em; border-radius:3px; }
+.masthead { border-left:.6rem solid #d15828; padding:1rem 1.25rem; background:#18252b; color:#f8f3e7; }
+h1 { margin:.1rem 0; font-family:Georgia,serif; font-size:clamp(1.6rem,6vw,2.6rem); }
+.eyebrow { text-transform:uppercase; letter-spacing:.12em; font-size:.74rem; margin:0; }
+.masthead p { margin:.4rem 0 0; }
+.notice { border:1px solid #b9aa86; padding:.8rem 1rem; background:#fffaf0; margin:1rem 0; font-size:.92rem; }
+h2.section { font-family:Georgia,serif; margin:2.2rem 0 .2rem; border-bottom:2px solid #18252b; padding-bottom:.25rem; }
+p.section-note { margin:.3rem 0 1rem; color:#48545a; font-size:.92rem; }
+article { border:1px solid #b9b1a0; border-left:5px solid #888; padding:1rem 1.1rem; background:#fffdf7; margin:0 0 1rem; border-radius:0 4px 4px 0; }
+article[data-tier="decide"] { border-left-color:#d15828; }
+article[data-tier="cheap"] { border-left-color:#086c7c; }
+article[data-tier="settled"] { border-left-color:#5a7d5a; }
+article[data-tier="backlog"] { border-left-color:#9a8c5f; }
+.item-head { display:flex; gap:.6rem; align-items:baseline; flex-wrap:wrap; }
+h3 { margin:0; font-size:1.05rem; }
+.tag { font-size:.72rem; text-transform:uppercase; letter-spacing:.06em; padding:.12rem .45rem; border-radius:3px; background:#dce6df; white-space:nowrap; }
+.tag.decide { background:#f3d8c9; } .tag.cheap { background:#cfe3e6; } .tag.settled { background:#d5e2d5; } .tag.backlog { background:#ece4cd; }
+.facts { margin:.6rem 0; } .facts p, .block p { margin:.35rem 0; font-size:.94rem; line-height:1.45; }
+.label { font-weight:700; font-size:.78rem; text-transform:uppercase; letter-spacing:.05em; color:#48545a; margin:.7rem 0 .15rem; }
+.rec { background:#f2ece0; border:1px dashed #b9aa86; padding:.5rem .7rem; margin:.4rem 0; font-size:.94rem; line-height:1.45; }
+.src { font-size:.8rem; color:#5c6a70; margin-top:.6rem; }
+.response-row { display:flex; flex-wrap:wrap; gap:.4rem; margin-top:.8rem; }
+button { font:inherit; font-size:.85rem; border:1px solid #49616a; background:#fbf6ea; color:#18252b; padding:.4rem .7rem; cursor:pointer; border-radius:3px; }
+button[aria-pressed="true"] { background:#d15828; color:#fff; border-color:#d15828; }
+button:focus-visible, textarea:focus-visible { outline:3px solid #086c7c; outline-offset:2px; }
+textarea { width:100%; min-height:3rem; font:inherit; font-size:.9rem; padding:.45rem; margin-top:.5rem; border:1px solid #b9b1a0; border-radius:3px; background:#fff; }
+.toolbar { display:flex; flex-wrap:wrap; gap:.45rem; align-items:center; margin:1rem 0; position:sticky; top:0; background:#f4f1ea; padding:.5rem 0; z-index:2; }
+.status { min-height:1.3em; color:#075b67; font-size:.9rem; }
+[hidden] { display:none !important; }
+@media (max-width:420px){ body{padding:.75rem;} .toolbar button{flex:1 1 40%;} .response-row button{flex:1 1 30%;} }
+</style></head><body><main>
+<header class="masthead">
+<p class="eyebrow">UI foundation · decisions · batch 01 · 2026-07-26</p>
+<h1>The real decisions</h1>
+<p>Consolidated from agent reports 01–11, deduplicated, grounded in code, stated in plain language. Supersedes <code>phase-3-reality-capability-01.html</code>.</p>
+</header>
+
+<p class="notice"><strong>How to read this.</strong> Each card states what the code actually does, the decision that follows, and a recommendation. Colour key: <span class="tag decide">decide</span> genuinely your call, shapes the UI &middot; <span class="tag cheap">cheap fix</span> answer obvious, small action needed &middot; <span class="tag settled">settled by code</span> code already chose; recorded for the record &middot; <span class="tag backlog">backlog</span> real but not UI-blocking. Responses stay in this browser; use <em>Export</em> to hand your answers back.</p>
+
+<section class="toolbar" aria-label="Controls">
+<span class="eyebrow">Show</span>
+<button type="button" data-filter="all" aria-pressed="true">all</button>
+<button type="button" data-filter="decide">decide</button>
+<button type="button" data-filter="unanswered">unanswered</button>
+<button type="button" data-export="text">Export answers (text)</button>
+<button type="button" data-export="json">Export JSON</button>
+</section>
+<p class="status" aria-live="polite" data-status></p>
+
+<div data-ledger>
+
+<h2 class="section">A · Identity &amp; selection</h2>
+<p class="section-note">Which IDs the UI navigates and selects by.</p>
+
+<article data-tier="settled" data-item="D1">
+<div class="item-head"><h3>D1 · Attempt identity</h3><span class="tag settled">settled by code</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p><code>Attempt.id</code> / <code>AttemptModel.id</code> is the identity round-tripped by repository conversion. The competing <code>AttemptRecord</code> dataclass (claims a globally unique <code>attempt_id</code>) is dead: not exported, not referenced by conversion, no table. <code>(task_id, attempt_num)</code> has no uniqueness constraint; cost records key on an execution tuple, not attempt id.</p>
+<p class="label">Decision</p>
+<p>Confirm <code>attempts.id</code> as canonical attempt identity. No migration.</p>
+<p class="label">Recommendation</p>
+<div class="rec">Confirm. Follow-up (small): delete or deprecate the <code>AttemptRecord</code> dataclass; optionally add a uniqueness constraint on <code>(task_id, attempt_num)</code>.</div>
+<p class="src">Sources: 01-domain-persistence (DP-ENT-attempt, DP-ENT-attempt-record), 08-domain-synthesis §1. Was Q-1.</p>
+</div>
+</article>
+
+<article data-tier="decide" data-item="D2">
+<div class="item-head"><h3>D2 · Legacy tasks vs graph nodes: joined or distinct?</h3><span class="tag decide">decide</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>A graph node is not a task row. <code>task_region_id</code> is an optional string — no foreign key, no proven join to task identity. Graph and legacy vocabularies (node/record/lease vs task/attempt) are separate throughout. Three reports independently recommend keeping them distinct until a conversion contract is evidenced.</p>
+<p class="label">Decision</p>
+<p>Does the UI ever join a legacy task to a graph node, or does each mode keep its own identity space and screens?</p>
+<p class="label">Recommendation</p>
+<div class="rec">Keep modes distinct. Graph is the default carrier, legacy is opt-out — the UI shows graph runs in graph terms and legacy runs in legacy terms, and treats <code>task_region_id</code> as an opaque informational string. No conversion layer. Revisit only if a concrete screen needs the join.</div>
+<p class="src">Sources: 01 §2, 02 §1–2, 03 decision 4, 08 §2. Was Q-2.</p>
+</div>
+</article>
+
+<article data-tier="decide" data-item="D3">
+<div class="item-head"><h3>D3 · One canonical selection identity per route</h3><span class="tag decide">decide</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>The current UI selects and deep-links by a mix of identities across routes (run, task, node, attempt, decision, review), with no stated rule for which is canonical where.</p>
+<p class="label">Decision</p>
+<p>Fix the identity each route selects by, so URLs, selection restore, and cross-links are stable.</p>
+<p class="label">Recommendation</p>
+<div class="rec">Per-mode, per-level: <code>run.id</code> → route root; legacy detail by <code>task.id</code> (attempt via ordinal within task); graph detail by <code>node_id</code> scoped to run. No cross-mode canonicalisation (see D2). Write this into the view contract when screens are designed — the decision here is just "one identity per route, chosen from the persisted IDs above".</div>
+<p class="src">Sources: 06-ui-projections §2.</p>
+</div>
+</article>
+
+<h2 class="section">B · Authority &amp; attribution</h2>
+<p class="section-note">Who acted, and what the UI may claim about it.</p>
+
+<article data-tier="decide" data-item="D4">
+<div class="item-head"><h3>D4 · Single-operator: actor strings are labels, not identity</h3><span class="tag decide">decide</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>Optional JWT auth: disabled by default; when enabled, any valid token grants everything — claims are validated then discarded. No endpoint checks role, scope, or ownership. Five incompatible attribution mechanisms record actors: fixed <code>"user"</code> (clarifications), <code>deps.get_current_user</code> (approve/reject), caller-supplied <code>approved_by</code> (step approval), caller-supplied <code>decider</code> (graph decisions), fixed <code>"human-operator"</code> (graph patch/requeue). None is bound to authentication.</p>
+<p class="label">Decision</p>
+<p>Declare the system single-operator by design, or commission per-action authorization.</p>
+<p class="label">Recommendation</p>
+<div class="rec">Declare single-operator. Consequences for the UI: render actor strings as provenance-of-record ("recorded as approved_by: X"), never as authenticated identity; build no permission-gated UI. Optional cleanup, not blocking: collapse the five attribution mechanisms to one convention.</div>
+<p class="src">Sources: 04 authority table (api-authn-jwt, api-authz-roles, api-identity-attribution), 09 §4. Was Q-5, minus the invented RBAC mandate.</p>
+</div>
+</article>
+
+<article data-tier="decide" data-item="D5">
+<div class="item-head"><h3>D5 · CLI bypasses the signal queue — allowed or not?</h3><span class="tag decide">decide</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>REST <code>POST /runs/{id}/start</code> enqueues <code>RUN_START</code> and returns 202 before the transition applies. CLI <code>runs start</code> calls <code>WorkflowService.apply_start_run</code> directly and commits synchronously — bypassing the queue <code>AGENTS.md</code> says all lifecycle transitions use. Most other CLI lifecycle commands are REST wrappers (and don't pass a Bearer token, so they fail against an auth-enabled server).</p>
+<p class="label">Decision</p>
+<p>Is CLI direct application a documented local-operator compatibility path, or must CLI conform to the queue?</p>
+<p class="label">Recommendation</p>
+<div class="rec">Document it as a local-operator compatibility path for now (changing it is product work, not documentation work). Either way the UI binds to REST semantics only: 202 = accepted, not applied — which feeds D7.</div>
+<p class="src">Sources: 03 CON-WF-02, 04 action-run-start. Fed Q-5's uncertainty list.</p>
+</div>
+</article>
+
+<article data-tier="cheap" data-item="D6">
+<div class="item-head"><h3>D6 · Stopping-row cancel: two surfaces disagree</h3><span class="tag cheap">cheap fix</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>The REST cancellation route rejects a run in <code>STOPPING</code>, but the workflow audit permits an applied stopping→cancelled transition. One inconsistency, low stakes, but the UI can't know whether to offer Cancel on a stopping run.</p>
+<p class="label">Decision</p>
+<p>Pick one: REST rejection is correct (stopping runs can't be cancelled), or the domain transition is correct (they can).</p>
+<p class="label">Recommendation</p>
+<div class="rec">Keep the REST rejection — a stopping run is already on its way to a terminal state, and a second cancel is noise. Align the workflow-side transition (or document it as the internal sweep path only). UI: disable Cancel while stopping.</div>
+<p class="src">Sources: 09 §3, 03 state tables.</p>
+</div>
+</article>
+
+<h2 class="section">C · State, feedback &amp; honesty</h2>
+<p class="section-note">What the UI may claim about state and freshness.</p>
+
+<article data-tier="settled" data-item="D7">
+<div class="item-head"><h3>D7 · SQL is the write authority; AGENTS.md is wrong</h3><span class="tag settled">settled by code</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p><code>SqliteEventStore.append</code> commits <code>events_v2</code> plus projections in one transaction; JSONL is a post-commit secondary sink; <code>drain_committed_events_to_journal</code> treats the event table as authoritative after a JSONL failure. JSONL is the source only in empty-database bootstrap. <code>AGENTS.md</code> says the opposite (JSONL-first). Durability tests already exist and pass.</p>
+<p class="label">Decision</p>
+<p>Confirm SQL-event-first as the canonical statement.</p>
+<p class="label">Recommendation</p>
+<div class="rec">Confirm. Only action: fix the <code>AGENTS.md</code> wording (and its stale <code>queued</code> status example — the enum says <code>draft</code>). No implementation or test work. Raised by four reports; it is one paragraph of editing.</div>
+<p class="src">Sources: 03 CON-WF-01 and uncertainty 6, 01 §4, 02 §4, 08 §3. Was Q-3 (and half of Q-4).</p>
+</div>
+</article>
+
+<article data-tier="decide" data-item="D8">
+<div class="item-head"><h3>D8 · Action feedback: is "accepted + watch events" enough?</h3><span class="tag decide">decide</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>Mutating routes return acceptance (202) or the current read model — not proof of the resulting state. There is no typed queued-command outcome record proving accepted / rejected-stale / resulting state / next activity. A crash window can even apply a transition without its <code>SignalProcessed</code> marker (CON-WF-03). The UI today infers results by watching projections and WebSocket events.</p>
+<p class="label">Decision</p>
+<p>Accept "202 + observe projections" as the v1 action-feedback contract, or require a typed command-outcome record from the backend first?</p>
+<p class="label">Recommendation</p>
+<div class="rec">Accept 202-plus-observation for v1 — single operator, WS events arrive fast, and this unblocks UI work now. UI rule: after any action, show "accepted, applying…" until the projection confirms; never render optimistic success. Typed outcome record becomes a backend backlog item that would later upgrade the same UI states.</div>
+<p class="src">Sources: 03 decision 3 + CON-WF-03, 06 §5.</p>
+</div>
+</article>
+
+<article data-tier="cheap" data-item="D9">
+<div class="item-head"><h3>D9 · "Live" badge overstates; derived numbers unlabeled</h3><span class="tag cheap">cheap fix</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>The UI's <code>Live</code> indicator reflects socket connectivity, not freshness of every visible projection. Frontend-computed values (stuck-run detection, token/cost/trace arithmetic, task ranges) are presented with the same visual weight as persisted facts.</p>
+<p class="label">Decision</p>
+<p>Narrow <code>Live</code> to what it measures, and mark frontend-derived values as estimates?</p>
+<p class="label">Recommendation</p>
+<div class="rec">Yes to both. <code>Live</code> = "event stream connected" (tooltip says so). Derived values get an estimate marker (≈) or muted styling with provenance on hover. This is a rendering convention, decidable now, no backend work.</div>
+<p class="src">Sources: 06 §1, §4.</p>
+</div>
+</article>
+
+<article data-tier="cheap" data-item="D10">
+<div class="item-head"><h3>D10 · Cost honesty: unpriced ≠ zero; rollup is graph-scoped</h3><span class="tag cheap">cheap fix</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>Cost rollup coverage is solid for graph-mode executions only; legacy and exception-terminated executions are incompletely covered. Run-level estimated cost can conflate explicit zero, unpriced, and approximate. <code>rate_missing == false</code> proves a price matched, not that every billable category had a rate.</p>
+<p class="label">Decision</p>
+<p>Adopt the three honesty rules for any cost display?</p>
+<p class="label">Recommendation</p>
+<div class="rec">Adopt: (1) cost totals labeled with their coverage scope ("graph executions"); (2) unpriced shown as unknown, never €0; (3) estimates visually distinct from measured spend. Pure display policy; decide once, apply everywhere.</div>
+<p class="src">Sources: 05 §3, §4, §7.</p>
+</div>
+</article>
+
+<article data-tier="settled" data-item="D11">
+<div class="item-head"><h3>D11 · Known evidence gaps stay gaps until implemented</h3><span class="tag settled">settled by code</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>No implementation exists for: health class, prompt pressure, repeated-work/churn detection, evidence convergence, retry information delta, causal gap, budget pace, comparable cohorts, exact prompt delivery accounting, complete transcript coverage, or node-exclusive file causality (file state is "observed at node callback", not "caused by node"). The JTBD documents demand them; the code does not provide them.</p>
+<p class="label">Decision</p>
+<p>Acknowledge these as gaps the v1 UI must not fake.</p>
+<p class="label">Recommendation</p>
+<div class="rec">Acknowledge. Design consequence: v1 screens are built from what exists (states, events, costs, artifacts, decisions) and leave explicit room for these rather than approximating them with lookalike numbers. Each gap becomes a candidate backend feature ticket ranked by UI value — that ranking is a design-phase activity.</div>
+<p class="src">Sources: 05 closing note, 07 §1, 10 §3.</p>
+</div>
+</article>
+
+<article data-tier="cheap" data-item="D12">
+<div class="item-head"><h3>D12 · Docs claim locking the code doesn't have</h3><span class="tag cheap">cheap fix</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>The only task lock is in-memory and process-local; the direct engine path doesn't even guarantee exception-safe release. Documentation implies robust pessimistic locking across processes. Deployment is in fact single-process (two uvicorns sharing the DB is a known death-loop incident).</p>
+<p class="label">Decision</p>
+<p>Document single-process as the supported deployment, or commission a durable lease design?</p>
+<p class="label">Recommendation</p>
+<div class="rec">Document single-process as the constraint (it already is operationally). Durable leases only if multi-process ever becomes a goal. UI consequence: none, beyond not advertising concurrent-operator safety.</div>
+<p class="src">Sources: 03 decision 2 + CON-WF-04, 07 §2.</p>
+</div>
+</article>
+
+<article data-tier="cheap" data-item="D13">
+<div class="item-head"><h3>D13 · Small vocabulary rulings</h3><span class="tag cheap">cheap fix</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>Three naming questions the reports escalate: (a) graph-mode <code>failed</code> can be reopened, so "failed" is not absolutely terminal in graph mode; (b) "review readiness" and "merge readiness" are distinct concepts with different evidence scopes; (c) "artifact" currently names four non-equivalent things (expected path, evidence bundle, interaction log, graph file-state record).</p>
+<p class="label">Decision</p>
+<p>Accept the three rulings for UI vocabulary?</p>
+<p class="label">Recommendation</p>
+<div class="rec">Accept: (a) graph UI shows failed as reopenable; (b) keep the two readiness labels distinct; (c) keep artifact variants separately named — no umbrella "artifact" concept until someone designs one.</div>
+<p class="src">Sources: 03 CON-WF-05, 06 §3, 01 §6, 08 §4.</p>
+</div>
+</article>
+
+<h2 class="section">D · Ops backlog (real, not UI-blocking)</h2>
+<p class="section-note">Genuine findings that belong in the engineering backlog, not in front of UI design.</p>
+
+<article data-tier="backlog" data-item="D14">
+<div class="item-head"><h3>D14 · Backup is not crash-consistent on a live DB</h3><span class="tag backlog">backlog</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p><code>create_backup</code> uses <code>shutil.copy2</code>, skips <code>-wal</code>/<code>-shm</code>, no SQLite backup API, no quiescence check; the journal marker is scanned after the copy so concurrent writes drift it; <code>backup_id</code> is UTC-second and can collide; <code>restore_backup</code> performs no replay and skips the <code>server.lock</code> check that rebuild has. The only genuinely bug-shaped finding in the whole exercise.</p>
+<p class="label">Recommendation</p>
+<div class="rec">Backlog ticket. Interim contract: backups valid only against a stopped server (already your practice). Proper fix when picked up: <code>sqlite3.Connection.backup()</code>, collision-safe id, lock check in restore. Was Q-4 — accurate finding, wrong queue.</div>
+<p class="src">Sources: 01 §7 + DP-ENT-backup rows, 08 §5.</p>
+</div>
+</article>
+
+<article data-tier="backlog" data-item="D15">
+<div class="item-head"><h3>D15 · Classify leftover persistence: legacy tables, session JSON</h3><span class="tag backlog">backlog</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>Legacy <code>events</code>, <code>replay_checkpoints</code>, and the optional whole-run JSON session persistence exist in schema but their status (current / compatibility-only / removable) is unestablished. Same family as the dead-code catalogue from the July cruft sweep.</p>
+<p class="label">Recommendation</p>
+<div class="rec">Backlog: classify and delete what's dead next cruft pass. No UI impact — the UI simply doesn't read them.</div>
+<p class="src">Sources: 01 §5.</p>
+</div>
+</article>
+
+<article data-tier="backlog" data-item="D16">
+<div class="item-head"><h3>D16 · Proposed-but-absent actions stay gaps</h3><span class="tag backlog">backlog</span></div>
+<div class="facts">
+<p class="label">What the code does</p>
+<p>No watch/ignore action, no agent-test-fix capability, no unified gate-or-patch approval command, no standalone contract for execution-bound graph MCP patch macros. Steering (context injection) remains the known kernel gap from the UI-rethink work.</p>
+<p class="label">Recommendation</p>
+<div class="rec">All stay gaps. The design phase decides which to request from the backend, ranked by UI value — the steering directive proposal is the standing candidate. No decision needed today.</div>
+<p class="src">Sources: 06 §6, 09 §1–2, 04 closing note.</p>
+</div>
+</article>
+
+<h2 class="section">E · Process</h2>
+
+<article data-tier="decide" data-item="D17">
+<div class="item-head"><h3>D17 · Freeze the catalog machinery</h3><span class="tag decide">decide</span></div>
+<div class="facts">
+<p class="label">What happened</p>
+<p>The Phase 0–3 pipeline produced ~4&nbsp;MB of canonical YAML, a 280&nbsp;KB validator, and a review checkpoint whose questions had lost their meaning through three lossy hops (reports → typed YAML → ID catalogs → generated review). The seven reality audits in <code>agent-reports/01</code>–<code>07</code> carry ~90% of the value and remain readable and cited.</p>
+<p class="label">Decision</p>
+<p>Freeze the <code>catalog/</code> + <code>validate.py</code> layer (no further maintenance, no hash-drift re-audits, phase gates retired) and treat the Markdown reports plus this decision record as the foundation deliverable?</p>
+<p class="label">Recommendation</p>
+<div class="rec">Freeze. Keep the files in-tree as an archive (deleting is a separate cleanup choice). The design phase consumes: the seven audit reports, the JTBD docs, and the answers you record here. Nothing downstream should require the validator to pass.</div>
+<p class="label">Outcome (2026-07-26)</p>
+<p>Peter amended: delete rather than freeze — "If files shouldn't be referenced we should remove them, otherwise they risk being pulled in again." The catalog layer, generated projections, and their tests were deleted; git history retains them. See <code>DECISIONS.md</code>.</p>
+<p class="src">Sources: this review; plan <code>2026-07-23-ui-foundation-phase-0-3.md</code> constraints 25–27 said exactly this and were structurally overridden.</p>
+</div>
+</article>
+
+</div>
+</main>
+<script>
+(() => {
+ const KEY='ui-foundation.decisions-01.v1'; // gitleaks:allow — localStorage key, not a secret
+ let state; try { state=JSON.parse(localStorage.getItem(KEY)||'{}'); } catch(e){ state={}; }
+ state.answers=state.answers||{}; state.notes=state.notes||{};
+ const save=()=>localStorage.setItem(KEY,JSON.stringify(state));
+ const status=document.querySelector('[data-status]');
+ const CHOICES=['agree','disagree','discuss'];
+ document.querySelectorAll('article[data-item]').forEach(card=>{
+   const id=card.dataset.item;
+   const row=document.createElement('div'); row.className='response-row'; row.setAttribute('aria-label','Response for '+id);
+   CHOICES.forEach(c=>{ const b=document.createElement('button'); b.type='button'; b.textContent=c; b.dataset.choice=c; b.dataset.item=id; b.setAttribute('aria-pressed',String(state.answers[id]===c)); row.append(b); });
+   const ta=document.createElement('textarea'); ta.dataset.note=id; ta.placeholder='Note for '+id+' (optional)'; ta.value=state.notes[id]||''; ta.setAttribute('aria-label','Note for '+id);
+   card.append(row,ta);
+ });
+ const applyFilter=()=>{ const f=document.querySelector('[data-filter][aria-pressed="true"]').dataset.filter;
+   document.querySelectorAll('article[data-item]').forEach(card=>{ const id=card.dataset.item;
+     const show=f==='all'||(f==='decide'?card.dataset.tier==='decide':!state.answers[id]);
+     card.hidden=!show; });
+   document.querySelectorAll('h2.section, p.section-note').forEach(h=>{ h.hidden=false; }); };
+ document.addEventListener('click',e=>{ const b=e.target.closest('button'); if(!b)return;
+   if(b.dataset.choice){ const id=b.dataset.item;
+     state.answers[id]=state.answers[id]===b.dataset.choice?undefined:b.dataset.choice;
+     if(!state.answers[id]) delete state.answers[id];
+     save();
+     b.closest('.response-row').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(state.answers[id]===x.dataset.choice)));
+     status.textContent=id+(state.answers[id]?(' marked '+state.answers[id]):' cleared')+'.'; applyFilter(); }
+   if(b.dataset.filter){ document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x===b))); applyFilter(); }
+   if(b.dataset.export){ const items=[...document.querySelectorAll('article[data-item]')].map(card=>{ const id=card.dataset.item;
+       return {id, title:card.querySelector('h3').textContent, tier:card.dataset.tier, answer:state.answers[id]||null, note:state.notes[id]||''}; });
+     let text, type, ext;
+     if(b.dataset.export==='json'){ text=JSON.stringify({review:'decisions-01', exported_at:new Date().toISOString(), items},null,2); type='application/json'; ext='json'; }
+     else { text=items.map(i=>`${i.id} | ${i.answer||'unanswered'} | ${i.note}`).join('\n'); type='text/plain'; ext='txt'; }
+     const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([text],{type})); a.download='decisions-01-answers.'+ext; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),0);
+     status.textContent='Exported '+items.filter(i=>i.answer).length+' answered of '+items.length+' items.'; } });
+ document.addEventListener('input',e=>{ if(e.target.matches('[data-note]')){ state.notes[e.target.dataset.note]=e.target.value; save(); } });
+})();
+</script></body></html>

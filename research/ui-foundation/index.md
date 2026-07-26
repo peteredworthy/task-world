@@ -1,29 +1,28 @@
 # Grounded UI/UX Foundation
 
-This package records semantic evidence and capability truth for Phases 0–3. It
-does not define product screens, view contracts, or future command behavior.
+Implementation-grounded record of how the orchestrator actually works, produced
+as pre-work for the UI design phase. It does not define product screens or view
+contracts.
 
-## Current entry points
+## Contents
 
-- [Phase status](status.md)
-- [Source snapshot](source-map.md)
-- [Open questions](open-questions.md)
-- [Decision log](decision-log.md)
-- [Static review index](reviews/index.html)
+- [`agent-reports/01`–`07`](agent-reports/) — the seven reality audits
+  (domain/persistence, graph runtime, workflow state, API/actions/authority,
+  evidence/telemetry, UI projections, tests/documentation), plus syntheses and
+  verification in 08–11. These are the substance: readable findings with exact
+  code and test citations.
+- [`reviews/decisions-01.html`](reviews/decisions-01.html) — the 17 consolidated
+  decisions (D1–D17) distilled from the reports, reviewed by Peter 2026-07-26.
+- [`DECISIONS.md`](DECISIONS.md) — the recorded answers and rulings now in
+  force. Read this first.
 
-Canonical records live in `catalog/`, `reality/`, and `capabilities/`. Phases 0–2
-are complete; Phase 3 is published as `complete-blocked` pending the human checkpoint.
+## 2026-07-26 teardown notice
 
-## Task 15 active semantic-status snapshot
-
-`snapshot-2026-07-26-post-merge-main` is the active bounded Phase 3 publication child
-snapshot. It records the post-merge hash re-audit, deleted-test and superseded-scratch tombstones,
-and the required generated status manifests. The current 210-record Task 15 projection
-contains 512 SER rows (454 admitted, 50 bounded, 8 rejected), 1,050 SDR rows, 137 exact and
-50 bounded test locators, and a 117-base/117-node collected-test manifest. These are qualifying
-collected coverage records, not evidence of test execution. The canonical
-SER/SDR review catalog and typed action-variant authority catalog are validation inputs.
-Task 15 is COMPLETE following material independent semantic review and a full passing verification gate.
-Task 16 supplied deterministic review selection and feedback import; Task 17 supplied the
-offline review checkpoint; Task 18 rebuilt and published it. The five open blocking questions
-make the Phase 3 result `complete-blocked`; see `reviews/phase-3-reality-capability-01.html`.
+The original Phase 0–3 pipeline also produced a canonical-YAML catalog layer
+(`catalog/`, `reality/`, `capabilities/`, `schemas/`, `tools/validate.py`,
+generated projections, and the `phase-3-reality-capability-01.html` checkpoint).
+That layer inflated far past its value — a 280 KB validator, ~4 MB of YAML, and
+review questions that lost their meaning through ID normalization — and was
+**deleted** per decision D17 (amended). Git history before this date retains all
+of it. Do not rebuild it: audit deliverables here are readable Markdown with
+code citations, not machine-validated catalogs.
