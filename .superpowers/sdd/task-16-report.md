@@ -110,3 +110,48 @@ was used to suppress the check.
 
 - None. Task 16 coverage is isolated outside the immutable Task 15 snapshot, and Phase 2 remains
   green without snapshot or provenance changes.
+
+## Important findings remediation
+
+### Explicit review priorities
+
+Removed all fallback ranking calculations from `build_review.py`. The selector now joins every
+unresolved question one-to-one with `catalog/review-priorities.yaml`. The catalog documents the
+three scoring methods and records a question-specific basis for each value. Its five rows cover
+exactly Q-1 through Q-5; resolved Q-6 and Q-7 are not review candidates.
+
+The join fails closed with stable errors for missing, duplicate, extra, malformed, negative, or
+out-of-range priority rows. The production catalog integration check confirms the adjudicated order
+`Q-5, Q-4, Q-1, Q-2, Q-3`; fixture ordering still uses the required ranking tuple exactly.
+
+### Managed batch reconciliation
+
+`build_review` now completes selection and renders every desired batch in memory before changing
+files. It then removes only obsolete files matching the managed
+`reviews/batch-[0-9][0-9].html` pattern, writes current batches, and leaves unrelated review files
+untouched. A real-file 13-to-1 item shrink verifies removal of `batch-02.html`, retention of
+`batch-01.html`, and preservation of `reviews/index.html`.
+
+### Remediation verification evidence
+
+The first focused run was red with four expected failures: no production priority catalog, missing
+priority accepted, resolved Q-6 still selected, and stale `batch-02.html` retained. After the two
+bounded fixes:
+
+```text
+uv run pytest tests/integration/test_ui_foundation_review_tools.py -v
+13 passed
+
+uv run python research/ui-foundation/tools/validate.py --phase 2
+exit 0
+
+uv run ruff check research/ui-foundation/tools/build_review.py \
+  tests/integration/test_ui_foundation_review_tools.py
+All checks passed!
+
+uv run pyright research/ui-foundation/tools/build_review.py \
+  tests/integration/test_ui_foundation_review_tools.py
+0 errors, 0 warnings, 0 informations
+```
+
+No Task 15 snapshot, provenance, validator, product code, or audit framework was changed.

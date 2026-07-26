@@ -7,6 +7,7 @@ import subprocess
 import sys
 from types import ModuleType
 
+import pytest
 import yaml
 
 
@@ -28,7 +29,11 @@ def load_tool(name: str) -> ModuleType:
     return module
 
 
-def write_review_foundation(tmp_path: Path, items: list[dict[str, object]]) -> Path:
+def write_review_foundation(
+    tmp_path: Path,
+    items: list[dict[str, object]],
+    priorities: list[dict[str, object]] | None = None,
+) -> Path:
     root = tmp_path / "research/ui-foundation"
     source = tmp_path / "source.txt"
     source.write_text("snapshot source\n", encoding="utf-8")
@@ -50,10 +55,39 @@ def write_review_foundation(tmp_path: Path, items: list[dict[str, object]]) -> P
             "items": [],
         },
     )
-    write_yaml(root / "catalog/questions.yaml", {"schema_version": "1", "items": items})
+    questions = [
+        {
+            key: value
+            for key, value in item.items()
+            if key
+            not in {
+                "downstream_dependency_count",
+                "authority_risk",
+                "capability_impact",
+            }
+        }
+        for item in items
+    ]
+    priority_items = priorities
+    if priority_items is None:
+        priority_items = [
+            {
+                "id": item["id"],
+                "downstream_dependency_count": item["downstream_dependency_count"],
+                "authority_risk": item["authority_risk"],
+                "capability_impact": item["capability_impact"],
+                "basis": f"Test priority for {item['id']}.",
+            }
+            for item in items
+        ]
+    write_yaml(root / "catalog/questions.yaml", {"schema_version": "1", "items": questions})
+    write_yaml(
+        root / "catalog/review-priorities.yaml",
+        {"schema_version": "1", "methodology": "Test methodology.", "items": priority_items},
+    )
     write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": []})
     schemas = root / "schemas"
-    schemas.mkdir()
+    schemas.mkdir(exist_ok=True)
     shutil.copyfile(
         REPO_ROOT / "research/ui-foundation/schemas/review-feedback.schema.json",
         schemas / "review-feedback.schema.json",
@@ -124,6 +158,131 @@ def test_review_selection_is_deterministic_and_blocker_only(tmp_path: Path) -> N
     assert [[item.id for item in batch] for batch in batches] == [["Q-02", "Q-03"]]
 
 
+def test_current_review_priority_catalog_loads_with_exact_ordering() -> None:
+    batches = load_tool("build_review").select_review_items(REPO_ROOT / "research/ui-foundation")
+
+    assert [[item.id for item in batch] for batch in batches] == [
+        ["Q-5", "Q-4", "Q-1", "Q-2", "Q-3"]
+    ]
+
+
+def test_review_selection_rejects_missing_priority(tmp_path: Path) -> None:
+    root = write_review_foundation(
+        tmp_path,
+        [
+            {
+                "id": "Q-01",
+                "blocking": True,
+                "status": "open",
+                "downstream_dependency_count": 2,
+                "authority_risk": 1,
+                "capability_impact": 1,
+            },
+            {
+                "id": "Q-02",
+                "blocking": True,
+                "status": "open",
+                "downstream_dependency_count": 1,
+                "authority_risk": 1,
+                "capability_impact": 1,
+            },
+        ],
+        priorities=[
+            {
+                "id": "Q-01",
+                "downstream_dependency_count": 2,
+                "authority_risk": 1,
+                "capability_impact": 1,
+                "basis": "Only one priority is intentionally present.",
+            }
+        ],
+    )
+
+    try:
+        load_tool("build_review").select_review_items(root)
+    except ValueError as error:
+        assert str(error) == "REVIEW_PRIORITY_MISSING:Q-02"
+    else:
+        raise AssertionError("missing review priority was accepted")
+
+
+@pytest.mark.parametrize(
+    ("priorities", "expected"),
+    [
+        (
+            [
+                {
+                    "id": "Q-01",
+                    "downstream_dependency_count": 1,
+                    "authority_risk": 1,
+                    "capability_impact": 1,
+                    "basis": "First duplicate row.",
+                },
+                {
+                    "id": "Q-01",
+                    "downstream_dependency_count": 1,
+                    "authority_risk": 1,
+                    "capability_impact": 1,
+                    "basis": "Second duplicate row.",
+                },
+            ],
+            "REVIEW_PRIORITY_DUPLICATE:Q-01",
+        ),
+        (
+            [
+                {
+                    "id": "Q-01",
+                    "downstream_dependency_count": 1,
+                    "authority_risk": 1,
+                    "capability_impact": 1,
+                    "basis": "Required row.",
+                },
+                {
+                    "id": "Q-02",
+                    "downstream_dependency_count": 1,
+                    "authority_risk": 1,
+                    "capability_impact": 1,
+                    "basis": "Extra row.",
+                },
+            ],
+            "REVIEW_PRIORITY_EXTRA:Q-02",
+        ),
+        (
+            [
+                {
+                    "id": "Q-01",
+                    "downstream_dependency_count": 1,
+                    "authority_risk": 4,
+                    "capability_impact": 1,
+                    "basis": "Out-of-range authority risk.",
+                }
+            ],
+            "REVIEW_PRIORITY_INVALID",
+        ),
+    ],
+)
+def test_review_selection_rejects_duplicate_extra_and_invalid_priorities(
+    tmp_path: Path, priorities: list[dict[str, object]], expected: str
+) -> None:
+    root = write_review_foundation(
+        tmp_path,
+        [
+            {
+                "id": "Q-01",
+                "blocking": True,
+                "status": "open",
+                "downstream_dependency_count": 1,
+                "authority_risk": 1,
+                "capability_impact": 1,
+            }
+        ],
+        priorities=priorities,
+    )
+
+    with pytest.raises(ValueError, match=f"^{expected}$"):
+        load_tool("build_review").select_review_items(root)
+
+
 def test_review_selection_limits_blocker_batches_to_twelve(tmp_path: Path) -> None:
     root = write_review_foundation(
         tmp_path,
@@ -165,6 +324,32 @@ def test_build_review_writes_one_static_projection_per_selected_batch(tmp_path: 
     assert [path.name for path in paths] == ["batch-01.html", "batch-02.html"]
     assert all(path.is_file() for path in paths)
     assert "snapshot-test" in paths[0].read_text(encoding="utf-8")
+
+
+def test_build_review_removes_only_obsolete_managed_batches(tmp_path: Path) -> None:
+    items = [
+        {
+            "id": f"Q-{index:02d}",
+            "blocking": True,
+            "status": "open",
+            "downstream_dependency_count": 14 - index,
+            "authority_risk": 3,
+            "capability_impact": 3,
+        }
+        for index in range(1, 14)
+    ]
+    root = write_review_foundation(tmp_path, items)
+    build_review = load_tool("build_review").build_review
+    assert [path.name for path in build_review(root)] == ["batch-01.html", "batch-02.html"]
+    unrelated = root / "reviews/index.html"
+    unrelated.write_text("keep me\n", encoding="utf-8")
+
+    write_review_foundation(tmp_path, items[:1])
+    paths = build_review(root)
+
+    assert [path.name for path in paths] == ["batch-01.html"]
+    assert not (root / "reviews/batch-02.html").exists()
+    assert unrelated.read_text(encoding="utf-8") == "keep me\n"
 
 
 def test_review_selection_uses_highest_impact_non_blockers_when_unblocked(
