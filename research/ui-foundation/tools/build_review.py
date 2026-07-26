@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from html import escape
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -120,6 +121,104 @@ def select_review_items(root: Path) -> list[list[ReviewItem]]:
     return [selected[index : index + BATCH_SIZE] for index in range(0, len(selected), BATCH_SIZE)]
 
 
+def _review_data(root: Path, batch: list[ReviewItem], snapshot: str, number: int) -> dict[str, Any]:
+    raw_questions = _load_yaml(root / "catalog/questions.yaml").get("items")
+    priorities = _review_priorities(root)
+    if not isinstance(raw_questions, list):
+        raise ValueError("REVIEW_ITEMS_INVALID")
+    by_id: dict[str, dict[str, Any]] = {}
+    for raw_question in cast(list[Any], raw_questions):
+        if not isinstance(raw_question, dict):
+            continue
+        question = cast(dict[str, Any], raw_question)
+        identifier = question.get("id")
+        if isinstance(identifier, str):
+            by_id[identifier] = question
+    items: list[dict[str, Any]] = []
+    for item in batch:
+        question = by_id.get(item.id)
+        if question is None:
+            raise ValueError(f"REVIEW_ITEM_MISSING:{item.id}")
+        priority = priorities[item.id]
+        raw_affected = question.get("affected_ids", [])
+        affected = (
+            [value for value in cast(list[Any], raw_affected) if isinstance(value, str)]
+            if isinstance(raw_affected, list)
+            else []
+        )
+        items.append(
+            {
+                "id": item.id,
+                "title": question.get("title", item.id),
+                "blocking": item.blocking,
+                "importance": priority.basis,
+                "interpretation": question.get(
+                    "settlement_method", "No settlement method recorded."
+                ),
+                "support": f"Priority evidence: {priority.basis}",
+                "uncertainty": "This remains open; acceptance does not convert it into observed implementation evidence.",
+                "consequence": f"Affects: {', '.join(affected) if affected else 'recorded canonical contracts'}.",
+                "evidence_paths": [
+                    "catalog/questions.yaml",
+                    "catalog/review-priorities.yaml",
+                    "catalog/evidence.yaml",
+                ],
+                "technical_details": (
+                    f"Ranked with dependency count {item.downstream_dependency_count}, "
+                    f"authority risk {item.authority_risk}, and capability impact {item.capability_impact}."
+                ),
+                "capability_status": "unknown",
+                "confidence": "review required",
+            }
+        )
+    return {
+        "schema_version": "1",
+        "review_version": "phase-3-01",
+        "batch_id": f"{number:02d}",
+        "source_snapshot": snapshot,
+        "items": items,
+    }
+
+
+def _render_batch(data: dict[str, Any]) -> str:
+    encoded = escape(json.dumps(data), quote=False)
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reality &amp; capability review</title><style>
+:root {{ color-scheme: light; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color:#192126; background:#f1eee6; }}
+* {{ box-sizing:border-box; }} body {{ margin:0; padding:clamp(1rem,4vw,3rem); overflow-wrap:anywhere; }} main {{ max-width:72rem; margin:auto; }}
+.masthead {{ border-left:.75rem solid #d15828; padding:1rem 1.25rem; background:#18252b; color:#f8f3e7; }} h1 {{ margin:.15rem 0; font-family:Georgia,serif; font-size:clamp(2rem,8vw,4.25rem); }} .eyebrow {{ text-transform:uppercase; letter-spacing:.12em; font-size:.76rem; }}
+.notice {{ border:1px solid #b9aa86; padding:1rem; background:#fffaf0; margin:1rem 0; }} .toolbar {{ display:flex; flex-wrap:wrap; gap:.5rem; align-items:center; margin:1rem 0; }} button {{ font:inherit; border:1px solid #49616a; background:#fbf6ea; color:#18252b; padding:.55rem .7rem; cursor:pointer; }} button[aria-pressed="true"] {{ background:#d15828; color:white; border-color:#d15828; }} button:focus-visible, textarea:focus-visible, summary:focus-visible {{ outline:3px solid #086c7c; outline-offset:3px; }}
+.ledger {{ display:grid; gap:1rem; }} article {{ border:1px solid #49616a; border-top:5px solid #d15828; padding:1rem; background:#fffdf7; }} article[data-response] {{ border-top-color:#086c7c; }} .item-head {{ display:flex; justify-content:space-between; gap:.75rem; align-items:baseline; }} h2 {{ margin:0; font-family:Georgia,serif; }} .tag {{ background:#dce6df; padding:.15rem .4rem; font-size:.78rem; }} dl {{ display:grid; grid-template-columns:minmax(8rem, .32fr) 1fr; gap:.6rem 1rem; }} dt {{ font-weight:700; color:#48545a; }} dd {{ margin:0; }} .response-row {{ display:flex; flex-wrap:wrap; gap:.45rem; margin-top:1rem; }} textarea {{ width:100%; min-height:4rem; font:inherit; padding:.5rem; margin-top:.7rem; }} details {{ margin-top:1rem; border-top:1px dashed #889; padding-top:.7rem; }} .status {{ min-height:1.4em; color:#075b67; }} [hidden] {{ display:none !important; }}
+@media (max-width: 390px) {{ body {{ padding:.75rem; }} .masthead {{ margin:0 -.1rem; }} dl {{ grid-template-columns:1fr; gap:.25rem; }} dd {{ margin-bottom:.75rem; }} .toolbar button {{ flex:1 1 42%; }} .response-row button {{ flex:1 1 42%; }} }}
+</style></head><body><main><header class="masthead"><p class="eyebrow">Semantic foundation / Phase 3 / batch {escape(str(data["batch_id"]))}</p><h1>Reality &amp; capability review</h1><p>Decide the boundaries the implementation cannot decide for us.</p></header>
+<p class="notice"><strong>Review checkpoint, not a product screen.</strong> Responses are local, exportable review evidence; they do not alter observed facts or capability classifications.</p>
+<section class="toolbar" aria-label="Review controls"><span class="eyebrow">Show</span><button type="button" data-filter="all" aria-pressed="true">all responses</button><button type="button" data-filter="unresolved">unresolved</button><button type="button" data-filter="accept">accepted</button><button type="button" data-filter="reject">rejected</button><button type="button" data-filter="revise">revise</button><button type="button" data-filter="uncertain">uncertain</button><button type="button" data-export="json">Export JSON</button><button type="button" data-export="text">Export concise text</button></section>
+<p class="status" aria-live="polite" data-status></p><section class="ledger" aria-label="Review items" data-ledger></section></main>
+<script type="application/json" data-review-data>{encoded}</script><script>
+(() => {{
+ const keyPrefix='grounded-ui-foundation.review-feedback.v'; let data, state, ledger, status;
+ const esc=(value)=>String(value).replace(/[&<>"]/g, c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]));
+ const fail=(message)=>{{document.querySelector('main').innerHTML='<section role="alert" class="notice"><h1>Review initialization failed</h1><p>Generated review data is invalid. '+esc(message)+'</p><p>Regenerate this checkpoint from canonical catalogs before reviewing it.</p></section>';}};
+ const load=(key)=>{{const raw=localStorage.getItem(key); if(!raw) return {{history:[], latest:{{}}, notes:{{}}}}; const saved=JSON.parse(raw); if(!Array.isArray(saved.history)) throw Error('Stored feedback history is malformed.'); return saved;}};
+ const save=()=>localStorage.setItem(state.key, JSON.stringify(state));
+ const responseLabel=(response)=>response === 'accept' ? 'accepted' : response || 'unresolved';
+ const render=()=>{{const filter=document.querySelector('[data-filter][aria-pressed="true"]').dataset.filter; ledger.innerHTML=data.items.map(item=>{{const response=state.latest[item.id] || ''; const visible=filter==='all'||(filter==='unresolved'?!response:response===filter); return `<article data-review-item="${{esc(item.id)}}" data-response="${{esc(response)}}"${{visible?'':' hidden'}}><div class="item-head"><h2>${{esc(item.id)}} · ${{esc(item.title)}}</h2><button type="button" aria-label="Copy ${{esc(item.id)}}" data-copy="${{esc(item.id)}}">copy ID</button></div><p><span class="tag">${{item.blocking?'blocking':'non-blocking'}}</span> <span class="tag">capability: ${{esc(item.capability_status)}}</span> <span class="tag">confidence: ${{esc(item.confidence)}}</span></p><dl><dt>Why this matters</dt><dd>${{esc(item.importance)}}</dd><dt>Proposed interpretation</dt><dd>${{esc(item.interpretation)}}</dd><dt>What supports it</dt><dd>${{esc(item.support)}}</dd><dt>What remains uncertain</dt><dd>${{esc(item.uncertainty)}}</dd><dt>Consequence of accepting</dt><dd>${{esc(item.consequence)}}</dd><dt>Options</dt><dd>Accept the proposed settlement, reject it, request a revision, or retain explicit uncertainty.</dd></dl><div class="response-row" aria-label="Feedback for ${{esc(item.id)}}">${{['accept','reject','revise','uncertain'].map(choice=>`<button type="button" data-response-choice="${{choice}}" data-item="${{esc(item.id)}}" aria-pressed="${{String(response===choice)}}">${{choice}}</button>`).join('')}}</div><label>Note for ${{esc(item.id)}}<textarea aria-label="Note for ${{esc(item.id)}}" data-note="${{esc(item.id)}}">${{esc(state.notes[item.id]||'')}}</textarea></label><details><summary>Evidence paths and technical details</summary><p><strong>Paths:</strong> ${{item.evidence_paths.map(esc).join(', ')}}</p><p>${{esc(item.technical_details)}}</p></details></article>`;}}).join('');}};
+ const record=(id,response)=>{{const note=state.notes[id]||''; const event={{item_id:id,response,note,recorded_at:new Date().toISOString()}}; state.history.push(event); state.latest[id]=response; save(); status.textContent=`${{id}} marked ${{responseLabel(response)}} locally.`; render();}};
+ const exportFeedback=(kind)=>{{const payload={{schema_version:data.schema_version,review_version:data.review_version,batch_id:data.batch_id,source_snapshot:data.source_snapshot,exported_at:new Date().toISOString(),response_history:state.history}}; const text=kind==='json'?JSON.stringify(payload,null,2):state.history.map(event=>`${{event.item_id}} | ${{event.response}} | ${{event.note}}`).join('\\n'); const blob=new Blob([text],{{type:kind==='json'?'application/json':'text/plain'}}); const link=document.createElement('a'); link.href=URL.createObjectURL(blob); link.download=`phase-3-${{data.batch_id}}-feedback.${{kind==='json'?'json':'txt'}}`; link.click(); setTimeout(()=>URL.revokeObjectURL(link.href),0);}};
+ window.foundationReview={{initialize}};
+ function initialize() {{ try {{ data=JSON.parse(document.querySelector('[data-review-data]').textContent); if(!data || data.schema_version!=='1'||!Array.isArray(data.items)||!data.batch_id) throw Error('Required schema fields are missing.'); const key=`${{keyPrefix}}${{data.schema_version}}.${{data.review_version}}.${{data.batch_id}}`; state={{key, ...load(key)}}; ledger=document.querySelector('[data-ledger]'); status=document.querySelector('[data-status]'); render(); document.addEventListener('click', event=>{{const target=event.target.closest('button'); if(!target)return; if(target.dataset.responseChoice) record(target.dataset.item,target.dataset.responseChoice); if(target.dataset.filter){{document.querySelectorAll('[data-filter]').forEach(button=>button.setAttribute('aria-pressed',String(button===target)));render();}} if(target.dataset.copy){{navigator.clipboard?.writeText(target.dataset.copy);status.textContent=`${{target.dataset.copy}} copied.`;}} if(target.dataset.export) exportFeedback(target.dataset.export);}}); document.addEventListener('input', event=>{{const target=event.target; if(target.matches('[data-note]')){{state.notes[target.dataset.note]=target.value;save();}}}}); }} catch(error) {{ fail(error instanceof Error ? error.message : 'Unknown initialization error.'); }} }} initialize();
+}})();</script></body></html>\n"""
+
+
+def _render_index(snapshot: str, paths: list[Path]) -> str:
+    links = "".join(
+        f'<li><a href="{escape(path.name)}">{escape(path.stem.replace("-", " "))}</a></li>'
+        for path in paths
+    )
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>UI Foundation Review Status</title></head><body><main><h1>Grounded UI/UX Foundation</h1><p><strong>Semantic foundation, not a product mockup.</strong></p><p>Phase 3 is <strong>complete-blocked</strong>: blocking reality and capability decisions remain for human review.</p><p>Source snapshot: <code>{escape(snapshot)}</code>. This index and its checkpoints do not prove future capabilities.</p><h2>Review batches</h2><ul>{links}</ul></main></body></html>\n"""
+
+
 def build_review(root: Path) -> list[Path]:
     evidence = _load_yaml(root / "catalog/evidence.yaml")
     snapshot = evidence.get("active_snapshot_id")
@@ -127,23 +226,15 @@ def build_review(root: Path) -> list[Path]:
         raise ValueError("ACTIVE_SNAPSHOT_INVALID")
     rendered: list[tuple[str, str]] = []
     for number, batch in enumerate(select_review_items(root), start=1):
-        name = f"batch-{number:02d}.html"
-        articles = "\n".join(
-            f'<article data-item-id="{escape(item.id)}"><h2>{escape(item.id)}</h2>'
-            f"<p>Blocking: {str(item.blocking).lower()}</p></article>"
-            for item in batch
-        )
-        rendered.append(
-            (
-                name,
-                '<!doctype html><html><head><meta charset="utf-8"><title>Foundation review</title>'
-                f'</head><body data-source-snapshot="{escape(snapshot)}">{articles}</body></html>\n',
-            )
-        )
+        name = f"phase-3-reality-capability-{number:02d}.html"
+        rendered.append((name, _render_batch(_review_data(root, batch, snapshot, number))))
     output = root / "reviews"
     output.mkdir(parents=True, exist_ok=True)
     desired = {name for name, _content in rendered}
-    for obsolete in output.glob("batch-[0-9][0-9].html"):
+    for obsolete in [
+        *output.glob("batch-[0-9][0-9].html"),
+        *output.glob("phase-3-reality-capability-[0-9][0-9].html"),
+    ]:
         if obsolete.name not in desired:
             obsolete.unlink()
     paths: list[Path] = []
@@ -151,6 +242,7 @@ def build_review(root: Path) -> list[Path]:
         path = output / name
         path.write_text(content, encoding="utf-8")
         paths.append(path)
+    (output / "index.html").write_text(_render_index(snapshot, paths), encoding="utf-8")
     return paths
 
 

@@ -321,7 +321,10 @@ def test_build_review_writes_one_static_projection_per_selected_batch(tmp_path: 
 
     paths = load_tool("build_review").build_review(root)
 
-    assert [path.name for path in paths] == ["batch-01.html", "batch-02.html"]
+    assert [path.name for path in paths] == [
+        "phase-3-reality-capability-01.html",
+        "phase-3-reality-capability-02.html",
+    ]
     assert all(path.is_file() for path in paths)
     assert "snapshot-test" in paths[0].read_text(encoding="utf-8")
 
@@ -340,16 +343,18 @@ def test_build_review_removes_only_obsolete_managed_batches(tmp_path: Path) -> N
     ]
     root = write_review_foundation(tmp_path, items)
     build_review = load_tool("build_review").build_review
-    assert [path.name for path in build_review(root)] == ["batch-01.html", "batch-02.html"]
-    unrelated = root / "reviews/index.html"
-    unrelated.write_text("keep me\n", encoding="utf-8")
+    assert [path.name for path in build_review(root)] == [
+        "phase-3-reality-capability-01.html",
+        "phase-3-reality-capability-02.html",
+    ]
+    index = root / "reviews/index.html"
 
     write_review_foundation(tmp_path, items[:1])
     paths = build_review(root)
 
-    assert [path.name for path in paths] == ["batch-01.html"]
-    assert not (root / "reviews/batch-02.html").exists()
-    assert unrelated.read_text(encoding="utf-8") == "keep me\n"
+    assert [path.name for path in paths] == ["phase-3-reality-capability-01.html"]
+    assert not (root / "reviews/phase-3-reality-capability-02.html").exists()
+    assert "phase-3-reality-capability-01.html" in index.read_text(encoding="utf-8")
 
 
 def test_review_selection_uses_highest_impact_non_blockers_when_unblocked(
