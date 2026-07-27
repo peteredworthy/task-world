@@ -101,6 +101,7 @@ class DiagnosticCode(StrEnum):
     UNSUPPORTED_BINDING = "unsupported_binding"
     UNSUPPORTED_CONSTRUCTION = "unsupported_construction"
     UNSUPPORTED_COMPARISON = "unsupported_comparison"
+    UNSUPPORTED_MUTATION = "unsupported_mutation"
 
 
 class AccessOccurrence(BaseModel):
@@ -256,6 +257,14 @@ class _Collector(cst.CSTVisitor):
             and self._tracked(node.func.value)
         )
 
+    def _is_tracked_get_call(self, node: cst.BaseExpression) -> bool:
+        return (
+            isinstance(node, cst.Call)
+            and isinstance(node.func, cst.Attribute)
+            and node.func.attr.value == "get"
+            and self._tracked(node.func.value)
+        )
+
     def _tracked_field_subscript(self, node: cst.BaseExpression) -> cst.Subscript | None:
         """Return the root literal field subscript for a tracked subscript chain."""
         current = node
@@ -329,6 +338,27 @@ class _Collector(cst.CSTVisitor):
             )
         return field if field in self.fields else None
 
+    def _field_from_get_call(self, node: cst.Call) -> str | None:
+        if not self._valid_method_shape("get", node.args):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_CALL,
+                "invalid projection.get call shape",
+                node,
+            )
+            return None
+        field = _literal_key(node.args[0].value)
+        if field is None:
+            self._diagnostic(
+                DiagnosticCode.COMPUTED_KEY,
+                "projection key must be a literal string",
+                node,
+            )
+        elif field not in self.fields:
+            self._diagnostic(
+                DiagnosticCode.UNKNOWN_FIELD, f"unknown projection field: {field}", node
+            )
+        return field if field in self.fields else None
+
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
         return
 
@@ -355,6 +385,17 @@ class _Collector(cst.CSTVisitor):
             self._discard_alias(node.target)
 
     def visit_AugAssign(self, node: cst.AugAssign) -> None:
+        if isinstance(node.target, cst.Subscript):
+            field_subscript = self._tracked_field_subscript(node.target)
+            if field_subscript is not None:
+                self._field_from_subscript(field_subscript)
+                self._handle_subscript_chain(node.target)
+                self._diagnostic(
+                    DiagnosticCode.UNSUPPORTED_MUTATION,
+                    "augmented projection mutation is unsupported",
+                    node,
+                )
+                return
         if (isinstance(node.target, cst.Name) and self._known_alias(node.target)) or self._tracked(
             node.value
         ):
@@ -458,6 +499,25 @@ class _Collector(cst.CSTVisitor):
         if isinstance(node.func, cst.Attribute):
             method = node.func.attr.value
             receiver = node.func.value
+            if self._is_tracked_get_call(receiver):
+                self.handled.add(id(receiver))
+                if method not in {"append", "extend"}:
+                    self._diagnostic(
+                        DiagnosticCode.UNSUPPORTED_CALL,
+                        f"projection.get result method {method} is unsupported",
+                        node,
+                    )
+                elif not self._valid_method_shape(method, node.args):
+                    self._diagnostic(
+                        DiagnosticCode.UNSUPPORTED_CALL,
+                        f"invalid projection.{method} call shape",
+                        node,
+                    )
+                else:
+                    field = self._field_from_get_call(receiver)
+                    if field is not None:
+                        self._record(AccessKind.APPEND_EXTEND, field, node)
+                return
             if self._tracked(receiver) and method in {
                 "get",
                 "keys",
@@ -586,8 +646,8 @@ class _Collector(cst.CSTVisitor):
             "keys": {0},
             "values": {0},
             "items": {0},
-            "get": {1},
-            "pop": {1},
+            "get": {1, 2},
+            "pop": {1, 2},
             "setdefault": {1, 2},
             "append": {1},
             "extend": {1},
@@ -665,10 +725,13 @@ class _Collector(cst.CSTVisitor):
 
     def visit_Del(self, node: cst.Del) -> None:
         if isinstance(node.target, cst.Subscript):
-            field = self._field_from_subscript(node.target)
+            field_subscript = self._tracked_field_subscript(node.target)
+            if field_subscript is None:
+                return
+            field = self._field_from_subscript(field_subscript)
+            self._handle_subscript_chain(node.target)
             if field is not None:
                 self._record(AccessKind.DELETE_POP, field, node)
-                self.handled.add(id(node.target))
 
     def visit_Subscript(self, node: cst.Subscript) -> None:
         if id(node) in self.handled:

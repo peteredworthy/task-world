@@ -395,7 +395,7 @@ def test_collect_source_rejects_remaining_binding_and_call_shapes() -> None:
 def invalid(projection: GraphProjection) -> None:
     consume(*projection)
     consume(**projection)
-    projection.get("run_state", None)
+    projection.get("run_state", None, "extra")
     projection.keys(extra=True)
     projection["ready_nodes"].append("node", "other")
     typed: object = projection
@@ -749,3 +749,85 @@ def alpha(projection: GraphProjection) -> None:
         )
         for item in inventory.occurrences
     )
+
+
+def test_collect_source_diagnoses_augmented_projection_mutation_without_child_reads() -> None:
+    inventory = collect_source(
+        """
+def mutations(projection: GraphProjection, value: object) -> None:
+    projection["run_state"] += value
+    projection["node_states"]["node"] += value
+    projection["node_states"]["node"]["status"] += value
+""",
+        relative_path="augmented.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_mutation",
+        "unsupported_mutation",
+        "unsupported_mutation",
+    ]
+
+
+def test_collect_source_classifies_nested_delete_without_emitting_a_read() -> None:
+    inventory = collect_source(
+        """
+def deletes(projection: GraphProjection) -> None:
+    del projection["run_state"]
+    del projection["node_states"]["node"]
+""",
+        relative_path="delete.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.kind, item.old_field_name) for item in inventory.occurrences] == [
+        ("delete_pop", "run_state"),
+        ("delete_pop", "node_states"),
+    ]
+    assert not inventory.diagnostics
+
+
+def test_collect_source_supports_one_and_two_argument_get_and_pop_calls() -> None:
+    inventory = collect_source(
+        """
+def calls(projection: GraphProjection) -> None:
+    projection.get("run_state")
+    projection.get("run_state", None)
+    projection.pop("node_states")
+    projection.pop("node_states", None)
+    projection.get("run_state", None, "extra")
+    projection.pop("node_states", None, "extra")
+""",
+        relative_path="get-pop.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.kind, item.old_field_name) for item in inventory.occurrences] == [
+        ("get", "run_state"),
+        ("get", "run_state"),
+        ("delete_pop", "node_states"),
+        ("delete_pop", "node_states"),
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_call",
+        "unsupported_call",
+    ]
+
+
+def test_collect_source_handles_calls_on_get_values_fail_closed() -> None:
+    inventory = collect_source(
+        """
+def methods(projection: GraphProjection) -> None:
+    projection.get("ready_nodes").append("node")
+    projection.get("node_states", {}).update({})
+""",
+        relative_path="get-methods.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.kind, item.old_field_name) for item in inventory.occurrences] == [
+        ("append_extend", "ready_nodes"),
+    ]
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_call"]

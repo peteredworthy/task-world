@@ -276,3 +276,56 @@ deprecations from `tests/unit/test_projectors.py`.
 The collector still intentionally performs no repository traversal, inter-procedural alias or
 return inference, import-alias closure, or baseline emission. Those exclusions remain explicit
 Task 1b boundaries rather than completeness claims.
+
+## Final Task 1b Fix Evidence (2026-07-27)
+
+### RED
+
+After adding regression fixtures for augmented projection mutations, nested deletes, one- and
+two-argument `get`/`pop` calls, and methods on `get` results, the focused collector suite failed
+in the expected four new tests:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+4 failed, 33 passed
+```
+
+The failures were the pre-fix child reads from augmented assignments and nested deletes, rejected
+two-argument `get`/`pop` shapes, and the inner-only `get` occurrence for a `get`-result method.
+
+### GREEN and verification
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+37 passed in 3.06s
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run pyright scripts/graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+make test
+4889 passed, 3 skipped, 3 warnings in 81.55s
+```
+
+The three full-suite warnings remain the existing Python 3.12 `aiosqlite` datetime-adapter
+deprecations in `tests/unit/test_projectors.py`.
+
+### Final fixes
+
+- Added an explicit `unsupported_mutation` diagnostic for direct and deep augmented projection
+  assignments, suppressing every child subscript read.
+- Classified direct and nested `del` chains as `delete_pop`, suppressing child reads.
+- Classified supported `append`/`extend` calls on `projection.get(...)` values and diagnosed
+  unsupported result methods without emitting an inner-only `get` occurrence.
+- Accepted exactly one or two positional arguments for both `projection.get(...)` and
+  `projection.pop(...)`; invalid arities remain fail-closed.
+
+### Files changed in this final fix
+
+- `scripts/graph_projection_inventory.py`
+- `tests/unit/test_graph_projection_inventory.py`
+- `.superpowers/sdd/task-1b-report.md`
+
+No progress ledger was edited. The bounded-scope concerns above remain unchanged.
