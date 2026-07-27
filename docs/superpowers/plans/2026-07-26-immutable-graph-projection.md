@@ -92,6 +92,31 @@
 
 ---
 
+## Execution Revision After Task 1c
+
+Tasks 1a-1c completed the ownership manifest, single-source collector, and
+repository provenance closure. The reviewed inventory intentionally reports
+explicit unresolved flows. The original order incorrectly required a zero-
+diagnostic baseline before the query codemod that resolves those diagnostics.
+
+The binding execution order is now:
+
+1. Keep Tasks 1a-1c and their diagnostic artifact unchanged as the migration
+   input ledger.
+2. Execute Task 2 to freeze replay and public-view behavior before source
+   transformation.
+3. Execute revised Task 3 against both classified occurrences and unresolved
+   diagnostics. Every input receives exactly one transformed or allowlisted
+   disposition.
+4. Require zero unresolved diagnostics after applying Task 3, then write and
+   verify `access_inventory.json` at the transformed source revision.
+5. Continue Tasks 4-9 unchanged.
+
+The original Task 1 Steps 7-9 are superseded by revised Task 3 Steps 8-10.
+This is an execution dependency correction, not an architecture change.
+
+---
+
 ### Task 1: Freeze The Ownership Manifest And Access Baseline
 
 **Files:**
@@ -193,32 +218,11 @@ def test_occurrence_id_ignores_line_number_changes() -> None:
 
 Seed projection values from annotations, known projection-returning functions, local assignments, and `GraphDispatchContext.graph_projection`. Classify subscript, `.get`, membership, key/value/item iteration, assignment, nested assignment, `setdefault`, append, delete, unpack, cast, fixture construction, and untyped escape. Use IDs composed from baseline revision, relative path, qualified function, normalized-expression hash, and same-expression ordinal. Abort on unsupported aliasing or dynamic access.
 
-- [ ] **Step 7: Generate and verify the access baseline**
+- [x] **Steps 7-9: Superseded after Task 1c**
 
-Run: `uv run python scripts/graph_projection_inventory.py --write-baseline`
-
-Expected: writes a sorted `access_inventory.json` containing all classified production and test occurrences and zero unclassified occurrences.
-
-Run: `uv run python scripts/graph_projection_inventory.py --check`
-
-Expected: exit 0 and report 73 owned fields, zero source drift, and zero unclassified accesses.
-
-- [ ] **Step 8: Run focused checks**
-
-Run: `uv run pytest tests/unit/test_graph_projection_inventory.py tests/unit/test_patch_validator.py -q`
-
-Expected: PASS.
-
-- [ ] **Step 9: Commit the baseline**
-
-```bash
-git add scripts/codemods/graph_projection_manifest.yaml scripts/graph_projection_inventory.py \
-  tests/unit/test_graph_projection_inventory.py \
-  tests/fixtures/graph_projection_migration/access_inventory.json \
-  src/orchestrator/graph/projection_queries.py src/orchestrator/graph/patch_validator.py \
-  src/orchestrator/graph/__init__.py
-git commit -m "test: inventory graph projection access"
-```
+Tasks 1a-1c committed and reviewed the manifest, collector, provenance closure,
+and complete diagnostic artifact. Baseline generation is deferred until the
+revised Task 3 codemod resolves the inventoried migration sites.
 
 ---
 
@@ -292,7 +296,7 @@ git commit -m "test: capture graph projection behavior"
 
 ---
 
-### Task 3: Move Consumers Onto The Permanent Query Boundary
+### Task 3: Resolve Inventory And Move Consumers Onto The Query Boundary
 
 **Files:**
 - Modify: `src/orchestrator/graph/projection_queries.py`
@@ -310,6 +314,8 @@ git commit -m "test: capture graph projection behavior"
 - Produces: `transform_repository(root: Path, inventory: AccessInventory) -> MigrationResult`
 - Produces: CLI `--check`, `--apply`, and `--assert-clean`
 - Produces: boundary-check CLI with an exact five-file physical-storage allowlist
+- Produces: clean `access_inventory.json` only after transformed source has zero unresolved diagnostics
+- Consumes: Task 1c occurrences plus every site in `docs/graph-projection-inventory-diagnostics.md`
 
 - [ ] **Step 1: Add failing query behavior tests over the old shape**
 
@@ -352,9 +358,9 @@ def test_codemod_is_idempotent() -> None:
     assert transform_source(once).code == once
 ```
 
-- [ ] **Step 4: Implement atomic LibCST transformation**
+- [ ] **Step 4: Implement atomic LibCST transformation and diagnostic dispositions**
 
-Follow `scripts/codemods/r04_otel_vocab.py`: collect and diagnose the complete repository in memory, compare each occurrence to the frozen inventory, transform reads to query calls, move non-core production mutations to graph update functions, and convert direct test construction/mutation to event-driven fixture factories. Write no files unless every baseline occurrence maps to exactly one transformed or allowlisted result and the transformed tree has zero unclassified accesses.
+Follow `scripts/codemods/r04_otel_vocab.py`: collect and diagnose the complete repository in memory, transform reads to query calls, move non-core production mutations to graph update functions, and convert direct test construction/mutation to event-driven fixture factories. The migration report maps every Task 1c occurrence and diagnostic to exactly one `transformed`, `approved_core`, `projection_neutral`, or `rejected` disposition. A `projection_neutral` disposition requires an exact source-pattern rule and reason; no path-wide suppression is allowed. Write no files unless every input site has one disposition and an in-memory re-inventory of the transformed tree has zero unresolved diagnostics outside the exact five core files.
 
 - [ ] **Step 5: Dry-run and inspect the generated report**
 
@@ -372,7 +378,28 @@ Run: `uv run python -m scripts.codemods.migrate_graph_projection_queries --asser
 
 Expected: exit 0 and no second-run changes.
 
-- [ ] **Step 7: Implement the exact boundary guard**
+- [ ] **Step 7: Prove diagnostic closure before freezing the baseline**
+
+Run: `uv run python scripts/graph_projection_inventory.py --diagnose`
+
+Expected: exit 0 with zero unresolved diagnostics after the codemod. The command
+must not rewrite the historical Task 1c diagnostic artifact.
+
+- [ ] **Step 8: Write and verify the transformed-source baseline**
+
+Update the manifest baseline revision to the pre-apply migration base retained
+in `query_migration_report.json`, then run:
+
+```bash
+uv run python scripts/graph_projection_inventory.py --write-baseline
+uv run python scripts/graph_projection_inventory.py --check
+```
+
+Expected: a sorted `access_inventory.json`, zero source drift, zero unresolved
+diagnostics, and a one-to-one link from every original occurrence/diagnostic to
+the migration report.
+
+- [ ] **Step 9: Implement the exact boundary guard**
 
 Allow direct grouped storage access only in:
 
@@ -388,7 +415,7 @@ ALLOWED_STORAGE_READERS = frozenset({
 
 Reject old literal projection subscripts, dynamic projection access, mutable projection operations, and imports from graph submodules outside `orchestrator.graph`.
 
-- [ ] **Step 8: Run generated-change verification**
+- [ ] **Step 10: Run generated-change verification**
 
 Run: `uv run python scripts/graph_projection_inventory.py --check`
 
@@ -402,18 +429,20 @@ Run: `uv run pytest tests/unit/test_graph_projection_queries.py tests/unit/test_
 
 Expected: PASS.
 
-- [ ] **Step 9: Run broad graph tests before committing generated changes**
+- [ ] **Step 11: Run broad graph tests before committing generated changes**
 
 Run: `uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/integration/test_graph_fr17_acceptance.py -q`
 
 Expected: PASS with unchanged golden output.
 
-- [ ] **Step 10: Commit the one-time consumer migration**
+- [ ] **Step 12: Commit the one-time consumer migration**
 
 ```bash
 git add src tests scripts/check_graph_projection_boundaries.py \
   scripts/codemods/migrate_graph_projection_queries.py \
-  tests/fixtures/graph_projection_migration/query_migration_report.json
+  tests/fixtures/graph_projection_migration/query_migration_report.json \
+  tests/fixtures/graph_projection_migration/access_inventory.json \
+  scripts/codemods/graph_projection_manifest.yaml
 git commit -m "refactor: isolate graph projection storage"
 ```
 
