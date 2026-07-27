@@ -9,7 +9,15 @@ from orchestrator.graph import (
     initial_projection,
     resource_claims_for_node,
 )
-from scripts.graph_projection_inventory import collect_source, load_manifest, occurrence_id
+from scripts.graph_projection_inventory import (
+    AccessKind,
+    AccessOccurrence,
+    DiagnosticCode,
+    InventoryDiagnostic,
+    collect_source,
+    load_manifest,
+    occurrence_id,
+)
 
 
 MANIFEST_PATH = Path(__file__).parents[2] / "scripts/codemods/graph_projection_manifest.yaml"
@@ -526,3 +534,218 @@ class Nested:
         ("Nested.outer.method", "node_states"),
         ("outer.Nested.method", "run_state"),
     ]
+
+
+def test_collect_source_only_diagnoses_methods_on_tracked_field_subscripts() -> None:
+    inventory = collect_source(
+        """
+def methods(projection: GraphProjection, mapping: dict[str, object]) -> None:
+    mapping["key"].update({})
+    mapping["key"].clear()
+    projection["node_states"].update({})
+""",
+        relative_path="tracked_methods.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_call"]
+
+
+def test_collect_source_classifies_deep_projection_subscripts_once() -> None:
+    inventory = collect_source(
+        """
+def nested(projection: GraphProjection) -> None:
+    read = projection["node_states"]["node"]
+    projection["node_states"]["node"]["status"] = "active"
+""",
+        relative_path="deep.py",
+        baseline_revision="baseline",
+    )
+
+    assert [
+        (item.kind, item.old_field_name, item.normalized_expression)
+        for item in inventory.occurrences
+    ] == [
+        ("literal_subscript_read", "node_states", "projection['node_states']['node']"),
+        (
+            "nested_assignment",
+            "node_states",
+            "projection['node_states']['node']['status']",
+        ),
+    ]
+
+
+def test_collect_source_keeps_rhs_tracking_until_rebinding_is_applied() -> None:
+    inventory = collect_source(
+        """
+def assignments(projection: GraphProjection) -> None:
+    alias = projection
+    alias = alias["run_state"]
+    alias["node_states"]
+    typed: object = projection["ready_nodes"]
+""",
+        relative_path="rhs.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.kind, item.old_field_name) for item in inventory.occurrences] == [
+        ("literal_subscript_read", "run_state"),
+        ("literal_subscript_read", "ready_nodes"),
+    ]
+    assert not inventory.diagnostics
+
+
+def test_collect_source_forgets_historical_alias_after_normal_rebinding() -> None:
+    inventory = collect_source(
+        """
+def rebindings(projection: GraphProjection) -> None:
+    alias = projection
+    alias = object()
+    for alias in ():
+        pass
+    with context() as alias:
+        pass
+    try:
+        pass
+    except ValueError as alias:
+        pass
+""",
+        relative_path="normal_rebinding.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert not inventory.diagnostics
+
+
+def test_collect_source_enforces_exact_call_shapes_and_tracks_constructor_escapes() -> None:
+    inventory = collect_source(
+        """
+from typing import cast
+
+def calls(projection: GraphProjection) -> None:
+    cast(dict[str, object], projection["node_states"], str)
+    projection()
+    GraphProjection(run_state=projection)
+""",
+        relative_path="calls.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.kind, item.old_field_name) for item in inventory.occurrences] == [
+        ("fixture_construction", "run_state"),
+        ("untyped_escape", None),
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_call",
+        "unsupported_call",
+    ]
+
+
+def test_collect_source_diagnoses_only_projection_comparisons_and_compfor_iteration() -> None:
+    inventory = collect_source(
+        """
+def comparisons(projection: GraphProjection) -> None:
+    unrelated = 1 == 2
+    simple = projection["run_state"] == "active"
+    chained = projection.get("node_states") < 2 < 3
+    values = [value for value in projection]
+""",
+        relative_path="comparison.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.kind, item.old_field_name) for item in inventory.occurrences] == [
+        ("direct_iteration", None),
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_comparison",
+        "unsupported_comparison",
+    ]
+
+
+def test_collect_source_uses_execution_scope_for_definition_metadata() -> None:
+    inventory = collect_source(
+        """
+def outer(projection: GraphProjection) -> None:
+    @projection["run_state"]
+    def decorated() -> projection["node_states"]:
+        pass
+
+    def defaulted(value=projection["ready_nodes"]) -> None:
+        pass
+""",
+        relative_path="definition_metadata.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("outer", "run_state"),
+        ("outer", "node_states"),
+        ("outer", "ready_nodes"),
+    ]
+
+
+def test_inventory_models_are_strict_frozen_and_enum_typed() -> None:
+    occurrence = AccessOccurrence(
+        occurrence_id="id",
+        relative_path="source.py",
+        qualified_function="f",
+        normalized_expression="projection['run_state']",
+        same_expression_ordinal=0,
+        old_field_name="run_state",
+        kind=AccessKind.LITERAL_SUBSCRIPT_READ,
+        line=1,
+        column=0,
+        ordering_sensitivity_disposition="insensitive",
+    )
+    diagnostic = InventoryDiagnostic(
+        relative_path="source.py",
+        line=1,
+        column=0,
+        code=DiagnosticCode.UNSUPPORTED_CALL,
+        message="unsupported",
+    )
+
+    assert occurrence.kind is AccessKind.LITERAL_SUBSCRIPT_READ
+    assert diagnostic.code is DiagnosticCode.UNSUPPORTED_CALL
+    with pytest.raises(ValidationError):
+        AccessOccurrence.model_validate({**occurrence.model_dump(), "unexpected": True})
+    with pytest.raises(ValidationError):
+        occurrence.line = 2
+
+
+def test_collect_source_sorts_by_every_documented_sort_tuple_component() -> None:
+    inventory = collect_source(
+        """
+def beta(projection: GraphProjection) -> None:
+    projection["ready_nodes"]
+
+def alpha(projection: GraphProjection) -> None:
+    projection["node_states"]
+    projection["run_state"]
+""",
+        relative_path="sorting.py",
+        baseline_revision="baseline",
+    )
+
+    assert [
+        (
+            item.relative_path,
+            item.qualified_function,
+            item.line,
+            item.column,
+            item.kind,
+        )
+        for item in inventory.occurrences
+    ] == sorted(
+        (
+            item.relative_path,
+            item.qualified_function,
+            item.line,
+            item.column,
+            item.kind,
+        )
+        for item in inventory.occurrences
+    )

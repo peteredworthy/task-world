@@ -204,7 +204,6 @@ class _Collector(cst.CSTVisitor):
         self.handled: set[int] = set()
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
-        self.lexical_names.append(node.name.value)
         variadic = tuple(
             parameter
             for parameter in (node.params.star_arg, node.params.star_kwarg)
@@ -225,13 +224,16 @@ class _Collector(cst.CSTVisitor):
         self.aliases[scope_id] = seeds
         self.known_aliases[scope_id] = set(seeds)
 
-    def leave_FunctionDef(self, original_node: cst.FunctionDef) -> None:
-        self.lexical_names.pop()
-
-    def visit_ClassDef(self, node: cst.ClassDef) -> None:
+    def visit_FunctionDef_body(self, node: cst.FunctionDef) -> None:
         self.lexical_names.append(node.name.value)
 
-    def leave_ClassDef(self, original_node: cst.ClassDef) -> None:
+    def leave_FunctionDef_body(self, original_node: cst.FunctionDef) -> None:
+        self.lexical_names.pop()
+
+    def visit_ClassDef_body(self, node: cst.ClassDef) -> None:
+        self.lexical_names.append(node.name.value)
+
+    def leave_ClassDef_body(self, original_node: cst.ClassDef) -> None:
         self.lexical_names.pop()
 
     def _tracked(self, node: cst.BaseExpression) -> bool:
@@ -245,9 +247,42 @@ class _Collector(cst.CSTVisitor):
         )
 
     def _projection_operand(self, node: cst.BaseExpression) -> bool:
-        return self._tracked(node) or (
-            isinstance(node, cst.Subscript) and self._tracked(node.value)
+        if self._tracked(node) or self._tracked_field_subscript(node) is not None:
+            return True
+        return (
+            isinstance(node, cst.Call)
+            and isinstance(node.func, cst.Attribute)
+            and node.func.attr.value == "get"
+            and self._tracked(node.func.value)
         )
+
+    def _tracked_field_subscript(self, node: cst.BaseExpression) -> cst.Subscript | None:
+        """Return the root literal field subscript for a tracked subscript chain."""
+        current = node
+        while isinstance(current, cst.Subscript):
+            if self._tracked(current.value):
+                return current
+            current = current.value
+        return None
+
+    def _handle_subscript_chain(self, node: cst.Subscript) -> None:
+        current: cst.BaseExpression = node
+        while isinstance(current, cst.Subscript):
+            self.handled.add(id(current))
+            current = current.value
+
+    def _discard_alias(self, node: cst.Name) -> None:
+        scope_id = id(self.get_metadata(ScopeProvider, node))
+        self.aliases.get(scope_id, set()).discard(node.value)
+        self.known_aliases.get(scope_id, set()).discard(node.value)
+
+    def _discard_live_alias(self, node: cst.Name) -> None:
+        self.aliases.get(id(self.get_metadata(ScopeProvider, node)), set()).discard(node.value)
+
+    def _add_alias(self, node: cst.Name) -> None:
+        scope_id = id(self.get_metadata(ScopeProvider, node))
+        self.aliases.setdefault(scope_id, set()).add(node.value)
+        self.known_aliases.setdefault(scope_id, set()).add(node.value)
 
     def _target_names(self, node: cst.BaseAssignTargetExpression) -> tuple[cst.Name, ...]:
         if isinstance(node, cst.Name):
@@ -295,6 +330,10 @@ class _Collector(cst.CSTVisitor):
         return field if field in self.fields else None
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
+        return
+
+    def leave_AnnAssign(self, original_node: cst.AnnAssign) -> None:
+        node = original_node
         if not isinstance(node.target, cst.Name):
             if node.value is not None and self._tracked(node.value):
                 self._diagnostic(
@@ -305,10 +344,7 @@ class _Collector(cst.CSTVisitor):
         if scope is None:
             return
         if _name(node.annotation.annotation) == "GraphProjection":
-            scope.add(node.target.value)
-            self.known_aliases.setdefault(
-                id(self.get_metadata(ScopeProvider, node.target)), set()
-            ).add(node.target.value)
+            self._add_alias(node.target)
         else:
             if node.value is not None and self._tracked(node.value):
                 self._diagnostic(
@@ -316,7 +352,7 @@ class _Collector(cst.CSTVisitor):
                     "annotated assignment loses projection type",
                     node,
                 )
-            scope.discard(node.target.value)
+            self._discard_alias(node.target)
 
     def visit_AugAssign(self, node: cst.AugAssign) -> None:
         if (isinstance(node.target, cst.Name) and self._known_alias(node.target)) or self._tracked(
@@ -325,12 +361,16 @@ class _Collector(cst.CSTVisitor):
             self._diagnostic(
                 DiagnosticCode.UNSUPPORTED_BINDING, "augmented projection binding", node
             )
-            if isinstance(node.target, cst.Name):
-                self.aliases.get(id(self.get_metadata(ScopeProvider, node.target)), set()).discard(
-                    node.target.value
-                )
+
+    def leave_AugAssign(self, original_node: cst.AugAssign) -> None:
+        if isinstance(original_node.target, cst.Name) and self._known_alias(original_node.target):
+            self._discard_live_alias(original_node.target)
 
     def visit_Assign(self, node: cst.Assign) -> None:
+        return
+
+    def leave_Assign(self, original_node: cst.Assign) -> None:
+        node = original_node
         if len(node.targets) != 1 or not isinstance(node.targets[0].target, cst.Name):
             target_names = tuple(
                 name for target in node.targets for name in self._target_names(target.target)
@@ -340,27 +380,21 @@ class _Collector(cst.CSTVisitor):
                     DiagnosticCode.UNSUPPORTED_BINDING, "unsupported projection binding", node
                 )
                 for name in target_names:
-                    self.aliases.get(id(self.get_metadata(ScopeProvider, name)), set()).discard(
-                        name.value
-                    )
+                    self._discard_live_alias(name)
             return
-        target = node.targets[0].target.value
         scope = self.aliases.get(id(self.get_metadata(ScopeProvider, node.targets[0].target)))
         if scope is None:
             return
         if self._tracked(node.value):
-            scope.add(target)
-            self.known_aliases.setdefault(
-                id(self.get_metadata(ScopeProvider, node.targets[0].target)), set()
-            ).add(target)
+            self._add_alias(node.targets[0].target)
         else:
-            scope.discard(target)
+            self._discard_alias(node.targets[0].target)
 
     def visit_For(self, node: cst.For) -> None:
         for target in self._target_names(node.target):
             scope = self.aliases.get(id(self.get_metadata(ScopeProvider, target)))
             if scope is not None and self._known_alias(target):
-                scope.discard(target.value)
+                self._discard_live_alias(target)
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING, "loop rebinds projection alias", node
                 )
@@ -400,6 +434,8 @@ class _Collector(cst.CSTVisitor):
             )
 
     def visit_Call(self, node: cst.Call) -> None:
+        if id(node) in self.handled:
+            return
         if any(
             argument.star in {"*", "**"} and self._tracked(argument.value) for argument in node.args
         ):
@@ -469,9 +505,12 @@ class _Collector(cst.CSTVisitor):
                     DiagnosticCode.UNSUPPORTED_CALL, f"projection.{method} is unsupported", node
                 )
                 return
-            if isinstance(receiver, cst.Subscript):
-                field = self._field_from_subscript(receiver)
-                self.handled.add(id(receiver))
+            field_subscript = self._tracked_field_subscript(receiver)
+            if field_subscript is not None:
+                field = self._field_from_subscript(field_subscript)
+                self._handle_subscript_chain(receiver) if isinstance(
+                    receiver, cst.Subscript
+                ) else None
                 if method not in {"append", "extend"}:
                     self._diagnostic(
                         DiagnosticCode.UNSUPPORTED_CALL,
@@ -489,13 +528,30 @@ class _Collector(cst.CSTVisitor):
                 return
         if (
             _name(node.func) == "cast"
-            and len(node.args) >= 2
+            and len(node.args) == 2
+            and not any(argument.star or argument.keyword is not None for argument in node.args)
             and isinstance(node.args[1].value, cst.Subscript)
         ):
-            field = self._field_from_subscript(node.args[1].value)
+            field_subscript = self._tracked_field_subscript(node.args[1].value)
+            field = self._field_from_subscript(field_subscript) if field_subscript else None
             if field is not None:
                 self._record(AccessKind.UNPACK_CAST, field, node)
-                self.handled.add(id(node.args[1].value))
+                self._handle_subscript_chain(node.args[1].value)
+            return
+        if _name(node.func) == "cast" and any(
+            self._projection_operand(arg.value) for arg in node.args
+        ):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_CALL, "invalid cast projection call shape", node
+            )
+            for argument in node.args:
+                if isinstance(argument.value, cst.Subscript):
+                    self._handle_subscript_chain(argument.value)
+            return
+        if self._tracked(node.func):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_CALL, "calling GraphProjection is unsupported", node
+            )
             return
         if _name(node.func) == "GraphProjection":
             for argument in node.args:
@@ -503,6 +559,8 @@ class _Collector(cst.CSTVisitor):
                     field = argument.keyword.value
                     if field in self.fields:
                         self._record(AccessKind.FIXTURE_CONSTRUCTION, field, node)
+                        if self._projection_operand(argument.value):
+                            self._record(AccessKind.UNTYPED_ESCAPE, None, argument.value)
                     else:
                         self._diagnostic(
                             DiagnosticCode.UNKNOWN_FIELD,
@@ -553,8 +611,8 @@ class _Collector(cst.CSTVisitor):
             )
 
     def visit_Comparison(self, node: cst.Comparison) -> None:
+        operands = (node.left, *(comparison.comparator for comparison in node.comparisons))
         if len(node.comparisons) != 1:
-            operands = (node.left, *(comparison.comparator for comparison in node.comparisons))
             projection_operands = tuple(
                 operand for operand in operands if self._projection_operand(operand)
             )
@@ -566,6 +624,8 @@ class _Collector(cst.CSTVisitor):
                 )
                 for operand in projection_operands:
                     if isinstance(operand, cst.Subscript):
+                        self._handle_subscript_chain(operand)
+                    elif isinstance(operand, cst.Call):
                         self.handled.add(id(operand))
             return
         target = node.comparisons[0]
@@ -583,6 +643,25 @@ class _Collector(cst.CSTVisitor):
                 )
             else:
                 self._record(AccessKind.MEMBERSHIP, field, node)
+            return
+        projection_operands = tuple(
+            operand for operand in operands if self._projection_operand(operand)
+        )
+        if projection_operands:
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_COMPARISON,
+                "projection comparison is unsupported",
+                node,
+            )
+            for operand in projection_operands:
+                if isinstance(operand, cst.Subscript):
+                    self._handle_subscript_chain(operand)
+                elif isinstance(operand, cst.Call):
+                    self.handled.add(id(operand))
+
+    def visit_CompFor(self, node: cst.CompFor) -> None:
+        if self._tracked(node.iter):
+            self._record(AccessKind.DIRECT_ITERATION, None, node.iter)
 
     def visit_Del(self, node: cst.Del) -> None:
         if isinstance(node.target, cst.Subscript):
@@ -594,16 +673,23 @@ class _Collector(cst.CSTVisitor):
     def visit_Subscript(self, node: cst.Subscript) -> None:
         if id(node) in self.handled:
             return
-        field = self._field_from_subscript(node)
+        field_subscript = self._tracked_field_subscript(node)
+        if field_subscript is None:
+            return
+        field = self._field_from_subscript(field_subscript)
         if field is None:
             return
+        self._handle_subscript_chain(node)
         parent = self.get_metadata(ParentNodeProvider, node)
-        if isinstance(parent, cst.AssignTarget) or isinstance(parent, cst.AnnAssign):
-            self._record(AccessKind.DIRECT_ASSIGNMENT, field, node)
-        elif isinstance(parent, cst.Subscript):
-            grandparent = self.get_metadata(ParentNodeProvider, parent)
-            if isinstance(grandparent, cst.AssignTarget):
-                self._record(AccessKind.NESTED_ASSIGNMENT, field, parent)
+        if isinstance(parent, cst.AssignTarget) or (
+            isinstance(parent, cst.AnnAssign) and parent.target is node
+        ):
+            kind = (
+                AccessKind.NESTED_ASSIGNMENT
+                if field_subscript is not node
+                else AccessKind.DIRECT_ASSIGNMENT
+            )
+            self._record(kind, field, node)
         elif isinstance(parent, cst.Assign) and isinstance(
             parent.targets[0].target, (cst.Tuple, cst.List)
         ):

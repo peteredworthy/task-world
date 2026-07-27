@@ -209,3 +209,70 @@ deprecations in `tests/unit/test_projectors.py`.
   tracked alias before later source is collected.
 - A single lexical definition stack preserves actual function/class nesting order in qualified
   function identities.
+
+## Remaining Fail-Closed Collector Review Evidence (2026-07-26)
+
+### RED
+
+Focused fixtures were added before collector changes for all remaining review findings. The
+unmodified collector failed the new cases while the previously preserved cases continued to run:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+7 failed, 26 passed in 3.15s
+```
+
+The failures demonstrated unrelated subscript-method diagnostics, omitted deep subscript
+accesses, alias removal before RHS traversal, stale historical aliases after normal rebinding,
+permissive `cast` shapes and missing callable/constructor escapes, missing simple/get comparison
+diagnostics, missing comprehension iteration, and definition metadata qualified with the body
+name. The direct strict/frozen/enum model and complete sort-tuple fixtures passed initially,
+confirming their existing contracts before the collector change.
+
+### GREEN
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+33 passed in 3.01s
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run pyright scripts/graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+make test
+4885 passed, 3 skipped, 3 warnings in 81.56s
+```
+
+The three full-suite warnings remain the existing Python 3.12 `aiosqlite` default datetime-adapter
+deprecations from `tests/unit/test_projectors.py`.
+
+### Review fixes
+
+- A tracked-field-chain helper now gates subscript method diagnostics on a chain rooted in a
+  tracked projection alias, so unrelated `mapping["key"].update()` and `.clear()` are ignored.
+- Deep tracked reads and assignments are classified at their outer expression once, with the root
+  manifest field retained and every visited chain node suppressed thereafter.
+- `Assign` and `AnnAssign` apply alias changes on leave, preserving the pre-assignment alias
+  environment for RHS reads and escapes; ordinary rebinding removes both live and historical alias
+  membership.
+- Unsupported rebinding remains fail-closed while retaining its historical-alias diagnostic path;
+  later loop/with/except targets after ordinary rebinding are ignored.
+- `cast` requires exactly two unstarred, unkeyworded arguments with a tracked projection-field
+  second operand; tracked projections invoked as callables diagnose; `GraphProjection` keyword
+  construction records projection-valued arguments as untyped escapes while retaining constructor
+  validation.
+- Simple and chained comparisons diagnose only when direct tracked fields, aliases, or tracked
+  `.get()` calls participate; their child field/call occurrences are suppressed. `CompFor` direct
+  projection iteration is recorded as `direct_iteration`.
+- Function and class names are pushed only while their bodies are traversed, so defaults,
+  decorators, and annotations retain their enclosing metadata execution scope.
+- Tests now directly assert strict/frozen enum-valued inventory models and the complete documented
+  occurrence sorting tuple.
+
+### Remaining bounded-scope concern
+
+The collector still intentionally performs no repository traversal, inter-procedural alias or
+return inference, import-alias closure, or baseline emission. Those exclusions remain explicit
+Task 1b boundaries rather than completeness claims.
