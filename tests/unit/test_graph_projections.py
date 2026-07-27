@@ -1660,14 +1660,17 @@ def test_remaining_primitive_checkpoint_maps_are_validated() -> None:
             "planner_successors": {"planner-1": "planner-2", "planner-bad": 2},
             "accepted_graph_patches_by_node": {
                 "planner-1": ["patch-1", 1],
+                "planner-2": ["patch-2", "patch-3"],
                 "planner-bad": "patch-2",
             },
             "accepted_no_successor_patches_by_node": {
                 "planner-1": ["patch-3", None],
+                "planner-2": ["patch-4", "patch-5"],
                 "planner-bad": "patch-4",
             },
             "accepted_no_successor_patch_ids_by_node": {
                 "planner-1": "patch-3",
+                "planner-2": "patch-5",
                 "planner-bad": 4,
             },
             "planner_generations": {"planner-1": 4, "planner-bad": True},
@@ -1734,9 +1737,25 @@ def test_remaining_primitive_checkpoint_maps_are_validated() -> None:
     assert restored["configured_gates"] == {"task-1": {"gate-1": True}}
     assert restored["gate_decisions"] == {"task-1": {"gate-1": False}}
     assert restored["planner_successors"] == {"planner-1": "planner-2"}
-    assert restored["accepted_graph_patches_by_node"] == {"planner-1": ["patch-1"]}
-    assert restored["accepted_no_successor_patches_by_node"] == {"planner-1": ["patch-3"]}
-    assert restored["accepted_no_successor_patch_ids_by_node"] == {"planner-1": "patch-3"}
+    assert restored["accepted_graph_patches_by_node"] == {
+        "planner-1": ["patch-1"],
+        "planner-2": ["patch-2", "patch-3"],
+    }
+    assert restored["accepted_no_successor_patches_by_node"] == {
+        "planner-1": ["patch-3"],
+        "planner-2": ["patch-4", "patch-5"],
+    }
+    assert restored["accepted_no_successor_patch_ids_by_node"] == {
+        "planner-1": "patch-3",
+        "planner-2": "patch-5",
+    }
+    assert "planner-bad" not in restored["accepted_graph_patches_by_node"]
+    assert "planner-bad" not in restored["accepted_no_successor_patches_by_node"]
+    assert "planner-bad" not in restored["accepted_no_successor_patch_ids_by_node"]
+    assert restored["accepted_no_successor_patches_by_node"]["planner-2"] == [
+        "patch-4",
+        "patch-5",
+    ]
     assert restored["planner_generations"] == {"planner-1": 4}
     assert restored["planner_sessions"] == {"planner-1": "session-1"}
     assert restored["planner_session_states"] == {"session-1": "active"}
