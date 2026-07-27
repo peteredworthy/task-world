@@ -2308,6 +2308,21 @@ dispositions:
   diagnostic_code: unsupported_call
   reason: The exact approved query implementation owns this physical storage read.
 - site_key:
+  - 5bc11cdf
+  - 169d958e
+  - e606d433
+  - 43b9cb1a
+  - 819cb704
+  - 3c9d3517
+  - 1e9bf6f9
+  - 67e9fdf1
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: environment_failures
+  normalized_source_pattern: for task_region_id, failure in projection["environment_failures"].items()
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
   - aea301e1
   - 42df4d35
   - 05579e0a
@@ -3335,6 +3350,34 @@ unclassified_sites:
   diagnostic_code: null
   domain: test_fixture
 - site_key:
+  - 9842a0fb
+  - 8bfbe08d
+  - 2caeaaae
+  - 47cb7d5c
+  - d017ebf7
+  - 7c602b36
+  - '10160028'
+  - 7d19e29a
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['output_record_payloads']['file-state-query']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 383a9cd6
+  - 2a6cf30e
+  - 2cbbc3d0
+  - ab167c9d
+  - 4087c809
+  - '73032754'
+  - cdd74268
+  - a9e7871b
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['file_state_records']['file-state-query']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
   - 68ab53a9
   - 001d0fda
   - 6110151b
@@ -3517,6 +3560,34 @@ unclassified_sites:
   diagnostic_code: null
   domain: test_fixture
 - site_key:
+  - ef616c46
+  - 07a121da
+  - 7d9b2178
+  - 2deb98ba
+  - cf664445
+  - 04ece847
+  - 26311b4e
+  - 23795fea
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['approval_decisions']['approval-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 12d05d90
+  - ff27c818
+  - '14288875'
+  - 0e34770b
+  - 0b6152ce
+  - fe50f227
+  - 822043d1
+  - 921cae42
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['authority_decisions']['authority-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
   - cc361379
   - 751b77eb
   - 4cbf64ae
@@ -3598,6 +3669,34 @@ unclassified_sites:
   relative_path: tests/unit/test_graph_projection_queries.py
   qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
   normalized_source_pattern: projection['callback_idempotency_events']['key-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - b08c9fcf
+  - a832685e
+  - '79776911'
+  - 10123fbf
+  - 2a6aa420
+  - 6cdad2bd
+  - b2199b9f
+  - 44b755be
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['environment_failures']['region-2']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 404a3862
+  - 4855b9e3
+  - 360b3f63
+  - a6014813
+  - 07c15cdb
+  - 96ea5ae6
+  - 12b8c1a8
+  - 9b00ccfa
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['environment_failures']['region-1']
   diagnostic_code: null
   domain: test_fixture
 - site_key:
@@ -6922,6 +7021,20 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: test_fixture
 - site_key:
+  - eb4aaf05
+  - aee2c28e
+  - 30a3d0ed
+  - e380c186
+  - 73e2cd0f
+  - 1c04488a
+  - 361062a1
+  - 6a2e984e
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert environment_failures(projection) == ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
   - 601e7f8d
   - a6b69dfe
   - e1b0dcc7
@@ -6933,6 +7046,21 @@ unclassified_sites:
   relative_path: tests/unit/test_graph_projection_queries.py
   qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
   normalized_source_pattern: assert output_record_payload(projection, "recovery-plan-1")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ca93bf2f
+  - 0a933bc0
+  - 50bd22af
+  - c85b4bd0
+  - 2133dec2
+  - 10a1d43a
+  - 62174dd2
+  - f675dfd0
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert output_record_payload(projection, "file-state-query")
     is not None
   diagnostic_code: unsupported_call
   domain: test_fixture
@@ -7132,6 +7260,36 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: test_fixture
 - site_key:
+  - cfb220a6
+  - 7667344c
+  - 5de1d2eb
+  - 221a9b3c
+  - 9a6a778b
+  - 4e606b3b
+  - b90f22ec
+  - 697ea8fb
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert approval_decision(projection, "approval-1") is
+    not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a01c7d15
+  - a51bd6ce
+  - f63d59e2
+  - e20c7229
+  - e90a4bb2
+  - c08c34dc
+  - 88e46466
+  - 6dd08786
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert authority_decision(projection, "authority-1")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
   - da60fc89
   - 756dba09
   - 59def23a
@@ -7266,6 +7424,36 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: test_fixture
 - site_key:
+  - 532c2e70
+  - 6b298a13
+  - cb2890c6
+  - 6207ba55
+  - 7f6fb94a
+  - d5fe777e
+  - 149d9f35
+  - 8af806e7
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert environment_failure(projection, "region-1") is
+    not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - eb9d0d9f
+  - eb1b913b
+  - f4ceb334
+  - 601f70d9
+  - 40226b59
+  - 537eccfd
+  - c65e8e37
+  - 70b36599
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert tuple(region_id for region_id, _ in environment_failures(projection))
+    == (
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
   - 13d45c3f
   - 67e27cae
   - f4e0ec9e
@@ -7305,6 +7493,62 @@ unclassified_sites:
   relative_path: tests/unit/test_graph_projection_queries.py
   qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
   normalized_source_pattern: file_state = file_state_record(projection, "file-state-query")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d41cbb7b
+  - d6efff53
+  - 94f97e1a
+  - 8785a9f6
+  - fd5f7a45
+  - ed6dcd2b
+  - 7fe9e07f
+  - 76caad96
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: output_payload = output_record_payload(projection, "file-state-query")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 99d91de3
+  - d89b66c6
+  - a1399721
+  - 115c0341
+  - 88ea26f1
+  - be474ddc
+  - 89cee8dc
+  - b533ac8a
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: approval = approval_decision(projection, "approval-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 69347dbc
+  - '78245231'
+  - 977c821a
+  - a7b6d1ea
+  - b06770c2
+  - d5aaefb2
+  - 622b7e68
+  - 5502d02f
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: authority = authority_decision(projection, "authority-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - '99125840'
+  - a2ced6ee
+  - 9b83b643
+  - 7fc58fde
+  - bb64738d
+  - ebd08139
+  - 76e5b67f
+  - 2219b7f1
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: cleanup = cleanup_request(projection, "cleanup-1")
   diagnostic_code: unsupported_call
   domain: test_fixture
 - site_key:
@@ -7350,6 +7594,176 @@ unclassified_sites:
   qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
   normalized_source_pattern: fresh_file_state = file_state_record(projection, "file-state-query")
   diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 371e664b
+  - 19c6c8a1
+  - cd3f9bc6
+  - 002c10d3
+  - eaacd0b5
+  - ee583da4
+  - bb1c2189
+  - ff6a964c
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_output_payload = output_record_payload(projection,
+    "file-state-query")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 70ca6d45
+  - df088f6d
+  - 8f38a50c
+  - 0d57e32b
+  - a7ce204e
+  - f1193950
+  - 2cb70efb
+  - 219267f7
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_approval = approval_decision(projection, "approval-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e76d9c67
+  - ab7f68d4
+  - '32976926'
+  - e7521a63
+  - c2c326df
+  - 1040f702
+  - 1c157bfd
+  - 66cefd55
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_authority = authority_decision(projection, "authority-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 27eb34c8
+  - 88dff4dc
+  - 3d739ba1
+  - cb10490c
+  - 3a484d77
+  - '32418770'
+  - 8d4ee1bd
+  - 6d815ff8
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_cleanup = cleanup_request(projection, "cleanup-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 0e2ca57c
+  - 4105b9f3
+  - 6b18c2d9
+  - 36cc3490
+  - 8ca3228d
+  - e783f87b
+  - f0a4b633
+  - f9f0fe8a
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_requirement = requirement_revision(projection,
+    "version-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 57986e2a
+  - 45942a8e
+  - 2bc32314
+  - 6847a5ae
+  - bcf96a3f
+  - faf50936
+  - ff97296c
+  - 25d08001
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert fresh_requirement is not projection["requirement_revisions"]["version-1"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 63a32184
+  - '99486628'
+  - 8b70a7d6
+  - 68b825c9
+  - 8e7d5e12
+  - 7adaae44
+  - 29f69966
+  - 4244c232
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_support = support_evidence(projection, "support-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 82b0c4d1
+  - 4f7aba9a
+  - e640c632
+  - f38391d8
+  - 2b18c7cf
+  - b20dc56b
+  - 413f0975
+  - 912ce6f7
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert fresh_support is not projection["support_evidence"]["support-1"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - baec4da3
+  - c9266346
+  - 2bf1aaf8
+  - 83509b7a
+  - fc945e37
+  - c2507334
+  - fa05f67f
+  - 98118d51
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_environment = environment_failure(projection, "region-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e5a775dd
+  - 6e9505d9
+  - 0a73e12b
+  - f76e71e4
+  - 3db75732
+  - d93cbc19
+  - 0c370969
+  - f578d289
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert fresh_environment is not projection["environment_failures"]["region-1"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - dfc44109
+  - 9f19e776
+  - 46f1cc5c
+  - 337b54cf
+  - 21b1e20e
+  - 6f4f4df0
+  - 60b1b975
+  - 409e5a88
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: environments = environment_failures(projection)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - cca56565
+  - d8a229c1
+  - 3c836960
+  - 489389f4
+  - 0cf9db16
+  - 73ca95ec
+  - a0464e34
+  - 8a4c5d78
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert environments[0][1] is not projection["environment_failures"]["region-2"]
+  diagnostic_code: unsupported_comparison
   domain: test_fixture
 - site_key:
   - c87d2b4f

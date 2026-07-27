@@ -23,6 +23,7 @@ from scripts.graph_projection_inventory import (
     inventory_repository,
     load_manifest,
     occurrence_id,
+    query_migration_skeleton,
 )
 
 
@@ -1540,8 +1541,19 @@ def test_repository_inventory_includes_controller_rebuild_dispatch_reads() -> No
     )
 
 
+@pytest.mark.timeout(120)
 def test_repository_inventory_keeps_representative_task_3c_physical_reads() -> None:
     root = Path(__file__).parents[2]
+    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
+    sites = {
+        (
+            site.relative_path,
+            site.qualified_function,
+            site.normalized_source_pattern,
+            site.domain,
+        )
+        for site in query_migration_skeleton(inventory, root).unclassified_sites
+    }
     source_lines = {
         relative_path: (root / relative_path).read_text().splitlines()
         for relative_path in (
@@ -1564,6 +1576,32 @@ def test_repository_inventory_keeps_representative_task_3c_physical_reads() -> N
     assert source_lines["src/orchestrator/graph/patch_validator.py"][145].strip() == (
         'and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}'
     )
+    assert {
+        (
+            "src/orchestrator/graph_runtime/dispatch.py",
+            "GraphDispatchExecutor._dispatch_snapshot_cleanup",
+            'compromised_record = projection["file_state_records"].get(record_id)',
+            "record_file_state",
+        ),
+        (
+            "src/orchestrator/graph_runtime/prompts.py",
+            "_planner_outstanding_failures",
+            'for region_id, failure in projection["environment_failures"].items():',
+            "planning_session",
+        ),
+        (
+            "src/orchestrator/graph/callbacks.py",
+            "validate_callback",
+            'lease = projection["leases"].get(request.lease_id)',
+            "cleanup_callback",
+        ),
+        (
+            "src/orchestrator/graph/patch_validator.py",
+            "validate_patch",
+            'and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}',
+            "governance_requirements",
+        ),
+    } <= sites
 
 
 def test_inventory_reports_one_outer_recursive_collection_escape_at_every_boundary(

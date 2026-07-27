@@ -11,8 +11,11 @@ from pydantic import ValidationError
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    ApprovalDecisionProjection,
+    AuthorityDecisionProjection,
     CallbackIdempotencyEvent,
     CleanupRequestedProjection,
+    EnvironmentFailureProjection,
     EventEnvelope,
     FileStateRecord,
     RequirementRevisionProjection,
@@ -36,6 +39,7 @@ from orchestrator.graph import (
     edges_from_node,
     edges_to_node,
     environment_failure,
+    environment_failures,
     file_state_record,
     input_binding_for_port,
     input_bindings_for_node,
@@ -139,6 +143,7 @@ def test_task_3c_queries_preserve_missing_values_and_planner_default() -> None:
     assert cleanup_applied(projection, "missing") is False
     assert callback_idempotency_event(projection, "missing") is None
     assert environment_failure(projection, "missing") is None
+    assert environment_failures(projection) == ()
 
 
 def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() -> None:
@@ -146,6 +151,9 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     projection["file_state_records"]["file-state-query"] = FileStateRecord(
         record_id="file-state-query", record_type="file_state", cleanup_excluded_paths=["secret"]
     )
+    projection["output_record_payloads"]["file-state-query"] = projection["file_state_records"][
+        "file-state-query"
+    ]
     projection["node_output_ports"]["worker-source"] = {
         "failure_record": ["failure-record-1", "failure-record-2"]
     }
@@ -161,6 +169,12 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     projection["planner_region_labels"]["planner-fr17"] = "region-1"
     projection["open_proposal_blockers"]["proposal-1"] = {"reasons": ["original"]}
     projection["authority_revision_blockers"]["revision-1"] = {"reasons": ["original"]}
+    projection["approval_decisions"]["approval-1"] = ApprovalDecisionProjection(
+        node_id="approval-1", decision="approved", scope={"items": ["original"]}
+    )
+    projection["authority_decisions"]["authority-1"] = AuthorityDecisionProjection(
+        node_id="authority-1", decision="granted", scope={"items": ["original"]}
+    )
     projection["requirement_revisions"]["version-1"] = RequirementRevisionProjection(
         requirement_id="requirement-1",
         version_id="version-1",
@@ -189,8 +203,15 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
         outcome="accepted",
         payload={"nested": ["original"]},
     )
+    projection["environment_failures"]["region-2"] = EnvironmentFailureProjection(
+        position=2, task_region_id="region-2", reason="second"
+    )
+    projection["environment_failures"]["region-1"] = EnvironmentFailureProjection(
+        position=1, task_region_id="region-1", reason="first"
+    )
 
     assert output_record_payload(projection, "recovery-plan-1") is not None
+    assert output_record_payload(projection, "file-state-query") is not None
     assert file_state_record(projection, "file-state-query") is not None
     assert output_record_ids_for_node_port(projection, "worker-source", "failure_record") == (
         "failure-record-1",
@@ -207,6 +228,8 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     assert planner_session_carryover(projection, "session-1") == "carryover-1"
     assert planner_region_label(projection, "planner-fr17") == "region-1"
     assert decision_request(projection, "gate-pending") is not None
+    assert approval_decision(projection, "approval-1") is not None
+    assert authority_decision(projection, "authority-1") is not None
     assert oversight_decision(projection, "oversight-1") is not None
     assert open_proposal_blocker(projection, "proposal-1") == {"reasons": ["original"]}
     assert authority_revision_blocker(projection, "revision-1") == {"reasons": ["original"]}
@@ -216,6 +239,11 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     assert cleanup_request(projection, "cleanup-1") is not None
     assert cleanup_applied(projection, "cleanup-1") is True
     assert callback_idempotency_event(projection, "key-1") is not None
+    assert environment_failure(projection, "region-1") is not None
+    assert tuple(region_id for region_id, _ in environment_failures(projection)) == (
+        "region-2",
+        "region-1",
+    )
 
     blocker = open_proposal_blocker(projection, "proposal-1")
     assert blocker is not None
@@ -230,6 +258,18 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     file_state = file_state_record(projection, "file-state-query")
     assert file_state is not None
     file_state.cleanup_excluded_paths.append("changed")
+    output_payload = output_record_payload(projection, "file-state-query")
+    assert isinstance(output_payload, FileStateRecord)
+    output_payload.cleanup_excluded_paths.append("output-changed")
+    approval = approval_decision(projection, "approval-1")
+    assert approval is not None and approval.scope is not None
+    approval.scope["items"].append("changed")
+    authority = authority_decision(projection, "authority-1")
+    assert authority is not None and authority.scope is not None
+    authority.scope["items"].append("changed")
+    cleanup = cleanup_request(projection, "cleanup-1")
+    assert cleanup is not None
+    cleanup.paths.append("changed")
 
     assert open_proposal_blocker(projection, "proposal-1") == {"reasons": ["original"]}
     fresh_callback = callback_idempotency_event(projection, "key-1")
@@ -237,6 +277,23 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     fresh_file_state = file_state_record(projection, "file-state-query")
     assert fresh_file_state is not None
     assert fresh_file_state.cleanup_excluded_paths == ["secret"]
+    fresh_output_payload = output_record_payload(projection, "file-state-query")
+    assert isinstance(fresh_output_payload, FileStateRecord)
+    assert fresh_output_payload.cleanup_excluded_paths == ["secret"]
+    fresh_approval = approval_decision(projection, "approval-1")
+    assert fresh_approval is not None and fresh_approval.scope == {"items": ["original"]}
+    fresh_authority = authority_decision(projection, "authority-1")
+    assert fresh_authority is not None and fresh_authority.scope == {"items": ["original"]}
+    fresh_cleanup = cleanup_request(projection, "cleanup-1")
+    assert fresh_cleanup is not None and fresh_cleanup.paths == ["secret"]
+    fresh_requirement = requirement_revision(projection, "version-1")
+    assert fresh_requirement is not projection["requirement_revisions"]["version-1"]
+    fresh_support = support_evidence(projection, "support-1")
+    assert fresh_support is not projection["support_evidence"]["support-1"]
+    fresh_environment = environment_failure(projection, "region-1")
+    assert fresh_environment is not projection["environment_failures"]["region-1"]
+    environments = environment_failures(projection)
+    assert environments[0][1] is not projection["environment_failures"]["region-2"]
 
 
 def test_lifecycle_queries_read_active_and_completed_event_projections() -> None:
@@ -646,7 +703,7 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
             domain: len(domain_keys)
         }
     assert Counter(site.domain for site in ledger.unclassified_sites) == {
-        "test_fixture": 321,
+        "test_fixture": 349,
         "verification_recovery": 151,
     }
     assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="lifecycle") == {

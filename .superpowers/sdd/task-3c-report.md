@@ -33,3 +33,17 @@
 
 No broad consumer was changed and no codemod was applied. The scratch execution plan
 and progress ledger are intentionally excluded from this commit.
+
+## Review-follow-up
+
+- Added `environment_failures()`, returning insertion-ordered immutable tuple pairs
+  with independently deep-copied `EnvironmentFailureProjection` values; the keyed
+  `environment_failure()` query remains available.
+- Strengthened representative-read tests to assert the fresh inventory site tuple
+  (path, qualified function, normalized expression, and domain), alongside source
+  text assertions.
+- Extended positive and isolation coverage for output payloads, approval and authority
+  decisions, requirement/support records, cleanup requests, and environment failures.
+- Updated closure after the added test inventory: 0 Task 3c target sites remain
+  unclassified; deferred counts are 349 `test_fixture` and 151
+  `verification_recovery`.

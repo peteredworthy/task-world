@@ -395,3 +395,13 @@ def environment_failure(
     """Return an independent environment failure, if present."""
     failure = projection["environment_failures"].get(task_region_id)
     return failure.model_copy(deep=True) if failure is not None else None
+
+
+def environment_failures(
+    projection: GraphProjection,
+) -> tuple[tuple[str, EnvironmentFailureProjection], ...]:
+    """Return independent environment failures in projection insertion order."""
+    return tuple(
+        (task_region_id, failure.model_copy(deep=True))
+        for task_region_id, failure in projection["environment_failures"].items()
+    )
