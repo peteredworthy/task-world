@@ -542,66 +542,6 @@ dispositions:
   reason: The exact source invokes a query or preserves type provenance without a physical projection
     storage read.
 - site_key:
-  - 5d566a0d
-  - 4bf025c3
-  - 6088b472
-  - b6b6977d
-  - a219843d
-  - ff004d30
-  - '55861251'
-  - dd1cec2c
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: completion_decision_passed
-  normalized_source_pattern: projection['completion_decision_passed']
-  diagnostic_code: null
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - e00fcb5e
-  - 97fa6384
-  - 297a899a
-  - ecacd18e
-  - 4eabf252
-  - f9ce62f4
-  - 1571186c
-  - df4ba7a7
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: latest_routine_snapshot_record
-  normalized_source_pattern: projection['latest_routine_snapshot_record']
-  diagnostic_code: null
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 755a5258
-  - 445a60c9
-  - 2e74fb71
-  - ec5e574d
-  - 26950faf
-  - 7c2a1e83
-  - d781a035
-  - 75ea6b0d
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: planner_generation_budget
-  normalized_source_pattern: projection['planner_generation_budget']
-  diagnostic_code: null
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 32cacfb3
-  - 6a836903
-  - 37597a2f
-  - 16c5e7ea
-  - e169dfd3
-  - '65926717'
-  - ac185392
-  - d49ee28c
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: run_state
-  normalized_source_pattern: projection['run_state']
-  diagnostic_code: null
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
   - f88edae4
   - 56c1f8f8
   - 427d54e2
@@ -1472,833 +1412,6 @@ dispositions:
   normalized_source_pattern: for claim in _resource_claim_dicts(resource_claims_for_node(projection, node_id))
   diagnostic_code: unsupported_call
   reason: The exact source preserves projection provenance without a physical storage read.
-- site_key:
-  - de4f2497
-  - 57eb6a9b
-  - 10268fa5
-  - '37783015'
-  - 16452d95
-  - 3fc0cbf8
-  - b1cafa7e
-  - 0b99a94e
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: resource_claims_for_node
-  normalized_source_pattern: claim.model_copy(deep=True) for claim in projection["node_resource_claims"].get(node_id,
-    ())
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - a4963a78
-  - 0e24a79d
-  - 413eb552
-  - 8ceb64eb
-  - b7a0a3b2
-  - ca051a84
-  - b71fe6bb
-  - 7790817b
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_exists
-  normalized_source_pattern: return node_id in projection["node_kinds"]
-  diagnostic_code: unsupported_comparison
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 099c2dbb
-  - 805709cf
-  - 280c4075
-  - 0aa68a1a
-  - ecff8786
-  - 5a325ad2
-  - 3524450a
-  - f5001acf
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_kind
-  normalized_source_pattern: return projection["node_kinds"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 84aa8385
-  - 9ceb8b4e
-  - 8643dca7
-  - ca19b3fc
-  - b008286e
-  - 375e68bf
-  - 90a2048a
-  - 4e255fc5
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_role
-  normalized_source_pattern: return projection["node_roles"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - a1131d17
-  - e7df961f
-  - dafdcad4
-  - f8c5f18b
-  - f2f5a1f3
-  - cf66d735
-  - 01d796f5
-  - a4a6e815
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_creation_position
-  normalized_source_pattern: return projection["node_creation_positions"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - dc773601
-  - 6bad6ebc
-  - 9fa07759
-  - 3e205db6
-  - fa1cff83
-  - b8058502
-  - 3d22279d
-  - a090406d
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_task_region
-  normalized_source_pattern: return projection["node_task_regions"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 3de7b75b
-  - 2159c6a9
-  - 43344c60
-  - 7018f501
-  - 5d0824fb
-  - 580a046c
-  - 8e59037e
-  - 3bb848b4
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_state
-  normalized_source_pattern: return projection["node_states"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - cd7b4bd6
-  - 7a68ea47
-  - d912f673
-  - 5a420035
-  - 584a2c6b
-  - 487167f0
-  - a80868c5
-  - 93343ec9
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_attempt
-  normalized_source_pattern: return projection["node_attempts"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 7f3409e2
-  - 2963e211
-  - 5d55aa2b
-  - 644811e1
-  - 7259050c
-  - ffa5b18b
-  - 28a7dd80
-  - 9d5a955a
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_candidate_id
-  normalized_source_pattern: return projection["node_candidates"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - ba57423d
-  - d65dd2cf
-  - 1136b351
-  - 6b8a9453
-  - df8baac5
-  - 815ba3e3
-  - 4f7f6a68
-  - b18a6477
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_failed_candidate_id
-  normalized_source_pattern: return projection["node_failed_candidates"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 20d51b8e
-  - 7b5da213
-  - a982b010
-  - 49115b99
-  - 300ecf55
-  - ba98d368
-  - f5638813
-  - 07a9040b
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_allowed_actions
-  normalized_source_pattern: return tuple(projection["node_allowed_actions"].get(node_id, ()))
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - bf22b69a
-  - 7f6bc936
-  - 692098e2
-  - d28817a0
-  - 76ca1e92
-  - 39b85a70
-  - 02135b11
-  - 0caa88f0
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_preconditions
-  normalized_source_pattern: return tuple(projection["node_preconditions"].get(node_id, ()))
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 576e8def
-  - b6cb8272
-  - 64793eac
-  - 4feee3ee
-  - c749b45a
-  - a35f32b5
-  - 6a751ba0
-  - 3db4e0e5
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_command_definition
-  normalized_source_pattern: definition = projection["node_command_definitions"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 0f883eaf
-  - 035ce96a
-  - b46dfd8c
-  - a43b1c07
-  - 1d67a348
-  - 30e567e0
-  - 67258ae2
-  - c1cf6b1d
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_last_deferred_reason
-  normalized_source_pattern: return projection["last_deferred_reasons"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 66636f75
-  - 2334955f
-  - de996927
-  - bc4e8061
-  - 27bc59af
-  - a1858435
-  - 6ba40c62
-  - 3d4f9d7e
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: node_retry_not_before
-  normalized_source_pattern: return projection["retry_not_before_by_node"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 292233b8
-  - 4a78a0a2
-  - 33c2629f
-  - 465cdcb6
-  - bb3dd524
-  - 5fc1da6b
-  - 5f1503a6
-  - e3c60291
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: task_state
-  normalized_source_pattern: return projection["task_states"].get(task_region_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 7df1b3f3
-  - 15b1ea4b
-  - 255da51e
-  - 767c200b
-  - e7322ca0
-  - 4881a9e3
-  - 3dabb56c
-  - f757b4e8
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: task_candidates
-  normalized_source_pattern: for candidate in projection["task_candidates"].get(task_region_id, ())
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 4bb5ebff
-  - c97563a3
-  - 32a38fb6
-  - dc1566ed
-  - bfdc9ec0
-  - d09f4b0f
-  - ef6d359e
-  - 60ef1306
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: edge_by_id
-  normalized_source_pattern: edge = projection["edges"].get(edge_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - d130de06
-  - 51c037ab
-  - dd719b89
-  - 845d0a30
-  - 5b659dfa
-  - 3af2a3f5
-  - be00fb37
-  - 8c4f8f20
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: iter_edges
-  normalized_source_pattern: return tuple(edge.model_copy(deep=True) for edge in projection["edges"].values())
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 61cf7e81
-  - 319cb76c
-  - 6e119236
-  - 60b45fff
-  - 1aa2a754
-  - a9e40178
-  - c063b526
-  - 38b3a27b
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: edges_from_node
-  normalized_source_pattern: for edge in projection["edges"].values()
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - c5ff019b
-  - 7fdef074
-  - a84b6532
-  - fce7d2a9
-  - 9d55210d
-  - 9e744132
-  - 17ba89e5
-  - de292a97
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: edges_to_node
-  normalized_source_pattern: for edge in projection["edges"].values()
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - d0f222ed
-  - 48ac8ebf
-  - 7823ac15
-  - fa0f3aa8
-  - 2201b1da
-  - eabd7d81
-  - a3b9c342
-  - 26d03f89
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: input_binding_for_port
-  normalized_source_pattern: binding = projection["input_bindings"].get(node_id, {}).get(port)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - e869df1b
-  - '06221036'
-  - 2640de5c
-  - 2252977f
-  - 6a5229dc
-  - 96d53f43
-  - 52a23354
-  - b8083783
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: input_bindings_for_node
-  normalized_source_pattern: for binding in projection["input_bindings"].get(node_id, {}).values()
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 98d94888
-  - e79e2353
-  - 04c3e4ac
-  - 1c19d8d1
-  - ba2bfcae
-  - 019534ce
-  - 0bec81fa
-  - 3d39efaa
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: bound_record_ids
-  normalized_source_pattern: binding = projection["input_bindings"].get(node_id, {}).get(port)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 733cd7bf
-  - bff9d9ae
-  - f81ba97b
-  - c218c06f
-  - 57badf4e
-  - e5f76f81
-  - 790858f3
-  - '14304799'
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: lease_by_id
-  normalized_source_pattern: lease = projection["leases"].get(lease_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - c9885de4
-  - b9ddcca7
-  - c6352cd9
-  - 77938f4f
-  - 9538fe0a
-  - d627e190
-  - 2cabaf9b
-  - 33d4c7e6
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: iter_leases
-  normalized_source_pattern: return tuple(lease.model_copy(deep=True) for lease in projection["leases"].values())
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 694a8fd3
-  - 0eee3d3b
-  - c63e8e71
-  - f9e10273
-  - d63b6ca7
-  - 5d39ba86
-  - 44b6a4d0
-  - 64942d8b
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: active_leases
-  normalized_source_pattern: for lease in projection["leases"].values()
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 84912f27
-  - 0278b4fb
-  - 607b95b9
-  - 8b19854c
-  - 907a08fa
-  - 4bd33d47
-  - c27da602
-  - 2c83cb4d
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: lease_generation
-  normalized_source_pattern: lease = projection["leases"].get(lease_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - b7c82c8b
-  - aa268cd6
-  - 83aaa883
-  - 15aff151
-  - fb203725
-  - 9f239689
-  - 2a0eaaf0
-  - 62f55823
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: output_record_payload
-  normalized_source_pattern: payload = projection["output_record_payloads"].get(record_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - b8f667be
-  - f5b9e997
-  - 663da43e
-  - 5dbb1a81
-  - 799dc034
-  - 872d2e93
-  - 66a29910
-  - bf82c735
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: file_state_record
-  normalized_source_pattern: record = projection["file_state_records"].get(record_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 4b577f1a
-  - 8d234835
-  - 565ecd79
-  - b11cbd68
-  - 77b27043
-  - b86acfb1
-  - 5388aca8
-  - acff7b62
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: output_record_ids_for_node_port
-  normalized_source_pattern: return tuple(projection["node_output_ports"].get(node_id, {}).get(port, ()))
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - aa9c71aa
-  - c22fdcb4
-  - 0f61c0d9
-  - 27cc558d
-  - d98586c5
-  - cca78977
-  - 22792ac9
-  - 44d3fccc
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: planner_successor
-  normalized_source_pattern: return projection["planner_successors"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 4162491b
-  - 521cc4df
-  - f603d44a
-  - 3a1b6e0f
-  - b7e6b7bb
-  - ea1e9a1f
-  - c1e29698
-  - fd6b2756
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: accepted_graph_patch_ids
-  normalized_source_pattern: return tuple(projection["accepted_graph_patches_by_node"].get(node_id, ()))
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 9b7e40e0
-  - cfba5a8b
-  - 5b6349ab
-  - 0a2f5daf
-  - e31e9d30
-  - f24bb205
-  - 00938bae
-  - 1a64bf2c
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: accepted_no_successor_patch_ids
-  normalized_source_pattern: return tuple(projection["accepted_no_successor_patches_by_node"].get(node_id,
-    ()))
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 7573b119
-  - ff1b1dfe
-  - e3a749e0
-  - 75f8fd88
-  - 5f0af772
-  - f751bd79
-  - d1d5c5cf
-  - fc6cce14
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: accepted_no_successor_patch_id
-  normalized_source_pattern: return projection["accepted_no_successor_patch_ids_by_node"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 5a621d53
-  - a3c80ffc
-  - 86e45b67
-  - a8a7b328
-  - 96e980f6
-  - 4e17b506
-  - 4d58c30b
-  - '35741066'
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: planner_generation
-  normalized_source_pattern: return projection["planner_generations"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 272708e1
-  - 15302dfc
-  - a867b205
-  - 19630dd6
-  - 0ba59018
-  - f0a51b3c
-  - 57b76dc4
-  - c0de13ff
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: planner_session
-  normalized_source_pattern: return projection["planner_sessions"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 9921650a
-  - 3dd59cb3
-  - b69a7af9
-  - ec44ae82
-  - 769b5ae2
-  - 9d5ecfe3
-  - c31de23f
-  - fb85da2c
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: planner_session_state
-  normalized_source_pattern: return projection["planner_session_states"].get(session_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - a7dc06aa
-  - 3791a28d
-  - 45f7860e
-  - 9c726876
-  - 79cef819
-  - f1fc3c9a
-  - 269c1b98
-  - 44580e75
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: planner_session_current_node
-  normalized_source_pattern: return projection["planner_session_current_nodes"].get(session_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 43fe7964
-  - df0c3f3b
-  - 885b2263
-  - 0999b87b
-  - 5aa8274b
-  - 9c9cd381
-  - c0c7068d
-  - 8ed3e077
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: planner_session_carryover
-  normalized_source_pattern: return projection["planner_session_carryovers"].get(session_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 2d2d39f4
-  - 6f3a0983
-  - 0852250d
-  - 9cb972fb
-  - c9650636
-  - b892c54a
-  - cb666598
-  - 2263afb0
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: planner_region_label
-  normalized_source_pattern: return projection["planner_region_labels"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 38f793ce
-  - 4045c024
-  - 53fbd6bf
-  - fece8b3c
-  - ea00b211
-  - 612aa4a9
-  - c70ee69c
-  - ca9d1360
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: approval_decision
-  normalized_source_pattern: decision = projection["approval_decisions"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 05e0d9bd
-  - 9d378cb5
-  - 589fed82
-  - 153bbce3
-  - 435a1adb
-  - f2d7a56e
-  - 5c4fb0fd
-  - 34640f60
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: authority_decision
-  normalized_source_pattern: decision = projection["authority_decisions"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 11b4fbf0
-  - f72a0fa6
-  - 1ec32f75
-  - dfc91972
-  - 483cd27a
-  - 42c9e6dd
-  - 4b143314
-  - 4b20cb7a
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: oversight_decision
-  normalized_source_pattern: decision = projection["oversight_decisions"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - c854ab76
-  - 5f4fde2e
-  - a3377f00
-  - ba615b6e
-  - d62ceae7
-  - 09bbf816
-  - 846b4d96
-  - 6af75c7f
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: decision_request
-  normalized_source_pattern: request = projection["decision_request_details"].get(node_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - f46a71cb
-  - 99451dc6
-  - 4d947db2
-  - 9b7d18df
-  - c140d20e
-  - f156354c
-  - 32f80ed4
-  - a2715f69
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: open_proposal_blocker
-  normalized_source_pattern: blocker = projection["open_proposal_blockers"].get(proposal_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - d602cd9b
-  - b545687a
-  - 90dbdd22
-  - e6365b68
-  - 4532b612
-  - '34055049'
-  - 529a91a9
-  - c51a5f77
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: authority_revision_blocker
-  normalized_source_pattern: blocker = projection["authority_revision_blockers"].get(revision_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - a50f78b2
-  - 613299db
-  - ac604a3b
-  - 205d7f09
-  - 3ad23156
-  - 83d552aa
-  - f1a269d2
-  - 4d550c32
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: requirement_revision
-  normalized_source_pattern: revision = projection["requirement_revisions"].get(version_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - e77424b6
-  - 3b79bb3c
-  - fc801a58
-  - ef5efb21
-  - 30da73ba
-  - 836df412
-  - db1795d5
-  - 2323fd11
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: active_requirement_version
-  normalized_source_pattern: return projection["active_requirement_versions"].get(requirement_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - f3de2369
-  - c43106d3
-  - b9531f17
-  - 4f9799ea
-  - e7c53b29
-  - a6ef933a
-  - 75da4396
-  - 267174ad
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: support_evidence
-  normalized_source_pattern: evidence = projection["support_evidence"].get(support_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - a65c8067
-  - f32d4467
-  - ce5d7084
-  - 401180da
-  - 4448c043
-  - 7bad784d
-  - a9d6ba0c
-  - 10cedc06
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: cleanup_request
-  normalized_source_pattern: request = projection["cleanup_requested_events"].get(cleanup_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - a53d1747
-  - 38c7b856
-  - 241d562b
-  - b75d665f
-  - ae59d0a4
-  - '11716184'
-  - 8cd01a18
-  - ba5f3937
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: cleanup_applied
-  normalized_source_pattern: return projection["cleanup_applied_ids"].get(cleanup_id, False)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 952c458c
-  - ad966479
-  - d9af380c
-  - f4b3e732
-  - 102cbfe0
-  - 8b3672c6
-  - db4bcd9c
-  - 7d72c68f
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: callback_idempotency_event
-  normalized_source_pattern: event = projection["callback_idempotency_events"].get(idempotency_key)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 01d29eb9
-  - 59023b76
-  - f7e6a96b
-  - e7908334
-  - 662a212a
-  - 3e38c914
-  - e9966707
-  - aaabdcb5
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: environment_failure
-  normalized_source_pattern: failure = projection["environment_failures"].get(task_region_id)
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 5bc11cdf
-  - 169d958e
-  - e606d433
-  - 43b9cb1a
-  - 819cb704
-  - 3c9d3517
-  - 1e9bf6f9
-  - 67e9fdf1
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: environment_failures
-  normalized_source_pattern: for task_region_id, failure in projection["environment_failures"].items()
-  diagnostic_code: unsupported_call
-  reason: The exact approved query implementation owns this physical storage read.
 - site_key:
   - aea301e1
   - 42df4d35
@@ -5059,6 +4172,938 @@ dispositions:
   disposition: projection_neutral
   reason: The exact source preserves projection provenance without a physical projection storage read.
 - site_key:
+  - 5d566a0d
+  - 4bf025c3
+  - 6088b472
+  - b6b6977d
+  - a219843d
+  - ff004d30
+  - '55861251'
+  - dd1cec2c
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: completion_decision_passed
+  normalized_source_pattern: projection['completion_decision_passed']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - e00fcb5e
+  - 97fa6384
+  - 297a899a
+  - ecacd18e
+  - 4eabf252
+  - f9ce62f4
+  - 1571186c
+  - df4ba7a7
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: latest_routine_snapshot_record
+  normalized_source_pattern: projection['latest_routine_snapshot_record']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 755a5258
+  - 445a60c9
+  - 2e74fb71
+  - ec5e574d
+  - 26950faf
+  - 7c2a1e83
+  - d781a035
+  - 75ea6b0d
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_generation_budget
+  normalized_source_pattern: projection['planner_generation_budget']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 32cacfb3
+  - 6a836903
+  - 37597a2f
+  - 16c5e7ea
+  - e169dfd3
+  - '65926717'
+  - ac185392
+  - d49ee28c
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: run_state
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - de4f2497
+  - 57eb6a9b
+  - 10268fa5
+  - '37783015'
+  - 16452d95
+  - 3fc0cbf8
+  - b1cafa7e
+  - 0b99a94e
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: resource_claims_for_node
+  normalized_source_pattern: claim.model_copy(deep=True) for claim in projection["node_resource_claims"].get(node_id,
+    ())
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a4963a78
+  - 0e24a79d
+  - 413eb552
+  - 8ceb64eb
+  - b7a0a3b2
+  - ca051a84
+  - b71fe6bb
+  - 7790817b
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_exists
+  normalized_source_pattern: return node_id in projection["node_kinds"]
+  diagnostic_code: unsupported_comparison
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 099c2dbb
+  - 805709cf
+  - 280c4075
+  - 0aa68a1a
+  - ecff8786
+  - 5a325ad2
+  - 3524450a
+  - f5001acf
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_kind
+  normalized_source_pattern: return projection["node_kinds"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 84aa8385
+  - 9ceb8b4e
+  - 8643dca7
+  - ca19b3fc
+  - b008286e
+  - 375e68bf
+  - 90a2048a
+  - 4e255fc5
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_role
+  normalized_source_pattern: return projection["node_roles"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a1131d17
+  - e7df961f
+  - dafdcad4
+  - f8c5f18b
+  - f2f5a1f3
+  - cf66d735
+  - 01d796f5
+  - a4a6e815
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_creation_position
+  normalized_source_pattern: return projection["node_creation_positions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - dc773601
+  - 6bad6ebc
+  - 9fa07759
+  - 3e205db6
+  - fa1cff83
+  - b8058502
+  - 3d22279d
+  - a090406d
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_task_region
+  normalized_source_pattern: return projection["node_task_regions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 3de7b75b
+  - 2159c6a9
+  - 43344c60
+  - 7018f501
+  - 5d0824fb
+  - 580a046c
+  - 8e59037e
+  - 3bb848b4
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_state
+  normalized_source_pattern: return projection["node_states"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 79d7aa33
+  - 5aa35795
+  - 73d3aa6c
+  - 4dff862c
+  - 5155136a
+  - 48f8b62b
+  - ff36c68a
+  - b8ad890b
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_states
+  normalized_source_pattern: return tuple(projection["node_states"].items())
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - cd7b4bd6
+  - 7a68ea47
+  - d912f673
+  - 5a420035
+  - 584a2c6b
+  - 487167f0
+  - a80868c5
+  - 93343ec9
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_attempt
+  normalized_source_pattern: return projection["node_attempts"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 7f3409e2
+  - 2963e211
+  - 5d55aa2b
+  - 644811e1
+  - 7259050c
+  - ffa5b18b
+  - 28a7dd80
+  - 9d5a955a
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_candidate_id
+  normalized_source_pattern: return projection["node_candidates"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - ba57423d
+  - d65dd2cf
+  - 1136b351
+  - 6b8a9453
+  - df8baac5
+  - 815ba3e3
+  - 4f7f6a68
+  - b18a6477
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_failed_candidate_id
+  normalized_source_pattern: return projection["node_failed_candidates"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 20d51b8e
+  - 7b5da213
+  - a982b010
+  - 49115b99
+  - 300ecf55
+  - ba98d368
+  - f5638813
+  - 07a9040b
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_allowed_actions
+  normalized_source_pattern: return tuple(projection["node_allowed_actions"].get(node_id, ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - bf22b69a
+  - 7f6bc936
+  - 692098e2
+  - d28817a0
+  - 76ca1e92
+  - 39b85a70
+  - 02135b11
+  - 0caa88f0
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_preconditions
+  normalized_source_pattern: return tuple(projection["node_preconditions"].get(node_id, ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 576e8def
+  - b6cb8272
+  - 64793eac
+  - 4feee3ee
+  - c749b45a
+  - a35f32b5
+  - 6a751ba0
+  - 3db4e0e5
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_command_definition
+  normalized_source_pattern: definition = projection["node_command_definitions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 0f883eaf
+  - 035ce96a
+  - b46dfd8c
+  - a43b1c07
+  - 1d67a348
+  - 30e567e0
+  - 67258ae2
+  - c1cf6b1d
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_last_deferred_reason
+  normalized_source_pattern: return projection["last_deferred_reasons"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 66636f75
+  - 2334955f
+  - de996927
+  - bc4e8061
+  - 27bc59af
+  - a1858435
+  - 6ba40c62
+  - 3d4f9d7e
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_retry_not_before
+  normalized_source_pattern: return projection["retry_not_before_by_node"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 292233b8
+  - 4a78a0a2
+  - 33c2629f
+  - 465cdcb6
+  - bb3dd524
+  - 5fc1da6b
+  - 5f1503a6
+  - e3c60291
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: task_state
+  normalized_source_pattern: return projection["task_states"].get(task_region_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a9556979
+  - 673b5d48
+  - 92d3bb51
+  - 727f1d8a
+  - bed320e8
+  - 219818d7
+  - 90b022d7
+  - 0813d37f
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: task_states
+  normalized_source_pattern: return tuple(projection["task_states"].items())
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 7df1b3f3
+  - 15b1ea4b
+  - 255da51e
+  - 767c200b
+  - e7322ca0
+  - 4881a9e3
+  - 3dabb56c
+  - f757b4e8
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: task_candidates
+  normalized_source_pattern: for candidate in projection["task_candidates"].get(task_region_id, ())
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 4bb5ebff
+  - c97563a3
+  - 32a38fb6
+  - dc1566ed
+  - bfdc9ec0
+  - d09f4b0f
+  - ef6d359e
+  - 60ef1306
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: edge_by_id
+  normalized_source_pattern: edge = projection["edges"].get(edge_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - d130de06
+  - 51c037ab
+  - dd719b89
+  - 845d0a30
+  - 5b659dfa
+  - 3af2a3f5
+  - be00fb37
+  - 8c4f8f20
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: iter_edges
+  normalized_source_pattern: return tuple(edge.model_copy(deep=True) for edge in projection["edges"].values())
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 61cf7e81
+  - 319cb76c
+  - 6e119236
+  - 60b45fff
+  - 1aa2a754
+  - a9e40178
+  - c063b526
+  - 38b3a27b
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: edges_from_node
+  normalized_source_pattern: for edge in projection["edges"].values()
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - c5ff019b
+  - 7fdef074
+  - a84b6532
+  - fce7d2a9
+  - 9d55210d
+  - 9e744132
+  - 17ba89e5
+  - de292a97
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: edges_to_node
+  normalized_source_pattern: for edge in projection["edges"].values()
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - d0f222ed
+  - 48ac8ebf
+  - 7823ac15
+  - fa0f3aa8
+  - 2201b1da
+  - eabd7d81
+  - a3b9c342
+  - 26d03f89
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: input_binding_for_port
+  normalized_source_pattern: binding = projection["input_bindings"].get(node_id, {}).get(port)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - e869df1b
+  - '06221036'
+  - 2640de5c
+  - 2252977f
+  - 6a5229dc
+  - 96d53f43
+  - 52a23354
+  - b8083783
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: input_bindings_for_node
+  normalized_source_pattern: for binding in projection["input_bindings"].get(node_id, {}).values()
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 98d94888
+  - e79e2353
+  - 04c3e4ac
+  - 1c19d8d1
+  - ba2bfcae
+  - 019534ce
+  - 0bec81fa
+  - 3d39efaa
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: bound_record_ids
+  normalized_source_pattern: binding = projection["input_bindings"].get(node_id, {}).get(port)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 733cd7bf
+  - bff9d9ae
+  - f81ba97b
+  - c218c06f
+  - 57badf4e
+  - e5f76f81
+  - 790858f3
+  - '14304799'
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: lease_by_id
+  normalized_source_pattern: lease = projection["leases"].get(lease_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - c9885de4
+  - b9ddcca7
+  - c6352cd9
+  - 77938f4f
+  - 9538fe0a
+  - d627e190
+  - 2cabaf9b
+  - 33d4c7e6
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: iter_leases
+  normalized_source_pattern: return tuple(lease.model_copy(deep=True) for lease in projection["leases"].values())
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 694a8fd3
+  - 0eee3d3b
+  - c63e8e71
+  - f9e10273
+  - d63b6ca7
+  - 5d39ba86
+  - 44b6a4d0
+  - 64942d8b
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: active_leases
+  normalized_source_pattern: for lease in projection["leases"].values()
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 84912f27
+  - 0278b4fb
+  - 607b95b9
+  - 8b19854c
+  - 907a08fa
+  - 4bd33d47
+  - c27da602
+  - 2c83cb4d
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: lease_generation
+  normalized_source_pattern: lease = projection["leases"].get(lease_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - b7c82c8b
+  - aa268cd6
+  - 83aaa883
+  - 15aff151
+  - fb203725
+  - 9f239689
+  - 2a0eaaf0
+  - 62f55823
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: output_record_payload
+  normalized_source_pattern: payload = projection["output_record_payloads"].get(record_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - b8f667be
+  - f5b9e997
+  - 663da43e
+  - 5dbb1a81
+  - 799dc034
+  - 872d2e93
+  - 66a29910
+  - bf82c735
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: file_state_record
+  normalized_source_pattern: record = projection["file_state_records"].get(record_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 4b577f1a
+  - 8d234835
+  - 565ecd79
+  - b11cbd68
+  - 77b27043
+  - b86acfb1
+  - 5388aca8
+  - acff7b62
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: output_record_ids_for_node_port
+  normalized_source_pattern: return tuple(projection["node_output_ports"].get(node_id, {}).get(port, ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 92f3f529
+  - 0d77fb78
+  - 4dfed221
+  - 8ac7b666
+  - efe91bc1
+  - 2fd805d5
+  - 0b00e0f0
+  - ba1618e3
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: accepted_output_records_for_node_port
+  normalized_source_pattern: for record in projection["accepted_output_records_by_node_port"]
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - aa9c71aa
+  - c22fdcb4
+  - 0f61c0d9
+  - 27cc558d
+  - d98586c5
+  - cca78977
+  - 22792ac9
+  - 44d3fccc
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_successor
+  normalized_source_pattern: return projection["planner_successors"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 4162491b
+  - 521cc4df
+  - f603d44a
+  - 3a1b6e0f
+  - b7e6b7bb
+  - ea1e9a1f
+  - c1e29698
+  - fd6b2756
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: accepted_graph_patch_ids
+  normalized_source_pattern: return tuple(projection["accepted_graph_patches_by_node"].get(node_id, ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 9b7e40e0
+  - cfba5a8b
+  - 5b6349ab
+  - 0a2f5daf
+  - e31e9d30
+  - f24bb205
+  - 00938bae
+  - 1a64bf2c
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: accepted_no_successor_patch_ids
+  normalized_source_pattern: return tuple(projection["accepted_no_successor_patches_by_node"].get(node_id,
+    ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 7573b119
+  - ff1b1dfe
+  - e3a749e0
+  - 75f8fd88
+  - 5f0af772
+  - f751bd79
+  - d1d5c5cf
+  - fc6cce14
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: accepted_no_successor_patch_id
+  normalized_source_pattern: return projection["accepted_no_successor_patch_ids_by_node"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 5a621d53
+  - a3c80ffc
+  - 86e45b67
+  - a8a7b328
+  - 96e980f6
+  - 4e17b506
+  - 4d58c30b
+  - '35741066'
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_generation
+  normalized_source_pattern: return projection["planner_generations"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 272708e1
+  - 15302dfc
+  - a867b205
+  - 19630dd6
+  - 0ba59018
+  - f0a51b3c
+  - 57b76dc4
+  - c0de13ff
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_session
+  normalized_source_pattern: return projection["planner_sessions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 9921650a
+  - 3dd59cb3
+  - b69a7af9
+  - ec44ae82
+  - 769b5ae2
+  - 9d5ecfe3
+  - c31de23f
+  - fb85da2c
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_session_state
+  normalized_source_pattern: return projection["planner_session_states"].get(session_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a7dc06aa
+  - 3791a28d
+  - 45f7860e
+  - 9c726876
+  - 79cef819
+  - f1fc3c9a
+  - 269c1b98
+  - 44580e75
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_session_current_node
+  normalized_source_pattern: return projection["planner_session_current_nodes"].get(session_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 43fe7964
+  - df0c3f3b
+  - 885b2263
+  - 0999b87b
+  - 5aa8274b
+  - 9c9cd381
+  - c0c7068d
+  - 8ed3e077
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_session_carryover
+  normalized_source_pattern: return projection["planner_session_carryovers"].get(session_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 2d2d39f4
+  - 6f3a0983
+  - 0852250d
+  - 9cb972fb
+  - c9650636
+  - b892c54a
+  - cb666598
+  - 2263afb0
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_region_label
+  normalized_source_pattern: return projection["planner_region_labels"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 38f793ce
+  - 4045c024
+  - 53fbd6bf
+  - fece8b3c
+  - ea00b211
+  - 612aa4a9
+  - c70ee69c
+  - ca9d1360
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: approval_decision
+  normalized_source_pattern: decision = projection["approval_decisions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 05e0d9bd
+  - 9d378cb5
+  - 589fed82
+  - 153bbce3
+  - 435a1adb
+  - f2d7a56e
+  - 5c4fb0fd
+  - 34640f60
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: authority_decision
+  normalized_source_pattern: decision = projection["authority_decisions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 11b4fbf0
+  - f72a0fa6
+  - 1ec32f75
+  - dfc91972
+  - 483cd27a
+  - 42c9e6dd
+  - 4b143314
+  - 4b20cb7a
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: oversight_decision
+  normalized_source_pattern: decision = projection["oversight_decisions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - c854ab76
+  - 5f4fde2e
+  - a3377f00
+  - ba615b6e
+  - d62ceae7
+  - 09bbf816
+  - 846b4d96
+  - 6af75c7f
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: decision_request
+  normalized_source_pattern: request = projection["decision_request_details"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - f46a71cb
+  - 99451dc6
+  - 4d947db2
+  - 9b7d18df
+  - c140d20e
+  - f156354c
+  - 32f80ed4
+  - a2715f69
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: open_proposal_blocker
+  normalized_source_pattern: blocker = projection["open_proposal_blockers"].get(proposal_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - d602cd9b
+  - b545687a
+  - 90dbdd22
+  - e6365b68
+  - 4532b612
+  - '34055049'
+  - 529a91a9
+  - c51a5f77
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: authority_revision_blocker
+  normalized_source_pattern: blocker = projection["authority_revision_blockers"].get(revision_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a50f78b2
+  - 613299db
+  - ac604a3b
+  - 205d7f09
+  - 3ad23156
+  - 83d552aa
+  - f1a269d2
+  - 4d550c32
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: requirement_revision
+  normalized_source_pattern: revision = projection["requirement_revisions"].get(version_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - e77424b6
+  - 3b79bb3c
+  - fc801a58
+  - ef5efb21
+  - 30da73ba
+  - 836df412
+  - db1795d5
+  - 2323fd11
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: active_requirement_version
+  normalized_source_pattern: return projection["active_requirement_versions"].get(requirement_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - f3de2369
+  - c43106d3
+  - b9531f17
+  - 4f9799ea
+  - e7c53b29
+  - a6ef933a
+  - 75da4396
+  - 267174ad
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: support_evidence
+  normalized_source_pattern: evidence = projection["support_evidence"].get(support_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a65c8067
+  - f32d4467
+  - ce5d7084
+  - 401180da
+  - 4448c043
+  - 7bad784d
+  - a9d6ba0c
+  - 10cedc06
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: cleanup_request
+  normalized_source_pattern: request = projection["cleanup_requested_events"].get(cleanup_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a53d1747
+  - 38c7b856
+  - 241d562b
+  - b75d665f
+  - ae59d0a4
+  - '11716184'
+  - 8cd01a18
+  - ba5f3937
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: cleanup_applied
+  normalized_source_pattern: return projection["cleanup_applied_ids"].get(cleanup_id, False)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 952c458c
+  - ad966479
+  - d9af380c
+  - f4b3e732
+  - 102cbfe0
+  - 8b3672c6
+  - db4bcd9c
+  - 7d72c68f
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: callback_idempotency_event
+  normalized_source_pattern: event = projection["callback_idempotency_events"].get(idempotency_key)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 01d29eb9
+  - 59023b76
+  - f7e6a96b
+  - e7908334
+  - 662a212a
+  - 3e38c914
+  - e9966707
+  - aaabdcb5
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: environment_failure
+  normalized_source_pattern: failure = projection["environment_failures"].get(task_region_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 5bc11cdf
+  - 169d958e
+  - e606d433
+  - 43b9cb1a
+  - 819cb704
+  - 3c9d3517
+  - 1e9bf6f9
+  - 67e9fdf1
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: environment_failures
+  normalized_source_pattern: for task_region_id, failure in projection["environment_failures"].items()
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
   - 8580644c
   - ac4b1528
   - 73158ad3
@@ -5252,6 +5297,21 @@ dispositions:
   qualified_function: node_gate_decision
   normalized_source_pattern: return projection["node_gate_decisions"].get(node_id, False)
   diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 1b4428e3
+  - c49f9f41
+  - 0748dc36
+  - 935a7126
+  - 364e4b46
+  - 040f1be5
+  - ab2cb143
+  - d993e876
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: node_usage_recorded
+  normalized_source_pattern: return usage_key in projection["recorded_node_usage_keys"]
+  diagnostic_code: unsupported_comparison
   reason: The exact approved query implementation owns this physical storage read.
 unclassified_sites:
 - site_key:

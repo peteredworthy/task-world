@@ -30,6 +30,7 @@ from orchestrator.graph.models import (
     VerifierVerdictProjection,
 )
 from orchestrator.graph.projections import (
+    AcceptedOutputRecord,
     GraphProjection,
     LatestRoutineSnapshotRecord,
     RecoveryNodeIndexEntry,
@@ -74,6 +75,11 @@ def node_task_region(projection: GraphProjection, node_id: str) -> str | None:
 def node_state(projection: GraphProjection, node_id: str) -> str | None:
     """Return a node's current runtime state, if it exists."""
     return projection["node_states"].get(node_id)
+
+
+def node_states(projection: GraphProjection) -> tuple[tuple[str, str], ...]:
+    """Return node states in projection insertion order."""
+    return tuple(projection["node_states"].items())
 
 
 def node_attempt(projection: GraphProjection, node_id: str) -> int | None:
@@ -122,6 +128,11 @@ def node_retry_not_before(projection: GraphProjection, node_id: str) -> str | No
 def task_state(projection: GraphProjection, task_region_id: str) -> str | None:
     """Return a task region's current state, if it exists."""
     return projection["task_states"].get(task_region_id)
+
+
+def task_states(projection: GraphProjection) -> tuple[tuple[str, str], ...]:
+    """Return task states in projection insertion order."""
+    return tuple(projection["task_states"].items())
 
 
 def task_candidates(
@@ -242,6 +253,18 @@ def output_record_ids_for_node_port(
 ) -> tuple[str, ...]:
     """Return output record identifiers for a node port in projection order."""
     return tuple(projection["node_output_ports"].get(node_id, {}).get(port, ()))
+
+
+def accepted_output_records_for_node_port(
+    projection: GraphProjection, node_id: str, port: str
+) -> tuple[AcceptedOutputRecord, ...]:
+    """Return independent accepted output records for a node port in projection order."""
+    return tuple(
+        deepcopy(record)
+        for record in projection["accepted_output_records_by_node_port"]
+        .get(node_id, {})
+        .get(port, ())
+    )
 
 
 def planner_generation_budget(projection: GraphProjection) -> int:
@@ -504,3 +527,8 @@ def gate_decision(projection: GraphProjection, task_region_id: str, gate_id: str
 def node_gate_decision(projection: GraphProjection, node_id: str) -> bool:
     """Return a node gate decision, defaulting to the established ``False`` value."""
     return projection["node_gate_decisions"].get(node_id, False)
+
+
+def node_usage_recorded(projection: GraphProjection, usage_key: str) -> bool:
+    """Return whether a node usage key has already been recorded."""
+    return usage_key in projection["recorded_node_usage_keys"]

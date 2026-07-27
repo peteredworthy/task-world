@@ -28,6 +28,7 @@ from orchestrator.graph import (
     active_leases,
     active_requirement_version,
     accepted_graph_patch_ids,
+    accepted_output_records_for_node_port,
     accepted_no_successor_patch_id,
     accepted_no_successor_patch_ids,
     approval_decision,
@@ -70,6 +71,7 @@ from orchestrator.graph import (
     node_exists,
     node_failed_candidate_id,
     node_gate_decision,
+    node_states,
     node_kind,
     node_last_deferred_reason,
     node_preconditions,
@@ -97,6 +99,8 @@ from orchestrator.graph import (
     run_state,
     task_candidates,
     task_state,
+    task_states,
+    node_usage_recorded,
     support_evidence,
     verifier_verdict,
 )
@@ -180,6 +184,10 @@ def test_verification_and_recovery_queries_preserve_missing_values() -> None:
     assert configured_gates(projection, "missing") == ()
     assert gate_decision(projection, "missing", "missing") is None
     assert node_gate_decision(projection, "missing") is False
+    assert node_states(projection) == ()
+    assert task_states(projection) == ()
+    assert accepted_output_records_for_node_port(projection, "missing", "missing") == ()
+    assert node_usage_recorded(projection, "missing") is False
 
 
 def test_verification_and_recovery_queries_preserve_order_and_isolation() -> None:
@@ -245,6 +253,30 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
     fresh_result = check_result(projection, "check-2")
     assert fresh_result is not None
     assert fresh_result.candidate_record_ids == ["candidate-2"]
+    assert (
+        verifier_verdict(projection, "candidate-1")
+        is not projection["verifier_verdicts"]["candidate-1"]
+    )
+    assert (
+        passed_verification_result(projection, "passed-1")
+        is not projection["passed_verification_results_by_record_id"]["passed-1"]
+    )
+    assert (
+        failed_verification_result(projection, "failed-1")
+        is not projection["failed_verification_results_by_record_id"]["failed-1"]
+    )
+    assert (
+        recovery_nodes_for_record(projection, "failed-1")[0]
+        is not projection["recovery_nodes_by_record_id"]["failed-1"][0]
+    )
+    assert (
+        invalid_test_block(projection, "region-1")
+        is not projection["invalid_test_blocks"]["region-1"]
+    )
+    assert check_results(projection)[0][1] is not projection["check_results"]["check-2"]
+    assert (
+        invalid_test_blocks(projection)[0][1] is not projection["invalid_test_blocks"]["region-2"]
+    )
 
 
 def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() -> None:
