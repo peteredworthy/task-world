@@ -24,6 +24,7 @@ from scripts.graph_projection_inventory import (
     IncompleteMigrationDispositionError,
     MigrationDisposition,
     QueryMigrationManifest,
+    UnclassifiedMigrationSite,
     classify_lifecycle_domain,
     disposition_site_key,
     inventory_repository,
@@ -203,6 +204,32 @@ def test_checked_lifecycle_ledger_matches_the_fresh_repository_inventory() -> No
         for disposition in ledger.dispositions
         if disposition.relative_path == "src/orchestrator/graph/projection_queries.py"
     } == {"approved_core"}
+    core_keys = {
+        site.site_key for site in skeleton.unclassified_sites if site.domain == "approved_core"
+    }
+    assert {
+        disposition.site_key
+        for disposition in ledger.dispositions
+        if disposition.disposition == "approved_core"
+    } == core_keys
+    assert not {site.site_key for site in ledger.unclassified_sites} & core_keys
+    assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="approved_core") == {
+        "approved_core": len(core_keys)
+    }
+    lifecycle_dispositions = [
+        disposition for disposition in ledger.dispositions if disposition.site_key in lifecycle_keys
+    ]
+    assert all(
+        disposition.disposition == "query_transform"
+        for disposition in lifecycle_dispositions
+        if 'projection["' in disposition.normalized_source_pattern
+    )
+    assert all(
+        disposition.disposition == "projection_neutral"
+        for disposition in lifecycle_dispositions
+        if 'projection["' not in disposition.normalized_source_pattern
+        and disposition.diagnostic_code is not None
+    )
     assert Counter(site.domain for site in ledger.unclassified_sites) == {
         "cleanup_callback": 14,
         "governance_requirements": 11,
@@ -278,6 +305,39 @@ def test_manifest_load_rejects_malformed_canonical_key_chunks(tmp_path: Path) ->
 
     with pytest.raises(ValueError, match="eight lowercase hex groups"):
         load_query_migration_manifest(path)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    ("relative_path", "qualified_function", "normalized_source_pattern", "reason"),
+)
+def test_disposition_rejects_blank_required_text(field_name: str) -> None:
+    values = {
+        "site_key": "a" * 64,
+        "disposition": "query_transform",
+        "relative_path": "src/example.py",
+        "qualified_function": "read",
+        "normalized_source_pattern": "projection['run_state']",
+        "diagnostic_code": None,
+        "reason": "Use a lifecycle query.",
+    }
+    values[field_name] = " \t"
+
+    with pytest.raises(ValidationError, match="must not be blank"):
+        MigrationDisposition.model_validate(values)
+
+
+def test_manifest_rejects_blank_baseline_and_unclassified_domain() -> None:
+    with pytest.raises(ValidationError, match="must not be blank"):
+        QueryMigrationManifest(baseline_revision=" ", dispositions=())
+    with pytest.raises(ValidationError, match="must not be blank"):
+        UnclassifiedMigrationSite(
+            site_key="a" * 64,
+            relative_path="src/example.py",
+            qualified_function="read",
+            normalized_source_pattern="projection['run_state']",
+            domain="\n",
+        )
 
 
 def _event(event_id: str, event_type: str, payload: dict[str, object]) -> EventEnvelope:

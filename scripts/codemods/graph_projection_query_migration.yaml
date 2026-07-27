@@ -14,7 +14,7 @@ dispositions:
   qualified_function: _apply_lifecycle_command
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 73b542f6
   - f677a8a2
@@ -29,7 +29,7 @@ dispositions:
   qualified_function: _apply_patch_command
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 97fef48c
   - a6357555
@@ -44,7 +44,7 @@ dispositions:
   qualified_function: _apply_reconcile
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - cba2a08c
   - bec05b3a
@@ -59,7 +59,7 @@ dispositions:
   qualified_function: _apply_record_decision
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - c0241056
   - e5edf556
@@ -74,7 +74,7 @@ dispositions:
   qualified_function: _apply_schedule_tick
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 01a84019
   - e5bec29a
@@ -89,7 +89,7 @@ dispositions:
   qualified_function: _apply_schedule_tick
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - ae4fa4f0
   - a851fb0e
@@ -104,7 +104,7 @@ dispositions:
   qualified_function: _has_passed_completion_decision
   normalized_source_pattern: projection['completion_decision_passed']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 7123e450
   - c2247dab
@@ -119,7 +119,7 @@ dispositions:
   qualified_function: validate_callback
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 5d566a0d
   - 4bf025c3
@@ -164,7 +164,7 @@ dispositions:
   qualified_function: _assign_projection_snapshot
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 3efb8aca
   - e09fe2c9
@@ -179,7 +179,7 @@ dispositions:
   qualified_function: _projection
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - ce65d320
   - fd15893b
@@ -194,8 +194,8 @@ dispositions:
   qualified_function: build_graph_projection_response
   normalized_source_pattern: run_state=project_run_state(events, projection=projection),
   diagnostic_code: unsupported_call
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 2c6ce9b7
   - f8e63485
@@ -210,8 +210,8 @@ dispositions:
   qualified_function: build_graph_health_response
   normalized_source_pattern: run_state = project_run_state(events, projection=projection)
   diagnostic_code: unsupported_call
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 3540e614
   - 295bbaff
@@ -221,13 +221,12 @@ dispositions:
   - e76a2b78
   - f52809b8
   - c8a881fb
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: src/orchestrator/graph/_commands.py
   qualified_function: _apply_record_heartbeat
   normalized_source_pattern: 'if projection["run_state"] != "active":'
   diagnostic_code: unsupported_comparison
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - c009e4e0
   - ae6564ca
@@ -237,13 +236,12 @@ dispositions:
   - 771273e4
   - cf014f82
   - 0ea89586
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: src/orchestrator/graph/_commands.py
   qualified_function: _failed_check_recovery_events
   normalized_source_pattern: 'if projection["run_state"] != "active":'
   diagnostic_code: unsupported_comparison
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 2e3b34ba
   - cbf9f952
@@ -253,13 +251,12 @@ dispositions:
   - 2549d1ef
   - 66ffdb3e
   - aa2e42f8
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: src/orchestrator/graph/_commands.py
   qualified_function: _failed_verification_recovery_events
   normalized_source_pattern: 'if projection["run_state"] != "active":'
   diagnostic_code: unsupported_comparison
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - adacb0f0
   - 9f72ef7f
@@ -269,13 +266,12 @@ dispositions:
   - 31ef344c
   - 1dfa3d5b
   - be52acb8
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: src/orchestrator/graph/_commands.py
   qualified_function: _passed_verification_terminalization_events
   normalized_source_pattern: 'if projection["run_state"] != "active":'
   diagnostic_code: unsupported_comparison
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 431f0757
   - 46a0be09
@@ -285,13 +281,12 @@ dispositions:
   - f25bf022
   - 7fe17fb3
   - cf592bad
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: src/orchestrator/graph/_commands.py
   qualified_function: _passed_check_terminalization_events
   normalized_source_pattern: 'if projection["run_state"] != "active":'
   diagnostic_code: unsupported_comparison
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - a5458bf0
   - afa2a8fc
@@ -301,13 +296,12 @@ dispositions:
   - d526c5f5
   - c80d6f49
   - 22f6efbd
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: src/orchestrator/graph/_commands.py
   qualified_function: _no_successor_recovery_terminal_failure_events
   normalized_source_pattern: 'if projection["run_state"] != "active":'
   diagnostic_code: unsupported_comparison
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - c264fd21
   - 36ea576a
@@ -322,8 +316,8 @@ dispositions:
   qualified_function: _handle_lifecycle
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 74a501b2
   - 004b662f
@@ -338,8 +332,8 @@ dispositions:
   qualified_function: handle_accept_run
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - caf571fe
   - 275d3b02
@@ -354,8 +348,8 @@ dispositions:
   qualified_function: handle_start
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - aa557c05
   - f6d9cfee
@@ -370,8 +364,8 @@ dispositions:
   qualified_function: handle_pause
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - cd209c5b
   - 5c14f9b9
@@ -386,8 +380,8 @@ dispositions:
   qualified_function: handle_resume
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - f20df6b8
   - a5ffe52e
@@ -402,8 +396,8 @@ dispositions:
   qualified_function: handle_cancel
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 37aa76fd
   - f00afbf2
@@ -418,8 +412,8 @@ dispositions:
   qualified_function: handle_complete
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 1bf1858f
   - 949382fe
@@ -434,8 +428,8 @@ dispositions:
   qualified_function: handle_fail
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - b0616872
   - 92389ae1
@@ -450,8 +444,8 @@ dispositions:
   qualified_function: handle_record_heartbeat
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 529ac06d
   - 2f73b3a5
@@ -477,13 +471,12 @@ dispositions:
   - b943f604
   - bf68fe2c
   - a66fbdb8
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: src/orchestrator/graph_runtime/recovery.py
   qualified_function: reconcile_graph
   normalized_source_pattern: 'if projection["run_state"] != "active":'
   diagnostic_code: unsupported_comparison
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - b0f55fd5
   - fb5443a1
@@ -493,13 +486,12 @@ dispositions:
   - af898283
   - 1a6475cb
   - 095346ac
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: src/orchestrator/graph_runtime/store.py
   qualified_function: _decisions_with_projection_checkpoint
   normalized_source_pattern: '_CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),'
   diagnostic_code: unsupported_call
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - fd1bb8dc
   - c8c87e29
@@ -509,13 +501,12 @@ dispositions:
   - 321c8856
   - c80bed70
   - 6bf0ac29
-  disposition: projection_neutral
+  disposition: query_transform
   relative_path: tests/unit/test_final_review_contracts.py
   qualified_function: test_canonical_lifecycle_serialization_preserves_reducer_semantics
   normalized_source_pattern: assert projection["run_state"] == "active"
   diagnostic_code: unsupported_comparison
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
   - 2cc29dbe
   - a7a8c12f
@@ -530,8 +521,8 @@ dispositions:
   qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
   normalized_source_pattern: assert run_state(projection) is None
   diagnostic_code: unsupported_call
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 00650ca3
   - c5a09783
@@ -546,8 +537,8 @@ dispositions:
   qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
   normalized_source_pattern: assert completion_decision_passed(projection) is False
   diagnostic_code: unsupported_call
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 90a3e9dc
   - 942f30ea
@@ -562,8 +553,8 @@ dispositions:
   qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
   normalized_source_pattern: assert run_state(active) == "active"
   diagnostic_code: unsupported_call
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 1792f1fe
   - 7fc42d3e
@@ -578,8 +569,8 @@ dispositions:
   qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
   normalized_source_pattern: assert run_state(completed) == "completed"
   diagnostic_code: unsupported_call
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 - site_key:
   - 334ce879
   - f7f11606
@@ -594,8 +585,8 @@ dispositions:
   qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
   normalized_source_pattern: assert completion_decision_passed(completed) is True
   diagnostic_code: unsupported_call
-  reason: The exact lifecycle command annotation is not a physical projection storage
-    read.
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
 unclassified_sites:
 - site_key:
   - 70d01b49

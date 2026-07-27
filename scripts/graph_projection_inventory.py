@@ -12,7 +12,14 @@ from typing import Annotated, Iterable, Literal
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider, ScopeProvider
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 import yaml
 
 
@@ -173,6 +180,12 @@ class IncompleteMigrationDispositionError(ValueError):
 CanonicalSiteKey = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", strict=True)]
 
 
+def _nonblank(value: str) -> str:
+    if not value.strip():
+        raise ValueError("must not be blank")
+    return value
+
+
 class MigrationDisposition(BaseModel):
     """One exact, reviewable disposition for a legacy projection inventory site."""
 
@@ -185,6 +198,11 @@ class MigrationDisposition(BaseModel):
     normalized_source_pattern: str
     diagnostic_code: DiagnosticCode | None = None
     reason: str
+
+    @field_validator("relative_path", "qualified_function", "normalized_source_pattern", "reason")
+    @classmethod
+    def required_text_is_nonblank(cls, value: str) -> str:
+        return _nonblank(value)
 
     @model_validator(mode="after")
     def requires_exact_policy_details(self) -> "MigrationDisposition":
@@ -216,6 +234,11 @@ class UnclassifiedMigrationSite(BaseModel):
     diagnostic_code: DiagnosticCode | None = None
     domain: str
 
+    @field_validator("relative_path", "qualified_function", "normalized_source_pattern", "domain")
+    @classmethod
+    def required_text_is_nonblank(cls, value: str) -> str:
+        return _nonblank(value)
+
     @field_serializer("site_key")
     def serialize_site_key(self, site_key: CanonicalSiteKey) -> tuple[str, ...]:
         return tuple(site_key[index : index + 8] for index in range(0, len(site_key), 8))
@@ -229,6 +252,11 @@ class QueryMigrationManifest(BaseModel):
     baseline_revision: str
     dispositions: tuple[MigrationDisposition, ...]
     unclassified_sites: tuple[UnclassifiedMigrationSite, ...] = ()
+
+    @field_validator("baseline_revision")
+    @classmethod
+    def baseline_revision_is_nonblank(cls, value: str) -> str:
+        return _nonblank(value)
 
     @model_validator(mode="after")
     def has_unique_site_keys(self) -> "QueryMigrationManifest":
@@ -527,9 +555,9 @@ def classify_lifecycle_domain(skeleton: QueryMigrationManifest) -> QueryMigratio
             disposition=(
                 "approved_core"
                 if site.relative_path in _APPROVED_CORE_STORAGE_FILES
-                else "projection_neutral"
-                if site.diagnostic_code is not None
                 else "query_transform"
+                if site.diagnostic_code is None or 'projection["' in site.normalized_source_pattern
+                else "projection_neutral"
             ),
             relative_path=site.relative_path,
             qualified_function=site.qualified_function,
@@ -538,9 +566,9 @@ def classify_lifecycle_domain(skeleton: QueryMigrationManifest) -> QueryMigratio
             reason=(
                 "The exact approved query implementation owns this physical storage read."
                 if site.relative_path in _APPROVED_CORE_STORAGE_FILES
-                else "The exact lifecycle command annotation is not a physical projection storage read."
-                if site.diagnostic_code is not None
-                else "Use the permanent lifecycle query API during the consumer codemod."
+                else "Replace this direct lifecycle projection read with the permanent query API."
+                if site.diagnostic_code is None or 'projection["' in site.normalized_source_pattern
+                else "The exact source invokes a query or preserves type provenance without a physical projection storage read."
             ),
         )
         for site in classified_sites
