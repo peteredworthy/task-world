@@ -17,6 +17,7 @@ from scripts.graph_projection_inventory import (
     DiagnosticCode,
     InventoryDiagnostic,
     collect_source,
+    diagnostic_artifact,
     diagnostic_report,
     inventory_paths,
     inventory_repository,
@@ -1433,3 +1434,96 @@ def test_default_tracked_provider_reports_real_prompt_dispatch_recovery_and_stor
         "src/orchestrator/graph_runtime/store.py",
     } <= diagnosed_paths
     assert all("worktrees/" not in path and "vendor/" not in path for path in diagnosed_paths)
+
+
+def test_inventory_requires_approved_origins_and_exact_projection_parameter_binding(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "adversarial.py"
+    source.write_text(
+        """
+from foreign import GraphProjection, GraphController, cast
+from orchestrator.graph import GraphProjection as Projection
+from typing import cast as typed_cast
+
+def foreign(value: GraphProjection) -> None:
+    value["run_state"]
+
+def accepted(value: Projection, other: object) -> None:
+    value["node_states"]
+
+def object_parameter(value: object) -> None:
+    pass
+
+def reordered(other: object, value: Projection) -> None:
+    value["ready_nodes"]
+
+def shadows(value: Projection) -> None:
+    typed_cast = lambda kind, item: item
+    typed_cast(dict[str, str], value["node_states"])
+    GraphController = object
+    controller: GraphController = GraphController()
+    controller.read_projection()["run_state"]
+    GraphProjection = object
+    GraphProjection(run_state=value)
+
+def calls(value: Projection) -> None:
+    accepted(value, object())
+    reordered(value=value, other=object())
+    object_parameter(value)
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("accepted", "node_states"),
+        ("reordered", "ready_nodes"),
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_call",
+        "unsupported_call",
+        "unsupported_call",
+    ]
+
+
+def test_inventory_reports_one_outer_recursive_collection_escape_at_every_boundary(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "collections.py"
+    source.write_text(
+        """
+from orchestrator.graph import GraphProjection
+
+def sink(value: object) -> None:
+    pass
+
+def returns(value: GraphProjection) -> object:
+    return [{"value": (value,)}]
+
+def boundaries(value: GraphProjection) -> None:
+    plain = [{"value": (value,)}]
+    annotated: object = [{"value": (value,)}]
+    sink([{"value": (value,)}])
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.code) for item in inventory.diagnostics] == [
+        ("returns", "unsupported_binding"),
+        ("boundaries", "unsupported_binding"),
+        ("boundaries", "unsupported_binding"),
+        ("boundaries", "unsupported_call"),
+    ]
+
+
+@pytest.mark.timeout(120)
+def test_checked_in_diagnostic_artifact_exactly_matches_full_repository_report() -> None:
+    root = Path(__file__).parents[2]
+    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
+
+    assert (
+        diagnostic_artifact(inventory)
+        == (root / "docs/graph-projection-inventory-diagnostics.md").read_text()
+    )

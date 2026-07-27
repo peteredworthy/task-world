@@ -165,18 +165,16 @@ uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_proje
 
 ## Authoritative final report (2026-07-27)
 
-### Completed provenance-first pass
+### Superseded partial provenance-first pass
 
 - Attribute provenance is admitted only for a declared `GraphProjection` field
   on an explicitly resolved receiver type. Attribute overwrite and root-name
   rebinding discard that provenance; unsupported projection attribute writes
   diagnose rather than becoming tracked implicitly.
-- A deterministic module symbol table resolves imports, aliases, local
-  definitions, declared fields, annotations, `typing.cast` (including an
-  imported `typing` module alias), and bounded local callable signatures.
-  Shadowed or dynamic names are not accepted. Calls to local functions that
-  declare `GraphProjection` parameters are bounded pass-through calls; other
-  projection-bearing calls diagnose.
+- This was an intermediate implementation claim. It did not yet enforce exact
+  fully-qualified origins, lexical shadow invalidation, Python argument
+  binding, or all collection boundaries, so it is not authoritative for the
+  final Task 1c result.
 - The collector diagnoses unbounded `Any`/`Callable`/`object` annotations,
   assignment into an already unbounded binding, unresolved projection returns,
   and collection-constructor escapes. It deliberately does not generalize into
@@ -189,10 +187,10 @@ uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_proje
   worktree/vendor paths are excluded. The checked diagnostics artifact now
   contains every current sorted diagnostic, rather than representative samples.
 
-### Current diagnostic inventory
+### Historical diagnostic inventory (superseded)
 
-`uv run python scripts/graph_projection_inventory.py --diagnose` exits **1**
-by design and reports **642** unresolved flows:
+The then-current diagnostic count is historical only; the authoritative count
+is the generated artifact and final closure report below.
 
 | Code | Count |
 | --- | ---: |
@@ -205,7 +203,7 @@ The complete deterministic site list is checked in at
 header and fenced report). These are outstanding migration sites, not silently
 accepted accesses. No general inter-procedural inference was added.
 
-### Final verification evidence
+### Historical verification evidence
 
 ```text
 uv run pytest tests/unit/test_graph_projection_inventory.py -q
@@ -226,3 +224,25 @@ uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_proje
 make test
 4926 passed, 3 skipped, 3 existing aiosqlite datetime-adapter warnings in 108.12s
 ```
+
+## Final provenance closure (2026-07-27)
+
+- The authoritative module table now recognizes only explicit approved
+  fully-qualified graph symbols and `typing.cast`; foreign same-tail imports
+  are never trusted. Parameter, assignment, definition, producer, constructor,
+  and imported-cast shadows invalidate those symbols in their lexical scope.
+- Local callable signatures record positional and keyword parameter names and
+  exact `GraphProjection` slots. Calls use conservative Python binding and
+  diagnose tracked values bound to any other parameter or an ambiguous/variadic
+  shape.
+- Lists, tuples, sets, and dictionary values recurse at assignment (annotated
+  or plain), return, and call boundaries. Each escape emits one outer
+  diagnostic; nested child reports are suppressed.
+- `diagnostic_artifact()` is the exact output of `--diagnose`, and its unit
+  test compares the full tracked repository generation byte-for-byte to
+  `docs/graph-projection-inventory-diagnostics.md`.
+
+The regenerated authoritative artifact reports **646** unresolved flows:
+`unsupported_binding: 9`, `unsupported_call: 566`, and
+`unsupported_comparison: 71`. They are deliberate fail-closed migration
+diagnostics, not inferred safe flows.
