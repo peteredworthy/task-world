@@ -12,6 +12,7 @@ from orchestrator.graph.models import (
     PatchEnvelope,
     normalize_record_selector,
 )
+from orchestrator.graph.projection_queries import resource_claims_for_node
 from orchestrator.graph.projections import GraphProjection
 
 
@@ -836,26 +837,14 @@ def _resource_claim_escalation_reason(
 
 
 def _existing_resource_claim_rank(projection: GraphProjection, node_id: str) -> int | None:
-    projection_data = cast(dict[str, Any], projection)
-    candidate_sources = (
-        projection_data.get("resource_claims"),
-        projection_data.get("node_resource_claims"),
-    )
-    for source in candidate_sources:
-        if not isinstance(source, dict):
-            continue
-        typed_source = cast(dict[str, Any], source)
-        raw_claims = typed_source.get(node_id)
-        ranks = [
-            rank
-            for claim in _resource_claim_dicts(raw_claims)
-            if isinstance(claim.get("mode"), str)
-            for rank in [MODE_RANK.get(claim["mode"])]
-            if rank is not None
-        ]
-        if ranks:
-            return max(ranks)
-    return None
+    ranks = [
+        rank
+        for claim in _resource_claim_dicts(list(resource_claims_for_node(projection, node_id)))
+        if isinstance(claim.get("mode"), str)
+        for rank in [MODE_RANK.get(claim["mode"])]
+        if rank is not None
+    ]
+    return max(ranks) if ranks else None
 
 
 def _resource_claim_dicts(raw_claims: Any) -> list[dict[str, Any]]:

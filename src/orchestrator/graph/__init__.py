@@ -120,6 +120,7 @@ from orchestrator.graph.models import (
     VerifierVerdictProjection,
 )
 from orchestrator.graph.patch_validator import PLANNER_OPS, validate_patch
+from orchestrator.graph.projection_queries import resource_claims_for_node
 from orchestrator.graph.payload_registry import (
     EVENT_PAYLOAD_SPECS,
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
@@ -350,6 +351,7 @@ __all__ = [
     "projection_from_checkpoint",
     "projection_to_checkpoint",
     "reduce_event",
+    "resource_claims_for_node",
     "resolve_check_command_definition",
     "run_scenario",
     "schedule",

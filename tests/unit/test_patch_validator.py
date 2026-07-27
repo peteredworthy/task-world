@@ -1,7 +1,7 @@
 """Unit tests for pure graph patch validation."""
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from orchestrator.graph.models import (
     Actor,
@@ -10,6 +10,7 @@ from orchestrator.graph.models import (
     EventEnvelope,
     PatchEnvelope,
     PatchOp,
+    ResourceClaimProjection,
 )
 from orchestrator.graph.patch_validator import PatchValidationResult, validate_patch
 from orchestrator.graph.projections import GraphProjection, initial_projection
@@ -68,7 +69,10 @@ def _projection(
             edge_id: EdgeProjection.model_validate(edge) for edge_id, edge in edges.items()
         }
     if resource_claims is not None:
-        cast(dict[str, Any], projection)["resource_claims"] = resource_claims
+        projection["node_resource_claims"] = {
+            node_id: [ResourceClaimProjection.model_validate(claim) for claim in claims]
+            for node_id, claims in resource_claims.items()
+        }
     return projection
 
 
