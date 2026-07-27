@@ -1715,7 +1715,7 @@ def foreign(value: ForeignProjection) -> None:
         "use",
         "use",
         "use",
-        "<module>",
+        "foreign",
     ]
     assert [item.code for item in inventory.diagnostics] == [
         "unsupported_binding",
@@ -1843,4 +1843,69 @@ def use(value: GraphProjection) -> None:
     inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
 
     assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]
+
+
+def test_inventory_paths_uses_declaration_time_annotation_provenance(tmp_path: Path) -> None:
+    source = tmp_path / "declaration_provenance.py"
+    source.write_text(
+        """
+from orchestrator.graph import GraphProjection as Projection, initial_projection
+
+module_value: Projection = initial_projection()
+module_value["node_states"]
+
+class Holder:
+    projection: Projection
+
+def approved_before_rebind(value: Projection) -> Projection:
+    value["run_state"]
+    return value
+
+Projection = object
+
+def rebound_before_annotation(value: Projection) -> Projection:
+    value["node_states"]
+    return value
+
+from orchestrator.graph import GraphProjection as LaterProjection
+
+def approved_after_import(value: LaterProjection) -> LaterProjection:
+    value["ready_nodes"]
+    return value
+
+def read_holder(holder: Holder) -> None:
+    holder.projection["run_state"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("<module>", "node_states"),
+        ("approved_after_import", "ready_nodes"),
+        ("approved_before_rebind", "run_state"),
+        ("read_holder", "run_state"),
+    ]
+    assert not inventory.diagnostics
+
+
+def test_inventory_paths_diagnoses_nested_function_local_unresolved_projection_import(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "local_unresolved_import.py"
+    source.write_text(
+        """
+def outer() -> None:
+    from foreign import ExternalProjection as GraphProjection
+
+    def nested(value: GraphProjection) -> None:
+        value["run_state"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [item.qualified_function for item in inventory.diagnostics] == ["outer.nested"]
     assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]

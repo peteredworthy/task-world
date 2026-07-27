@@ -312,6 +312,7 @@ class _ModuleSymbols:
     class_fields: dict[str, frozenset[str]]
     call_symbols: dict[str, str]
     signatures: dict[str, _CallableSignature]
+    declaration_annotations: dict[tuple[int, int], str | None]
 
     @classmethod
     def from_source(
@@ -341,7 +342,12 @@ class _ModuleSymbols:
         try:
             tree = ast.parse(source)
         except SyntaxError:
-            return cls(names, frozenset(), class_fields, call_symbols, signatures)
+            return cls(names, frozenset(), class_fields, call_symbols, signatures, {})
+        declaration_annotations = cls._declaration_annotations(
+            tree,
+            initial_names=dict(names),
+            module_name=module_name,
+        )
         unresolved_projection_names: set[str] = set()
 
         def clear_local_binding(local: str) -> None:
@@ -422,8 +428,114 @@ class _ModuleSymbols:
             if owner in _PROJECTION_FIELDS:
                 class_fields[owner] = _PROJECTION_FIELDS[owner]
         return cls(
-            names, frozenset(unresolved_projection_names), class_fields, call_symbols, signatures
+            names,
+            frozenset(unresolved_projection_names),
+            class_fields,
+            call_symbols,
+            signatures,
+            declaration_annotations,
         )
+
+    @classmethod
+    def _declaration_annotations(
+        cls,
+        tree: ast.Module,
+        *,
+        initial_names: dict[str, str],
+        module_name: str | None,
+    ) -> dict[tuple[int, int], str | None]:
+        """Resolve declaration annotations against bindings visible at their source position."""
+
+        facts: dict[tuple[int, int], str | None] = {}
+
+        def bind_import(
+            node: ast.Import | ast.ImportFrom,
+            names: dict[str, str],
+            unresolved: set[str],
+        ) -> None:
+            if isinstance(node, ast.Import):
+                for imported in node.names:
+                    local = imported.asname or imported.name.split(".")[0]
+                    names.pop(local, None)
+                    unresolved.discard(local)
+                    if imported.name in {"typing", "orchestrator.graph"}:
+                        names[local] = imported.name
+                return
+            module = _resolve_import_module(node, module_name)
+            for imported in node.names:
+                if imported.name == "*":
+                    continue
+                local = imported.asname or imported.name
+                names.pop(local, None)
+                unresolved.discard(local)
+                if module is None:
+                    continue
+                resolved = f"{module}.{imported.name}"
+                if resolved in _APPROVED_SYMBOLS | _APPROVED_PRODUCER_ORIGINS:
+                    names[local] = resolved
+                elif local == "GraphProjection" or "GraphProjection" in imported.name:
+                    unresolved.add(local)
+
+        def visit_statements(
+            statements: list[ast.stmt], names: dict[str, str], unresolved: set[str]
+        ) -> None:
+            for statement in statements:
+                if isinstance(statement, (ast.Import, ast.ImportFrom)):
+                    bind_import(statement, names, unresolved)
+                elif isinstance(statement, ast.AnnAssign):
+                    record_annotation(statement.annotation, names, unresolved)
+                    clear_targets((statement.target,), names, unresolved)
+                elif isinstance(statement, ast.Assign):
+                    clear_targets(statement.targets, names, unresolved)
+                elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    record_function_annotations(statement, names, unresolved)
+                    names.pop(statement.name, None)
+                    unresolved.discard(statement.name)
+                    body_names = dict(names)
+                    body_unresolved = set(unresolved)
+                    visit_statements(statement.body, body_names, body_unresolved)
+                elif isinstance(statement, ast.ClassDef):
+                    body_names = dict(names)
+                    body_unresolved = set(unresolved)
+                    visit_statements(statement.body, body_names, body_unresolved)
+                    names.pop(statement.name, None)
+                    unresolved.discard(statement.name)
+
+        def clear_targets(
+            targets: Iterable[ast.expr], names: dict[str, str], unresolved: set[str]
+        ) -> None:
+            for target in targets:
+                for local in _ast_target_names(target):
+                    names.pop(local, None)
+                    unresolved.discard(local)
+
+        def record_annotation(
+            annotation: ast.expr, names: dict[str, str], unresolved: set[str]
+        ) -> None:
+            facts[(annotation.lineno, annotation.col_offset)] = cls._annotation(
+                annotation, names, unresolved
+            )
+
+        def record_function_annotations(
+            node: ast.FunctionDef | ast.AsyncFunctionDef,
+            names: dict[str, str],
+            unresolved: set[str],
+        ) -> None:
+            parameters = (
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+                *((node.args.vararg,) if node.args.vararg is not None else ()),
+                *((node.args.kwarg,) if node.args.kwarg is not None else ()),
+            )
+            for parameter in parameters:
+                if parameter.annotation is not None:
+                    record_annotation(parameter.annotation, names, unresolved)
+            if node.returns is not None:
+                record_annotation(node.returns, names, unresolved)
+
+        visit_statements(tree.body, dict(initial_names), set())
+        return facts
 
     @staticmethod
     def _annotation(
@@ -498,6 +610,14 @@ class _ModuleSymbols:
         except SyntaxError:
             return None
         return self._annotation(expression, self.names, self.unresolved_projection_names)
+
+    def declaration_annotation_name(
+        self, node: cst.BaseExpression, position: tuple[int, int]
+    ) -> str | None:
+        """Use ordered AST provenance for an annotation declaration when available."""
+        if position in self.declaration_annotations:
+            return self.declaration_annotations[position]
+        return self.annotation_name(node)
 
     @staticmethod
     def _projection_symbol(resolved: str) -> str:
@@ -609,13 +729,14 @@ class _Collector(cst.CSTVisitor):
                 *variadic,
             )
             if parameter.annotation is not None
-            and self._annotation_name(parameter.annotation.annotation) == "GraphProjection"
+            and self._declaration_annotation_name(parameter.annotation.annotation)
+            == "GraphProjection"
         }
         scope_id = id(self.get_metadata(ScopeProvider, node.body))
         self.aliases[scope_id] = seeds
         self.known_aliases[scope_id] = set(seeds)
         self.receiver_types[scope_id] = {
-            parameter.name.value: self._annotation_name(parameter.annotation.annotation)
+            parameter.name.value: self._declaration_annotation_name(parameter.annotation.annotation)
             for parameter in (
                 *node.params.posonly_params,
                 *node.params.params,
@@ -623,7 +744,7 @@ class _Collector(cst.CSTVisitor):
                 *variadic,
             )
             if parameter.annotation is not None
-            and self._annotation_name(parameter.annotation.annotation) is not None
+            and self._declaration_annotation_name(parameter.annotation.annotation) is not None
         }
         for parameter in (
             *node.params.posonly_params,
@@ -632,14 +753,14 @@ class _Collector(cst.CSTVisitor):
         ):
             if (
                 parameter.annotation is not None
-                and (owner := self._annotation_name(parameter.annotation.annotation))
+                and (owner := self._declaration_annotation_name(parameter.annotation.annotation))
                 in self.typed_fields
             ):
                 self.tracked_attributes.setdefault(scope_id, set()).update(
                     f"{parameter.name.value}.{field}" for field in self.typed_fields[owner]
                 )
         self.binding_types[scope_id] = {
-            parameter.name.value: self._annotation_name(parameter.annotation.annotation)
+            parameter.name.value: self._declaration_annotation_name(parameter.annotation.annotation)
             for parameter in (
                 *node.params.posonly_params,
                 *node.params.params,
@@ -657,7 +778,9 @@ class _Collector(cst.CSTVisitor):
             )
         }
         self.return_annotations.append(
-            self._annotation_name(node.returns.annotation) if node.returns is not None else None
+            self._declaration_annotation_name(node.returns.annotation)
+            if node.returns is not None
+            else None
         )
         for parameter in (
             *node.params.posonly_params,
@@ -667,12 +790,14 @@ class _Collector(cst.CSTVisitor):
         ):
             if (
                 parameter.annotation is not None
-                and self._annotation_name(parameter.annotation.annotation) == _UNRESOLVED_PROJECTION
+                and self._declaration_annotation_name(parameter.annotation.annotation)
+                == _UNRESOLVED_PROJECTION
             ):
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING,
                     "projection-shaped imported annotation is unresolved",
                     parameter,
+                    qualified=".".join((*self.lexical_names, node.name.value)),
                 )
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef) -> None:
@@ -749,6 +874,10 @@ class _Collector(cst.CSTVisitor):
         ):
             return None
         return self.symbols.annotation_name(node)
+
+    def _declaration_annotation_name(self, node: cst.BaseExpression) -> str | None:
+        position = self.get_metadata(PositionProvider, node).start
+        return self.symbols.declaration_annotation_name(node, (position.line, position.column))
 
     def _symbol_is_shadowed(self, node: cst.Name) -> bool:
         return node.value in self.shadowed_symbols.get(
@@ -897,7 +1026,14 @@ class _Collector(cst.CSTVisitor):
             (qualified, self._expression(node), field, kind, position.line, position.column)
         )
 
-    def _diagnostic(self, code: DiagnosticCode, message: str, node: cst.CSTNode) -> None:
+    def _diagnostic(
+        self,
+        code: DiagnosticCode,
+        message: str,
+        node: cst.CSTNode,
+        *,
+        qualified: str | None = None,
+    ) -> None:
         key = (id(node), code)
         if key in self.diagnostic_keys:
             return
@@ -905,7 +1041,7 @@ class _Collector(cst.CSTVisitor):
         position = self.get_metadata(PositionProvider, node).start
         self.diagnostics.append(
             (
-                ".".join(self.lexical_names) or "<module>",
+                qualified or ".".join(self.lexical_names) or "<module>",
                 code,
                 message,
                 position.line,
@@ -954,7 +1090,7 @@ class _Collector(cst.CSTVisitor):
         return field if field in self.fields else None
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
-        annotation = self._annotation_name(node.annotation.annotation)
+        annotation = self._declaration_annotation_name(node.annotation.annotation)
         if (
             node.value is not None
             and (
@@ -982,7 +1118,7 @@ class _Collector(cst.CSTVisitor):
         if scope is None:
             return
         scope_id = id(self.get_metadata(ScopeProvider, node.target))
-        annotation = self._annotation_name(node.annotation.annotation)
+        annotation = self._declaration_annotation_name(node.annotation.annotation)
         self.binding_types.setdefault(scope_id, {})[node.target.value] = annotation
         if annotation in self.typed_fields:
             self.receiver_types.setdefault(scope_id, {})[node.target.value] = annotation

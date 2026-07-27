@@ -184,32 +184,32 @@ src/orchestrator/graph/callbacks.py:112:17: validate_callback: unsupported_call:
 src/orchestrator/graph/callbacks.py:141:17: _validate_expired_lease_callback: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/callbacks.py:155:27: _has_replacement_active_lease: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/callbacks.py:199:20: _validate_idempotency: unsupported_call: projection.get result method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/commands/__init__.py:120:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:38:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:60:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:78:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:96:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:114:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:132:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:150:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:169:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/callbacks.py:187:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:30:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:50:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:64:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:78:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:92:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:106:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:120:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:134:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/lifecycle.py:148:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/patches.py:23:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/records.py:26:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/records.py:48:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/records.py:70:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/schedule.py:26:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/schedule.py:48:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph/commands/schedule.py:70:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/__init__.py:120:4: apply_command: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:38:4: handle_submit_callback: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:60:4: handle_acknowledge_start: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:78:4: handle_raise_appeal: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:96:4: handle_record_decision: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:114:4: handle_record_gatekeeper_verdicts: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:132:4: handle_record_node_usage: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:150:4: handle_record_requirement_revision: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:169:4: handle_record_support_evidence: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:187:4: handle_record_cleanup_applied: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:30:4: _handle_lifecycle: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:50:4: handle_accept_run: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:64:4: handle_start: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:78:4: handle_pause: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:92:4: handle_resume: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:106:4: handle_cancel: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:120:4: handle_complete: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:134:4: handle_fail: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:148:4: handle_record_heartbeat: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/patches.py:23:4: handle_submit_patch: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/records.py:26:4: handle_evaluate_join: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/records.py:48:4: handle_evaluate_final_gate: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/records.py:70:4: handle_agent_died: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/schedule.py:26:4: handle_seed_compiled_events: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/schedule.py:48:4: handle_schedule_tick: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/schedule.py:70:4: handle_reconcile: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph/patch_validator.py:146:20: validate_patch: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/patch_validator.py:154:20: validate_patch: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/patch_validator.py:260:43: _validate_typed_topology: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
@@ -249,7 +249,7 @@ src/orchestrator/graph_runtime/store.py:716:15: GraphEventStore.load_projection_
 src/orchestrator/graph_runtime/store.py:863:15: GraphEventStore.advance_projection_snapshot: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 src/orchestrator/graph_runtime/store.py:873:25: GraphEventStore.advance_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:874:14: GraphEventStore.advance_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/store.py:1266:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph_runtime/store.py:1266:4: _assign_projection_snapshot: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:1276:22: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1277:22: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1278:17: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -257,14 +257,14 @@ src/orchestrator/graph_runtime/store.py:1279:22: _assign_projection_snapshot: un
 src/orchestrator/graph_runtime/store.py:1280:25: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1281:26: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1283:25: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/store.py:1294:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph_runtime/store.py:1305:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph_runtime/store.py:1315:43: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph_runtime/store.py:1294:4: _projection_from_snapshot_row: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph_runtime/store.py:1305:4: _projection_schema_version_from_snapshot_row: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph_runtime/store.py:1315:43: _projection_terminal_from_snapshot_row: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:1329:36: _decisions_with_projection_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1330:34: _decisions_with_projection_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/workflow/graph_driver.py:593:8: GraphRunDriver: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/workflow/graph_driver.py:829:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/workflow/graph_driver.py:883:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/workflow/graph_driver.py:593:8: GraphRunDriver.drive_to_quiescence: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/workflow/graph_driver.py:829:4: _renew_running_expired_leases: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/workflow/graph_driver.py:883:4: _recover_orphaned_active_leases: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_event_store.py:87:21: _rebuild_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_event_store.py:88:4: _rebuild_projection: unsupported_binding: projection escapes through an unresolved return annotation; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_gatekeeper_flow.py:397:21: test_gatekeeper_secret_verdict_scrubs_compromised_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query

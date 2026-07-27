@@ -326,3 +326,39 @@ Authoritative outstanding inventory: **409** fail-closed diagnostics —
 
 Focused verification: `81 passed`; Ruff and Pyright passed. `--diagnose`
 intentionally exits 1 while the above diagnostics remain.
+
+## Final blocker verification (2026-07-27)
+
+- Ordered AST declaration facts now preserve function, class, and variable
+  annotation provenance at the declaration position. The CST pass consumes
+  those facts rather than a final module binding table, so an approved alias
+  remains valid before a later rebind and is not inferred before an import.
+- Function-local foreign imports that bind the reserved `GraphProjection`
+  spelling are resolved per lexical scope. Nested declarations emit the
+  explicit unresolved-import binding diagnostic at their qualified declaration.
+- `docs/graph-projection-inventory-diagnostics.md` is the authoritative,
+  byte-exact generated `--diagnose` artifact. Its intentional nonzero command
+  result reports **409** unresolved flows: **42** `unsupported_binding`,
+  **302** `unsupported_call`, and **65** `unsupported_comparison`.
+
+Final-head verification:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+88 passed in 50.38s
+
+uv run python scripts/graph_projection_inventory.py --diagnose
+exit 1 expected; checked artifact is byte-exact; 409 unresolved flows
+
+uv run ruff format --check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+2 files already formatted
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+uv run pytest
+4940 passed, 3 skipped, 3 aiosqlite datetime-adapter warnings in 124.02s
+```
