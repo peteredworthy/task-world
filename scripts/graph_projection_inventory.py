@@ -313,6 +313,7 @@ class _ModuleSymbols:
     call_symbols: dict[str, str]
     signatures: dict[str, _CallableSignature]
     declaration_annotations: dict[tuple[int, int], str | None]
+    require_declaration_facts: bool = False
 
     @classmethod
     def from_source(
@@ -321,6 +322,7 @@ class _ModuleSymbols:
         *,
         allow_implicit_graph_projection: bool = False,
         module_name: str | None = None,
+        require_declaration_facts: bool = False,
     ) -> "_ModuleSymbols":
         names: dict[str, str] = (
             {
@@ -342,9 +344,18 @@ class _ModuleSymbols:
         try:
             tree = ast.parse(source)
         except SyntaxError:
-            return cls(names, frozenset(), class_fields, call_symbols, signatures, {})
+            return cls(
+                names,
+                frozenset(),
+                class_fields,
+                call_symbols,
+                signatures,
+                {},
+                require_declaration_facts,
+            )
         declaration_annotations = cls._declaration_annotations(
             tree,
+            source=source,
             initial_names=dict(names),
             module_name=module_name,
         )
@@ -434,6 +445,7 @@ class _ModuleSymbols:
             call_symbols,
             signatures,
             declaration_annotations,
+            require_declaration_facts,
         )
 
     @classmethod
@@ -441,6 +453,7 @@ class _ModuleSymbols:
         cls,
         tree: ast.Module,
         *,
+        source: str,
         initial_names: dict[str, str],
         module_name: str | None,
     ) -> dict[tuple[int, int], str | None]:
@@ -460,6 +473,8 @@ class _ModuleSymbols:
                     unresolved.discard(local)
                     if imported.name in {"typing", "orchestrator.graph"}:
                         names[local] = imported.name
+                    elif _projection_shaped_import(imported.name, local):
+                        unresolved.add(local)
                 return
             module = _resolve_import_module(node, module_name)
             for imported in node.names:
@@ -473,7 +488,7 @@ class _ModuleSymbols:
                 resolved = f"{module}.{imported.name}"
                 if resolved in _APPROVED_SYMBOLS | _APPROVED_PRODUCER_ORIGINS:
                     names[local] = resolved
-                elif local == "GraphProjection" or "GraphProjection" in imported.name:
+                elif _projection_shaped_import(imported.name, local):
                     unresolved.add(local)
 
         def visit_statements(
@@ -500,6 +515,9 @@ class _ModuleSymbols:
                     visit_statements(statement.body, body_names, body_unresolved)
                     names.pop(statement.name, None)
                     unresolved.discard(statement.name)
+                else:
+                    for block in _lexical_statement_blocks(statement):
+                        visit_statements(block, names, unresolved)
 
         def clear_targets(
             targets: Iterable[ast.expr], names: dict[str, str], unresolved: set[str]
@@ -512,7 +530,7 @@ class _ModuleSymbols:
         def record_annotation(
             annotation: ast.expr, names: dict[str, str], unresolved: set[str]
         ) -> None:
-            facts[(annotation.lineno, annotation.col_offset)] = cls._annotation(
+            facts[_ast_character_position(annotation, source)] = cls._annotation(
                 annotation, names, unresolved
             )
 
@@ -577,6 +595,8 @@ class _ModuleSymbols:
                 return _UNRESOLVED_PROJECTION
             return _ModuleSymbols._projection_symbol(names.get(node.id, node.id))
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+            if node.value.id in unresolved_projection_names:
+                return _UNRESOLVED_PROJECTION
             prefix = names.get(node.value.id)
             return _ModuleSymbols._projection_symbol(f"{prefix}.{node.attr}" if prefix else "")
         return None
@@ -617,6 +637,8 @@ class _ModuleSymbols:
         """Use ordered AST provenance for an annotation declaration when available."""
         if position in self.declaration_annotations:
             return self.declaration_annotations[position]
+        if self.require_declaration_facts:
+            return _UNRESOLVED_PROJECTION
         return self.annotation_name(node)
 
     @staticmethod
@@ -642,16 +664,47 @@ def _ast_target_names(node: ast.expr) -> tuple[str, ...]:
     return ()
 
 
+def _ast_character_position(node: ast.expr, source: str) -> tuple[int, int]:
+    """Convert AST's UTF-8 byte column into LibCST's character column."""
+    line = source.splitlines()[node.lineno - 1]
+    return node.lineno, len(line.encode("utf-8")[: node.col_offset].decode("utf-8"))
+
+
+def _projection_shaped_import(imported_name: str, local_name: str) -> bool:
+    """Recognize foreign imports that could deceptively denote GraphProjection."""
+    return local_name == "GraphProjection" or "GraphProjection" in imported_name.split(".")
+
+
+def _lexical_statement_blocks(statement: ast.stmt) -> tuple[list[ast.stmt], ...]:
+    """Return nested statement suites that retain their enclosing lexical scope."""
+    if isinstance(statement, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+        return statement.body, statement.orelse
+    if isinstance(statement, (ast.With, ast.AsyncWith)):
+        return (statement.body,)
+    if isinstance(statement, (ast.Try, ast.TryStar)):
+        return (
+            statement.body,
+            *(handler.body for handler in statement.handlers),
+            statement.orelse,
+            statement.finalbody,
+        )
+    if isinstance(statement, ast.Match):
+        return tuple(case.body for case in statement.cases)
+    return ()
+
+
 def _module_symbols(
     source: str,
     *,
     allow_implicit_graph_projection: bool = False,
     module_name: str | None = None,
+    require_declaration_facts: bool = False,
 ) -> _ModuleSymbols:
     return _ModuleSymbols.from_source(
         source,
         allow_implicit_graph_projection=allow_implicit_graph_projection,
         module_name=module_name,
+        require_declaration_facts=require_declaration_facts,
     )
 
 
@@ -1872,6 +1925,7 @@ def inventory_paths(
     *,
     root: Path | None = None,
     allow_implicit_graph_projection: bool = False,
+    require_declaration_facts: bool = False,
 ) -> AccessInventory:
     """Collect a sorted aggregate from explicitly selected Python paths."""
     inventories: list[SourceInventory] = []
@@ -1921,6 +1975,7 @@ def inventory_paths(
             source,
             allow_implicit_graph_projection=allow_implicit_graph_projection,
             module_name=_module_name(relative_path),
+            require_declaration_facts=require_declaration_facts,
         )
         collector = _Collector(
             relative_path,
@@ -1979,7 +2034,13 @@ def inventory_repository(
         and path.relative_to(root).parts[:1] in {("src",), ("tests",), ("scripts",)}
         and not any(part in excluded for part in path.relative_to(root).parts)
     )
-    return inventory_paths(paths, manifest, root=root, allow_implicit_graph_projection=False)
+    return inventory_paths(
+        paths,
+        manifest,
+        root=root,
+        allow_implicit_graph_projection=False,
+        require_declaration_facts=True,
+    )
 
 
 def diagnostic_report(inventory: AccessInventory) -> str:

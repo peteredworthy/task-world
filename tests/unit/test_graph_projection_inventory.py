@@ -1909,3 +1909,118 @@ def outer() -> None:
     assert not inventory.occurrences
     assert [item.qualified_function for item in inventory.diagnostics] == ["outer.nested"]
     assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]
+
+
+def test_repository_inventory_uses_character_columns_for_non_ascii_declaration_facts(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/non_ascii_declaration.py"
+    source.parent.mkdir()
+    source.write_text(
+        """
+from orchestrator.graph import GraphProjection as Projection
+
+def before_rebind(é: Projection) -> None:
+    é["run_state"]
+
+Projection = object
+"""
+    )
+
+    inventory = inventory_repository(
+        tmp_path,
+        load_manifest(MANIFEST_PATH),
+        tracked_paths=(source,),
+    )
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("before_rebind", "run_state")
+    ]
+    assert not inventory.diagnostics
+
+
+def test_inventory_paths_uses_source_ordered_compound_statement_declarations(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "compound_declarations.py"
+    source.write_text(
+        """
+if True:
+    from orchestrator.graph import GraphProjection as IfProjection
+
+def after_if(value: IfProjection) -> None:
+    value["run_state"]
+
+try:
+    from orchestrator.graph import GraphProjection as TryProjection
+except ImportError:
+    pass
+
+def after_try(value: TryProjection) -> None:
+    value["node_states"]
+
+with object():
+    from orchestrator.graph import GraphProjection as WithProjection
+
+def after_with(value: WithProjection) -> None:
+    value["ready_nodes"]
+
+for _ in ():
+    from orchestrator.graph import GraphProjection as ForProjection
+
+def after_for(value: ForProjection) -> None:
+    value["edges"]
+
+while False:
+    from orchestrator.graph import GraphProjection as WhileProjection
+
+def after_while(value: WhileProjection) -> None:
+    value["leases"]
+
+match 1:
+    case _:
+        from orchestrator.graph import GraphProjection as MatchProjection
+
+def after_match(value: MatchProjection) -> None:
+    value["node_states"]
+
+if True:
+    import foreign.GraphProjection as ForeignProjection
+
+def foreign(value: ForeignProjection) -> None:
+    value["run_state"]
+
+if True:
+    import foreign as GraphProjection
+
+def foreign_alias(value: GraphProjection) -> None:
+    value["run_state"]
+
+if True:
+    import foreign.GraphProjection
+
+def foreign_module(value: foreign.GraphProjection) -> None:
+    value["run_state"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("after_for", "edges"),
+        ("after_if", "run_state"),
+        ("after_match", "node_states"),
+        ("after_try", "node_states"),
+        ("after_while", "leases"),
+        ("after_with", "ready_nodes"),
+    ]
+    assert [item.qualified_function for item in inventory.diagnostics] == [
+        "foreign",
+        "foreign_alias",
+        "foreign_module",
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_binding",
+    ]

@@ -8,8 +8,8 @@ The command intentionally exits nonzero while unresolved flows remain.
 ## Complete sorted diagnostics
 
 ```text
-Unresolved GraphProjection flows: 409
-unsupported_binding: 42
+Unresolved GraphProjection flows: 402
+unsupported_binding: 35
 unsupported_call: 302
 unsupported_comparison: 65
 
@@ -249,7 +249,6 @@ src/orchestrator/graph_runtime/store.py:716:15: GraphEventStore.load_projection_
 src/orchestrator/graph_runtime/store.py:863:15: GraphEventStore.advance_projection_snapshot: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 src/orchestrator/graph_runtime/store.py:873:25: GraphEventStore.advance_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:874:14: GraphEventStore.advance_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/store.py:1266:4: _assign_projection_snapshot: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:1276:22: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1277:22: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1278:17: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -257,14 +256,8 @@ src/orchestrator/graph_runtime/store.py:1279:22: _assign_projection_snapshot: un
 src/orchestrator/graph_runtime/store.py:1280:25: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1281:26: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1283:25: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/store.py:1294:4: _projection_from_snapshot_row: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph_runtime/store.py:1305:4: _projection_schema_version_from_snapshot_row: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/graph_runtime/store.py:1315:43: _projection_terminal_from_snapshot_row: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:1329:36: _decisions_with_projection_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1330:34: _decisions_with_projection_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/workflow/graph_driver.py:593:8: GraphRunDriver.drive_to_quiescence: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/workflow/graph_driver.py:829:4: _renew_running_expired_leases: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
-src/orchestrator/workflow/graph_driver.py:883:4: _recover_orphaned_active_leases: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_event_store.py:87:21: _rebuild_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_event_store.py:88:4: _rebuild_projection: unsupported_binding: projection escapes through an unresolved return annotation; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_gatekeeper_flow.py:397:21: test_gatekeeper_secret_verdict_scrubs_compromised_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
