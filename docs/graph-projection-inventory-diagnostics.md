@@ -8,10 +8,10 @@ The command intentionally exits nonzero while unresolved flows remain.
 ## Complete sorted diagnostics
 
 ```text
-Unresolved GraphProjection flows: 404
+Unresolved GraphProjection flows: 468
 unsupported_binding: 66
-unsupported_call: 288
-unsupported_comparison: 50
+unsupported_call: 351
+unsupported_comparison: 51
 
 scripts/generate_graph_projection_goldens.py:129:8: _replay_views: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
 scripts/generate_graph_projection_goldens.py:129:22: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -224,7 +224,34 @@ src/orchestrator/graph/patch_validator.py:526:21: _validate_no_poisoned_final_in
 src/orchestrator/graph/patch_validator.py:580:11: _node_kind_role: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/patch_validator.py:580:50: _node_kind_role: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/patch_validator.py:843:43: _existing_resource_claim_rank: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projection_queries.py:12:11: resource_claims_for_node: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:26:49: resource_claims_for_node: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:32:11: node_exists: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
+src/orchestrator/graph/projection_queries.py:37:11: node_kind: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:42:11: node_role: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:47:11: node_creation_position: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:52:11: node_task_region: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:57:11: node_state: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:62:11: node_attempt: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:67:11: node_candidate_id: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:72:11: node_failed_candidate_id: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:77:11: node_allowed_actions: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:82:11: node_preconditions: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:89:17: node_command_definition: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:95:11: node_last_deferred_reason: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:100:11: node_retry_not_before: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:105:11: task_state: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:114:25: task_candidates: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:120:11: edge_by_id: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:126:56: iter_edges: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:133:20: edges_from_node: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:142:20: edges_to_node: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:151:14: input_binding_for_port: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:161:23: input_bindings_for_node: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:167:14: bound_record_ids: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:173:12: lease_by_id: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:179:58: iter_leases: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:186:21: active_leases: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/projection_queries.py:193:12: lease_generation: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:908:12: _recovered_lease_still_active: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:1088:19: _guard_no_pending_compromised_file_state_bindings: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:1090:21: _guard_no_pending_compromised_file_state_bindings: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
@@ -297,11 +324,48 @@ tests/unit/test_graph_planner_session.py:294:8: _project: unsupported_binding: c
 tests/unit/test_graph_planner_session.py:294:21: _project: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projection_inventory.py:173:11: test_resource_claim_query_returns_an_immutable_sequence: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projection_inventory.py:174:11: test_resource_claim_query_returns_an_immutable_sequence: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/unit/test_graph_projection_queries.py:47:11: test_lifecycle_queries_preserve_missing_and_default_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/unit/test_graph_projection_queries.py:48:11: test_lifecycle_queries_preserve_missing_and_default_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/unit/test_graph_projection_queries.py:71:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/unit/test_graph_projection_queries.py:72:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/unit/test_graph_projection_queries.py:73:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:77:11: test_lifecycle_queries_preserve_missing_and_default_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:78:11: test_lifecycle_queries_preserve_missing_and_default_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:101:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:102:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:103:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:109:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:110:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:111:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:112:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:113:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:114:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:115:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:116:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:117:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:118:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:119:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:120:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:121:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:122:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:123:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:124:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:125:11: test_node_and_task_queries_preserve_missing_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:131:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:132:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:133:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:134:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:135:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:136:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:137:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:141:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:142:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:143:42: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:148:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:149:42: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:152:42: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:156:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:157:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:159:39: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:161:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:162:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:163:45: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:164:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projections.py:239:42: test_callback_idempotency_projection_checkpoint_round_trips_typed_payload: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projections.py:360:42: test_decision_projection_checkpoint_round_trips_typed_payloads: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projections.py:450:8: test_decision_view_behavior_is_preserved_with_typed_decision_projection: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
