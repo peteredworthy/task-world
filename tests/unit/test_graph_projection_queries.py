@@ -209,6 +209,12 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
             node_id="verifier-2", record_id="failed-1", candidate_id="candidate-2"
         )
     )
+    projection["passed_verification_results_by_record_id"]["passed-2"] = (
+        VerificationResultProjection(node_id="verifier-2", record_id="passed-2")
+    )
+    projection["failed_verification_results_by_record_id"]["failed-2"] = (
+        VerificationResultProjection(node_id="verifier-3", record_id="failed-2")
+    )
     projection["passed_verification_candidate_ids"].extend(("candidate-2", "candidate-1"))
     projection["failed_verification_candidate_ids"].update(
         {"candidate-3": True, "candidate-2": True}
@@ -217,6 +223,22 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
         RecoveryNodeIndexEntry(node_id="recovery-2", recovery_reason="second"),
         RecoveryNodeIndexEntry(node_id="recovery-1", recovery_reason="first"),
     ]
+    projection["recovery_nodes_by_record_id"]["failed-2"] = [
+        RecoveryNodeIndexEntry(node_id="recovery-3", recovery_reason="third")
+    ]
+    projection["node_states"].update({"node-2": "running", "node-1": "ready"})
+    projection["task_states"].update({"task-2": "pending", "task-1": "accepted"})
+    projection["recorded_node_usage_keys"]["usage-1"] = True
+    projection["accepted_output_records_by_node_port"]["node-2"] = {
+        "z-port": [{"record_id": "record-3", "payload": {"nested": ["original"]}}],
+        "a-port": [
+            {"record_id": "record-2", "payload": {"nested": ["original"]}},
+            {"record_id": "record-1", "payload": {"nested": ["original"]}},
+        ],
+    }
+    projection["accepted_output_records_by_node_port"]["node-1"] = {
+        "b-port": [{"record_id": "record-0", "payload": {"nested": ["original"]}}]
+    }
     projection["check_results"]["check-2"] = CheckResultProjection(
         node_id="check-2", status="failed", position=2, candidate_record_ids=["candidate-2"]
     )
@@ -234,26 +256,34 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
     assert failed_verification_result(projection, "failed-1") is not None
     assert passed_verification_candidate_ids(projection) == ("candidate-2", "candidate-1")
     assert failed_verification_candidate_ids(projection) == ("candidate-3", "candidate-2")
+    assert node_states(projection) == (("node-2", "running"), ("node-1", "ready"))
+    assert task_states(projection) == (("task-2", "pending"), ("task-1", "accepted"))
+    assert node_usage_recorded(projection, "usage-1") is True
+    assert node_usage_recorded(projection, "missing-usage") is False
+    assert tuple(
+        record["record_id"]
+        for record in accepted_output_records_for_node_port(projection, "node-2", "a-port")
+    ) == ("record-2", "record-1")
+    assert tuple((node_id, port) for node_id, port, _ in accepted_output_records(projection)) == (
+        ("node-1", "b-port"),
+        ("node-2", "a-port"),
+        ("node-2", "z-port"),
+    )
     assert tuple(record_id for record_id, _ in passed_verification_results(projection)) == (
         "passed-1",
+        "passed-2",
     )
     assert tuple(record_id for record_id, _ in failed_verification_results(projection)) == (
         "failed-1",
+        "failed-2",
+    )
+    assert tuple(record_id for record_id, _ in recovery_nodes(projection)) == (
+        "failed-1",
+        "failed-2",
     )
     assert tuple(entry.node_id for entry in recovery_nodes_for_record(projection, "failed-1")) == (
         "recovery-2",
         "recovery-1",
-    )
-    assert tuple(record_id for record_id, _ in recovery_nodes(projection)) == ("failed-1",)
-    projection["accepted_output_records_by_node_port"]["node-2"] = {
-        "out": [{"record_id": "record-2", "payload": {"nested": ["original"]}}]
-    }
-    projection["accepted_output_records_by_node_port"]["node-1"] = {
-        "out": [{"record_id": "record-1", "payload": {"nested": ["original"]}}]
-    }
-    assert tuple((node_id, port) for node_id, port, _ in accepted_output_records(projection)) == (
-        ("node-1", "out"),
-        ("node-2", "out"),
     )
     assert tuple(node_id for node_id, _ in check_results(projection)) == ("check-2", "check-1")
     assert tuple(region_id for region_id, _ in invalid_test_blocks(projection)) == (
@@ -287,9 +317,26 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
         is not projection["failed_verification_results_by_record_id"]["failed-1"]
     )
     assert (
+        passed_verification_results(projection)[0][1]
+        is not projection["passed_verification_results_by_record_id"]["passed-1"]
+    )
+    assert (
+        failed_verification_results(projection)[0][1]
+        is not projection["failed_verification_results_by_record_id"]["failed-1"]
+    )
+    assert (
         recovery_nodes_for_record(projection, "failed-1")[0]
         is not projection["recovery_nodes_by_record_id"]["failed-1"][0]
     )
+    assert (
+        recovery_nodes(projection)[0][1][0]
+        is not projection["recovery_nodes_by_record_id"]["failed-1"][0]
+    )
+    accepted = accepted_output_records(projection)[1][2][0]
+    accepted["payload"]["nested"].append("changed")
+    assert accepted_output_records_for_node_port(projection, "node-2", "a-port")[0]["payload"] == {
+        "nested": ["original"]
+    }
     assert (
         invalid_test_block(projection, "region-1")
         is not projection["invalid_test_blocks"]["region-1"]
