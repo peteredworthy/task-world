@@ -9,7 +9,7 @@ from orchestrator.graph import (
     initial_projection,
     resource_claims_for_node,
 )
-from scripts.graph_projection_inventory import load_manifest
+from scripts.graph_projection_inventory import collect_source, load_manifest, occurrence_id
 
 
 MANIFEST_PATH = Path(__file__).parents[2] / "scripts/codemods/graph_projection_manifest.yaml"
@@ -158,3 +158,142 @@ def test_resource_claim_query_returns_an_immutable_sequence() -> None:
 
     assert resource_claims_for_node(projection, "worker-1") == (claim,)
     assert resource_claims_for_node(projection, "missing") == ()
+
+
+def test_collect_source_classifies_supported_projection_accesses() -> None:
+    inventory = collect_source(
+        """
+from typing import cast
+
+def access(projection: GraphProjection) -> None:
+    alias = projection
+    read = alias["run_state"]
+    gotten = projection.get("run_state")
+    member = "run_state" in projection
+    keys = projection.keys()
+    values = projection.values()
+    items = projection.items()
+    for value in projection:
+        pass
+    projection["run_state"] = "active"
+    projection["node_states"]["node"] = "active"
+    projection.setdefault("node_states", {})
+    projection["ready_nodes"].append("node")
+    projection["ready_nodes"].extend(("other",))
+    del projection["run_state"]
+    projection.pop("run_state")
+    first, second = projection["ready_nodes"]
+    converted = cast(dict[str, str], projection["node_states"])
+    consume(projection)
+
+def fixture() -> GraphProjection:
+    return GraphProjection(run_state="active")
+""",
+        relative_path="sample.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.diagnostics
+    assert {occurrence.kind for occurrence in inventory.occurrences} == {
+        "literal_subscript_read",
+        "get",
+        "membership",
+        "keys",
+        "values",
+        "items",
+        "direct_iteration",
+        "direct_assignment",
+        "nested_assignment",
+        "setdefault",
+        "append_extend",
+        "delete_pop",
+        "unpack_cast",
+        "fixture_construction",
+        "untyped_escape",
+    }
+    assert [occurrence.kind for occurrence in inventory.occurrences].count("append_extend") == 2
+
+
+def test_collect_source_rejects_invalid_or_ambiguous_accesses() -> None:
+    computed = collect_source(
+        "def read(projection: GraphProjection, key: str):\n    return projection[key]\n",
+        relative_path="computed.py",
+        baseline_revision="baseline",
+    )
+    unknown = collect_source(
+        'def read(projection: GraphProjection):\n    return projection["unknown"]\n',
+        relative_path="unknown.py",
+        baseline_revision="baseline",
+    )
+    invalid = collect_source(
+        "def broken(:\n",
+        relative_path="invalid.py",
+        baseline_revision="baseline",
+    )
+
+    assert [diagnostic.code for diagnostic in computed.diagnostics] == ["computed_key"]
+    assert [diagnostic.code for diagnostic in unknown.diagnostics] == ["unknown_field"]
+    assert [diagnostic.code for diagnostic in invalid.diagnostics] == ["parse_error"]
+    assert not invalid.occurrences
+
+
+def test_collect_source_tracks_only_direct_local_aliases() -> None:
+    inventory = collect_source(
+        """
+def aliases(projection: GraphProjection) -> None:
+    alias = projection
+    alias["run_state"]
+    alias = {}
+    alias["node_states"]
+
+def separate() -> None:
+    alias["run_state"]
+""",
+        relative_path="aliases.py",
+        baseline_revision="baseline",
+    )
+
+    assert [occurrence.old_field_name for occurrence in inventory.occurrences] == ["run_state"]
+    assert not inventory.diagnostics
+
+
+def test_occurrence_identity_ignores_positions_and_uses_deterministic_ordinals() -> None:
+    first = collect_source(
+        'def read(projection: GraphProjection):\n    projection["run_state"]\n    projection["run_state"]\n',
+        relative_path="identity.py",
+        baseline_revision="baseline",
+    )
+    shifted = collect_source(
+        'def read(projection: GraphProjection):\n\n\n    projection["run_state"]\n    projection["run_state"]\n',
+        relative_path="identity.py",
+        baseline_revision="baseline",
+    )
+
+    assert [item.occurrence_id for item in first.occurrences] == [
+        item.occurrence_id for item in shifted.occurrences
+    ]
+    assert [item.same_expression_ordinal for item in first.occurrences] == [0, 1]
+    assert first.occurrences[0].occurrence_id == occurrence_id(
+        "baseline", "identity.py", "read", 'projection["run_state"]', 0
+    )
+
+
+def test_collect_source_rejects_reflection_unpacking_and_unsupported_calls() -> None:
+    inventory = collect_source(
+        """
+def rejected(projection: GraphProjection) -> None:
+    getattr(projection, "run_state")
+    dict(projection)
+    projection.clear()
+    {**projection}
+""",
+        relative_path="rejected.py",
+        baseline_revision="baseline",
+    )
+
+    assert [diagnostic.code for diagnostic in inventory.diagnostics] == [
+        "reflection",
+        "projection_unpacking",
+        "unsupported_call",
+        "projection_unpacking",
+    ]
