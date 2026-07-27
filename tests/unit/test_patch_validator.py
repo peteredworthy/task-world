@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 from typing import Any
 
+from orchestrator.graph import ResourceClaimProjection
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -10,9 +11,12 @@ from orchestrator.graph.models import (
     EventEnvelope,
     PatchEnvelope,
     PatchOp,
-    ResourceClaimProjection,
 )
-from orchestrator.graph.patch_validator import PatchValidationResult, validate_patch
+from orchestrator.graph.patch_validator import (
+    PatchValidationResult,
+    _resource_claim_dicts,
+    validate_patch,
+)
 from orchestrator.graph.projections import GraphProjection, initial_projection
 
 
@@ -1068,6 +1072,12 @@ def test_set_resource_claims_escalation_rejected() -> None:
     assert not result.accepted
     assert result.rejection_reason is not None
     assert "resource claim escalation" in result.rejection_reason
+
+
+def test_resource_claim_dicts_accepts_read_only_sequence() -> None:
+    claim = ResourceClaimProjection(mode="read", scope="repo")
+
+    assert _resource_claim_dicts((claim,)) == [claim.model_dump()]
 
 
 def test_set_resource_claims_narrowing_accepted() -> None:

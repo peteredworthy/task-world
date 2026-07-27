@@ -51,6 +51,15 @@ class ProjectionMigrationManifest(BaseModel):
     node_creation_fields: frozenset[str]
     node_creation_ownership: tuple[NodeCreationFieldOwnership, ...]
 
+    @model_validator(mode="after")
+    def node_creation_ownership_is_complete(self) -> "ProjectionMigrationManifest":
+        ownership_fields = tuple(ownership.field_name for ownership in self.node_creation_ownership)
+        if len(ownership_fields) != len(frozenset(ownership_fields)):
+            raise ValueError("duplicate node creation ownership")
+        if frozenset(ownership_fields) != self.node_creation_fields:
+            raise ValueError("node creation fields and ownership differ")
+        return self
+
 
 def load_manifest(path: Path) -> ProjectionMigrationManifest:
     """Load and strictly validate a projection migration manifest."""

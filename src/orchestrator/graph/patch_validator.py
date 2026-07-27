@@ -1,5 +1,6 @@
 """Pure graph patch validation helpers."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 import posixpath
 from typing import Any, cast
@@ -839,7 +840,7 @@ def _resource_claim_escalation_reason(
 def _existing_resource_claim_rank(projection: GraphProjection, node_id: str) -> int | None:
     ranks = [
         rank
-        for claim in _resource_claim_dicts(list(resource_claims_for_node(projection, node_id)))
+        for claim in _resource_claim_dicts(resource_claims_for_node(projection, node_id))
         if isinstance(claim.get("mode"), str)
         for rank in [MODE_RANK.get(claim["mode"])]
         if rank is not None
@@ -848,11 +849,11 @@ def _existing_resource_claim_rank(projection: GraphProjection, node_id: str) -> 
 
 
 def _resource_claim_dicts(raw_claims: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw_claims, list):
+    if not isinstance(raw_claims, Sequence):
         return []
 
     claims: list[dict[str, Any]] = []
-    for claim in cast(list[Any], raw_claims):
+    for claim in cast(Sequence[Any], raw_claims):
         if isinstance(claim, dict):
             claims.append(cast(dict[str, Any], claim))
         else:
