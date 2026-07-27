@@ -46,3 +46,29 @@ duplicate keys. Remaining unclassified-domain counts are unchanged:
 - `uv run ruff check .` and `uv run ruff format --check .` — passed.
 - `uv run pyright` — 0 errors, 0 warnings.
 - `make test` — 4,973 passed, 3 skipped, 3 pre-existing aiosqlite deprecation warnings.
+
+## Review-Finding Follow-up
+
+The disposition classifier now accepts only the committed ledger's exact,
+reviewed target-domain site keys. It no longer infers dispositions from source
+syntax and no longer contains `_TEST_QUERY_DOMAINS`; an injected matching
+lease-shaped site remains unclassified until its exact key is reviewed.
+
+The dispatch `file_state_records` lookup is now explicitly in the
+`record_file_state` deferred domain, not the lease domain. The refreshed target
+closure is **31** `node_task_edge_binding` sites (all `projection_neutral`) and
+**2** lease sites (all `query_transform`): **33** classified target sites with
+zero target-domain unclassified sites. Remaining deferred counts are
+`test_fixture` 236, `verification_recovery` 150, `planning_session` 16,
+`cleanup_callback` 14, `record_file_state` 12, and
+`governance_requirements` 11.
+
+Added query behavior coverage for present/missing node creation/runtime fields,
+task candidates/state, resource claims, active/absent leases, and
+absent edge/binding lookups. Mutation-isolation coverage proves command
+definition dictionaries and copied Pydantic models' nested lists remain
+independent of projection storage.
+
+Follow-up verification: focused graph suites **245 passed**; Ruff and Pyright
+passed; full suite **4,975 passed, 3 skipped** with the same three pre-existing
+aiosqlite deprecation warnings.

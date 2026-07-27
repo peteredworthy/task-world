@@ -8,8 +8,8 @@ The command intentionally exits nonzero while unresolved flows remain.
 ## Complete sorted diagnostics
 
 ```text
-Unresolved GraphProjection flows: 468
-unsupported_binding: 66
+Unresolved GraphProjection flows: 469
+unsupported_binding: 67
 unsupported_call: 351
 unsupported_comparison: 51
 
@@ -366,6 +366,7 @@ tests/unit/test_graph_projection_queries.py:161:11: test_topology_and_lease_quer
 tests/unit/test_graph_projection_queries.py:162:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projection_queries.py:163:45: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projection_queries.py:164:11: test_topology_and_lease_queries_preserve_fixture_order_and_selection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:645:4: _query_projection: unsupported_binding: projection escapes through an unresolved return annotation; retain the GraphProjection annotation through this binding
 tests/unit/test_graph_projections.py:239:42: test_callback_idempotency_projection_checkpoint_round_trips_typed_payload: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projections.py:360:42: test_decision_projection_checkpoint_round_trips_typed_payloads: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projections.py:450:8: test_decision_view_behavior_is_preserved_with_typed_decision_projection: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding

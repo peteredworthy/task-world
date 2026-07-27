@@ -1528,636 +1528,6 @@ dispositions:
   diagnostic_code: unsupported_call
   reason: Replace this direct node, task, topology, binding, or lease projection read
     with the permanent query API.
-- site_key:
-  - d7dfdd5d
-  - 8c25aa6a
-  - b21c3cef
-  - ecc1cbee
-  - 9613c096
-  - de233c2e
-  - c0dd55c4
-  - 54bf5914
-  disposition: query_transform
-  relative_path: src/orchestrator/graph_runtime/dispatch.py
-  qualified_function: _guard_no_pending_compromised_file_state_bindings
-  normalized_source_pattern: record = projection["file_state_records"].get(raw_record_id)
-  diagnostic_code: unsupported_call
-  reason: Replace this direct node, task, topology, binding, or lease projection read
-    with the permanent query API.
-- site_key:
-  - c87d2b4f
-  - c714674b
-  - c6e94b5a
-  - 89d69931
-  - b74a2bd2
-  - 77f5f79d
-  - a50b7fb5
-  - b7dcbc76
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_exists(projection, "missing") is False
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 210155c2
-  - f7d220e4
-  - ceac66f0
-  - f72906fe
-  - 1a547ea4
-  - 5b116915
-  - 32b36003
-  - e89388dd
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_kind(projection, "missing") is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 2fbc495a
-  - a214ebf8
-  - 83094c21
-  - 125c4ec0
-  - 462f62ec
-  - b92eab43
-  - 69f35e36
-  - 574a82fd
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_role(projection, "missing") is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 2195df29
-  - bc394d9e
-  - b5b08245
-  - 61bdbcc0
-  - 6bb1e12c
-  - b17e6064
-  - bef27790
-  - c5c7b98c
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_creation_position(projection, "missing")
-    is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 547585b8
-  - 596bf102
-  - 6d0f4416
-  - 1d58e3ae
-  - 7206d631
-  - 2afa4705
-  - 3b447413
-  - d51a9971
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_task_region(projection, "missing") is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - bc3dcb2d
-  - ead97432
-  - 76ef1fcb
-  - 5401aa59
-  - a1c299f9
-  - 233aae1d
-  - fbe3c9c6
-  - 7e8e5011
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_state(projection, "missing") is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - c003044d
-  - 50e0d85e
-  - 28ef1bd0
-  - 3321acf5
-  - 9c3b4971
-  - 9b960905
-  - 7771896d
-  - fc322487
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_attempt(projection, "missing") is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - d8bc9f91
-  - 24ce3377
-  - 08bad264
-  - d920a229
-  - fd54619d
-  - fcbfeaa9
-  - 97623d31
-  - '34483053'
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_candidate_id(projection, "missing") is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - c7b77a66
-  - 7c7f1353
-  - d8e82b71
-  - b8b979d3
-  - 5f6c71a4
-  - 2deaaede
-  - dcc70c3c
-  - dcbeebcf
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_failed_candidate_id(projection, "missing")
-    is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - f7016c6f
-  - bb0339d6
-  - d135063b
-  - c59e68bf
-  - c128d5c6
-  - d1c53f5e
-  - c2a348e0
-  - d012650c
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_allowed_actions(projection, "missing") ==
-    ()
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 7d71ffab
-  - 22c2f027
-  - e1705f77
-  - 8be30b9f
-  - deab5862
-  - de9b5713
-  - a551e9bc
-  - 0bb242e1
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_preconditions(projection, "missing") == ()
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 775978b0
-  - 438cbc9c
-  - 9995bd6b
-  - '64386837'
-  - d1a8e9c4
-  - f11df60e
-  - f5f602b4
-  - 9e2f3382
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_command_definition(projection, "missing")
-    is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 3df4e1c5
-  - 30461d4e
-  - 371ff5b6
-  - 457de9b1
-  - 42f7dc5a
-  - 4f05274e
-  - 86706cf8
-  - f958fe50
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_last_deferred_reason(projection, "missing")
-    is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 7a72732b
-  - 647ea54a
-  - 1f570ac5
-  - 60faa2b6
-  - bb003733
-  - 29a860c4
-  - 490c1d4e
-  - 0e8d3a9f
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert node_retry_not_before(projection, "missing") is
-    None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - a95ab262
-  - cdc553c5
-  - 11cec1ff
-  - ba2459f6
-  - 257dc450
-  - 420d7b49
-  - 367d9918
-  - c460865c
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert resource_claims_for_node(projection, "missing")
-    == ()
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 1284d358
-  - 25cfbac7
-  - b0e20f20
-  - 62ab370a
-  - 13c48cca
-  - c8f7a9b6
-  - 862a610c
-  - 11760a44
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert task_state(projection, "missing") is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - c72dfc1b
-  - 10b6a8ad
-  - 266ecc75
-  - a63f6ad0
-  - 33031cdf
-  - ba3f3845
-  - d8779619
-  - 3d7bbe60
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_node_and_task_queries_preserve_missing_values
-  normalized_source_pattern: assert task_candidates(projection, "missing") == ()
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - e85d6411
-  - c4bfc4bb
-  - d29ab663
-  - 834cc0cc
-  - 84b738a9
-  - 06f72f29
-  - 5314a54d
-  - 4c561372
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_exists(projection, "worker-source") is True
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 5a8972f2
-  - 1867ba83
-  - b3260be3
-  - 536939dc
-  - a05715da
-  - 5be2bda5
-  - 9c804369
-  - bf50c1a9
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_kind(projection, "worker-source") == "worker"
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 6af2f972
-  - 6ddc97f2
-  - c7eeb2e2
-  - 3ff899db
-  - ae4c8f8c
-  - c22606a3
-  - 69644aef
-  - b8bc3b23
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_role(projection, "worker-source") == "builder"
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 9fa08fc6
-  - 4151c7c9
-  - 3068ffb0
-  - 2ad4a2ce
-  - 1a1439f3
-  - 2be015e9
-  - 356ee25c
-  - 4ea8a2e0
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_task_region(projection, "worker-source")
-    == "task-fr17"
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - '73982889'
-  - 550f7f32
-  - 5889e43e
-  - '66472758'
-  - 47b211eb
-  - 37cc6aa2
-  - 8dbe240a
-  - 91ee0087
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_state(projection, "recovery-1") == "completed"
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 0e5b09b0
-  - f5aa4b72
-  - c59e0c6e
-  - ca1b0613
-  - c0664405
-  - e6d6657d
-  - 02590a59
-  - f775a8c3
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_last_deferred_reason(projection, "review-1")
-    == "merge_conflicts"
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 8f868b24
-  - 227bfca7
-  - 8d0f57cc
-  - c1a2ddec
-  - '72687915'
-  - b4ea7db7
-  - 542f0d1d
-  - 738f29c3
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_allowed_actions(projection, "worker-source")
-    == (
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 619dae1a
-  - be8cea0f
-  - 6fdacf9e
-  - 8d21f960
-  - f61fec59
-  - 41a75802
-  - 4104d166
-  - 8bb9a06f
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_preconditions(projection, "recovery-1") ==
-    ("failure_record_bound",)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - c0ada74e
-  - 71abfbdd
-  - 6fd47956
-  - f16c7c77
-  - b34d4a6c
-  - b8cabda4
-  - ba293fce
-  - 982b5dc6
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert node_command_definition(projection, "recovery-1")
-    is not None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 22f0ac2e
-  - ebf89220
-  - 86fbd761
-  - fe1f5be7
-  - '94097541'
-  - 27a2fcf2
-  - 2dd2f40c
-  - eebb27be
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert tuple(edge.edge_id for edge in iter_edges(projection))
-    == (
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 7a84977a
-  - 001979c3
-  - 67c96535
-  - 360f9e98
-  - 9cbc1b06
-  - 6bb9444b
-  - 5e76b074
-  - bef27cde
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert edge_by_id(projection, "edge-failure-recovery")
-    is not None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - b5664232
-  - f44d932a
-  - 1f169b48
-  - e515aac8
-  - 83c47d42
-  - 4cf4da62
-  - a091ab5a
-  - b8cfa67e
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert tuple(edge.edge_id for edge in edges_from_node(projection,
-    "recovery-1")) == (
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - e2e579f9
-  - 47cf1779
-  - 54c04072
-  - 07b9bf9b
-  - 2eddc560
-  - b4dcfc41
-  - e775179f
-  - c39bd8c3
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert tuple(edge.edge_id for edge in edges_to_node(projection,
-    "consumer-1")) == (
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - d05033ac
-  - 1e286b2e
-  - 2df293c9
-  - '18842763'
-  - 63b141ba
-  - c5be95a4
-  - 27ac9c0c
-  - 8b045a22
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert bound_record_ids(projection, "recovery-1", "failure_record")
-    == ("failure-record-1",)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - fdf31769
-  - 673ac795
-  - 5880aa0e
-  - e54175e4
-  - 88b2dad1
-  - a63baad4
-  - 2dd1138c
-  - b8ccd18c
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert input_binding_for_port(projection, "recovery-1",
-    "failure_record") is not None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - fa999637
-  - 9d4bd28a
-  - 90c3fc4e
-  - 482b0988
-  - c004384e
-  - 99a790fc
-  - c612b68c
-  - bdafe695
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: binding.to_port for binding in input_bindings_for_node(projection,
-    "consumer-1")
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 6e120905
-  - f8038ff6
-  - 56448d95
-  - 0c30266d
-  - 1b1f152b
-  - ded18a15
-  - e8e51475
-  - f1fa1d57
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert lease_by_id(projection, "lease-recovery") is not
-    None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 6d1a3978
-  - b3f58f21
-  - b55d4a6f
-  - 09f75090
-  - a4d702e2
-  - cecf1ed3
-  - 8b67557c
-  - 4fd42eef
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert lease_generation(projection, "lease-recovery")
-    == 1
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 496a0730
-  - 36196a59
-  - ed041f53
-  - 68a911fe
-  - 76ca3952
-  - 0d71df58
-  - 68c5533c
-  - c8990753
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert tuple(lease.lease_id for lease in iter_leases(projection))
-    == ("lease-recovery",)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - a6c0b030
-  - f3317305
-  - 23f7beea
-  - d5abc709
-  - 7e16f048
-  - f619de09
-  - fe50c8b2
-  - f5d9dc32
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
-  normalized_source_pattern: assert active_leases(projection) == ()
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
 unclassified_sites:
 - site_key:
   - 70d01b49
@@ -5268,6 +4638,20 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: governance_requirements
 - site_key:
+  - d7dfdd5d
+  - 8c25aa6a
+  - b21c3cef
+  - ecc1cbee
+  - 9613c096
+  - de233c2e
+  - c0dd55c4
+  - 54bf5914
+  relative_path: src/orchestrator/graph_runtime/dispatch.py
+  qualified_function: _guard_no_pending_compromised_file_state_bindings
+  normalized_source_pattern: record = projection["file_state_records"].get(raw_record_id)
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
   - 974f7d49
   - 1fe9338b
   - 991a7f30
@@ -6198,6 +5582,560 @@ unclassified_sites:
   normalized_source_pattern: assert resource_claims_for_node(projection, "missing")
     == ()
   diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c87d2b4f
+  - c714674b
+  - c6e94b5a
+  - 89d69931
+  - b74a2bd2
+  - 77f5f79d
+  - a50b7fb5
+  - b7dcbc76
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_exists(projection, "missing") is False
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 210155c2
+  - f7d220e4
+  - ceac66f0
+  - f72906fe
+  - 1a547ea4
+  - 5b116915
+  - 32b36003
+  - e89388dd
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_kind(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 2fbc495a
+  - a214ebf8
+  - 83094c21
+  - 125c4ec0
+  - 462f62ec
+  - b92eab43
+  - 69f35e36
+  - 574a82fd
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_role(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 2195df29
+  - bc394d9e
+  - b5b08245
+  - 61bdbcc0
+  - 6bb1e12c
+  - b17e6064
+  - bef27790
+  - c5c7b98c
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_creation_position(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 547585b8
+  - 596bf102
+  - 6d0f4416
+  - 1d58e3ae
+  - 7206d631
+  - 2afa4705
+  - 3b447413
+  - d51a9971
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_task_region(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - bc3dcb2d
+  - ead97432
+  - 76ef1fcb
+  - 5401aa59
+  - a1c299f9
+  - 233aae1d
+  - fbe3c9c6
+  - 7e8e5011
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_state(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c003044d
+  - 50e0d85e
+  - 28ef1bd0
+  - 3321acf5
+  - 9c3b4971
+  - 9b960905
+  - 7771896d
+  - fc322487
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_attempt(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d8bc9f91
+  - 24ce3377
+  - 08bad264
+  - d920a229
+  - fd54619d
+  - fcbfeaa9
+  - 97623d31
+  - '34483053'
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_candidate_id(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c7b77a66
+  - 7c7f1353
+  - d8e82b71
+  - b8b979d3
+  - 5f6c71a4
+  - 2deaaede
+  - dcc70c3c
+  - dcbeebcf
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_failed_candidate_id(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - f7016c6f
+  - bb0339d6
+  - d135063b
+  - c59e68bf
+  - c128d5c6
+  - d1c53f5e
+  - c2a348e0
+  - d012650c
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_allowed_actions(projection, "missing") ==
+    ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 7d71ffab
+  - 22c2f027
+  - e1705f77
+  - 8be30b9f
+  - deab5862
+  - de9b5713
+  - a551e9bc
+  - 0bb242e1
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_preconditions(projection, "missing") == ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 775978b0
+  - 438cbc9c
+  - 9995bd6b
+  - '64386837'
+  - d1a8e9c4
+  - f11df60e
+  - f5f602b4
+  - 9e2f3382
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_command_definition(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 3df4e1c5
+  - 30461d4e
+  - 371ff5b6
+  - 457de9b1
+  - 42f7dc5a
+  - 4f05274e
+  - 86706cf8
+  - f958fe50
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_last_deferred_reason(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 7a72732b
+  - 647ea54a
+  - 1f570ac5
+  - 60faa2b6
+  - bb003733
+  - 29a860c4
+  - 490c1d4e
+  - 0e8d3a9f
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert node_retry_not_before(projection, "missing") is
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a95ab262
+  - cdc553c5
+  - 11cec1ff
+  - ba2459f6
+  - 257dc450
+  - 420d7b49
+  - 367d9918
+  - c460865c
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert resource_claims_for_node(projection, "missing")
+    == ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1284d358
+  - 25cfbac7
+  - b0e20f20
+  - 62ab370a
+  - 13c48cca
+  - c8f7a9b6
+  - 862a610c
+  - 11760a44
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert task_state(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c72dfc1b
+  - 10b6a8ad
+  - 266ecc75
+  - a63f6ad0
+  - 33031cdf
+  - ba3f3845
+  - d8779619
+  - 3d7bbe60
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_node_and_task_queries_preserve_missing_values
+  normalized_source_pattern: assert task_candidates(projection, "missing") == ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e85d6411
+  - c4bfc4bb
+  - d29ab663
+  - 834cc0cc
+  - 84b738a9
+  - 06f72f29
+  - 5314a54d
+  - 4c561372
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_exists(projection, "worker-source") is True
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 5a8972f2
+  - 1867ba83
+  - b3260be3
+  - 536939dc
+  - a05715da
+  - 5be2bda5
+  - 9c804369
+  - bf50c1a9
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_kind(projection, "worker-source") == "worker"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 6af2f972
+  - 6ddc97f2
+  - c7eeb2e2
+  - 3ff899db
+  - ae4c8f8c
+  - c22606a3
+  - 69644aef
+  - b8bc3b23
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_role(projection, "worker-source") == "builder"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 9fa08fc6
+  - 4151c7c9
+  - 3068ffb0
+  - 2ad4a2ce
+  - 1a1439f3
+  - 2be015e9
+  - 356ee25c
+  - 4ea8a2e0
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_task_region(projection, "worker-source")
+    == "task-fr17"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - '73982889'
+  - 550f7f32
+  - 5889e43e
+  - '66472758'
+  - 47b211eb
+  - 37cc6aa2
+  - 8dbe240a
+  - 91ee0087
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_state(projection, "recovery-1") == "completed"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 0e5b09b0
+  - f5aa4b72
+  - c59e0c6e
+  - ca1b0613
+  - c0664405
+  - e6d6657d
+  - 02590a59
+  - f775a8c3
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_last_deferred_reason(projection, "review-1")
+    == "merge_conflicts"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 8f868b24
+  - 227bfca7
+  - 8d0f57cc
+  - c1a2ddec
+  - '72687915'
+  - b4ea7db7
+  - 542f0d1d
+  - 738f29c3
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_allowed_actions(projection, "worker-source")
+    == (
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 619dae1a
+  - be8cea0f
+  - 6fdacf9e
+  - 8d21f960
+  - f61fec59
+  - 41a75802
+  - 4104d166
+  - 8bb9a06f
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_preconditions(projection, "recovery-1") ==
+    ("failure_record_bound",)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c0ada74e
+  - 71abfbdd
+  - 6fd47956
+  - f16c7c77
+  - b34d4a6c
+  - b8cabda4
+  - ba293fce
+  - 982b5dc6
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert node_command_definition(projection, "recovery-1")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 22f0ac2e
+  - ebf89220
+  - 86fbd761
+  - fe1f5be7
+  - '94097541'
+  - 27a2fcf2
+  - 2dd2f40c
+  - eebb27be
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert tuple(edge.edge_id for edge in iter_edges(projection))
+    == (
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 7a84977a
+  - 001979c3
+  - 67c96535
+  - 360f9e98
+  - 9cbc1b06
+  - 6bb9444b
+  - 5e76b074
+  - bef27cde
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert edge_by_id(projection, "edge-failure-recovery")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - b5664232
+  - f44d932a
+  - 1f169b48
+  - e515aac8
+  - 83c47d42
+  - 4cf4da62
+  - a091ab5a
+  - b8cfa67e
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert tuple(edge.edge_id for edge in edges_from_node(projection,
+    "recovery-1")) == (
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e2e579f9
+  - 47cf1779
+  - 54c04072
+  - 07b9bf9b
+  - 2eddc560
+  - b4dcfc41
+  - e775179f
+  - c39bd8c3
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert tuple(edge.edge_id for edge in edges_to_node(projection,
+    "consumer-1")) == (
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d05033ac
+  - 1e286b2e
+  - 2df293c9
+  - '18842763'
+  - 63b141ba
+  - c5be95a4
+  - 27ac9c0c
+  - 8b045a22
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert bound_record_ids(projection, "recovery-1", "failure_record")
+    == ("failure-record-1",)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - fdf31769
+  - 673ac795
+  - 5880aa0e
+  - e54175e4
+  - 88b2dad1
+  - a63baad4
+  - 2dd1138c
+  - b8ccd18c
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert input_binding_for_port(projection, "recovery-1",
+    "failure_record") is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - fa999637
+  - 9d4bd28a
+  - 90c3fc4e
+  - 482b0988
+  - c004384e
+  - 99a790fc
+  - c612b68c
+  - bdafe695
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: binding.to_port for binding in input_bindings_for_node(projection,
+    "consumer-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 6e120905
+  - f8038ff6
+  - 56448d95
+  - 0c30266d
+  - 1b1f152b
+  - ded18a15
+  - e8e51475
+  - f1fa1d57
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert lease_by_id(projection, "lease-recovery") is not
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 6d1a3978
+  - b3f58f21
+  - b55d4a6f
+  - 09f75090
+  - a4d702e2
+  - cecf1ed3
+  - 8b67557c
+  - 4fd42eef
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert lease_generation(projection, "lease-recovery")
+    == 1
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 496a0730
+  - 36196a59
+  - ed041f53
+  - 68a911fe
+  - 76ca3952
+  - 0d71df58
+  - 68c5533c
+  - c8990753
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert tuple(lease.lease_id for lease in iter_leases(projection))
+    == ("lease-recovery",)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a6c0b030
+  - f3317305
+  - 23f7beea
+  - d5abc709
+  - 7e16f048
+  - f619de09
+  - fe50c8b2
+  - f5d9dc32
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_topology_and_lease_queries_preserve_fixture_order_and_selection
+  normalized_source_pattern: assert active_leases(projection) == ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a1f7b8e8
+  - b434f0d4
+  - 680f1a75
+  - 06f875e0
+  - 2ed2f198
+  - 491df5a5
+  - 6651c504
+  - 229a709d
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: _query_projection
+  normalized_source_pattern: return build_projection(events)
+  diagnostic_code: unsupported_binding
   domain: test_fixture
 - site_key:
   - 7f57d980

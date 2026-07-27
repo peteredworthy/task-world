@@ -292,37 +292,6 @@ _APPROVED_CORE_STORAGE_FILES = frozenset(
     }
 )
 
-_TEST_QUERY_DOMAINS = {
-    "active_leases": "lease",
-    "iter_leases": "lease",
-    "lease_by_id": "lease",
-    "lease_generation": "lease",
-    "bound_record_ids": "node_task_edge_binding",
-    "edge_by_id": "node_task_edge_binding",
-    "edges_from_node": "node_task_edge_binding",
-    "edges_to_node": "node_task_edge_binding",
-    "input_binding_for_port": "node_task_edge_binding",
-    "input_bindings_for_node": "node_task_edge_binding",
-    "iter_edges": "node_task_edge_binding",
-    "node_allowed_actions": "node_task_edge_binding",
-    "node_attempt": "node_task_edge_binding",
-    "node_candidate_id": "node_task_edge_binding",
-    "node_command_definition": "node_task_edge_binding",
-    "node_creation_position": "node_task_edge_binding",
-    "node_exists": "node_task_edge_binding",
-    "node_failed_candidate_id": "node_task_edge_binding",
-    "node_kind": "node_task_edge_binding",
-    "node_last_deferred_reason": "node_task_edge_binding",
-    "node_preconditions": "node_task_edge_binding",
-    "node_retry_not_before": "node_task_edge_binding",
-    "node_role": "node_task_edge_binding",
-    "node_state": "node_task_edge_binding",
-    "node_task_region": "node_task_edge_binding",
-    "resource_claims_for_node": "node_task_edge_binding",
-    "task_candidates": "node_task_edge_binding",
-    "task_state": "node_task_edge_binding",
-}
-
 
 def disposition_site_key(
     *,
@@ -431,10 +400,10 @@ def _site_domain(
         or relative_path.endswith("/commands/lifecycle.py")
     ):
         return "lifecycle"
-    if relative_path == "tests/unit/test_graph_projection_queries.py":
-        for query_name, query_domain in _TEST_QUERY_DOMAINS.items():
-            if f"{query_name}(projection" in normalized_source_pattern:
-                return query_domain
+    if relative_path.endswith("/graph_runtime/dispatch.py") and (
+        old_field_name == "file_state_records" or "file_state_records" in normalized_source_pattern
+    ):
+        return "record_file_state"
     if relative_path.startswith("tests/"):
         return "test_fixture"
     if relative_path.endswith("/_commands.py"):
@@ -621,38 +590,27 @@ def classify_lifecycle_domain(skeleton: QueryMigrationManifest) -> QueryMigratio
 
 def classify_node_task_edge_binding_and_lease_domains(
     skeleton: QueryMigrationManifest,
+    reviewed_dispositions: tuple[MigrationDisposition, ...],
 ) -> QueryMigrationManifest:
-    """Apply reviewed dispositions for node/topology/task/binding and lease sites."""
+    """Apply only the closed, reviewed target-domain disposition keys.
+
+    The migration skeleton is deliberately broader than the reviewed ledger:
+    a newly discovered target-domain site must remain unclassified until a
+    reviewer adds its exact site key and disposition to the ledger.
+    """
     target_domains = frozenset({"node_task_edge_binding", "lease"})
+    reviewed_by_key = {
+        disposition.site_key: disposition
+        for disposition in reviewed_dispositions
+        if disposition.site_key
+        and disposition.disposition in {"query_transform", "projection_neutral", "rejected"}
+    }
     classified_sites = tuple(
         site
         for site in skeleton.unclassified_sites
-        if site.domain in target_domains or site.relative_path in _APPROVED_CORE_STORAGE_FILES
+        if site.domain in target_domains and site.site_key in reviewed_by_key
     )
-    dispositions = tuple(
-        MigrationDisposition(
-            site_key=site.site_key,
-            disposition=(
-                "approved_core"
-                if site.relative_path in _APPROVED_CORE_STORAGE_FILES
-                else "query_transform"
-                if site.diagnostic_code is None or 'projection["' in site.normalized_source_pattern
-                else "projection_neutral"
-            ),
-            relative_path=site.relative_path,
-            qualified_function=site.qualified_function,
-            normalized_source_pattern=site.normalized_source_pattern,
-            diagnostic_code=site.diagnostic_code,
-            reason=(
-                "The exact approved query implementation owns this physical storage read."
-                if site.relative_path in _APPROVED_CORE_STORAGE_FILES
-                else "Replace this direct node, task, topology, binding, or lease projection read with the permanent query API."
-                if site.diagnostic_code is None or 'projection["' in site.normalized_source_pattern
-                else "The exact source invokes a query or preserves type provenance without a physical projection storage read."
-            ),
-        )
-        for site in classified_sites
-    )
+    dispositions = tuple(reviewed_by_key[site.site_key] for site in classified_sites)
     classified_keys = {site.site_key for site in classified_sites}
     return QueryMigrationManifest(
         baseline_revision=skeleton.baseline_revision,
@@ -2720,8 +2678,10 @@ def main() -> int:
     inventory = inventory_repository(root, manifest)
     if args.write_query_migration_skeleton:
         target = root / "scripts/codemods/graph_projection_query_migration.yaml"
+        reviewed = load_query_migration_manifest(target)
         ledger = classify_node_task_edge_binding_and_lease_domains(
-            classify_lifecycle_domain(query_migration_skeleton(inventory, root))
+            classify_lifecycle_domain(query_migration_skeleton(inventory, root)),
+            reviewed.dispositions,
         )
         target.write_text(yaml.safe_dump(ledger.model_dump(mode="json"), sort_keys=False))
         return 0

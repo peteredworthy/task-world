@@ -164,6 +164,57 @@ def test_topology_and_lease_queries_preserve_fixture_order_and_selection() -> No
     assert active_leases(projection) == ()
 
 
+def test_node_task_and_lease_queries_preserve_present_and_missing_values() -> None:
+    projection = _query_projection()
+
+    assert node_creation_position(projection, "worker-query") == 1
+    assert node_attempt(projection, "worker-query") == 2
+    assert node_candidate_id(projection, "worker-query") == "candidate-current"
+    assert node_failed_candidate_id(projection, "worker-query") == "candidate-failed"
+    assert node_retry_not_before(projection, "worker-query") == "2026-01-01T00:01:00+00:00"
+    assert task_state(projection, "task-query") == "pending"
+    assert tuple(
+        candidate.candidate_id for candidate in task_candidates(projection, "task-query")
+    ) == ("candidate-current",)
+    assert resource_claims_for_node(projection, "worker-query")[0].paths == ["src/"]
+    assert tuple(lease.lease_id for lease in active_leases(projection)) == ("lease-query",)
+    assert edge_by_id(projection, "missing") is None
+    assert input_binding_for_port(projection, "worker-query", "missing") is None
+    assert lease_by_id(projection, "missing") is None
+
+
+def test_query_results_are_mutation_isolated_from_projection_storage() -> None:
+    projection = _query_projection()
+
+    definition = node_command_definition(projection, "worker-query")
+    assert definition is not None
+    definition["nested"]["values"].append("changed")
+    candidate = task_candidates(projection, "task-query")[0]
+    candidate.file_state_record_ids.append("changed")
+    claim = resource_claims_for_node(projection, "worker-query")[0]
+    assert claim.paths is not None
+    claim.paths.append("changed")
+    lease = lease_by_id(projection, "lease-query")
+    assert lease is not None
+    assert lease.resource_claims[0].paths is not None
+    lease.resource_claims[0].paths.append("changed")
+    binding = input_binding_for_port(projection, "worker-query", "input")
+    assert binding is not None
+    binding.record_ids.append("changed")
+
+    fresh_definition = node_command_definition(projection, "worker-query")
+    assert fresh_definition is not None
+    assert fresh_definition["nested"] == {"values": ["original"]}
+    assert task_candidates(projection, "task-query")[0].file_state_record_ids == ["file-state-1"]
+    assert resource_claims_for_node(projection, "worker-query")[0].paths == ["src/"]
+    fresh_lease = lease_by_id(projection, "lease-query")
+    assert fresh_lease is not None
+    assert fresh_lease.resource_claims[0].paths == ["worktree/"]
+    fresh_binding = input_binding_for_port(projection, "worker-query", "input")
+    assert fresh_binding is not None
+    assert fresh_binding.record_ids == ["record-1"]
+
+
 def test_disposition_site_key_is_stable_without_source_position() -> None:
     first = disposition_site_key(
         baseline_revision="baseline",
@@ -305,16 +356,26 @@ def test_node_and_lease_classification_covers_their_generated_domains() -> None:
         diagnostics=(),
     )
 
+    reviewed = MigrationDisposition(
+        site_key="d" * 64,
+        disposition="query_transform",
+        relative_path="src/example.py",
+        qualified_function="read_node",
+        normalized_source_pattern='projection["node_states"]',
+        diagnostic_code=None,
+        reason="Reviewed direct node-state read.",
+    )
     manifest = classify_node_task_edge_binding_and_lease_domains(
-        query_migration_skeleton(inventory, Path.cwd())
+        query_migration_skeleton(inventory, Path.cwd()), (reviewed,)
     )
 
     assert validate_query_migration_manifest(
         manifest, inventory, Path.cwd(), domain="node_task_edge_binding"
     ) == {"node_task_edge_binding": 1}
-    assert validate_query_migration_manifest(manifest, inventory, Path.cwd(), domain="lease") == {
-        "lease": 1
-    }
+    with pytest.raises(IncompleteMigrationDispositionError) as raised:
+        validate_query_migration_manifest(manifest, inventory, Path.cwd(), domain="lease")
+
+    assert raised.value.remaining_counts == {"lease": 1}
 
 
 @pytest.mark.timeout(120)
@@ -379,12 +440,20 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
         assert validate_query_migration_manifest(ledger, inventory, ROOT, domain=domain) == {
             domain: len(domain_keys)
         }
+    dispatch_file_state_sites = [
+        site
+        for site in ledger.unclassified_sites
+        if site.relative_path == "src/orchestrator/graph_runtime/dispatch.py"
+        and "file_state_records" in site.normalized_source_pattern
+    ]
+    assert len(dispatch_file_state_sites) == 1
+    assert dispatch_file_state_sites[0].domain == "record_file_state"
     assert Counter(site.domain for site in ledger.unclassified_sites) == {
         "cleanup_callback": 14,
         "governance_requirements": 11,
         "planning_session": 16,
-        "record_file_state": 11,
-        "test_fixture": 198,
+        "record_file_state": 12,
+        "test_fixture": 236,
         "verification_recovery": 150,
     }
     assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="lifecycle") == {
@@ -507,3 +576,83 @@ def _lifecycle(to_state: str) -> dict[str, object]:
         "to_state": to_state,
         "trigger": "test",
     }
+
+
+def _query_projection():
+    events = (
+        _query_event(
+            1,
+            "node_created",
+            {
+                "node_id": "worker-query",
+                "kind": "worker",
+                "state": "ready",
+                "task_region_id": "task-query",
+                "attempt_number": 2,
+                "candidate_id": "candidate-current",
+                "failed_candidate_id": "candidate-failed",
+                "resource_claims": [{"mode": "write", "scope": "paths", "paths": ["src/"]}],
+                "command_definition": {"nested": {"values": ["original"]}},
+            },
+        ),
+        _query_event(
+            2,
+            "runtime_retry_scheduled",
+            {
+                "node_id": "worker-query",
+                "lease_id": "lease-query",
+                "generation": 1,
+                "policy": "retry",
+                "reason": "test",
+                "retry_not_before": "2026-01-01T00:01:00+00:00",
+            },
+        ),
+        _query_event(
+            3,
+            "output_record_accepted",
+            {
+                "record_id": "record-1",
+                "producer_node_id": "worker-query",
+                "task_region_id": "task-query",
+                "candidate_id": "candidate-current",
+                "attempt_number": 2,
+                "file_state_record_ids": ["file-state-1"],
+            },
+        ),
+        _query_event(
+            4,
+            "input_bound",
+            {
+                "edge_id": "edge-query",
+                "to_node_id": "worker-query",
+                "to_port": "input",
+                "record_ids": ["record-1"],
+                "bound_at_position": 4,
+            },
+        ),
+        _query_event(
+            5,
+            "lease_granted",
+            {
+                "lease_id": "lease-query",
+                "node_id": "worker-query",
+                "task_region_id": "lease-task",
+                "generation": 1,
+                "resource_claims": [{"mode": "write", "scope": "paths", "paths": ["worktree/"]}],
+            },
+        ),
+    )
+    return build_projection(events)
+
+
+def _query_event(position: int, event_type: str, payload: dict[str, object]) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=f"query-{position}",
+        run_id="query-run",
+        position=position,
+        event_type=event_type,
+        schema_version=1,
+        actor=Actor(kind=ActorKind.SYSTEM, id="system"),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        payload=canonical_event_payload(event_type, payload),
+    )
