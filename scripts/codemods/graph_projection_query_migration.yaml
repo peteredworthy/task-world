@@ -129,12 +129,12 @@ dispositions:
   - ff004d30
   - '55861251'
   - dd1cec2c
-  disposition: query_transform
+  disposition: approved_core
   relative_path: src/orchestrator/graph/projection_queries.py
   qualified_function: completion_decision_passed
   normalized_source_pattern: projection['completion_decision_passed']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: The exact approved query implementation owns this physical storage read.
 - site_key:
   - 32cacfb3
   - 6a836903
@@ -144,12 +144,12 @@ dispositions:
   - '65926717'
   - ac185392
   - d49ee28c
-  disposition: query_transform
+  disposition: approved_core
   relative_path: src/orchestrator/graph/projection_queries.py
   qualified_function: run_state
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
-  reason: Use the permanent lifecycle query API during the consumer codemod.
+  reason: The exact approved query implementation owns this physical storage read.
 - site_key:
   - 02358157
   - ab0a6687
@@ -180,6 +180,134 @@ dispositions:
   normalized_source_pattern: projection['run_state']
   diagnostic_code: null
   reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - ce65d320
+  - fd15893b
+  - 765b30a2
+  - 484f7c2d
+  - fc8cf8a8
+  - 0d519641
+  - e88a03bd
+  - b860f731
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: run_state=project_run_state(events, projection=projection),
+  diagnostic_code: unsupported_call
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 2c6ce9b7
+  - f8e63485
+  - 11c2c799
+  - 48f31b8d
+  - 46b8d291
+  - 677fae63
+  - 7bac2383
+  - 7b5c4b55
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: run_state = project_run_state(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 3540e614
+  - 295bbaff
+  - fd63f5d9
+  - f52202d1
+  - b4dc91fb
+  - e76a2b78
+  - f52809b8
+  - c8a881fb
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_heartbeat
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - c009e4e0
+  - ae6564ca
+  - 660fc0eb
+  - 06875d69
+  - b67da42f
+  - 771273e4
+  - cf014f82
+  - 0ea89586
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_check_recovery_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 2e3b34ba
+  - cbf9f952
+  - 0fd453c6
+  - af2ce281
+  - d1a637ea
+  - 2549d1ef
+  - 66ffdb3e
+  - aa2e42f8
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_verification_recovery_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - adacb0f0
+  - 9f72ef7f
+  - 4bb7b743
+  - 522bdaaf
+  - e0356926
+  - 31ef344c
+  - 1dfa3d5b
+  - be52acb8
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _passed_verification_terminalization_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 431f0757
+  - 46a0be09
+  - c44ba729
+  - '75706951'
+  - 951326d1
+  - f25bf022
+  - 7fe17fb3
+  - cf592bad
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _passed_check_terminalization_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - a5458bf0
+  - afa2a8fc
+  - abd19a7b
+  - 43033e8f
+  - d7925c9b
+  - d526c5f5
+  - c80d6f49
+  - 22f6efbd
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _no_successor_recovery_terminal_failure_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
 - site_key:
   - c264fd21
   - 36ea576a
@@ -322,6 +450,150 @@ dispositions:
   qualified_function: handle_record_heartbeat
   normalized_source_pattern: 'projection: GraphProjection,'
   diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 529ac06d
+  - 2f73b3a5
+  - c032b25e
+  - 1fd141c3
+  - e93bbc7f
+  - b481b163
+  - aadd2cde
+  - 4a4cfe59
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: resource_claims_for_node
+  normalized_source_pattern: return tuple(projection["node_resource_claims"].get(node_id,
+    ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 270166f5
+  - 31bd13b8
+  - 2ac56c60
+  - b600a9c6
+  - c3ff5b26
+  - b943f604
+  - bf68fe2c
+  - a66fbdb8
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/recovery.py
+  qualified_function: reconcile_graph
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - b0f55fd5
+  - fb5443a1
+  - a0f1f735
+  - d63769b5
+  - 4959021d
+  - af898283
+  - 1a6475cb
+  - 095346ac
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _decisions_with_projection_checkpoint
+  normalized_source_pattern: '_CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),'
+  diagnostic_code: unsupported_call
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - fd1bb8dc
+  - c8c87e29
+  - d7b53fff
+  - 507b6d7b
+  - eb01086c
+  - 321c8856
+  - c80bed70
+  - 6bf0ac29
+  disposition: projection_neutral
+  relative_path: tests/unit/test_final_review_contracts.py
+  qualified_function: test_canonical_lifecycle_serialization_preserves_reducer_semantics
+  normalized_source_pattern: assert projection["run_state"] == "active"
+  diagnostic_code: unsupported_comparison
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 2cc29dbe
+  - a7a8c12f
+  - 1c2e003a
+  - a06bcd29
+  - ec27d973
+  - 4e627c1e
+  - d043e67c
+  - 49e03e3c
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
+  normalized_source_pattern: assert run_state(projection) is None
+  diagnostic_code: unsupported_call
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 00650ca3
+  - c5a09783
+  - '21600493'
+  - 2bead136
+  - 610daf5b
+  - de24c87e
+  - ff888250
+  - f06e1ac2
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
+  normalized_source_pattern: assert completion_decision_passed(projection) is False
+  diagnostic_code: unsupported_call
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 90a3e9dc
+  - 942f30ea
+  - '67203965'
+  - c6288ae3
+  - b8ae7d01
+  - 830568d6
+  - a93ae952
+  - 107f0ab2
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
+  normalized_source_pattern: assert run_state(active) == "active"
+  diagnostic_code: unsupported_call
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 1792f1fe
+  - 7fc42d3e
+  - e48ae8c7
+  - 41bceedd
+  - e2b88d5f
+  - 463a3f1c
+  - f547c659
+  - 8ff7ac15
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
+  normalized_source_pattern: assert run_state(completed) == "completed"
+  diagnostic_code: unsupported_call
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 334ce879
+  - f7f11606
+  - 521d96ac
+  - 1ac0fade
+  - 5bb41e61
+  - b04ef98f
+  - 815b5bbf
+  - 05e4714c
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
+  normalized_source_pattern: assert completion_decision_passed(completed) is True
+  diagnostic_code: unsupported_call
   reason: The exact lifecycle command annotation is not a physical projection storage
     read.
 unclassified_sites:
@@ -1209,20 +1481,6 @@ unclassified_sites:
   diagnostic_code: unsupported_binding
   domain: node_task_edge_binding
 - site_key:
-  - ce65d320
-  - fd15893b
-  - 765b30a2
-  - 484f7c2d
-  - fc8cf8a8
-  - 0d519641
-  - e88a03bd
-  - b860f731
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_projection_response
-  normalized_source_pattern: run_state=project_run_state(events, projection=projection),
-  diagnostic_code: unsupported_call
-  domain: node_task_edge_binding
-- site_key:
   - 77cf7e4e
   - f98a105f
   - 1cfb3e53
@@ -1406,20 +1664,6 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: node_task_edge_binding
 - site_key:
-  - 2c6ce9b7
-  - f8e63485
-  - 11c2c799
-  - 48f31b8d
-  - 46b8d291
-  - 677fae63
-  - 7bac2383
-  - 7b5c4b55
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_health_response
-  normalized_source_pattern: run_state = project_run_state(events, projection=projection)
-  diagnostic_code: unsupported_call
-  domain: node_task_edge_binding
-- site_key:
   - 68077f5a
   - 53b847ac
   - f924d0f4
@@ -1489,20 +1733,6 @@ unclassified_sites:
   qualified_function: _apply_record_heartbeat
   normalized_source_pattern: lease = projection["leases"].get(lease_id)
   diagnostic_code: unsupported_call
-  domain: verification_recovery
-- site_key:
-  - 3540e614
-  - 295bbaff
-  - fd63f5d9
-  - f52202d1
-  - b4dc91fb
-  - e76a2b78
-  - f52809b8
-  - c8a881fb
-  relative_path: src/orchestrator/graph/_commands.py
-  qualified_function: _apply_record_heartbeat
-  normalized_source_pattern: 'if projection["run_state"] != "active":'
-  diagnostic_code: unsupported_comparison
   domain: verification_recovery
 - site_key:
   - f5514810
@@ -2047,20 +2277,6 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: verification_recovery
 - site_key:
-  - c009e4e0
-  - ae6564ca
-  - 660fc0eb
-  - 06875d69
-  - b67da42f
-  - 771273e4
-  - cf014f82
-  - 0ea89586
-  relative_path: src/orchestrator/graph/_commands.py
-  qualified_function: _failed_check_recovery_events
-  normalized_source_pattern: 'if projection["run_state"] != "active":'
-  diagnostic_code: unsupported_comparison
-  domain: verification_recovery
-- site_key:
   - d9009aed
   - '79114330'
   - bc028f3f
@@ -2101,20 +2317,6 @@ unclassified_sites:
   relative_path: src/orchestrator/graph/_commands.py
   qualified_function: _failed_check_recovery_events
   normalized_source_pattern: 'if recovery_node_id in projection["node_states"]:'
-  diagnostic_code: unsupported_comparison
-  domain: verification_recovery
-- site_key:
-  - 2e3b34ba
-  - cbf9f952
-  - 0fd453c6
-  - af2ce281
-  - d1a637ea
-  - 2549d1ef
-  - 66ffdb3e
-  - aa2e42f8
-  relative_path: src/orchestrator/graph/_commands.py
-  qualified_function: _failed_verification_recovery_events
-  normalized_source_pattern: 'if projection["run_state"] != "active":'
   diagnostic_code: unsupported_comparison
   domain: verification_recovery
 - site_key:
@@ -2217,34 +2419,6 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: verification_recovery
 - site_key:
-  - adacb0f0
-  - 9f72ef7f
-  - 4bb7b743
-  - 522bdaaf
-  - e0356926
-  - 31ef344c
-  - 1dfa3d5b
-  - be52acb8
-  relative_path: src/orchestrator/graph/_commands.py
-  qualified_function: _passed_verification_terminalization_events
-  normalized_source_pattern: 'if projection["run_state"] != "active":'
-  diagnostic_code: unsupported_comparison
-  domain: verification_recovery
-- site_key:
-  - 431f0757
-  - 46a0be09
-  - c44ba729
-  - '75706951'
-  - 951326d1
-  - f25bf022
-  - 7fe17fb3
-  - cf592bad
-  relative_path: src/orchestrator/graph/_commands.py
-  qualified_function: _passed_check_terminalization_events
-  normalized_source_pattern: 'if projection["run_state"] != "active":'
-  diagnostic_code: unsupported_comparison
-  domain: verification_recovery
-- site_key:
   - 8dd1bdad
   - 1b23ae5c
   - 9a3be807
@@ -2257,20 +2431,6 @@ unclassified_sites:
   qualified_function: _passed_check_terminalization_events
   normalized_source_pattern: 'for check_node_id, result in sorted(projection["check_results"].items()):'
   diagnostic_code: unsupported_call
-  domain: verification_recovery
-- site_key:
-  - a5458bf0
-  - afa2a8fc
-  - abd19a7b
-  - 43033e8f
-  - d7925c9b
-  - d526c5f5
-  - c80d6f49
-  - 22f6efbd
-  relative_path: src/orchestrator/graph/_commands.py
-  qualified_function: _no_successor_recovery_terminal_failure_events
-  normalized_source_pattern: 'if projection["run_state"] != "active":'
-  diagnostic_code: unsupported_comparison
   domain: verification_recovery
 - site_key:
   - 49a3243f
@@ -3982,21 +4142,6 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: governance_requirements
 - site_key:
-  - 529ac06d
-  - 2f73b3a5
-  - c032b25e
-  - 1fd141c3
-  - e93bbc7f
-  - b481b163
-  - aadd2cde
-  - 4a4cfe59
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: resource_claims_for_node
-  normalized_source_pattern: return tuple(projection["node_resource_claims"].get(node_id,
-    ()))
-  diagnostic_code: unsupported_call
-  domain: approved_core
-- site_key:
   - 7a61e7f2
   - b04afa12
   - 41448f57
@@ -4266,20 +4411,6 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: planning_session
 - site_key:
-  - 270166f5
-  - 31bd13b8
-  - 2ac56c60
-  - b600a9c6
-  - c3ff5b26
-  - b943f604
-  - bf68fe2c
-  - a66fbdb8
-  relative_path: src/orchestrator/graph_runtime/recovery.py
-  qualified_function: reconcile_graph
-  normalized_source_pattern: 'if projection["run_state"] != "active":'
-  diagnostic_code: unsupported_comparison
-  domain: verification_recovery
-- site_key:
   - c5aafa32
   - '96379520'
   - 09d166c9
@@ -4431,20 +4562,6 @@ unclassified_sites:
   relative_path: src/orchestrator/graph_runtime/store.py
   qualified_function: _decisions_with_projection_checkpoint
   normalized_source_pattern: '_CHECKPOINT_PROJECTION_KEY: projection_to_checkpoint(projection),'
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - b0f55fd5
-  - fb5443a1
-  - a0f1f735
-  - d63769b5
-  - 4959021d
-  - af898283
-  - 1a6475cb
-  - 095346ac
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _decisions_with_projection_checkpoint
-  normalized_source_pattern: '_CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),'
   diagnostic_code: unsupported_call
   domain: record_file_state
 - site_key:
@@ -4660,20 +4777,6 @@ unclassified_sites:
   qualified_function: test_projected_prior_rejection_does_not_return_duplicate
   normalized_source_pattern: result = validate_callback(_request(), projection, [])
   diagnostic_code: unsupported_call
-  domain: test_fixture
-- site_key:
-  - fd1bb8dc
-  - c8c87e29
-  - d7b53fff
-  - 507b6d7b
-  - eb01086c
-  - 321c8856
-  - c80bed70
-  - 6bf0ac29
-  relative_path: tests/unit/test_final_review_contracts.py
-  qualified_function: test_canonical_lifecycle_serialization_preserves_reducer_semantics
-  normalized_source_pattern: assert projection["run_state"] == "active"
-  diagnostic_code: unsupported_comparison
   domain: test_fixture
 - site_key:
   - 7b14eb6d
@@ -5011,34 +5114,6 @@ unclassified_sites:
   qualified_function: test_resource_claim_query_returns_an_immutable_sequence
   normalized_source_pattern: assert resource_claims_for_node(projection, "missing")
     == ()
-  diagnostic_code: unsupported_call
-  domain: test_fixture
-- site_key:
-  - 2cc29dbe
-  - a7a8c12f
-  - 1c2e003a
-  - a06bcd29
-  - ec27d973
-  - 4e627c1e
-  - d043e67c
-  - 49e03e3c
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
-  normalized_source_pattern: assert run_state(projection) is None
-  diagnostic_code: unsupported_call
-  domain: test_fixture
-- site_key:
-  - 00650ca3
-  - c5a09783
-  - '21600493'
-  - 2bead136
-  - 610daf5b
-  - de24c87e
-  - ff888250
-  - f06e1ac2
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
-  normalized_source_pattern: assert completion_decision_passed(projection) is False
   diagnostic_code: unsupported_call
   domain: test_fixture
 - site_key:

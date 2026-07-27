@@ -8,9 +8,9 @@ The command intentionally exits nonzero while unresolved flows remain.
 ## Complete sorted diagnostics
 
 ```text
-Unresolved GraphProjection flows: 401
+Unresolved GraphProjection flows: 404
 unsupported_binding: 66
-unsupported_call: 285
+unsupported_call: 288
 unsupported_comparison: 50
 
 scripts/generate_graph_projection_goldens.py:129:8: _replay_views: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
@@ -297,8 +297,11 @@ tests/unit/test_graph_planner_session.py:294:8: _project: unsupported_binding: c
 tests/unit/test_graph_planner_session.py:294:21: _project: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projection_inventory.py:173:11: test_resource_claim_query_returns_an_immutable_sequence: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projection_inventory.py:174:11: test_resource_claim_query_returns_an_immutable_sequence: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/unit/test_graph_projection_queries.py:24:11: test_lifecycle_queries_preserve_missing_and_default_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/unit/test_graph_projection_queries.py:25:11: test_lifecycle_queries_preserve_missing_and_default_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:46:11: test_lifecycle_queries_preserve_missing_and_default_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:47:11: test_lifecycle_queries_preserve_missing_and_default_values: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:70:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:71:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_graph_projection_queries.py:72:11: test_lifecycle_queries_read_active_and_completed_event_projections: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projections.py:239:42: test_callback_idempotency_projection_checkpoint_round_trips_typed_payload: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projections.py:360:42: test_decision_projection_checkpoint_round_trips_typed_payloads: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/unit/test_graph_projections.py:450:8: test_decision_view_behavior_is_preserved_with_typed_decision_projection: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding

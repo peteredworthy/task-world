@@ -8,11 +8,11 @@ import subprocess
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Iterable, Literal
+from typing import Annotated, Iterable, Literal
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider, ScopeProvider
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 import yaml
 
 
@@ -170,12 +170,15 @@ class IncompleteMigrationDispositionError(ValueError):
         super().__init__(f"unclassified graph projection sites: {remaining_counts}")
 
 
+CanonicalSiteKey = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", strict=True)]
+
+
 class MigrationDisposition(BaseModel):
     """One exact, reviewable disposition for a legacy projection inventory site."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    site_key: str | tuple[str, ...]
+    site_key: CanonicalSiteKey
     disposition: Literal["query_transform", "approved_core", "projection_neutral", "rejected"]
     relative_path: str
     qualified_function: str
@@ -196,24 +199,32 @@ class MigrationDisposition(BaseModel):
             raise ValueError("approved_core is limited to the exact five storage files")
         return self
 
+    @field_serializer("site_key")
+    def serialize_site_key(self, site_key: CanonicalSiteKey) -> tuple[str, ...]:
+        return tuple(site_key[index : index + 8] for index in range(0, len(site_key), 8))
+
 
 class UnclassifiedMigrationSite(BaseModel):
     """A mechanically generated site awaiting an explicit human disposition."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    site_key: str | tuple[str, ...]
+    site_key: CanonicalSiteKey
     relative_path: str
     qualified_function: str
     normalized_source_pattern: str
     diagnostic_code: DiagnosticCode | None = None
     domain: str
 
+    @field_serializer("site_key")
+    def serialize_site_key(self, site_key: CanonicalSiteKey) -> tuple[str, ...]:
+        return tuple(site_key[index : index + 8] for index in range(0, len(site_key), 8))
+
 
 class QueryMigrationManifest(BaseModel):
     """Strict disposition ledger for the query-boundary source migration."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     baseline_revision: str
     dispositions: tuple[MigrationDisposition, ...]
@@ -229,7 +240,18 @@ class QueryMigrationManifest(BaseModel):
 
 def load_query_migration_manifest(path: Path) -> QueryMigrationManifest:
     """Load a strict query migration ledger or its generated partial skeleton."""
-    return QueryMigrationManifest.model_validate(yaml.safe_load(path.read_text()))
+    raw = yaml.safe_load(path.read_text())
+    if not isinstance(raw, dict):
+        raise ValueError("query migration manifest must be a mapping")
+    normalized = dict(raw)
+    for collection_name in ("dispositions", "unclassified_sites"):
+        collection = normalized.get(collection_name, ())
+        if not isinstance(collection, list):
+            raise ValueError(f"{collection_name} must be a YAML list")
+        normalized[collection_name] = tuple(
+            _normalize_loaded_migration_site(item) for item in collection
+        )
+    return QueryMigrationManifest.model_validate(normalized)
 
 
 _APPROVED_CORE_STORAGE_FILES = frozenset(
@@ -269,22 +291,25 @@ def disposition_site_key(
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def _manifest_site_key(site_key: str) -> str | tuple[str, ...]:
-    """Render a deterministic hash in scanner-safe, human-checkable groups."""
-    if len(site_key) != 64 or any(character not in "0123456789abcdef" for character in site_key):
-        return site_key
-    return tuple(site_key[index : index + 8] for index in range(0, len(site_key), 8))
-
-
-def _raw_site_key(site_key: str | tuple[str, ...]) -> str:
-    """Recover the canonical site key from its manifest presentation form."""
-    if isinstance(site_key, tuple):
-        compact = "".join(site_key)
-    else:
-        compact = site_key.replace("-", "")
-    if len(compact) == 64 and all(character in "0123456789abcdef" for character in compact):
-        return compact
-    return site_key
+def _normalize_loaded_migration_site(raw_site: object) -> dict[str, object]:
+    """Convert only YAML's ledger containers and eight-part canonical site keys."""
+    if not isinstance(raw_site, dict):
+        raise ValueError("migration site must be a mapping")
+    normalized = dict(raw_site)
+    site_key = normalized.get("site_key")
+    if isinstance(site_key, list):
+        if len(site_key) != 8 or any(
+            not isinstance(part, str)
+            or len(part) != 8
+            or any(character not in "0123456789abcdef" for character in part)
+            for part in site_key
+        ):
+            raise ValueError("site_key YAML chunks must be eight lowercase hex groups")
+        normalized["site_key"] = "".join(site_key)
+    diagnostic_code = normalized.get("diagnostic_code")
+    if isinstance(diagnostic_code, str):
+        normalized["diagnostic_code"] = DiagnosticCode(diagnostic_code)
+    return normalized
 
 
 def _diagnostic_source_pattern(root: Path, diagnostic: InventoryDiagnostic) -> str:
@@ -332,10 +357,19 @@ def _diagnostic_site_keys(root: Path, inventory: AccessInventory) -> dict[int, s
     return keys
 
 
-def _site_domain(relative_path: str, old_field_name: str | None = None) -> str:
+def _site_domain(
+    relative_path: str,
+    old_field_name: str | None = None,
+    normalized_source_pattern: str = "",
+) -> str:
     """Assign a deterministic bounded domain for partial migration reporting."""
-    if old_field_name in {"run_state", "completion_decision_passed"} or relative_path.endswith(
-        "/commands/lifecycle.py"
+    if relative_path in _APPROVED_CORE_STORAGE_FILES:
+        return "approved_core"
+    if (
+        old_field_name in {"run_state", "completion_decision_passed"}
+        or "run_state" in normalized_source_pattern
+        or "completion_decision_passed" in normalized_source_pattern
+        or relative_path.endswith("/commands/lifecycle.py")
     ):
         return "lifecycle"
     if relative_path.startswith("tests/"):
@@ -354,8 +388,6 @@ def _site_domain(relative_path: str, old_field_name: str | None = None) -> str:
         return "verification_recovery"
     if relative_path.endswith("/graph_runtime/store.py"):
         return "record_file_state"
-    if relative_path in _APPROVED_CORE_STORAGE_FILES:
-        return "approved_core"
     return "node_task_edge_binding"
 
 
@@ -377,7 +409,11 @@ def validate_query_migration_manifest(
             occurrence.qualified_function,
             occurrence.normalized_expression,
             None,
-            _site_domain(occurrence.relative_path, occurrence.old_field_name),
+            _site_domain(
+                occurrence.relative_path,
+                occurrence.old_field_name,
+                occurrence.normalized_expression,
+            ),
         )
     diagnostic_keys = _diagnostic_site_keys(root, inventory)
     for diagnostic in inventory.diagnostics:
@@ -387,14 +423,14 @@ def validate_query_migration_manifest(
             diagnostic.qualified_function,
             pattern,
             diagnostic.code,
-            _site_domain(diagnostic.relative_path),
+            _site_domain(diagnostic.relative_path, normalized_source_pattern=pattern),
         )
 
     scoped_expected = {
         site_key: site for site_key, site in expected.items() if domain is None or site[4] == domain
     }
-    all_supplied = {_raw_site_key(item.site_key): item for item in manifest.dispositions}
-    all_unclassified = {_raw_site_key(item.site_key): item for item in manifest.unclassified_sites}
+    all_supplied = {item.site_key: item for item in manifest.dispositions}
+    all_unclassified = {item.site_key: item for item in manifest.unclassified_sites}
     stale = set(all_supplied) - set(expected)
     stale_unclassified = set(all_unclassified) - set(expected)
     if stale or stale_unclassified:
@@ -444,23 +480,30 @@ def query_migration_skeleton(inventory: AccessInventory, root: Path) -> QueryMig
     """Mechanically generate a complete, unclassified disposition ledger from inventory."""
     sites = [
         UnclassifiedMigrationSite(
-            site_key=_manifest_site_key(occurrence.occurrence_id),
+            site_key=occurrence.occurrence_id,
             relative_path=occurrence.relative_path,
             qualified_function=occurrence.qualified_function,
             normalized_source_pattern=occurrence.normalized_expression,
-            domain=_site_domain(occurrence.relative_path, occurrence.old_field_name),
+            domain=_site_domain(
+                occurrence.relative_path,
+                occurrence.old_field_name,
+                occurrence.normalized_expression,
+            ),
         )
         for occurrence in inventory.occurrences
     ]
     diagnostic_keys = _diagnostic_site_keys(root, inventory)
     sites.extend(
         UnclassifiedMigrationSite(
-            site_key=_manifest_site_key(diagnostic_keys[id(diagnostic)]),
+            site_key=diagnostic_keys[id(diagnostic)],
             relative_path=diagnostic.relative_path,
             qualified_function=diagnostic.qualified_function,
             normalized_source_pattern=_diagnostic_source_pattern(root, diagnostic),
             diagnostic_code=diagnostic.code,
-            domain=_site_domain(diagnostic.relative_path),
+            domain=_site_domain(
+                diagnostic.relative_path,
+                normalized_source_pattern=_diagnostic_source_pattern(root, diagnostic),
+            ),
         )
         for diagnostic in inventory.diagnostics
     )
@@ -473,32 +516,42 @@ def query_migration_skeleton(inventory: AccessInventory, root: Path) -> QueryMig
 
 def classify_lifecycle_domain(skeleton: QueryMigrationManifest) -> QueryMigrationManifest:
     """Apply the reviewed lifecycle-domain dispositions to a generated skeleton."""
-    lifecycle_sites = tuple(
-        site for site in skeleton.unclassified_sites if site.domain == "lifecycle"
+    classified_sites = tuple(
+        site
+        for site in skeleton.unclassified_sites
+        if site.domain == "lifecycle" or site.relative_path in _APPROVED_CORE_STORAGE_FILES
     )
     dispositions = tuple(
         MigrationDisposition(
             site_key=site.site_key,
-            disposition="projection_neutral"
-            if site.diagnostic_code is not None
-            else "query_transform",
+            disposition=(
+                "approved_core"
+                if site.relative_path in _APPROVED_CORE_STORAGE_FILES
+                else "projection_neutral"
+                if site.diagnostic_code is not None
+                else "query_transform"
+            ),
             relative_path=site.relative_path,
             qualified_function=site.qualified_function,
             normalized_source_pattern=site.normalized_source_pattern,
             diagnostic_code=site.diagnostic_code,
             reason=(
-                "The exact lifecycle command annotation is not a physical projection storage read."
+                "The exact approved query implementation owns this physical storage read."
+                if site.relative_path in _APPROVED_CORE_STORAGE_FILES
+                else "The exact lifecycle command annotation is not a physical projection storage read."
                 if site.diagnostic_code is not None
                 else "Use the permanent lifecycle query API during the consumer codemod."
             ),
         )
-        for site in lifecycle_sites
+        for site in classified_sites
     )
     return QueryMigrationManifest(
         baseline_revision=skeleton.baseline_revision,
         dispositions=(*skeleton.dispositions, *dispositions),
         unclassified_sites=tuple(
-            site for site in skeleton.unclassified_sites if site.domain != "lifecycle"
+            site
+            for site in skeleton.unclassified_sites
+            if site.domain != "lifecycle" and site.relative_path not in _APPROVED_CORE_STORAGE_FILES
         ),
     )
 

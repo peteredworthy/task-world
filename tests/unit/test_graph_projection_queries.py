@@ -1,21 +1,43 @@
 """Public query-boundary and migration-disposition behavior."""
 
+from datetime import UTC, datetime
 from pathlib import Path
+from collections import Counter
 
 import pytest
+import yaml
+from pydantic import ValidationError
 
-from orchestrator.graph import completion_decision_passed, initial_projection, run_state
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    build_projection,
+    completion_decision_passed,
+    initial_projection,
+    run_state,
+)
 from scripts.graph_projection_inventory import (
     AccessInventory,
     AccessKind,
     AccessOccurrence,
     IncompleteMigrationDispositionError,
+    MigrationDisposition,
     QueryMigrationManifest,
     classify_lifecycle_domain,
     disposition_site_key,
+    inventory_repository,
+    load_manifest,
+    load_query_migration_manifest,
     query_migration_skeleton,
     validate_query_migration_manifest,
 )
+from tests.unit.graph_test_utils import canonical_event_payload
+
+
+ROOT = Path(__file__).parents[2]
+MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
+QUERY_MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
 
 
 def test_lifecycle_queries_preserve_missing_and_default_values() -> None:
@@ -23,6 +45,31 @@ def test_lifecycle_queries_preserve_missing_and_default_values() -> None:
 
     assert run_state(projection) is None
     assert completion_decision_passed(projection) is False
+
+
+def test_lifecycle_queries_read_active_and_completed_event_projections() -> None:
+    active = build_projection((_event("active", "run_lifecycle_changed", _lifecycle("active")),))
+    completed = build_projection(
+        (
+            _event("active", "run_lifecycle_changed", _lifecycle("active")),
+            _event(
+                "decision",
+                "output_record_accepted",
+                {
+                    "record_id": "decision-1",
+                    "record_type": "completion_decision",
+                    "producer_node_id": "gate-final",
+                    "port": "completion_decision",
+                    "value": {"status": "passed"},
+                },
+            ),
+            _event("completed", "run_lifecycle_changed", _lifecycle("completed")),
+        )
+    )
+
+    assert run_state(active) == "active"
+    assert run_state(completed) == "completed"
+    assert completion_decision_passed(completed) is True
 
 
 def test_disposition_site_key_is_stable_without_source_position() -> None:
@@ -74,7 +121,7 @@ def test_partial_manifest_reports_exact_unclassified_inventory_counts() -> None:
         baseline_revision="baseline",
         occurrences=(
             AccessOccurrence(
-                occurrence_id="lifecycle-site",
+                occurrence_id="a" * 64,
                 relative_path="src/example.py",
                 qualified_function="read",
                 normalized_expression="projection['run_state']",
@@ -100,7 +147,7 @@ def test_lifecycle_classification_covers_its_complete_generated_domain() -> None
         baseline_revision="baseline",
         occurrences=(
             AccessOccurrence(
-                occurrence_id="lifecycle-site",
+                occurrence_id="c" * 64,
                 relative_path="src/example.py",
                 qualified_function="read",
                 normalized_expression="projection['run_state']",
@@ -112,7 +159,7 @@ def test_lifecycle_classification_covers_its_complete_generated_domain() -> None
                 ordering_sensitivity_disposition="not_applicable",
             ),
             AccessOccurrence(
-                occurrence_id="node-site",
+                occurrence_id="b" * 64,
                 relative_path="src/example.py",
                 qualified_function="read",
                 normalized_expression="projection['node_states']",
@@ -132,3 +179,124 @@ def test_lifecycle_classification_covers_its_complete_generated_domain() -> None
     assert validate_query_migration_manifest(
         manifest, inventory, Path.cwd(), domain="lifecycle"
     ) == {"lifecycle": 1}
+
+
+@pytest.mark.timeout(120)
+def test_checked_lifecycle_ledger_matches_the_fresh_repository_inventory() -> None:
+    inventory = inventory_repository(ROOT, load_manifest(MANIFEST_PATH))
+    ledger = load_query_migration_manifest(QUERY_MANIFEST_PATH)
+    skeleton = query_migration_skeleton(inventory, ROOT)
+
+    lifecycle_keys = {
+        site.site_key for site in skeleton.unclassified_sites if site.domain == "lifecycle"
+    }
+    classified_keys = {
+        disposition.site_key
+        for disposition in ledger.dispositions
+        if disposition.site_key in lifecycle_keys
+    }
+
+    assert classified_keys == lifecycle_keys
+    assert not {site.site_key for site in ledger.unclassified_sites} & lifecycle_keys
+    assert {
+        disposition.disposition
+        for disposition in ledger.dispositions
+        if disposition.relative_path == "src/orchestrator/graph/projection_queries.py"
+    } == {"approved_core"}
+    assert Counter(site.domain for site in ledger.unclassified_sites) == {
+        "cleanup_callback": 14,
+        "governance_requirements": 11,
+        "lease": 3,
+        "node_task_edge_binding": 31,
+        "planning_session": 16,
+        "record_file_state": 11,
+        "test_fixture": 198,
+        "verification_recovery": 150,
+    }
+    assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="lifecycle") == {
+        "lifecycle": len(lifecycle_keys)
+    }
+
+
+def test_manifest_load_canonicalizes_yaml_key_chunks_and_rejects_key_aliases(
+    tmp_path: Path,
+) -> None:
+    key = "a" * 64
+    payload = {
+        "baseline_revision": "baseline",
+        "dispositions": [
+            {
+                "site_key": ["a" * 8] * 8,
+                "disposition": "query_transform",
+                "relative_path": "src/example.py",
+                "qualified_function": "read",
+                "normalized_source_pattern": "projection['run_state']",
+                "diagnostic_code": None,
+                "reason": "Use a lifecycle query.",
+            }
+        ],
+        "unclassified_sites": [
+            {
+                "site_key": key,
+                "relative_path": "src/example.py",
+                "qualified_function": "read",
+                "normalized_source_pattern": "projection['node_states']",
+                "diagnostic_code": None,
+                "domain": "node_task_edge_binding",
+            }
+        ],
+    }
+    path = tmp_path / "ledger.yaml"
+    path.write_text(yaml.safe_dump(payload))
+
+    with pytest.raises(ValidationError, match="duplicate migration disposition site key"):
+        load_query_migration_manifest(path)
+    with pytest.raises(ValidationError):
+        MigrationDisposition.model_validate(payload["dispositions"][0])
+
+
+def test_manifest_load_rejects_malformed_canonical_key_chunks(tmp_path: Path) -> None:
+    path = tmp_path / "ledger.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "baseline_revision": "baseline",
+                "dispositions": [],
+                "unclassified_sites": [
+                    {
+                        "site_key": ["a" * 8] * 7,
+                        "relative_path": "src/example.py",
+                        "qualified_function": "read",
+                        "normalized_source_pattern": "projection['run_state']",
+                        "diagnostic_code": None,
+                        "domain": "lifecycle",
+                    }
+                ],
+            }
+        )
+    )
+
+    with pytest.raises(ValueError, match="eight lowercase hex groups"):
+        load_query_migration_manifest(path)
+
+
+def _event(event_id: str, event_type: str, payload: dict[str, object]) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=event_id,
+        run_id="run-1",
+        position={"active": 0, "decision": 1, "completed": 2}[event_id],
+        event_type=event_type,
+        schema_version=1,
+        actor=Actor(kind=ActorKind.SYSTEM, id="system"),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        payload=canonical_event_payload(event_type, payload),
+    )
+
+
+def _lifecycle(to_state: str) -> dict[str, object]:
+    return {
+        "command_type": "run_lifecycle",
+        "from_state": "queued" if to_state == "active" else "active",
+        "to_state": to_state,
+        "trigger": "test",
+    }
