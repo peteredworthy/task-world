@@ -1604,6 +1604,31 @@ def test_repository_inventory_keeps_representative_task_3c_physical_reads() -> N
     } <= sites
 
 
+@pytest.mark.timeout(120)
+def test_repository_inventory_keeps_verification_recovery_provenance() -> None:
+    root = Path(__file__).parents[2]
+    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
+    sites = {
+        (site.relative_path, site.qualified_function, site.normalized_source_pattern, site.domain)
+        for site in query_migration_skeleton(inventory, root).unclassified_sites
+    }
+
+    assert {
+        (
+            "src/orchestrator/graph/_commands.py",
+            "_current_failed_verification_results",
+            "projection['passed_verification_candidate_ids']",
+            "verification_recovery",
+        ),
+        (
+            "src/orchestrator/graph_runtime/recovery.py",
+            "recover",
+            "projection = rebuild_projection(events)",
+            "verification_recovery",
+        ),
+    } <= sites
+
+
 def test_inventory_reports_one_outer_recursive_collection_escape_at_every_boundary(
     tmp_path: Path,
 ) -> None:

@@ -13,19 +13,27 @@ from orchestrator.graph.models import (
     AuthorityDecisionProjection,
     CallbackIdempotencyEvent,
     CandidateProjection,
+    CheckResultProjection,
     CleanupRequestedProjection,
     EdgeProjection,
     EnvironmentFailureProjection,
     FileStateRecord,
     InputBindingProjection,
+    InvalidTestBlockProjection,
     LeaseProjection,
     OversightDecisionProjection,
     PendingGateDecisionProjection,
     RequirementRevisionProjection,
     ResourceClaimProjection,
     SupportEvidenceProjection,
+    VerificationResultProjection,
+    VerifierVerdictProjection,
 )
-from orchestrator.graph.projections import GraphProjection, LatestRoutineSnapshotRecord
+from orchestrator.graph.projections import (
+    GraphProjection,
+    LatestRoutineSnapshotRecord,
+    RecoveryNodeIndexEntry,
+)
 
 
 def resource_claims_for_node(
@@ -405,3 +413,94 @@ def environment_failures(
         (task_region_id, failure.model_copy(deep=True))
         for task_region_id, failure in projection["environment_failures"].items()
     )
+
+
+def verifier_verdict(
+    projection: GraphProjection, candidate_id: str
+) -> VerifierVerdictProjection | None:
+    """Return an independent verifier verdict for a candidate, if present."""
+    verdict = projection["verifier_verdicts"].get(candidate_id)
+    return verdict.model_copy(deep=True) if verdict is not None else None
+
+
+def passed_verification_result(
+    projection: GraphProjection, record_id: str
+) -> VerificationResultProjection | None:
+    """Return an independent passed verification result, if present."""
+    result = projection["passed_verification_results_by_record_id"].get(record_id)
+    return result.model_copy(deep=True) if result is not None else None
+
+
+def failed_verification_result(
+    projection: GraphProjection, record_id: str
+) -> VerificationResultProjection | None:
+    """Return an independent failed verification result, if present."""
+    result = projection["failed_verification_results_by_record_id"].get(record_id)
+    return result.model_copy(deep=True) if result is not None else None
+
+
+def passed_verification_candidate_ids(projection: GraphProjection) -> tuple[str, ...]:
+    """Return passed verification candidate identifiers in projection order."""
+    return tuple(projection["passed_verification_candidate_ids"])
+
+
+def failed_verification_candidate_ids(projection: GraphProjection) -> tuple[str, ...]:
+    """Return failed verification candidate identifiers in projection insertion order."""
+    return tuple(projection["failed_verification_candidate_ids"])
+
+
+def recovery_nodes_for_record(
+    projection: GraphProjection, record_id: str
+) -> tuple[RecoveryNodeIndexEntry, ...]:
+    """Return independent recovery-node index entries in projection order."""
+    return tuple(
+        entry.model_copy(deep=True)
+        for entry in projection["recovery_nodes_by_record_id"].get(record_id, ())
+    )
+
+
+def check_result(projection: GraphProjection, node_id: str) -> CheckResultProjection | None:
+    """Return an independent check result for a node, if present."""
+    result = projection["check_results"].get(node_id)
+    return result.model_copy(deep=True) if result is not None else None
+
+
+def check_results(projection: GraphProjection) -> tuple[tuple[str, CheckResultProjection], ...]:
+    """Return independent check results in projection insertion order."""
+    return tuple(
+        (node_id, result.model_copy(deep=True))
+        for node_id, result in projection["check_results"].items()
+    )
+
+
+def invalid_test_block(
+    projection: GraphProjection, task_region_id: str
+) -> InvalidTestBlockProjection | None:
+    """Return an independent invalid-test block for a task region, if present."""
+    block = projection["invalid_test_blocks"].get(task_region_id)
+    return block.model_copy(deep=True) if block is not None else None
+
+
+def invalid_test_blocks(
+    projection: GraphProjection,
+) -> tuple[tuple[str, InvalidTestBlockProjection], ...]:
+    """Return independent invalid-test blocks in projection insertion order."""
+    return tuple(
+        (task_region_id, block.model_copy(deep=True))
+        for task_region_id, block in projection["invalid_test_blocks"].items()
+    )
+
+
+def configured_gates(projection: GraphProjection, task_region_id: str) -> tuple[str, ...]:
+    """Return configured gate identifiers for a task region in insertion order."""
+    return tuple(projection["configured_gates"].get(task_region_id, ()))
+
+
+def gate_decision(projection: GraphProjection, task_region_id: str, gate_id: str) -> bool | None:
+    """Return a task-region gate decision, if it has been recorded."""
+    return projection["gate_decisions"].get(task_region_id, {}).get(gate_id)
+
+
+def node_gate_decision(projection: GraphProjection, node_id: str) -> bool:
+    """Return a node gate decision, defaulting to the established ``False`` value."""
+    return projection["node_gate_decisions"].get(node_id, False)

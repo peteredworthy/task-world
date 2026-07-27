@@ -14,12 +14,17 @@ from orchestrator.graph import (
     ApprovalDecisionProjection,
     AuthorityDecisionProjection,
     CallbackIdempotencyEvent,
+    CheckResultProjection,
     CleanupRequestedProjection,
     EnvironmentFailureProjection,
     EventEnvelope,
     FileStateRecord,
+    InvalidTestBlockProjection,
     RequirementRevisionProjection,
+    RecoveryNodeIndexEntry,
     SupportEvidenceProjection,
+    VerificationResultProjection,
+    VerifierVerdictProjection,
     active_leases,
     active_requirement_version,
     accepted_graph_patch_ids,
@@ -30,9 +35,12 @@ from orchestrator.graph import (
     authority_revision_blocker,
     bound_record_ids,
     callback_idempotency_event,
+    check_result,
+    check_results,
     cleanup_applied,
     cleanup_request,
     decision_request,
+    configured_gates,
     build_projection,
     completion_decision_passed,
     edge_by_id,
@@ -41,9 +49,14 @@ from orchestrator.graph import (
     environment_failure,
     environment_failures,
     file_state_record,
+    failed_verification_candidate_ids,
+    failed_verification_result,
+    gate_decision,
     input_binding_for_port,
     input_bindings_for_node,
     initial_projection,
+    invalid_test_block,
+    invalid_test_blocks,
     iter_edges,
     iter_leases,
     lease_by_id,
@@ -56,6 +69,7 @@ from orchestrator.graph import (
     node_creation_position,
     node_exists,
     node_failed_candidate_id,
+    node_gate_decision,
     node_kind,
     node_last_deferred_reason,
     node_preconditions,
@@ -75,12 +89,16 @@ from orchestrator.graph import (
     planner_session_current_node,
     planner_session_state,
     planner_successor,
+    passed_verification_candidate_ids,
+    passed_verification_result,
+    recovery_nodes_for_record,
     requirement_revision,
     resource_claims_for_node,
     run_state,
     task_candidates,
     task_state,
     support_evidence,
+    verifier_verdict,
 )
 from scripts.graph_projection_inventory import (
     AccessInventory,
@@ -144,6 +162,89 @@ def test_task_3c_queries_preserve_missing_values_and_planner_default() -> None:
     assert callback_idempotency_event(projection, "missing") is None
     assert environment_failure(projection, "missing") is None
     assert environment_failures(projection) == ()
+
+
+def test_verification_and_recovery_queries_preserve_missing_values() -> None:
+    projection = initial_projection()
+
+    assert verifier_verdict(projection, "missing") is None
+    assert passed_verification_result(projection, "missing") is None
+    assert failed_verification_result(projection, "missing") is None
+    assert passed_verification_candidate_ids(projection) == ()
+    assert failed_verification_candidate_ids(projection) == ()
+    assert recovery_nodes_for_record(projection, "missing") == ()
+    assert check_result(projection, "missing") is None
+    assert check_results(projection) == ()
+    assert invalid_test_block(projection, "missing") is None
+    assert invalid_test_blocks(projection) == ()
+    assert configured_gates(projection, "missing") == ()
+    assert gate_decision(projection, "missing", "missing") is None
+    assert node_gate_decision(projection, "missing") is False
+
+
+def test_verification_and_recovery_queries_preserve_order_and_isolation() -> None:
+    projection = initial_projection()
+    projection["verifier_verdicts"]["candidate-1"] = VerifierVerdictProjection(
+        candidate_id="candidate-1", verdict="passed", position=1
+    )
+    projection["passed_verification_results_by_record_id"]["passed-1"] = (
+        VerificationResultProjection(
+            node_id="verifier-1", record_id="passed-1", candidate_id="candidate-1"
+        )
+    )
+    projection["failed_verification_results_by_record_id"]["failed-1"] = (
+        VerificationResultProjection(
+            node_id="verifier-2", record_id="failed-1", candidate_id="candidate-2"
+        )
+    )
+    projection["passed_verification_candidate_ids"].extend(("candidate-2", "candidate-1"))
+    projection["failed_verification_candidate_ids"].update(
+        {"candidate-3": True, "candidate-2": True}
+    )
+    projection["recovery_nodes_by_record_id"]["failed-1"] = [
+        RecoveryNodeIndexEntry(node_id="recovery-2", recovery_reason="second"),
+        RecoveryNodeIndexEntry(node_id="recovery-1", recovery_reason="first"),
+    ]
+    projection["check_results"]["check-2"] = CheckResultProjection(
+        node_id="check-2", status="failed", position=2, candidate_record_ids=["candidate-2"]
+    )
+    projection["check_results"]["check-1"] = CheckResultProjection(
+        node_id="check-1", status="passed", position=1, candidate_record_ids=["candidate-1"]
+    )
+    projection["invalid_test_blocks"]["region-2"] = InvalidTestBlockProjection(position=2)
+    projection["invalid_test_blocks"]["region-1"] = InvalidTestBlockProjection(position=1)
+    projection["configured_gates"]["region-1"] = {"gate-2": True, "gate-1": True}
+    projection["gate_decisions"]["region-1"] = {"gate-2": False}
+    projection["node_gate_decisions"]["gate-node"] = True
+
+    assert verifier_verdict(projection, "candidate-1") is not None
+    assert passed_verification_result(projection, "passed-1") is not None
+    assert failed_verification_result(projection, "failed-1") is not None
+    assert passed_verification_candidate_ids(projection) == ("candidate-2", "candidate-1")
+    assert failed_verification_candidate_ids(projection) == ("candidate-3", "candidate-2")
+    assert tuple(entry.node_id for entry in recovery_nodes_for_record(projection, "failed-1")) == (
+        "recovery-2",
+        "recovery-1",
+    )
+    assert tuple(node_id for node_id, _ in check_results(projection)) == ("check-2", "check-1")
+    assert tuple(region_id for region_id, _ in invalid_test_blocks(projection)) == (
+        "region-2",
+        "region-1",
+    )
+    assert configured_gates(projection, "region-1") == ("gate-2", "gate-1")
+    assert gate_decision(projection, "region-1", "gate-2") is False
+    assert node_gate_decision(projection, "gate-node") is True
+
+    verdict = verifier_verdict(projection, "candidate-1")
+    assert verdict is not None
+    with pytest.raises(ValidationError):
+        verdict.position = 99
+    result = check_result(projection, "check-2")
+    assert result is not None
+    result.candidate_record_ids.append("changed")
+    fresh_result = check_result(projection, "check-2")
+    assert fresh_result is not None
+    assert fresh_result.candidate_record_ids == ["candidate-2"]
 
 
 def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() -> None:
@@ -755,10 +856,21 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
         assert validate_query_migration_manifest(ledger, inventory, ROOT, domain=domain) == {
             domain: len(domain_keys)
         }
-    assert Counter(site.domain for site in ledger.unclassified_sites) == {
-        "test_fixture": 349,
-        "verification_recovery": 151,
+    assert Counter(site.domain for site in ledger.unclassified_sites) == {"test_fixture": 349}
+    verification_recovery_keys = {
+        site.site_key
+        for site in skeleton.unclassified_sites
+        if site.domain == "verification_recovery"
     }
+    assert {
+        disposition.site_key
+        for disposition in ledger.dispositions
+        if disposition.site_key in verification_recovery_keys
+    } == verification_recovery_keys
+    assert not {site.site_key for site in ledger.unclassified_sites} & verification_recovery_keys
+    assert validate_query_migration_manifest(
+        ledger, inventory, ROOT, domain="verification_recovery"
+    ) == {"verification_recovery": 151}
     assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="lifecycle") == {
         "lifecycle": len(lifecycle_keys)
     }
