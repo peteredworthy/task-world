@@ -937,3 +937,76 @@ def aliases(projection: GraphProjection) -> None:
 
     assert not inventory.occurrences
     assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        'projection["run_state"], alias',
+        'projection["run_state"], *alias',
+    ],
+)
+def test_collect_source_clears_alias_independently_of_projection_target_diagnostic(
+    target: str,
+) -> None:
+    inventory = collect_source(
+        f"""
+def aliases(projection: GraphProjection) -> None:
+    alias = projection
+    {target} = values
+    alias["run_state"]
+""",
+        relative_path="mixed-starred-alias-target.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "projection.keys().clear()",
+        'projection.setdefault("run_state", None).update({})',
+        'projection.pop("run_state").method()',
+        'projection.get("node_states")["node"].update({})',
+    ],
+)
+def test_collect_source_rejects_calls_on_chained_projection_method_results(
+    expression: str,
+) -> None:
+    inventory = collect_source(
+        f"""
+def calls(projection: GraphProjection) -> None:
+    {expression}
+""",
+        relative_path="chained-method-result-calls.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_call"]
+
+
+@pytest.mark.parametrize(
+    ("expression", "diagnostic_code"),
+    [
+        ('projection["unknown"]["nested"]', "unknown_field"),
+        ('projection[unknown]["nested"]', "computed_key"),
+    ],
+)
+def test_collect_source_deduplicates_invalid_deep_subscript_diagnostics(
+    expression: str, diagnostic_code: str
+) -> None:
+    inventory = collect_source(
+        f"""
+def reads(projection: GraphProjection, unknown: str) -> None:
+    {expression}
+""",
+        relative_path="invalid-deep-subscript.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [diagnostic_code]

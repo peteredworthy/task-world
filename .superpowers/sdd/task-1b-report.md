@@ -423,3 +423,58 @@ deprecations from `tests/unit/test_projectors.py`.
   starred destructuring emits the target diagnostic and clears stale projection aliases.
 - Starred assignment targets are excluded from the generic projection-unpacking diagnostic; their
   fail-closed binding diagnostic is produced by assignment-target analysis instead.
+
+## Final Task 1b Fix Evidence (2026-07-27, remaining Important findings)
+
+### RED
+
+Parametrized regressions for mixed/starred alias rebinding, chained supported-method results, and
+invalid deep subscripts were added before the collector change:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+8 failed, 51 passed
+```
+
+The failures showed that a projection target in mixed/starred destructuring prevented the generic
+rebind cleanup from clearing a live alias, method-result calls through `Attribute` and `Subscript`
+chains leaked inner supported occurrences, and invalid root subscripts emitted duplicate
+diagnostics while their deep expression was visited.
+
+### GREEN and verification
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+59 passed in 4.12s
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run ruff format --check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+2 files already formatted
+
+uv run pyright scripts/graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+make test
+4911 passed, 3 skipped, 3 warnings in 97.13s
+```
+
+The three full-suite warnings remain the existing Python 3.12 `aiosqlite` default datetime-adapter
+deprecations from `tests/unit/test_projectors.py`.
+
+### Final fixes
+
+- Alias cleanup now runs independently of projection-target diagnostics, clearing every rebound
+  live alias name in mixed and starred destructuring while retaining one target diagnostic.
+- Projection-derived detection now recurses through `Attribute` and `Subscript` chains, so calls
+  on `keys()`, `setdefault()`, `pop()`, and `get()[...]` results emit one `unsupported_call` and
+  suppress all inner supported occurrences.
+- Diagnostics are deduplicated by localized CST node and diagnostic code, preserving the first
+  occurrence and preventing duplicate computed-key or unknown-field reports for deep subscripts.
+
+### Files changed in this final fix
+
+- `scripts/graph_projection_inventory.py`
+- `tests/unit/test_graph_projection_inventory.py`
+- `.superpowers/sdd/task-1b-report.md`

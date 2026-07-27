@@ -207,6 +207,7 @@ class _Collector(cst.CSTVisitor):
         self.known_aliases: dict[int, set[str]] = {}
         self.records: list[tuple[str, str, str | None, AccessKind, int, int]] = []
         self.diagnostics: list[tuple[str, str, int, int]] = []
+        self.diagnostic_keys: set[tuple[int, DiagnosticCode]] = set()
         self.handled: set[int] = set()
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
@@ -265,19 +266,16 @@ class _Collector(cst.CSTVisitor):
     def _projection_derived(self, node: cst.BaseExpression) -> bool:
         if self._tracked(node) or self._is_projection_method_call(node):
             return True
-        return isinstance(node, cst.Subscript) and self._projection_derived(node.value)
+        return isinstance(node, (cst.Attribute, cst.Subscript)) and self._projection_derived(
+            node.value
+        )
 
     def _is_projection_method_call(self, node: cst.BaseExpression) -> bool:
         if not isinstance(node, cst.Call) or not isinstance(node.func, cst.Attribute):
             return False
         if node.func.attr.value not in _SUPPORTED_PROJECTION_METHODS:
             return False
-        receiver = node.func.value
-        return (
-            self._tracked(receiver)
-            or self._tracked_field_subscript(receiver) is not None
-            or self._is_tracked_get_call(receiver)
-        )
+        return self._projection_derived(node.func.value)
 
     def _is_tracked_get_call(self, node: cst.BaseExpression) -> bool:
         return (
@@ -297,22 +295,14 @@ class _Collector(cst.CSTVisitor):
         return None
 
     def _handle_subscript_chain(self, node: cst.Subscript) -> None:
-        current: cst.BaseExpression = node
-        while isinstance(current, cst.Subscript):
-            self.handled.add(id(current))
-            current = current.value
-        if self._is_tracked_get_call(current):
-            self.handled.add(id(current))
+        self._handle_projection_derived(node)
 
-    def _handle_projection_method_call(self, node: cst.Call) -> None:
+    def _handle_projection_derived(self, node: cst.BaseExpression) -> None:
         self.handled.add(id(node))
-        if not isinstance(node.func, cst.Attribute):
-            return
-        receiver = node.func.value
-        if isinstance(receiver, cst.Subscript):
-            self._handle_subscript_chain(receiver)
-        elif isinstance(receiver, cst.Call):
-            self._handle_projection_method_call(receiver)
+        if isinstance(node, cst.Call) and isinstance(node.func, cst.Attribute):
+            self._handle_projection_derived(node.func.value)
+        elif isinstance(node, (cst.Attribute, cst.Subscript)):
+            self._handle_projection_derived(node.value)
 
     def _projection_target_subscripts(
         self, node: cst.BaseAssignTargetExpression
@@ -368,6 +358,10 @@ class _Collector(cst.CSTVisitor):
         )
 
     def _diagnostic(self, code: DiagnosticCode, message: str, node: cst.CSTNode) -> None:
+        key = (id(node), code)
+        if key in self.diagnostic_keys:
+            return
+        self.diagnostic_keys.add(key)
         position = self.get_metadata(PositionProvider, node).start
         self.diagnostics.append((code, message, position.line, position.column))
 
@@ -488,8 +482,8 @@ class _Collector(cst.CSTVisitor):
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING, "unsupported projection binding", node
                 )
-                for name in target_names:
-                    self._discard_live_alias(name)
+            for name in target_names:
+                self._discard_live_alias(name)
             return
         scope = self.aliases.get(id(self.get_metadata(ScopeProvider, node.targets[0].target)))
         if scope is None:
@@ -684,8 +678,8 @@ class _Collector(cst.CSTVisitor):
             )
             if isinstance(node.func, cst.Subscript):
                 self._handle_subscript_chain(node.func)
-            elif isinstance(node.func, cst.Call):
-                self._handle_projection_method_call(node.func)
+            else:
+                self._handle_projection_derived(node.func)
             return
         if self._tracked(node.func):
             self._diagnostic(
