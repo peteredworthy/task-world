@@ -1,10 +1,11 @@
 """Strict ownership-manifest loading and bounded access collection."""
 
 import ast
+import argparse
 import hashlib
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Iterable, Literal
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider, ScopeProvider
@@ -133,6 +134,7 @@ class InventoryDiagnostic(BaseModel):
     column: int
     code: DiagnosticCode
     message: str
+    remediation: str = "replace this dynamic projection access with a typed GraphProjection flow"
 
 
 class SourceInventory(BaseModel):
@@ -141,6 +143,16 @@ class SourceInventory(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     relative_path: str
+    baseline_revision: str
+    occurrences: tuple[AccessOccurrence, ...]
+    diagnostics: tuple[InventoryDiagnostic, ...]
+
+
+class AccessInventory(BaseModel):
+    """Deterministic aggregate of every bounded source inventory."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
     baseline_revision: str
     occurrences: tuple[AccessOccurrence, ...]
     diagnostics: tuple[InventoryDiagnostic, ...]
@@ -179,6 +191,16 @@ def _name(node: cst.BaseExpression) -> str | None:
     return None
 
 
+def _attribute_key(node: cst.Attribute) -> str | None:
+    """Return a stable dotted key without rendering a detached CST fragment."""
+    if isinstance(node.value, cst.Name):
+        return f"{node.value.value}.{node.attr.value}"
+    if isinstance(node.value, cst.Attribute):
+        prefix = _attribute_key(node.value)
+        return f"{prefix}.{node.attr.value}" if prefix is not None else None
+    return None
+
+
 def _literal_key(node: cst.BaseExpression) -> str | None:
     if not isinstance(node, cst.SimpleString):
         return None
@@ -197,11 +219,18 @@ class _Collector(cst.CSTVisitor):
     METADATA_DEPENDENCIES = (PositionProvider, ParentNodeProvider, ScopeProvider)
 
     def __init__(
-        self, relative_path: str, baseline_revision: str, fields: dict[str, FieldOwnership]
+        self,
+        relative_path: str,
+        baseline_revision: str,
+        fields: dict[str, FieldOwnership],
+        known_returns: frozenset[str] = frozenset(),
     ) -> None:
         self.relative_path = relative_path
         self.baseline_revision = baseline_revision
         self.fields = fields
+        self.known_returns = known_returns
+        self.tracked_attributes: set[str] = set()
+        self.imported_names: set[str] = set()
         self.lexical_names: list[str] = []
         self.aliases: dict[int, set[str]] = {}
         self.known_aliases: dict[int, set[str]] = {}
@@ -244,9 +273,18 @@ class _Collector(cst.CSTVisitor):
         self.lexical_names.pop()
 
     def _tracked(self, node: cst.BaseExpression) -> bool:
-        if not isinstance(node, cst.Name):
-            return False
-        return node.value in self.aliases.get(id(self.get_metadata(ScopeProvider, node)), set())
+        if isinstance(node, cst.Name):
+            return node.value in self.aliases.get(id(self.get_metadata(ScopeProvider, node)), set())
+        return isinstance(node, cst.Attribute) and _attribute_key(node) in self.tracked_attributes
+
+    def _known_projection_value(self, node: cst.BaseExpression) -> bool:
+        if self._tracked(node):
+            return True
+        return (
+            isinstance(node, cst.Call)
+            and isinstance(node.func, cst.Name)
+            and node.func.value in self.known_returns
+        )
 
     def _known_alias(self, node: cst.Name) -> bool:
         return node.value in self.known_aliases.get(
@@ -406,7 +444,23 @@ class _Collector(cst.CSTVisitor):
         return field if field in self.fields else None
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
+        if (
+            node.value is not None
+            and _name(node.annotation.annotation) == "Any"
+            and self._known_projection_value(node.value)
+        ):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_BINDING,
+                "projection escapes through Any",
+                node,
+            )
         return
+
+    def visit_ImportFrom(self, node: cst.ImportFrom) -> None:
+        if isinstance(node.names, cst.ImportStar):
+            return
+        for name in node.names:
+            self.imported_names.add(name.asname.name.value if name.asname else name.name.value)
 
     def leave_AnnAssign(self, original_node: cst.AnnAssign) -> None:
         node = original_node
@@ -472,6 +526,12 @@ class _Collector(cst.CSTVisitor):
             and self._projection_target_subscripts(target.target)
             for target in node.targets
         )
+        if len(node.targets) == 1 and isinstance(node.targets[0].target, cst.Attribute):
+            if self._known_projection_value(node.value):
+                attribute = _attribute_key(node.targets[0].target)
+                if attribute is not None:
+                    self.tracked_attributes.add(attribute)
+            return
         if len(node.targets) != 1 or not isinstance(node.targets[0].target, cst.Name):
             target_names = tuple(
                 name for target in node.targets for name in self._target_names(target.target)
@@ -488,7 +548,7 @@ class _Collector(cst.CSTVisitor):
         scope = self.aliases.get(id(self.get_metadata(ScopeProvider, node.targets[0].target)))
         if scope is None:
             return
-        if self._tracked(node.value):
+        if self._known_projection_value(node.value):
             self._add_alias(node.targets[0].target)
         else:
             self._discard_alias(node.targets[0].target)
@@ -707,6 +767,15 @@ class _Collector(cst.CSTVisitor):
                         argument,
                     )
             return
+        if _name(node.func) == "callback" and any(
+            self._known_projection_value(arg.value) for arg in node.args
+        ):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_CALL,
+                "projection escapes through an unknown callback",
+                node,
+            )
+            return
         for argument in node.args:
             if self._tracked(argument.value):
                 self._record(AccessKind.UNTYPED_ESCAPE, None, node)
@@ -823,6 +892,13 @@ class _Collector(cst.CSTVisitor):
     def visit_Subscript(self, node: cst.Subscript) -> None:
         if id(node) in self.handled:
             return
+        if isinstance(node.value, cst.Name) and node.value.value in self.imported_names:
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_BINDING,
+                "imported projection alias cannot be resolved",
+                node,
+            )
+            return
         field_subscript = self._tracked_field_subscript(node)
         if field_subscript is None:
             return
@@ -931,3 +1007,121 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
     collector = _Collector(relative_path, baseline_revision, _manifest_fields())
     MetadataWrapper(module).visit(collector)
     return collector.result()
+
+
+def _known_projection_returns(source: str) -> frozenset[str]:
+    """Return local functions with an explicit or bounded projection-producing return."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return frozenset()
+    known = {"initial_projection", "build_projection", "reduce_event"}
+    functions = [
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for function in functions:
+            annotation = ast.unparse(function.returns) if function.returns is not None else ""
+            returns_known_call = any(
+                isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Name)
+                and value.func.id in known
+                for statement in ast.walk(function)
+                if isinstance(statement, ast.Return)
+                for value in (statement.value,)
+                if value is not None
+            )
+            if (
+                annotation.endswith("GraphProjection") or returns_known_call
+            ) and function.name not in known:
+                known.add(function.name)
+                changed = True
+    return frozenset(known)
+
+
+def inventory_paths(
+    paths: Iterable[Path], manifest: ProjectionMigrationManifest, *, root: Path
+) -> AccessInventory:
+    """Collect a sorted aggregate from explicitly selected Python paths."""
+    inventories: list[SourceInventory] = []
+    for path in sorted(
+        (path for path in paths if path.suffix == ".py"), key=lambda item: str(item)
+    ):
+        source = path.read_text()
+        relative_path = path.relative_to(root).as_posix()
+        try:
+            module = cst.parse_module(source)
+        except cst.ParserSyntaxError:
+            inventories.append(
+                collect_source(
+                    source,
+                    relative_path=relative_path,
+                    baseline_revision=manifest.baseline_revision,
+                )
+            )
+            continue
+        collector = _Collector(
+            relative_path,
+            manifest.baseline_revision,
+            {field.old_name: field for field in manifest.fields},
+            _known_projection_returns(source),
+        )
+        MetadataWrapper(module).visit(collector)
+        inventories.append(collector.result())
+    return AccessInventory(
+        baseline_revision=manifest.baseline_revision,
+        occurrences=tuple(
+            sorted(
+                (item for inventory in inventories for item in inventory.occurrences),
+                key=lambda item: (
+                    item.relative_path,
+                    item.qualified_function,
+                    item.line,
+                    item.column,
+                    item.kind,
+                ),
+            )
+        ),
+        diagnostics=tuple(
+            sorted(
+                (item for inventory in inventories for item in inventory.diagnostics),
+                key=lambda item: (item.relative_path, item.line, item.column, item.code),
+            )
+        ),
+    )
+
+
+def inventory_repository(root: Path, manifest: ProjectionMigrationManifest) -> AccessInventory:
+    """Collect tracked source areas while excluding generated and third-party trees."""
+    excluded = {"worktrees", "vendor", ".venv", "venv", "__pycache__"}
+    paths = (
+        path
+        for directory in (root / "src", root / "tests", root / "scripts")
+        if directory.exists()
+        for path in directory.rglob("*.py")
+        if not any(part in excluded for part in path.relative_to(root).parts)
+    )
+    return inventory_paths(paths, manifest, root=root)
+
+
+def main() -> int:
+    """Print unresolved-site remediation without writing a baseline."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--diagnose", action="store_true")
+    args = parser.parse_args()
+    if not args.diagnose:
+        parser.error("--diagnose is required; this slice never writes a baseline")
+    root = Path(__file__).parents[1]
+    manifest = load_manifest(root / "scripts/codemods/graph_projection_manifest.yaml")
+    inventory = inventory_repository(root, manifest)
+    for diagnostic in inventory.diagnostics:
+        print(
+            f"{diagnostic.relative_path}:{diagnostic.line}:{diagnostic.column}: {diagnostic.code}: {diagnostic.remediation}"
+        )
+    return 1 if inventory.diagnostics else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

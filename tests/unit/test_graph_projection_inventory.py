@@ -10,11 +10,14 @@ from orchestrator.graph import (
     resource_claims_for_node,
 )
 from scripts.graph_projection_inventory import (
+    AccessInventory,
     AccessKind,
     AccessOccurrence,
     DiagnosticCode,
     InventoryDiagnostic,
     collect_source,
+    inventory_paths,
+    inventory_repository,
     load_manifest,
     occurrence_id,
 )
@@ -1010,3 +1013,104 @@ def reads(projection: GraphProjection, unknown: str) -> None:
 
     assert not inventory.occurrences
     assert [item.code for item in inventory.diagnostics] == [diagnostic_code]
+
+
+def test_inventory_paths_follows_known_returns_pass_through_and_context_flow(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "flow.py"
+    source.write_text(
+        """
+def make() -> GraphProjection:
+    return initial_projection()
+
+def pass_through(projection: GraphProjection) -> GraphProjection:
+    return projection
+
+def read() -> None:
+    projection = pass_through(make())
+    projection["run_state"]
+
+def dispatch(context: GraphDispatchContext) -> None:
+    context.graph_projection = make()
+    context.graph_projection["node_states"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("dispatch", "node_states"),
+        ("read", "run_state"),
+    ]
+    assert not inventory.diagnostics
+
+
+def test_inventory_paths_tracks_annotated_attributes_and_rejects_any_callbacks_and_imports(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "escapes.py"
+    source.write_text(
+        """
+from external import projection_alias
+from typing import Any, cast
+
+class Holder:
+    projection: GraphProjection
+
+def read(holder: Holder, projection: GraphProjection, callback: object) -> None:
+    holder.projection = projection
+    holder.projection["ready_nodes"]
+    cast(dict[str, str], projection["node_states"])
+    any_value: Any = projection
+    callback(projection)
+    projection_alias["run_state"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.kind, item.old_field_name) for item in inventory.occurrences] == [
+        ("literal_subscript_read", "ready_nodes"),
+        ("unpack_cast", "node_states"),
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_call",
+        "unsupported_binding",
+    ]
+    assert all(item.remediation for item in inventory.diagnostics)
+
+
+def test_inventory_repository_excludes_generated_and_sorts_files(tmp_path: Path) -> None:
+    for relative_path in (
+        "src/z.py",
+        "tests/a.py",
+        "scripts/b.py",
+        "vendor/ignored.py",
+        "worktrees/ignored.py",
+        ".venv/ignored.py",
+        "src/__pycache__/ignored.py",
+    ):
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('def read(projection: GraphProjection):\n    projection["run_state"]\n')
+
+    inventory = inventory_repository(tmp_path, load_manifest(MANIFEST_PATH))
+
+    assert [item.relative_path for item in inventory.occurrences] == [
+        "scripts/b.py",
+        "src/z.py",
+        "tests/a.py",
+    ]
+    assert AccessInventory.model_config.get("frozen") is True
+
+
+def test_inventory_paths_does_not_parse_detached_attribute_fragments(tmp_path: Path) -> None:
+    source = tmp_path / "ordinary.py"
+    source.write_text('def ordinary(values: list[str]) -> str:\n    return ",".join(values)\n')
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert not inventory.diagnostics
