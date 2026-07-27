@@ -188,6 +188,11 @@ def _literal_key(node: cst.BaseExpression) -> str | None:
     return None
 
 
+_SUPPORTED_PROJECTION_METHODS = frozenset(
+    {"get", "pop", "setdefault", "keys", "values", "items", "append", "extend"}
+)
+
+
 class _Collector(cst.CSTVisitor):
     METADATA_DEPENDENCIES = (PositionProvider, ParentNodeProvider, ScopeProvider)
 
@@ -258,9 +263,21 @@ class _Collector(cst.CSTVisitor):
         )
 
     def _projection_derived(self, node: cst.BaseExpression) -> bool:
-        if self._tracked(node) or self._is_tracked_get_call(node):
+        if self._tracked(node) or self._is_projection_method_call(node):
             return True
         return isinstance(node, cst.Subscript) and self._projection_derived(node.value)
+
+    def _is_projection_method_call(self, node: cst.BaseExpression) -> bool:
+        if not isinstance(node, cst.Call) or not isinstance(node.func, cst.Attribute):
+            return False
+        if node.func.attr.value not in _SUPPORTED_PROJECTION_METHODS:
+            return False
+        receiver = node.func.value
+        return (
+            self._tracked(receiver)
+            or self._tracked_field_subscript(receiver) is not None
+            or self._is_tracked_get_call(receiver)
+        )
 
     def _is_tracked_get_call(self, node: cst.BaseExpression) -> bool:
         return (
@@ -287,11 +304,23 @@ class _Collector(cst.CSTVisitor):
         if self._is_tracked_get_call(current):
             self.handled.add(id(current))
 
+    def _handle_projection_method_call(self, node: cst.Call) -> None:
+        self.handled.add(id(node))
+        if not isinstance(node.func, cst.Attribute):
+            return
+        receiver = node.func.value
+        if isinstance(receiver, cst.Subscript):
+            self._handle_subscript_chain(receiver)
+        elif isinstance(receiver, cst.Call):
+            self._handle_projection_method_call(receiver)
+
     def _projection_target_subscripts(
         self, node: cst.BaseAssignTargetExpression
     ) -> tuple[cst.Subscript, ...]:
         if isinstance(node, cst.Subscript):
             return (node,) if self._tracked_field_subscript(node) is not None else ()
+        if isinstance(node, cst.StarredElement):
+            return self._projection_target_subscripts(node.value)
         if isinstance(node, (cst.Tuple, cst.List)):
             return tuple(
                 subscript
@@ -317,6 +346,8 @@ class _Collector(cst.CSTVisitor):
     def _target_names(self, node: cst.BaseAssignTargetExpression) -> tuple[cst.Name, ...]:
         if isinstance(node, cst.Name):
             return (node,)
+        if isinstance(node, cst.StarredElement):
+            return self._target_names(node.value)
         if isinstance(node, (cst.Tuple, cst.List)):
             return tuple(
                 name
@@ -654,7 +685,7 @@ class _Collector(cst.CSTVisitor):
             if isinstance(node.func, cst.Subscript):
                 self._handle_subscript_chain(node.func)
             elif isinstance(node.func, cst.Call):
-                self.handled.add(id(node.func))
+                self._handle_projection_method_call(node.func)
             return
         if self._tracked(node.func):
             self._diagnostic(
@@ -703,6 +734,11 @@ class _Collector(cst.CSTVisitor):
         return len(args) in arities[method]
 
     def visit_StarredElement(self, node: cst.StarredElement) -> None:
+        parent = self.get_metadata(ParentNodeProvider, node)
+        if isinstance(parent, (cst.Tuple, cst.List)) and isinstance(
+            self.get_metadata(ParentNodeProvider, parent), cst.AssignTarget
+        ):
+            return
         if self._tracked(node.value):
             self._diagnostic(
                 DiagnosticCode.PROJECTION_UNPACKING,

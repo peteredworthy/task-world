@@ -876,3 +876,64 @@ def targets(projection: GraphProjection) -> None:
         "unsupported_mutation",
         "unsupported_mutation",
     ]
+
+
+@pytest.mark.parametrize(
+    "method_call",
+    [
+        'projection.get("run_state")()',
+        'projection.pop("run_state")()',
+        'projection.setdefault("run_state", None)()',
+        "projection.keys()()",
+        "projection.values()()",
+        "projection.items()()",
+        'projection["ready_nodes"].append("node")()',
+        'projection["ready_nodes"].extend(("node",))()',
+        'projection.get("ready_nodes").append("node")()',
+        'projection.get("ready_nodes").extend(("node",))()',
+    ],
+)
+def test_collect_source_rejects_invocation_of_every_supported_method_result(
+    method_call: str,
+) -> None:
+    inventory = collect_source(
+        f"""
+def calls(projection: GraphProjection) -> None:
+    {method_call}
+""",
+        relative_path="method-result-calls.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_call"]
+
+
+def test_collect_source_diagnoses_starred_projection_subscript_targets() -> None:
+    inventory = collect_source(
+        """
+def targets(projection: GraphProjection) -> None:
+    first, *projection["node_states"]["node"] = values
+""",
+        relative_path="starred-projection-target.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]
+
+
+def test_collect_source_clears_alias_after_starred_destructured_rebinding() -> None:
+    inventory = collect_source(
+        """
+def aliases(projection: GraphProjection) -> None:
+    alias = projection
+    first, *alias = values
+    alias["run_state"]
+""",
+        relative_path="starred-alias-target.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]

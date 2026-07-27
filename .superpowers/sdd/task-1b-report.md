@@ -378,3 +378,48 @@ deprecations in `tests/unit/test_projectors.py`.
 - `scripts/graph_projection_inventory.py`
 - `tests/unit/test_graph_projection_inventory.py`
 - `.superpowers/sdd/task-1b-report.md`
+
+## Final Localized Task 1b Fix Evidence (2026-07-27, final two fixes)
+
+### RED
+
+Parametrized regression tests for invocation of every supported projection-method result, plus
+starred projection-target and alias-rebinding tests, were added before the implementation change:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+8 failed, 41 passed
+```
+
+The failures showed supported `pop`, `setdefault`, `keys`, `values`, `items`, `append`, and
+`extend` results being recorded instead of rejected, and starred targets being missed by target
+diagnostics and alias clearing.
+
+### GREEN and verification
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+51 passed in 4.35s
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run pyright scripts/graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+make test
+4903 passed, 3 skipped, 3 warnings in 99.46s
+```
+
+The three full-suite warnings remain the existing Python 3.12 `aiosqlite` datetime-adapter
+deprecations from `tests/unit/test_projectors.py`.
+
+### Final fixes
+
+- All supported projection method results are treated as projection-derived when directly
+  invoked; the outer call emits `unsupported_call` and suppresses the inner supported occurrence,
+  including field and `.get()`-result `append`/`extend` chains.
+- Projection target-subscript and target-name traversal recurses through `cst.StarredElement`, so
+  starred destructuring emits the target diagnostic and clears stale projection aliases.
+- Starred assignment targets are excluded from the generic projection-unpacking diagnostic; their
+  fail-closed binding diagnostic is produced by assignment-target analysis instead.
