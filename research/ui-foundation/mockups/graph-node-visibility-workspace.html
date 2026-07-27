@@ -1,0 +1,1603 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Graph node visibility workspace</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17231e;
+      --muted: #65716a;
+      --paper: #f4f0e6;
+      --panel: #fffdf7;
+      --line: #c8c0b3;
+      --grid: rgba(71, 83, 76, 0.09);
+      --active: #2d647f;
+      --waiting: #8a691b;
+      --failed: #a64225;
+      --settled: #476856;
+      --retired: #857f75;
+      --selection: #d65a32;
+      --inspector-width: 372px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+    }
+
+    body {
+      color: var(--ink);
+      background: #d9d3c8;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button { font: inherit; }
+
+    .prototype-shell {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      width: 100%;
+      height: 100dvh;
+      background: var(--paper);
+    }
+
+    .run-header {
+      display: grid;
+      grid-template-columns: minmax(250px, 1fr) auto auto;
+      align-items: center;
+      gap: 24px;
+      min-height: 68px;
+      padding: 11px 18px;
+      color: #f8f3e8;
+      background: #17251f;
+      border-bottom: 3px solid #9c3c23;
+    }
+
+    .run-identity {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .run-identity strong {
+      font: 700 22px/1 Georgia, "Times New Roman", serif;
+      letter-spacing: -0.02em;
+    }
+
+    .run-identity span,
+    .run-stat {
+      color: #cbd3cd;
+      font-size: 12px;
+    }
+
+    .run-stat {
+      display: grid;
+      gap: 2px;
+      min-width: 120px;
+      padding-left: 18px;
+      border-left: 1px solid #536159;
+    }
+
+    .run-stat b {
+      color: #fffaf0;
+      font: 700 13px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    .attention-summary {
+      justify-self: end;
+      padding: 7px 10px;
+      color: #ffcfb9;
+      border: 1px solid #98533c;
+      background: #3d271f;
+      font: 700 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .workspace {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) var(--inspector-width);
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .graph-region {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border-right: 1px solid #9e978c;
+    }
+
+    .graph-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-height: 48px;
+      padding: 8px 14px;
+      background: #ece7dc;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .graph-toolbar h1 {
+      margin: 0;
+      font: 700 16px/1.1 Georgia, "Times New Roman", serif;
+    }
+
+    .graph-toolbar p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .view-readout {
+      display: flex;
+      gap: 12px;
+      margin-left: auto;
+      color: #516059;
+      font: 700 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .graph-scroll {
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      overscroll-behavior: contain;
+      background-color: #e9e4d9;
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+      background-size: 24px 24px;
+      scrollbar-color: #8f8a80 #d9d3c8;
+    }
+
+    .graph-scroll:focus-visible {
+      outline: 3px solid var(--active);
+      outline-offset: -3px;
+    }
+
+    .stage {
+      position: relative;
+      width: max-content;
+      min-width: 100%;
+      isolation: isolate;
+    }
+
+    .edge-layer {
+      position: absolute;
+      inset: 0;
+      z-index: 1;
+      overflow: visible;
+      pointer-events: none;
+    }
+
+    .edge {
+      fill: none;
+      stroke: #748078;
+      stroke-width: 2.5;
+      vector-effect: non-scaling-stroke;
+    }
+
+    .edge.attention {
+      stroke: var(--failed);
+      stroke-width: 3.5;
+    }
+
+    .edge.retired {
+      stroke: var(--retired);
+      stroke-dasharray: 8 7;
+      opacity: 0.62;
+    }
+
+    .edge.selected {
+      stroke: var(--selection);
+      stroke-width: 3.5;
+      opacity: 1;
+    }
+
+    .node-layer {
+      position: relative;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: repeat(9, 212px);
+      grid-template-rows: repeat(5, minmax(126px, max-content));
+      gap: 34px 140px;
+      align-items: center;
+      width: max-content;
+      min-width: 100%;
+      min-height: 100%;
+      padding: 80px 86px;
+    }
+
+    .node {
+      position: relative;
+      display: grid;
+      gap: 9px;
+      width: 212px;
+      min-height: 126px;
+      padding: 13px 14px 12px;
+      color: var(--ink);
+      text-align: left;
+      border: 2px solid #69756e;
+      border-left-width: 6px;
+      border-radius: 5px;
+      background: var(--panel);
+      box-shadow: 0 5px 13px rgba(31, 43, 36, 0.12);
+      cursor: pointer;
+    }
+
+    .node:hover,
+    .node:focus-visible {
+      outline: 3px solid rgba(45, 100, 127, 0.28);
+      outline-offset: 3px;
+      border-color: var(--active);
+    }
+
+    .node.active { border-left-color: var(--active); }
+    .node.waiting { border-left-color: var(--waiting); }
+    .node.failed { border-left-color: var(--failed); }
+    .node.settled { border-left-color: var(--settled); }
+
+    .node.retired {
+      color: #555c58;
+      border-color: #918b82;
+      background: #efebe2;
+      box-shadow: none;
+      opacity: 0.67;
+    }
+
+    .node.selected {
+      border-color: var(--selection);
+      outline: 4px solid rgba(214, 90, 50, 0.19);
+      outline-offset: 3px;
+      box-shadow: 0 9px 23px rgba(92, 48, 34, 0.2);
+    }
+
+    .port {
+      position: absolute;
+      top: 50%;
+      width: 12px;
+      height: 12px;
+      border: 3px solid #536059;
+      border-radius: 50%;
+      background: var(--panel);
+      transform: translateY(-50%);
+    }
+
+    .port.target { left: -9px; }
+    .port.source { right: -9px; }
+
+    .node.selected .port {
+      border-color: var(--selection);
+      background: #fff4eb;
+    }
+
+    .node-head {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+
+    .state-mark {
+      display: inline-grid;
+      place-items: center;
+      flex: 0 0 25px;
+      width: 25px;
+      height: 20px;
+      color: #fff;
+      border-radius: 2px;
+      font: 800 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.02em;
+    }
+
+    .active .state-mark { background: var(--active); }
+    .waiting .state-mark { color: #fff9dd; background: var(--waiting); }
+    .failed .state-mark { background: var(--failed); }
+    .settled .state-mark { background: var(--settled); }
+    .retired .state-mark { background: var(--retired); }
+
+    .node-kind {
+      min-width: 0;
+      overflow: hidden;
+      color: #637069;
+      font: 700 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-overflow: ellipsis;
+      text-transform: uppercase;
+      white-space: nowrap;
+      letter-spacing: 0.04em;
+    }
+
+    .node h2 {
+      margin: -2px 0 0;
+      overflow-wrap: anywhere;
+      font: 700 18px/1.08 Georgia, "Times New Roman", serif;
+      letter-spacing: -0.015em;
+    }
+
+    .signals {
+      display: grid;
+      gap: 5px;
+      padding-top: 8px;
+      border-top: 1px solid #ddd6cb;
+    }
+
+    .signal {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr);
+      gap: 7px;
+      align-items: baseline;
+      font-size: 10.5px;
+      line-height: 1.25;
+    }
+
+    .signal b {
+      color: #737c77;
+      font: 700 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .signal span {
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-weight: 650;
+    }
+
+    .preview {
+      position: absolute;
+      z-index: 5;
+      width: 300px;
+      min-height: 102px;
+      padding: 12px 14px;
+      color: var(--ink);
+      border: 3px solid var(--active);
+      border-radius: 4px;
+      background: #fffaf0;
+      box-shadow: 0 10px 25px rgba(24, 35, 30, 0.2);
+      pointer-events: none;
+    }
+
+    .preview[hidden] { display: none; }
+
+    .preview::after {
+      position: absolute;
+      left: var(--stem-x, 150px);
+      width: 3px;
+      height: 18px;
+      content: "";
+      background: var(--active);
+      transform: translateX(-50%);
+    }
+
+    .preview[data-placement="above"]::after { bottom: -18px; }
+    .preview[data-placement="below"]::after { top: -18px; }
+
+    .preview-label {
+      color: var(--active);
+      font: 800 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .preview strong {
+      display: block;
+      margin: 5px 0 4px;
+      font: 700 16px/1.15 Georgia, "Times New Roman", serif;
+    }
+
+    .preview p {
+      margin: 0;
+      color: #4d5953;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .preview-hint {
+      display: block;
+      margin-top: 7px;
+      color: var(--active);
+      font: 750 10px/1.2 ui-sans-serif, system-ui, sans-serif;
+    }
+
+    .graph-legend {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px 17px;
+      min-height: 42px;
+      padding: 8px 14px;
+      color: #5a665f;
+      background: #f8f4eb;
+      border-top: 1px solid var(--line);
+      font-size: 10.5px;
+    }
+
+    .legend-state,
+    .legend-edge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-state::before {
+      display: inline-grid;
+      place-items: center;
+      width: 20px;
+      height: 16px;
+      color: #fff;
+      border-radius: 2px;
+      font: 800 8px/1 ui-monospace, monospace;
+      content: attr(data-mark);
+    }
+
+    .legend-state.active::before { background: var(--active); }
+    .legend-state.waiting::before { background: var(--waiting); }
+    .legend-state.failed::before { background: var(--failed); }
+    .legend-state.settled::before { background: var(--settled); }
+
+    .legend-edge::before {
+      width: 28px;
+      border-top: 3px solid #748078;
+      content: "";
+    }
+
+    .legend-edge.attention::before { border-color: var(--failed); }
+    .legend-edge.retired::before { border-top: 3px dashed var(--retired); }
+
+    .inspector {
+      position: relative;
+      z-index: 6;
+      min-width: 0;
+      min-height: 0;
+      overflow-x: hidden;
+      overflow-y: auto;
+      background: var(--panel);
+      scrollbar-color: #9a9388 #eee8dd;
+    }
+
+    .inspector-empty {
+      display: grid;
+      align-content: center;
+      min-height: 100%;
+      padding: 34px;
+      background:
+        linear-gradient(145deg, transparent 0 56%, rgba(71, 104, 86, 0.07) 56% 57%, transparent 57%),
+        var(--panel);
+    }
+
+    .inspector-empty[hidden] { display: none; }
+
+    .inspector-empty b {
+      margin-bottom: 7px;
+      font: 700 22px/1.1 Georgia, "Times New Roman", serif;
+    }
+
+    .inspector-empty p {
+      max-width: 28ch;
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .inspector-content { min-height: 100%; }
+    .inspector-content[hidden] { display: none; }
+
+    .inspector-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      padding: 18px 18px 15px;
+      background: rgba(255, 253, 247, 0.96);
+      border-bottom: 1px solid var(--line);
+      backdrop-filter: blur(8px);
+    }
+
+    .class-label {
+      display: inline-block;
+      width: fit-content;
+      margin-bottom: 7px;
+      padding: 3px 6px;
+      color: #214f65;
+      background: #dceaf0;
+      font: 800 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .class-label.local {
+      color: #675628;
+      background: #eee6ce;
+    }
+
+    .class-label.destination {
+      color: #633d70;
+      background: #eadfee;
+    }
+
+    .inspector-header h2 {
+      margin: 0;
+      font: 700 25px/1.04 Georgia, "Times New Roman", serif;
+      overflow-wrap: anywhere;
+    }
+
+    .inspector-header p {
+      margin: 5px 0 0;
+      color: var(--muted);
+      font: 700 10px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .icon-button {
+      align-self: start;
+      padding: 6px 9px;
+      color: #4d5953;
+      border: 1px solid #aaa398;
+      border-radius: 3px;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .icon-button:hover,
+    .icon-button:focus-visible { border-color: var(--active); }
+
+    .inspector-body {
+      display: grid;
+      gap: 0;
+      padding: 0 18px 24px;
+    }
+
+    .fact-block {
+      padding: 16px 0;
+      border-bottom: 1px solid #ddd6ca;
+    }
+
+    .fact-block h3 {
+      margin: 0 0 6px;
+      color: #616d66;
+      font: 800 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .fact-block p {
+      margin: 0;
+      font-size: 12px;
+      line-height: 1.48;
+    }
+
+    .fact-block strong { font-size: 14px; }
+
+    .local-disclosure {
+      margin: 15px 0 0;
+      border: 1px solid #b9ab83;
+      background: #f7f1e2;
+    }
+
+    .local-disclosure summary {
+      padding: 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 750;
+    }
+
+    .local-disclosure div {
+      padding: 0 12px 13px;
+      color: #4e5a53;
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .destination-action {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      margin-top: 18px;
+      padding: 13px;
+      color: #fffaf0;
+      text-align: left;
+      border: 0;
+      border-radius: 3px;
+      background: #253d32;
+      cursor: pointer;
+    }
+
+    .destination-action:hover,
+    .destination-action:focus-visible { background: #315441; }
+
+    .destination-action small {
+      display: block;
+      margin-top: 3px;
+      color: #cbd8d0;
+      font-size: 10px;
+    }
+
+    .destination-action span:last-child {
+      font-size: 20px;
+    }
+
+    .context-destination {
+      width: 100vw;
+      max-width: none;
+      height: 100dvh;
+      max-height: none;
+      margin: 0;
+      padding: 0;
+      color: var(--ink);
+      border: 0;
+      background: #eee8dd;
+    }
+
+    .context-destination::backdrop { background: rgba(12, 18, 15, 0.72); }
+
+    .destination-shell {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      height: 100%;
+    }
+
+    .destination-header {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      padding: 14px 20px;
+      color: #f8f3e8;
+      background: #17251f;
+      border-bottom: 3px solid #68437a;
+    }
+
+    .return-button {
+      padding: 8px 11px;
+      color: #f8f3e8;
+      border: 1px solid #7f9086;
+      border-radius: 3px;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .return-button:hover,
+    .return-button:focus-visible { background: #293d34; }
+
+    .destination-crumb {
+      color: #c8d1cb;
+      font: 700 10px/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .destination-body {
+      min-height: 0;
+      overflow-y: auto;
+      padding: clamp(28px, 6vw, 78px);
+    }
+
+    .destination-document {
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) minmax(250px, 0.8fr);
+      gap: 54px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .destination-document h2 {
+      max-width: 16ch;
+      margin: 8px 0 14px;
+      font: 700 clamp(34px, 5vw, 64px)/0.98 Georgia, "Times New Roman", serif;
+      letter-spacing: -0.035em;
+    }
+
+    .destination-document .lead {
+      max-width: 64ch;
+      color: #46524c;
+      font-size: 15px;
+      line-height: 1.6;
+    }
+
+    .destination-evidence {
+      padding: 20px;
+      border-left: 4px solid #68437a;
+      background: #fffdf7;
+    }
+
+    .destination-evidence h3 {
+      margin: 0 0 14px;
+      font: 700 18px/1.2 Georgia, "Times New Roman", serif;
+    }
+
+    .destination-evidence dl {
+      display: grid;
+      grid-template-columns: 100px minmax(0, 1fr);
+      gap: 10px 12px;
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .destination-evidence dt {
+      color: #6b746f;
+      font: 700 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-transform: uppercase;
+    }
+
+    .destination-evidence dd {
+      margin: 0;
+      overflow-wrap: anywhere;
+      font-weight: 650;
+    }
+
+    @media (max-width: 900px) {
+      :root { --inspector-width: min(88vw, 360px); }
+
+      .run-header {
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+      }
+
+      .run-stat { display: none; }
+      .attention-summary { font-size: 9px; }
+
+      .workspace { grid-template-columns: minmax(0, 1fr); }
+      .graph-region { border-right: 0; }
+
+      .inspector {
+        position: absolute;
+        inset: 0 0 0 auto;
+        width: var(--inspector-width);
+        box-shadow: -12px 0 28px rgba(24, 35, 30, 0.26);
+        transform: translateX(105%);
+        transition: transform 150ms ease;
+      }
+
+      .inspector.has-selection { transform: translateX(0); }
+      .inspector-empty { display: none; }
+
+      .destination-document {
+        grid-template-columns: 1fr;
+        gap: 30px;
+      }
+    }
+
+    @media (max-width: 560px) {
+      .run-header { min-height: 60px; padding: 9px 12px; }
+      .run-identity { display: grid; gap: 3px; }
+      .run-identity strong { font-size: 18px; }
+      .attention-summary { max-width: 145px; }
+      .graph-toolbar p { display: none; }
+      .view-readout span:first-child { display: none; }
+      .graph-legend { gap: 8px 12px; }
+      .legend-edge { display: none; }
+      .destination-header { padding: 11px 12px; }
+      .destination-body { padding: 28px 18px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .inspector { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="prototype-shell">
+    <header class="run-header">
+      <div class="run-identity">
+        <strong>r314 / recovery branch</strong>
+        <span>Graph node visibility contract</span>
+      </div>
+      <div class="run-stat"><span>Topology</span><b>12 nodes / 12 edges</b></div>
+      <div class="attention-summary">verify-01 needs attention</div>
+    </header>
+
+    <section class="workspace" id="workspace" aria-label="Run graph workspace">
+      <div class="graph-region">
+        <header class="graph-toolbar">
+          <div>
+            <h1>Dependency graph</h1>
+            <p>Hover or focus before selecting. Click or tap to inspect.</p>
+          </div>
+          <div class="view-readout" aria-label="Graph view status">
+            <span>Layered DAG</span>
+            <span>View 100%</span>
+          </div>
+        </header>
+
+        <div class="graph-scroll" id="graphScroll" tabindex="0" aria-label="Horizontally scrollable dependency graph">
+          <div class="stage" id="stage">
+            <svg class="edge-layer" id="edgeLayer" aria-label="Explicit dependency edges">
+              <defs>
+                <marker id="arrow" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+                  <path d="M0,0 L0,10 L10,5 z" fill="context-stroke"></path>
+                </marker>
+              </defs>
+              <g id="edgeGroup"></g>
+            </svg>
+            <div class="node-layer" id="nodeLayer"></div>
+            <div class="preview" id="preview" role="tooltip" hidden>
+              <span class="preview-label" id="previewLabel"></span>
+              <strong id="previewTitle"></strong>
+              <p id="previewText"></p>
+              <span class="preview-hint">Click to inspect the node</span>
+            </div>
+          </div>
+        </div>
+
+        <footer class="graph-legend" aria-label="Graph legend">
+          <span class="legend-state active" data-mark="GO">Active</span>
+          <span class="legend-state waiting" data-mark="II">Waiting / blocked</span>
+          <span class="legend-state failed" data-mark="!">Failed / attention</span>
+          <span class="legend-state settled" data-mark="OK">Settled</span>
+          <span class="legend-edge">Dependency</span>
+          <span class="legend-edge attention">Attention path</span>
+          <span class="legend-edge retired">Retired path</span>
+        </footer>
+      </div>
+
+      <aside class="inspector" id="inspector" aria-label="Selected node inspector">
+        <div class="inspector-empty" id="inspectorEmpty">
+          <b>Select a node</b>
+          <p>The graph stays fixed. Selection changes only the node treatment and this inspector.</p>
+        </div>
+        <div class="inspector-content" id="inspectorContent" hidden></div>
+      </aside>
+    </section>
+  </main>
+
+  <dialog class="context-destination" id="contextDestination" aria-labelledby="destinationTitle">
+    <div class="destination-shell">
+      <header class="destination-header">
+        <button class="return-button" id="returnButton" type="button">&larr; Return to graph</button>
+        <div class="destination-crumb" id="destinationCrumb"></div>
+      </header>
+      <div class="destination-body">
+        <article class="destination-document">
+          <div>
+            <span class="class-label destination">Class 4 / separate destination</span>
+            <h2 id="destinationTitle"></h2>
+            <p class="lead" id="destinationBody"></p>
+          </div>
+          <aside class="destination-evidence">
+            <h3>Preserved context</h3>
+            <dl id="destinationFacts"></dl>
+          </aside>
+        </article>
+      </div>
+    </div>
+  </dialog>
+
+  <script>
+    (() => {
+      const graphFixture = {
+        run: "r314",
+        nodes: [
+          {
+            id: "plan-01",
+            title: "Recovery plan",
+            kind: "Planner",
+            archetype: "settled",
+            rank: 1,
+            lane: 3,
+            alwaysVisible: [
+              ["State", "Completed 18m ago"],
+              ["Current", "2 branches created"],
+              ["Effect", "Main and docs paths"]
+            ],
+            preview: "Created parallel implementation and documentation work from the same routine snapshot.",
+            inspector: {
+              summary: "The planner split recovery work into two independent branches without serializing documentation behind implementation.",
+              inputs: "Routine snapshot v17 and failed requirement R-17.",
+              consequence: "Both branches must eventually converge at join-01."
+            },
+            details: [
+              ["Bound input summary", "Routine v17, requirement R-17, prior verifier evidence."],
+              ["Scheduler evidence", "Created build-main and build-docs in one expansion event."]
+            ],
+            destination: {
+              title: "Planner transcript and expansion record",
+              body: "This destination represents the substantial reasoning and full event evidence intentionally kept away from the graph. Returning restores the selected planner and the exact graph viewport.",
+              record: "expansion-118"
+            }
+          },
+          {
+            id: "build-main",
+            title: "Implement identity fix",
+            kind: "Worker",
+            archetype: "settled",
+            rank: 2,
+            lane: 1,
+            alwaysVisible: [
+              ["State", "Completed in 6m"],
+              ["Current", "candidate-01 ready"],
+              ["Effect", "Feeds verify-01"]
+            ],
+            preview: "Produced a candidate intended to preserve request identity across retries.",
+            inspector: {
+              summary: "The worker changed retry construction and emitted candidate-01 for requirement R-17.",
+              inputs: "plan-01, repository state 6f20c9a, requirement R-17.",
+              consequence: "The candidate failed its first verification and opened the recovery path."
+            },
+            details: [
+              ["Output records", "candidate-01, patch summary, changed-path manifest."],
+              ["Usage coverage", "6m 14s wall time; token and price coverage available."]
+            ],
+            destination: {
+              title: "Implementation diff for candidate-01",
+              body: "The complete repository diff needs more space than the inspector and supports code review rather than graph navigation.",
+              record: "candidate-01"
+            }
+          },
+          {
+            id: "build-docs",
+            title: "Document retry contract",
+            kind: "Worker",
+            archetype: "active",
+            rank: 2,
+            lane: 5,
+            alwaysVisible: [
+              ["State", "Running for 3m"],
+              ["Current", "Examples drafted"],
+              ["Effect", "Feeds docs summary"]
+            ],
+            preview: "Updating the retry contract and examples in parallel with corrective implementation work.",
+            inspector: {
+              summary: "Documentation work is active and independent of the failed main candidate.",
+              inputs: "plan-01 and current retry API behavior.",
+              consequence: "Its summary is one of the two required inputs to join-01."
+            },
+            details: [
+              ["Execution profile", "Builder / coder profile / active lease."],
+              ["Prompt summary", "Explain stable request identity and retry boundaries."]
+            ],
+            destination: {
+              title: "Documentation working tree",
+              body: "The full documentation diff is available here without increasing the graph node's information budget.",
+              record: "docs-worktree-04"
+            }
+          },
+          {
+            id: "verify-01",
+            title: "Verify request identity",
+            kind: "Verifier",
+            archetype: "failed",
+            rank: 3,
+            lane: 1,
+            alwaysVisible: [
+              ["State", "Failed / grade C"],
+              ["Current", "Attempt 1 of 2"],
+              ["Effect", "Blocks final path"]
+            ],
+            preview: "Request identity is regenerated inside retry; the invariant does not hold across attempts.",
+            inspector: {
+              summary: "Primary failure: candidate-01 creates a new request identity while reconstructing retry state.",
+              inputs: "candidate-01 and requirement R-17.",
+              consequence: "Blocks the final invariant and requires constrained corrective work."
+            },
+            details: [
+              ["Verifier reason", "Identity equality assertion fails after the first retry boundary."],
+              ["Attempt evidence", "Attempt 1 used candidate-01; one corrective attempt remains."],
+              ["Usage and records", "Verification record vr-441 and execution usage are available."]
+            ],
+            destination: {
+              title: "Verification evidence for R-17",
+              body: "The complete verifier trace, assertions, and repository evidence explain why the first candidate failed. This is a review job with substantially more information than the selected-node inspector.",
+              record: "verification-vr-441"
+            }
+          },
+          {
+            id: "summarize-docs",
+            title: "Summarize docs",
+            kind: "Summarizer",
+            archetype: "waiting",
+            rank: 3,
+            lane: 5,
+            alwaysVisible: [
+              ["State", "Waiting"],
+              ["Current", "Needs docs artifact"],
+              ["Effect", "Join input delayed"]
+            ],
+            preview: "Cannot summarize until build-docs publishes its artifact.",
+            inspector: {
+              summary: "The summarizer is ready but lacks the documentation artifact from build-docs.",
+              inputs: "Missing docs artifact; scheduler and profile are already available.",
+              consequence: "join-01 cannot become ready until this branch produces its summary."
+            },
+            details: [
+              ["Dependency evidence", "build-docs is active; no authority or resource issue detected."],
+              ["Planned output", "A compact documentation summary record for join-01."]
+            ],
+            destination: {
+              title: "Summarizer input record",
+              body: "The eventual complete input and output payloads live here because they are records, not first-glance graph signals.",
+              record: "summary-pending"
+            }
+          },
+          {
+            id: "gate-01",
+            title: "Authorize recovery",
+            kind: "Human gate",
+            archetype: "waiting",
+            rank: 4,
+            lane: 1,
+            alwaysVisible: [
+              ["State", "Decision needed"],
+              ["Current", "Waiting 7m"],
+              ["Effect", "Corrective branch held"]
+            ],
+            preview: "A human must grant one constrained corrective branch before gap planning can proceed.",
+            inspector: {
+              summary: "Authority is required because the failed candidate exhausted the routine's automatic correction allowance.",
+              inputs: "verify-01 failure and proposed recovery boundary.",
+              consequence: "gap-plan-01 and all downstream corrective work remain blocked."
+            },
+            details: [
+              ["Requested authority", "Permit one corrective branch scoped only to requirement R-17."],
+              ["Event evidence", "Authority request ar-92 created 7 minutes ago."]
+            ],
+            destination: {
+              title: "Authority request ar-92",
+              body: "This destination provides the full request and evidence context. It deliberately does not turn the compact inspector into an action workflow.",
+              record: "authority-ar-92"
+            }
+          },
+          {
+            id: "old-fix",
+            title: "Replace retry loop",
+            kind: "Worker",
+            archetype: "settled",
+            retired: true,
+            rank: 4,
+            lane: 3,
+            alwaysVisible: [
+              ["State", "Retired"],
+              ["Current", "Superseded path"],
+              ["Effect", "No surviving successor"]
+            ],
+            preview: "Retained for history; this broad rewrite was superseded by the constrained recovery branch.",
+            inspector: {
+              summary: "The initial recovery proposal was retired because it changed retry semantics beyond R-17.",
+              inputs: "verify-01 failure and broad retry-loop proposal.",
+              consequence: "No downstream work depends on this path."
+            },
+            details: [
+              ["Retirement reason", "Scope exceeded the failed requirement and risked unrelated behavior."],
+              ["Historical event", "Superseded by authority request ar-92."]
+            ],
+            destination: {
+              title: "Retired proposal history",
+              body: "The complete superseded proposal remains auditable without competing visually with the surviving graph path.",
+              record: "retired-proposal-02"
+            }
+          },
+          {
+            id: "gap-plan-01",
+            title: "Plan corrective gap",
+            kind: "Gap planner",
+            archetype: "waiting",
+            rank: 5,
+            lane: 1,
+            alwaysVisible: [
+              ["State", "Blocked by gate"],
+              ["Current", "Exact gap known"],
+              ["Effect", "Will add retry branch"]
+            ],
+            preview: "The corrective branch is defined but cannot expand until gate-01 grants authority.",
+            inspector: {
+              summary: "The gap planner will create one narrow implementation and verification pair for request identity.",
+              inputs: "verify-01 evidence plus pending gate-01 authority.",
+              consequence: "On approval, adds retry-build and verify-02 without moving unaffected ranks."
+            },
+            details: [
+              ["Gap statement", "Preserve original request identity when retry state is reconstructed."],
+              ["Expansion preview", "Adds retry-build then verify-02; existing docs branch remains unchanged."]
+            ],
+            destination: {
+              title: "Corrective gap plan",
+              body: "The full generated plan and requirement evidence are separate from the graph's concise blocked-state representation.",
+              record: "gap-plan-gp-17"
+            }
+          },
+          {
+            id: "retry-build",
+            title: "Preserve request identity",
+            kind: "Corrective worker",
+            archetype: "active",
+            rank: 6,
+            lane: 1,
+            alwaysVisible: [
+              ["State", "Ready after gate"],
+              ["Current", "Corrective attempt 2"],
+              ["Effect", "Feeds verify-02"]
+            ],
+            preview: "Dynamically added corrective worker scoped to the exact failed identity invariant.",
+            inspector: {
+              summary: "This node is the dynamically added implementation branch created by gap-plan-01.",
+              inputs: "R-17, verify-01 evidence, and authority from gate-01.",
+              consequence: "Its candidate will be graded by verify-02 before the final join."
+            },
+            details: [
+              ["Execution profile", "Builder / coder profile; lease begins after authority."],
+              ["Scope boundary", "May change retry identity transport only."]
+            ],
+            destination: {
+              title: "Corrective worker context",
+              body: "The full task prompt and eventual repository diff live in this destination while the graph retains only operationally decisive signals.",
+              record: "corrective-task-02"
+            }
+          },
+          {
+            id: "verify-02",
+            title: "Recheck identity invariant",
+            kind: "Corrective verifier",
+            archetype: "active",
+            rank: 7,
+            lane: 1,
+            alwaysVisible: [
+              ["State", "Planned"],
+              ["Current", "Awaits retry candidate"],
+              ["Effect", "Decides surviving path"]
+            ],
+            preview: "Will grade the corrective candidate against R-17 and the original failure evidence.",
+            inspector: {
+              summary: "A fresh verifier context will test only the corrective candidate and requirement R-17.",
+              inputs: "retry-build candidate, R-17, and immutable verify-01 evidence.",
+              consequence: "A pass releases the corrective input to join-01; a failure stops the run."
+            },
+            details: [
+              ["Verification boundary", "Request identity before and after retry must be equal."],
+              ["Fresh context", "No builder conversation state is shared with this verifier."]
+            ],
+            destination: {
+              title: "Corrective verification context",
+              body: "The complete verifier prompt and eventual trace are available as a separate evidence-review destination.",
+              record: "verification-planned-02"
+            }
+          },
+          {
+            id: "join-01",
+            title: "Converge recovery outputs",
+            kind: "Multi-input join",
+            archetype: "waiting",
+            rank: 8,
+            lane: 3,
+            alwaysVisible: [
+              ["State", "Waiting on 2 inputs"],
+              ["Current", "0 of 2 ready"],
+              ["Effect", "Final check blocked"]
+            ],
+            preview: "Waits for corrective verification and the documentation summary before releasing final-check.",
+            inspector: {
+              summary: "The join makes convergence explicit: implementation recovery and documentation must both complete.",
+              inputs: "verify-02 pass record and summarize-docs output.",
+              consequence: "final-check remains blocked until both inputs are present."
+            },
+            details: [
+              ["Input readiness", "verify-02: planned. summarize-docs: waiting on build-docs."],
+              ["Join policy", "All declared inputs required; no partial release."]
+            ],
+            destination: {
+              title: "Join input records",
+              body: "Complete input payloads and event history are available here for audit without expanding the graph node.",
+              record: "join-record-j01"
+            }
+          },
+          {
+            id: "final-check",
+            title: "Check final invariant",
+            kind: "Final check",
+            archetype: "waiting",
+            rank: 9,
+            lane: 3,
+            alwaysVisible: [
+              ["State", "Blocked"],
+              ["Current", "Needs join-01"],
+              ["Effect", "Controls run completion"]
+            ],
+            preview: "The run cannot settle until the joined recovery outputs satisfy the final invariant.",
+            inspector: {
+              summary: "The final check evaluates the joined implementation and documentation outcome against the run invariant.",
+              inputs: "Missing join-01 output.",
+              consequence: "A pass completes r314; a failure returns attention to the responsible branch."
+            },
+            details: [
+              ["Final invariant", "Request identity remains stable and the documented contract matches behavior."],
+              ["Readiness evidence", "Blocked solely by join-01; no authority or resource issue."]
+            ],
+            destination: {
+              title: "Final invariant record",
+              body: "The complete cross-artifact review belongs in a separate destination because it supports final review rather than graph scanning.",
+              record: "final-check-fc-01"
+            }
+          }
+        ],
+        edges: [
+          { id: "e01", source: "plan-01", target: "build-main", state: "normal" },
+          { id: "e02", source: "plan-01", target: "build-docs", state: "normal" },
+          { id: "e03", source: "build-main", target: "verify-01", state: "attention" },
+          { id: "e04", source: "build-docs", target: "summarize-docs", state: "normal" },
+          { id: "e05", source: "verify-01", target: "gate-01", state: "attention" },
+          { id: "e06", source: "verify-01", target: "old-fix", state: "retired" },
+          { id: "e07", source: "gate-01", target: "gap-plan-01", state: "attention" },
+          { id: "e08", source: "gap-plan-01", target: "retry-build", state: "attention" },
+          { id: "e09", source: "retry-build", target: "verify-02", state: "attention" },
+          { id: "e10", source: "verify-02", target: "join-01", state: "attention" },
+          { id: "e11", source: "summarize-docs", target: "join-01", state: "normal" },
+          { id: "e12", source: "join-01", target: "final-check", state: "attention" }
+        ]
+      };
+
+      const stateMarks = {
+        active: "GO",
+        waiting: "II",
+        failed: "!",
+        settled: "OK"
+      };
+
+      const stage = document.getElementById("stage");
+      const nodeLayer = document.getElementById("nodeLayer");
+      const edgeLayer = document.getElementById("edgeLayer");
+      const edgeGroup = document.getElementById("edgeGroup");
+      const graphScroll = document.getElementById("graphScroll");
+      const preview = document.getElementById("preview");
+      const inspector = document.getElementById("inspector");
+      const inspectorEmpty = document.getElementById("inspectorEmpty");
+      const inspectorContent = document.getElementById("inspectorContent");
+      const destination = document.getElementById("contextDestination");
+      const returnButton = document.getElementById("returnButton");
+      const nodeById = Object.fromEntries(graphFixture.nodes.map((node) => [node.id, node]));
+      const nodeElements = new Map();
+      let edgeSegments = [];
+      let selectedId = null;
+      let returnContext = null;
+
+      const escapeHtml = (value) => String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+
+      function renderNodes() {
+        for (const node of graphFixture.nodes) {
+          if (node.alwaysVisible.length > 3) {
+            throw new Error(`${node.id} exceeds the three-signal Class 1 budget`);
+          }
+
+          const element = document.createElement("button");
+          element.type = "button";
+          element.className = `node ${node.archetype}${node.retired ? " retired" : ""}`;
+          element.dataset.nodeId = node.id;
+          element.style.gridColumn = String(node.rank);
+          element.style.gridRow = String(node.lane);
+          element.setAttribute(
+            "aria-label",
+            `${node.title}, ${node.kind}, ${node.alwaysVisible.map((signal) => signal[1]).join(", ")}`
+          );
+          element.innerHTML = `
+            <span class="port target" aria-hidden="true"></span>
+            <span class="port source" aria-hidden="true"></span>
+            <span class="node-head">
+              <span class="state-mark" aria-hidden="true">${stateMarks[node.archetype]}</span>
+              <span class="node-kind">${escapeHtml(node.kind)}</span>
+            </span>
+            <h2>${escapeHtml(node.title)}</h2>
+            <span class="signals">
+              ${node.alwaysVisible.map(([label, value]) => `
+                <span class="signal"><b>${escapeHtml(label)}</b><span>${escapeHtml(value)}</span></span>
+              `).join("")}
+            </span>
+          `;
+
+          element.addEventListener("pointerenter", () => showPreview(node, element));
+          element.addEventListener("pointerleave", hidePreview);
+          element.addEventListener("focus", () => showPreview(node, element));
+          element.addEventListener("blur", hidePreview);
+          element.addEventListener("click", () => selectNode(node.id));
+          nodeLayer.appendChild(element);
+          nodeElements.set(node.id, element);
+        }
+      }
+
+      function relativeRect(element) {
+        const stageRect = stage.getBoundingClientRect();
+        const rect = element.getBoundingClientRect();
+        return {
+          left: rect.left - stageRect.left,
+          top: rect.top - stageRect.top,
+          right: rect.right - stageRect.left,
+          bottom: rect.bottom - stageRect.top,
+          width: rect.width,
+          height: rect.height
+        };
+      }
+
+      function routeEdges() {
+        const width = nodeLayer.scrollWidth;
+        const height = nodeLayer.scrollHeight;
+        edgeLayer.setAttribute("width", width);
+        edgeLayer.setAttribute("height", height);
+        edgeLayer.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        edgeGroup.replaceChildren();
+        edgeSegments = [];
+
+        for (const [edgeIndex, edge] of graphFixture.edges.entries()) {
+          const source = relativeRect(nodeElements.get(edge.source));
+          const target = relativeRect(nodeElements.get(edge.target));
+          const sx = source.right;
+          const sy = source.top + source.height / 2;
+          const tx = target.left;
+          const ty = target.top + target.height / 2;
+          const midX = sx + Math.max(34, (tx - sx) / 2);
+          const selected = selectedId && (edge.source === selectedId || edge.target === selectedId);
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", `M ${sx} ${sy} H ${midX} V ${ty} H ${tx}`);
+          path.setAttribute("class", `edge ${edge.state}${selected ? " selected" : ""}`);
+          path.setAttribute("marker-end", "url(#arrow)");
+          path.dataset.source = edge.source;
+          path.dataset.target = edge.target;
+          path.dataset.state = edge.state;
+          path.dataset.order = String(edgeIndex);
+          edgeGroup.appendChild(path);
+          edgeSegments.push(
+            { x1: sx, y1: sy, x2: midX, y2: sy },
+            { x1: midX, y1: sy, x2: midX, y2: ty },
+            { x1: midX, y1: ty, x2: tx, y2: ty }
+          );
+        }
+        syncEdgeZOrder();
+      }
+
+      function updateEdgeSelection() {
+        for (const path of edgeGroup.querySelectorAll(".edge")) {
+          const selected = selectedId && (
+            path.dataset.source === selectedId || path.dataset.target === selectedId
+          );
+          path.className.baseVal = `edge ${path.dataset.state}${selected ? " selected" : ""}`;
+        }
+        syncEdgeZOrder();
+      }
+
+      function syncEdgeZOrder() {
+        const stateLayer = { retired: 0, normal: 1, attention: 2 };
+        const paths = [...edgeGroup.querySelectorAll(".edge")];
+        paths.sort((left, right) => {
+          const leftLayer = left.classList.contains("selected") ? 3 : stateLayer[left.dataset.state];
+          const rightLayer = right.classList.contains("selected") ? 3 : stateLayer[right.dataset.state];
+          return leftLayer - rightLayer || Number(left.dataset.order) - Number(right.dataset.order);
+        });
+        for (const path of paths) edgeGroup.appendChild(path);
+      }
+
+      function rectanglesOverlap(a, b, margin = 0) {
+        return !(
+          a.right + margin <= b.left ||
+          a.left >= b.right + margin ||
+          a.bottom + margin <= b.top ||
+          a.top >= b.bottom + margin
+        );
+      }
+
+      function segmentRect(segment, margin = 7) {
+        return {
+          left: Math.min(segment.x1, segment.x2) - margin,
+          top: Math.min(segment.y1, segment.y2) - margin,
+          right: Math.max(segment.x1, segment.x2) + margin,
+          bottom: Math.max(segment.y1, segment.y2) + margin
+        };
+      }
+
+      function previewPositionIsClear(candidate, ownerElement) {
+        for (const element of nodeElements.values()) {
+          if (element !== ownerElement && rectanglesOverlap(candidate, relativeRect(element), 7)) {
+            return false;
+          }
+        }
+        return !edgeSegments.some((segment) => rectanglesOverlap(candidate, segmentRect(segment)));
+      }
+
+      function showPreview(node, element) {
+        if (selectedId !== null) return;
+
+        document.getElementById("previewLabel").textContent = `${node.kind} / selected preview`;
+        document.getElementById("previewTitle").textContent = node.title;
+        document.getElementById("previewText").textContent = node.preview;
+        preview.hidden = false;
+        preview.style.visibility = "hidden";
+
+        const nodeRect = relativeRect(element);
+        const previewWidth = preview.offsetWidth;
+        const previewHeight = preview.offsetHeight;
+        const stageWidth = stage.scrollWidth;
+        const centeredLeft = nodeRect.left + nodeRect.width / 2 - previewWidth / 2;
+        const left = Math.max(10, Math.min(stageWidth - previewWidth - 10, centeredLeft));
+        const candidates = [
+          { placement: "above", top: nodeRect.top - previewHeight - 18 },
+          { placement: "below", top: nodeRect.bottom + 18 }
+        ];
+        const choice = candidates.find(({ top }) => {
+          const candidate = {
+            left,
+            top,
+            right: left + previewWidth,
+            bottom: top + previewHeight
+          };
+          return top >= 8 && candidate.bottom <= stage.scrollHeight - 8 && previewPositionIsClear(candidate, element);
+        });
+
+        if (!choice) {
+          preview.hidden = true;
+          return;
+        }
+
+        const stemX = Math.max(14, Math.min(previewWidth - 14, nodeRect.left + nodeRect.width / 2 - left));
+        preview.dataset.placement = choice.placement;
+        preview.style.left = `${left}px`;
+        preview.style.top = `${choice.top}px`;
+        preview.style.setProperty("--stem-x", `${stemX}px`);
+        preview.style.visibility = "visible";
+      }
+
+      function hidePreview() {
+        preview.hidden = true;
+      }
+
+      function selectNode(nodeId) {
+        hidePreview();
+        selectedId = nodeId;
+        for (const [id, element] of nodeElements) {
+          const selected = id === nodeId;
+          element.classList.toggle("selected", selected);
+          element.setAttribute("aria-pressed", String(selected));
+        }
+        renderInspector(nodeById[nodeId]);
+        updateEdgeSelection();
+        keepSelectedNodeVisible(nodeElements.get(nodeId));
+      }
+
+      function renderInspector(node) {
+        inspectorEmpty.hidden = true;
+        inspectorContent.hidden = false;
+        inspector.classList.add("has-selection");
+        inspectorContent.innerHTML = `
+          <header class="inspector-header">
+            <div>
+              <span class="class-label">Class 2 / selected</span>
+              <h2>${escapeHtml(node.title)}</h2>
+              <p>${escapeHtml(node.id)} / ${escapeHtml(node.kind)}</p>
+            </div>
+            <button class="icon-button" id="closeInspector" type="button" aria-label="Close selected node inspector">Close</button>
+          </header>
+          <div class="inspector-body">
+            <section class="fact-block">
+              <h3>Operational summary</h3>
+              <strong>${escapeHtml(node.alwaysVisible[0][1])}</strong>
+              <p>${escapeHtml(node.inspector.summary)}</p>
+            </section>
+            <section class="fact-block">
+              <h3>Bound inputs</h3>
+              <p>${escapeHtml(node.inspector.inputs)}</p>
+            </section>
+            <section class="fact-block">
+              <h3>Downstream consequence</h3>
+              <p>${escapeHtml(node.inspector.consequence)}</p>
+            </section>
+            ${node.details.map(([title, body], index) => `
+              <details class="local-disclosure"${index === 0 ? "" : ""}>
+                <summary><span class="class-label local">Class 3</span> ${escapeHtml(title)}</summary>
+                <div>${escapeHtml(body)}</div>
+              </details>
+            `).join("")}
+            <button class="destination-action" id="openDestination" type="button">
+              <span>
+                <span class="class-label destination">Class 4</span>
+                Open task context
+                <small>Full evidence in a separate destination</small>
+              </span>
+              <span aria-hidden="true">&rarr;</span>
+            </button>
+          </div>
+        `;
+        document.getElementById("closeInspector").addEventListener("click", clearSelection);
+        document.getElementById("openDestination").addEventListener("click", openDestination);
+        inspector.scrollTop = 0;
+      }
+
+      function clearSelection() {
+        const previous = selectedId;
+        selectedId = null;
+        hidePreview();
+        inspector.classList.remove("has-selection");
+        inspectorContent.hidden = true;
+        inspectorContent.replaceChildren();
+        inspectorEmpty.hidden = false;
+        for (const element of nodeElements.values()) {
+          element.classList.remove("selected");
+          element.setAttribute("aria-pressed", "false");
+        }
+        updateEdgeSelection();
+        if (previous) nodeElements.get(previous).focus({ preventScroll: true });
+      }
+
+      function keepSelectedNodeVisible(element) {
+        if (window.innerWidth > 900) return;
+        const scrollRect = graphScroll.getBoundingClientRect();
+        const nodeRect = element.getBoundingClientRect();
+        const coveredWidth = inspector.getBoundingClientRect().width;
+        const visibleRight = scrollRect.right - coveredWidth - 16;
+        const visibleLeft = scrollRect.left + 16;
+        if (nodeRect.right > visibleRight) {
+          graphScroll.scrollBy({ left: nodeRect.right - visibleRight, behavior: "smooth" });
+        } else if (nodeRect.left < visibleLeft) {
+          graphScroll.scrollBy({ left: nodeRect.left - visibleLeft, behavior: "smooth" });
+        }
+      }
+
+      function openDestination() {
+        const node = nodeById[selectedId];
+        returnContext = {
+          nodeId: selectedId,
+          scrollLeft: graphScroll.scrollLeft,
+          scrollTop: graphScroll.scrollTop,
+          zoom: "100%",
+          source: document.getElementById("openDestination")
+        };
+        document.getElementById("destinationCrumb").textContent =
+          `${graphFixture.run} / ${node.id} / from selected-node inspector`;
+        document.getElementById("destinationTitle").textContent = node.destination.title;
+        document.getElementById("destinationBody").textContent = node.destination.body;
+        document.getElementById("destinationFacts").innerHTML = `
+          <dt>Run</dt><dd>${escapeHtml(graphFixture.run)}</dd>
+          <dt>Selected node</dt><dd>${escapeHtml(node.id)}</dd>
+          <dt>Attempt</dt><dd>${escapeHtml(node.alwaysVisible[1][1])}</dd>
+          <dt>Graph view</dt><dd>Zoom 100%; x ${Math.round(returnContext.scrollLeft)}, y ${Math.round(returnContext.scrollTop)}</dd>
+          <dt>Opened from</dt><dd>Inspector / Open task context</dd>
+          <dt>Record</dt><dd>${escapeHtml(node.destination.record)}</dd>
+        `;
+        destination.showModal();
+        returnButton.focus();
+      }
+
+      function restoreDestinationContext() {
+        if (!returnContext) return;
+        const context = returnContext;
+        returnContext = null;
+        selectedId = context.nodeId;
+        graphScroll.scrollLeft = context.scrollLeft;
+        graphScroll.scrollTop = context.scrollTop;
+        requestAnimationFrame(() => {
+          graphScroll.scrollLeft = context.scrollLeft;
+          graphScroll.scrollTop = context.scrollTop;
+          const action = document.getElementById("openDestination");
+          if (action) action.focus({ preventScroll: true });
+        });
+      }
+
+      returnButton.addEventListener("click", () => destination.close());
+      destination.addEventListener("close", restoreDestinationContext);
+
+      renderNodes();
+      requestAnimationFrame(routeEdges);
+
+      const resizeObserver = new ResizeObserver(() => requestAnimationFrame(routeEdges));
+      resizeObserver.observe(nodeLayer);
+      for (const element of nodeElements.values()) resizeObserver.observe(element);
+      window.addEventListener("resize", () => requestAnimationFrame(routeEdges));
+    })();
+  </script>
+</body>
+</html>
