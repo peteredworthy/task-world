@@ -3,6 +3,7 @@
 import ast
 import argparse
 import hashlib
+import subprocess
 from enum import StrEnum
 from pathlib import Path
 from typing import Iterable, Literal
@@ -130,6 +131,7 @@ class InventoryDiagnostic(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     relative_path: str
+    qualified_function: str = "<module>"
     line: int
     column: int
     code: DiagnosticCode
@@ -210,6 +212,15 @@ def _literal_key(node: cst.BaseExpression) -> str | None:
     return None
 
 
+def _remediation(code: DiagnosticCode) -> str:
+    return {
+        DiagnosticCode.UNSUPPORTED_CALL: "replace the dynamic call with a typed projection query",
+        DiagnosticCode.UNSUPPORTED_COMPARISON: "compare an explicit typed projection field",
+        DiagnosticCode.UNSUPPORTED_BINDING: "retain the GraphProjection annotation through this binding",
+        DiagnosticCode.REFLECTION: "replace reflection with an explicit typed projection field",
+    }.get(code, "replace this dynamic projection access with a typed GraphProjection flow")
+
+
 _SUPPORTED_PROJECTION_METHODS = frozenset(
     {"get", "pop", "setdefault", "keys", "values", "items", "append", "extend"}
 )
@@ -224,18 +235,19 @@ class _Collector(cst.CSTVisitor):
         baseline_revision: str,
         fields: dict[str, FieldOwnership],
         known_returns: frozenset[str] = frozenset(),
+        typed_fields: dict[str, frozenset[str]] | None = None,
     ) -> None:
         self.relative_path = relative_path
         self.baseline_revision = baseline_revision
         self.fields = fields
         self.known_returns = known_returns
-        self.tracked_attributes: set[str] = set()
-        self.imported_names: set[str] = set()
+        self.tracked_attributes: dict[int, set[str]] = {}
+        self.typed_fields = typed_fields or {}
         self.lexical_names: list[str] = []
         self.aliases: dict[int, set[str]] = {}
         self.known_aliases: dict[int, set[str]] = {}
         self.records: list[tuple[str, str, str | None, AccessKind, int, int]] = []
-        self.diagnostics: list[tuple[str, str, int, int]] = []
+        self.diagnostics: list[tuple[str, str, str, int, int]] = []
         self.diagnostic_keys: set[tuple[int, DiagnosticCode]] = set()
         self.handled: set[int] = set()
 
@@ -259,6 +271,18 @@ class _Collector(cst.CSTVisitor):
         scope_id = id(self.get_metadata(ScopeProvider, node.body))
         self.aliases[scope_id] = seeds
         self.known_aliases[scope_id] = set(seeds)
+        for parameter in (
+            *node.params.posonly_params,
+            *node.params.params,
+            *node.params.kwonly_params,
+        ):
+            if (
+                parameter.annotation is not None
+                and (owner := _name(parameter.annotation.annotation)) in self.typed_fields
+            ):
+                self.tracked_attributes.setdefault(scope_id, set()).update(
+                    f"{parameter.name.value}.{field}" for field in self.typed_fields[owner]
+                )
 
     def visit_FunctionDef_body(self, node: cst.FunctionDef) -> None:
         self.lexical_names.append(node.name.value)
@@ -275,7 +299,9 @@ class _Collector(cst.CSTVisitor):
     def _tracked(self, node: cst.BaseExpression) -> bool:
         if isinstance(node, cst.Name):
             return node.value in self.aliases.get(id(self.get_metadata(ScopeProvider, node)), set())
-        return isinstance(node, cst.Attribute) and _attribute_key(node) in self.tracked_attributes
+        return isinstance(node, cst.Attribute) and _attribute_key(
+            node
+        ) in self.tracked_attributes.get(id(self.get_metadata(ScopeProvider, node)), set())
 
     def _known_projection_value(self, node: cst.BaseExpression) -> bool:
         if self._tracked(node):
@@ -401,7 +427,15 @@ class _Collector(cst.CSTVisitor):
             return
         self.diagnostic_keys.add(key)
         position = self.get_metadata(PositionProvider, node).start
-        self.diagnostics.append((code, message, position.line, position.column))
+        self.diagnostics.append(
+            (
+                ".".join(self.lexical_names) or "<module>",
+                code,
+                message,
+                position.line,
+                position.column,
+            )
+        )
 
     def _field_from_subscript(self, node: cst.Subscript) -> str | None:
         if not self._tracked(node.value):
@@ -455,12 +489,6 @@ class _Collector(cst.CSTVisitor):
                 node,
             )
         return
-
-    def visit_ImportFrom(self, node: cst.ImportFrom) -> None:
-        if isinstance(node.names, cst.ImportStar):
-            return
-        for name in node.names:
-            self.imported_names.add(name.asname.name.value if name.asname else name.name.value)
 
     def leave_AnnAssign(self, original_node: cst.AnnAssign) -> None:
         node = original_node
@@ -530,7 +558,26 @@ class _Collector(cst.CSTVisitor):
             if self._known_projection_value(node.value):
                 attribute = _attribute_key(node.targets[0].target)
                 if attribute is not None:
-                    self.tracked_attributes.add(attribute)
+                    scope_id = id(self.get_metadata(ScopeProvider, node.targets[0].target))
+                    self.tracked_attributes.setdefault(scope_id, set()).add(attribute)
+            return
+        if (
+            len(node.targets) == 1
+            and isinstance(node.targets[0].target, cst.Name)
+            and isinstance(node.value, cst.Call)
+            and isinstance(node.value.func, cst.Name)
+            and node.value.func.value in self.typed_fields
+        ):
+            scope_id = id(self.get_metadata(ScopeProvider, node.targets[0].target))
+            for argument in node.value.args:
+                if (
+                    argument.keyword is not None
+                    and argument.keyword.value in self.typed_fields[node.value.func.value]
+                    and self._known_projection_value(argument.value)
+                ):
+                    self.tracked_attributes.setdefault(scope_id, set()).add(
+                        f"{node.targets[0].target.value}.{argument.keyword.value}"
+                    )
             return
         if len(node.targets) != 1 or not isinstance(node.targets[0].target, cst.Name):
             target_names = tuple(
@@ -892,13 +939,6 @@ class _Collector(cst.CSTVisitor):
     def visit_Subscript(self, node: cst.Subscript) -> None:
         if id(node) in self.handled:
             return
-        if isinstance(node.value, cst.Name) and node.value.value in self.imported_names:
-            self._diagnostic(
-                DiagnosticCode.UNSUPPORTED_BINDING,
-                "imported projection alias cannot be resolved",
-                node,
-            )
-            return
         field_subscript = self._tracked_field_subscript(node)
         if field_subscript is None:
             return
@@ -951,12 +991,14 @@ class _Collector(cst.CSTVisitor):
         diagnostics = tuple(
             InventoryDiagnostic(
                 relative_path=self.relative_path,
+                qualified_function=qualified,
                 line=line,
                 column=column,
                 code=code,
                 message=message,
+                remediation=_remediation(code),
             )
-            for code, message, line, column in self.diagnostics
+            for qualified, code, message, line, column in self.diagnostics
         )
         return SourceInventory(
             relative_path=self.relative_path,
@@ -997,6 +1039,7 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
             diagnostics=(
                 InventoryDiagnostic(
                     relative_path=relative_path,
+                    qualified_function="<module>",
                     line=error.raw_line,
                     column=error.raw_column,
                     code=DiagnosticCode.PARSE_ERROR,
@@ -1010,35 +1053,42 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
 
 
 def _known_projection_returns(source: str) -> frozenset[str]:
-    """Return local functions with an explicit or bounded projection-producing return."""
+    """Return explicitly annotated local projection producers; never infer bodies."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return frozenset()
     known = {"initial_projection", "build_projection", "reduce_event"}
-    functions = [
-        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
-    changed = True
-    while changed:
-        changed = False
-        for function in functions:
-            annotation = ast.unparse(function.returns) if function.returns is not None else ""
-            returns_known_call = any(
-                isinstance(value, ast.Call)
-                and isinstance(value.func, ast.Name)
-                and value.func.id in known
-                for statement in ast.walk(function)
-                if isinstance(statement, ast.Return)
-                for value in (statement.value,)
-                if value is not None
-            )
-            if (
-                annotation.endswith("GraphProjection") or returns_known_call
-            ) and function.name not in known:
-                known.add(function.name)
-                changed = True
+    for function in tree.body:
+        if (
+            isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and isinstance(function.returns, ast.Name)
+            and function.returns.id == "GraphProjection"
+        ):
+            known.add(function.name)
     return frozenset(known)
+
+
+def _typed_projection_fields(source: str) -> dict[str, frozenset[str]]:
+    """Read exact local class field annotations used for bounded attribute provenance."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+    result: dict[str, frozenset[str]] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef):
+            fields = frozenset(
+                field.target.id
+                for field in node.body
+                if isinstance(field, ast.AnnAssign)
+                and isinstance(field.target, ast.Name)
+                and isinstance(field.annotation, ast.Name)
+                and field.annotation.id == "GraphProjection"
+            )
+            if fields:
+                result[node.name] = fields
+    return result
 
 
 def inventory_paths(
@@ -1047,7 +1097,7 @@ def inventory_paths(
     """Collect a sorted aggregate from explicitly selected Python paths."""
     inventories: list[SourceInventory] = []
     for path in sorted(
-        (path for path in paths if path.suffix == ".py"), key=lambda item: str(item)
+        {path for path in paths if path.suffix == ".py"}, key=lambda item: str(item)
     ):
         source = path.read_text()
         relative_path = path.relative_to(root).as_posix()
@@ -1067,6 +1117,7 @@ def inventory_paths(
             manifest.baseline_revision,
             {field.old_name: field for field in manifest.fields},
             _known_projection_returns(source),
+            _typed_projection_fields(source),
         )
         MetadataWrapper(module).visit(collector)
         inventories.append(collector.result())
@@ -1093,15 +1144,31 @@ def inventory_paths(
     )
 
 
-def inventory_repository(root: Path, manifest: ProjectionMigrationManifest) -> AccessInventory:
-    """Collect tracked source areas while excluding generated and third-party trees."""
+def inventory_repository(
+    root: Path,
+    manifest: ProjectionMigrationManifest,
+    *,
+    tracked_paths: Iterable[Path] | None = None,
+) -> AccessInventory:
+    """Collect only injected or git-tracked Python source paths."""
     excluded = {"worktrees", "vendor", ".venv", "venv", "__pycache__"}
+    if tracked_paths is None:
+        tracked_paths = tuple(
+            root / path
+            for path in subprocess.run(
+                ("git", "-C", str(root), "ls-files", "--", "*.py"),
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.splitlines()
+        )
     paths = (
         path
-        for directory in (root / "src", root / "tests", root / "scripts")
-        if directory.exists()
-        for path in directory.rglob("*.py")
-        if not any(part in excluded for part in path.relative_to(root).parts)
+        for path in tracked_paths
+        if path.suffix == ".py"
+        and path.is_relative_to(root)
+        and path.relative_to(root).parts[:1] in {("src",), ("tests",), ("scripts",)}
+        and not any(part in excluded for part in path.relative_to(root).parts)
     )
     return inventory_paths(paths, manifest, root=root)
 
@@ -1118,7 +1185,9 @@ def main() -> int:
     inventory = inventory_repository(root, manifest)
     for diagnostic in inventory.diagnostics:
         print(
-            f"{diagnostic.relative_path}:{diagnostic.line}:{diagnostic.column}: {diagnostic.code}: {diagnostic.remediation}"
+            f"{diagnostic.relative_path}:{diagnostic.line}:{diagnostic.column}: "
+            f"{diagnostic.qualified_function}: {diagnostic.code}: {diagnostic.message}; "
+            f"{diagnostic.remediation}"
         )
     return 1 if inventory.diagnostics else 0
 

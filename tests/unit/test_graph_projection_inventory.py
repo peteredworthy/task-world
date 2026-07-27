@@ -1077,9 +1077,46 @@ def read(holder: Holder, projection: GraphProjection, callback: object) -> None:
     assert [item.code for item in inventory.diagnostics] == [
         "unsupported_binding",
         "unsupported_call",
-        "unsupported_binding",
     ]
+    assert [item.qualified_function for item in inventory.diagnostics] == ["read", "read"]
     assert all(item.remediation for item in inventory.diagnostics)
+
+
+def test_inventory_paths_uses_typed_constructor_and_checkpoint_provenance(tmp_path: Path) -> None:
+    source = tmp_path / "provenance.py"
+    source.write_text(
+        """
+class GraphDispatchContext:
+    graph_projection: GraphProjection
+
+class ProjectionCheckpoint:
+    projection: GraphProjection
+
+def read(checkpoint: ProjectionCheckpoint) -> None:
+    checkpoint.projection["run_state"]
+
+def dispatch() -> None:
+    context = GraphDispatchContext(graph_projection=initial_projection())
+    context.graph_projection["node_states"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("dispatch", "node_states"),
+        ("read", "run_state"),
+    ]
+
+
+def test_inventory_paths_does_not_diagnose_ordinary_imported_subscripts(tmp_path: Path) -> None:
+    source = tmp_path / "generic.py"
+    source.write_text("from typing import List\n\ndef read() -> None:\n    List[int]\n")
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert not inventory.diagnostics
 
 
 def test_inventory_repository_excludes_generated_and_sorts_files(tmp_path: Path) -> None:
@@ -1096,7 +1133,22 @@ def test_inventory_repository_excludes_generated_and_sorts_files(tmp_path: Path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text('def read(projection: GraphProjection):\n    projection["run_state"]\n')
 
-    inventory = inventory_repository(tmp_path, load_manifest(MANIFEST_PATH))
+    inventory = inventory_repository(
+        tmp_path,
+        load_manifest(MANIFEST_PATH),
+        tracked_paths=tuple(
+            tmp_path / relative_path
+            for relative_path in (
+                "src/z.py",
+                "tests/a.py",
+                "scripts/b.py",
+                "vendor/ignored.py",
+                "worktrees/ignored.py",
+                ".venv/ignored.py",
+                "src/__pycache__/ignored.py",
+            )
+        ),
+    )
 
     assert [item.relative_path for item in inventory.occurrences] == [
         "scripts/b.py",
