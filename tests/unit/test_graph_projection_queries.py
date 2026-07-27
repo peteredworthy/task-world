@@ -222,6 +222,9 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     assert accepted_graph_patch_ids(projection, "planner-fr17") == ("patch-1", "patch-2")
     assert accepted_no_successor_patch_ids(projection, "planner-fr17") == ("no-successor-1",)
     assert accepted_no_successor_patch_id(projection, "planner-fr17") == "no-successor-1"
+    assert accepted_graph_patch_ids(projection, "missing") == ()
+    assert accepted_no_successor_patch_ids(projection, "missing") == ()
+    assert accepted_no_successor_patch_id(projection, "missing") is None
     assert planner_generation(projection, "planner-fr17") == 3
     assert planner_session(projection, "planner-fr17") == "session-1"
     assert planner_session_state(projection, "session-1") == "active"
