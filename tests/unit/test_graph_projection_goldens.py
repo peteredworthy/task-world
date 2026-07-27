@@ -60,3 +60,13 @@ def test_canonical_json_check_reports_missing_terminal_newline(tmp_path: Path) -
 
     assert mismatch is not None
     assert "No newline at end of file" in mismatch
+
+
+def test_canonical_json_check_reports_crlf_drift(tmp_path: Path) -> None:
+    path = tmp_path / "golden.json"
+    value = {"a": 1}
+    path.write_bytes(b'{\r\n  "a": 1\r\n}\r\n')
+
+    mismatch = check_canonical_json(path, value)
+
+    assert mismatch is not None

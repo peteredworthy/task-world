@@ -257,3 +257,47 @@ Results: focused tests `14 passed in 4.06s`; Ruff passed; Pyright reported
 `0 errors, 0 warnings, 0 informations`; full suite passed with `4955 passed,
 3 skipped, 3 warnings in 116.64s`. The three warnings are the existing Python
 3.12 SQLite datetime-adapter deprecations from `aiosqlite`.
+
+## Task 2 final review fixes
+
+### RED evidence
+
+Added a CRLF drift regression test that writes canonical-looking JSON with
+Windows line endings using `write_bytes()`. Before the fix, `read_text()`
+normalized those endings and the test failed because the check incorrectly
+returned `None`.
+
+### GREEN implementation
+
+- Canonical JSON is encoded as UTF-8 bytes for both writing and checking.
+- Golden checks use `read_bytes()` for byte-exact comparison and decode only
+  after a mismatch to render the human-readable diff.
+- Unified diff output uses `itertools.islice(diff, 80)` without materializing
+  the complete diff.
+- Updated the line-sensitive inventory diagnostic artifact after the import
+  change moved the reported source locations.
+
+### Verification evidence
+
+```console
+uv run python scripts/generate_graph_projection_goldens.py --check
+uv run pytest tests/unit/test_graph_projection_goldens.py \
+  tests/unit/test_fixture_corpus.py \
+  tests/integration/test_graph_projection_public_parity.py \
+  tests/integration/test_graph_fr17_acceptance.py -q
+```
+
+Result: generator check passed; focused tests `15 passed in 4.17s`.
+
+```console
+uv run ruff check scripts/generate_graph_projection_goldens.py \
+  tests/unit/test_graph_projection_goldens.py
+uv run pyright scripts/generate_graph_projection_goldens.py \
+  tests/unit/test_graph_projection_goldens.py
+uv run pytest
+```
+
+Result: Ruff passed; Pyright reported `0 errors, 0 warnings, 0 informations`;
+full suite passed with `4956 passed, 3 skipped, 3 warnings in 117.97s`. The
+warnings remain the existing Python 3.12 `aiosqlite` datetime-adapter
+deprecations.

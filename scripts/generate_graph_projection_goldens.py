@@ -8,6 +8,7 @@ import difflib
 import json
 import sys
 from dataclasses import asdict
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -66,11 +67,13 @@ def canonical_json(value: JsonValue) -> str:
 
 
 def check_canonical_json(path: Path, value: JsonValue) -> str | None:
-    """Return a bounded exact-text diff when *path* is not canonical *value*."""
-    expected = canonical_json(value)
-    actual = path.read_text() if path.exists() else ""
-    if actual == expected:
+    """Return a bounded byte-exact diff when *path* is not canonical *value*."""
+    expected_bytes = canonical_json(value).encode("utf-8")
+    actual_bytes = path.read_bytes() if path.exists() else b""
+    if actual_bytes == expected_bytes:
         return None
+    actual = actual_bytes.decode("utf-8")
+    expected = expected_bytes.decode("utf-8")
     diff = difflib.unified_diff(
         actual.splitlines(keepends=True),
         expected.splitlines(keepends=True),
@@ -78,7 +81,7 @@ def check_canonical_json(path: Path, value: JsonValue) -> str | None:
         tofile=f"expected/{path.name}",
         n=3,
     )
-    rendered = "".join(list(diff)[:80])
+    rendered = "".join(islice(diff, 80))
     if actual and not actual.endswith("\n"):
         rendered += "\\ No newline at end of file\n"
     return rendered
@@ -262,7 +265,7 @@ def _storage_positioned_events(events: list[Any]) -> list[Any]:
 
 def _write_json(path: Path, value: dict[str, JsonValue]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(canonical_json(value))
+    path.write_bytes(canonical_json(value).encode("utf-8"))
 
 
 def main() -> int:
