@@ -24,6 +24,7 @@ from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
+from tests.graph_fr17_fixture import create_graph_run, seed_less_used_readback_graph
 
 
 @pytest.fixture
@@ -44,8 +45,8 @@ async def test_fr17_less_used_readbacks_survive_projection_rebuild(
     client, app = fr17_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     run_id = f"fr17-readback-{uuid4().hex[:8]}"
-    await _create_graph_run(session_factory, run_id)
-    await _seed_less_used_readback_graph(session_factory, run_id)
+    await create_graph_run(session_factory, run_id)
+    await seed_less_used_readback_graph(session_factory, run_id)
 
     decision_response = await client.post(
         f"/api/runs/{run_id}/graph/decisions",
