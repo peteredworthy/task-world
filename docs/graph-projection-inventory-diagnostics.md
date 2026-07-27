@@ -6,10 +6,10 @@ The command intentionally exits nonzero while unresolved flows remain.
 ## Complete sorted diagnostics
 
 ```text
-Unresolved GraphProjection flows: 363
-unsupported_binding: 9
-unsupported_call: 288
-unsupported_comparison: 66
+Unresolved GraphProjection flows: 409
+unsupported_binding: 42
+unsupported_call: 302
+unsupported_comparison: 65
 
 src/orchestrator/api/presenters/evidence_digest.py:143:18: _representative_nodes: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/api/presenters/evidence_digest.py:147:20: _representative_nodes: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -182,6 +182,32 @@ src/orchestrator/graph/callbacks.py:112:17: validate_callback: unsupported_call:
 src/orchestrator/graph/callbacks.py:141:17: _validate_expired_lease_callback: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/callbacks.py:155:27: _has_replacement_active_lease: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/callbacks.py:199:20: _validate_idempotency: unsupported_call: projection.get result method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph/commands/__init__.py:120:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:38:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:60:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:78:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:96:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:114:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:132:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:150:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:169:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/callbacks.py:187:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:30:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:50:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:64:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:78:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:92:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:106:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:120:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:134:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/lifecycle.py:148:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/patches.py:23:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/records.py:26:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/records.py:48:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/records.py:70:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/schedule.py:26:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/schedule.py:48:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph/commands/schedule.py:70:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph/patch_validator.py:146:20: validate_patch: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/patch_validator.py:154:20: validate_patch: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/patch_validator.py:260:43: _validate_typed_topology: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
@@ -214,8 +240,6 @@ src/orchestrator/graph_runtime/prompts.py:891:30: _planner_outstanding_failures:
 src/orchestrator/graph_runtime/prompts.py:905:17: _planner_session_carryover_record: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:908:16: _planner_session_carryover_record: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/recovery.py:80:7: reconcile_graph: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
-src/orchestrator/graph_runtime/store.py:679:11: GraphEventStore.read_projection_checkpoint: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
-src/orchestrator/graph_runtime/store.py:681:15: GraphEventStore.read_projection_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:704:22: GraphEventStore.load_projection_with_tail: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:706:19: GraphEventStore.load_projection_with_tail: unsupported_binding: projection escapes through a collection constructor; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:714:18: GraphEventStore.load_projection_with_tail: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -223,6 +247,7 @@ src/orchestrator/graph_runtime/store.py:716:15: GraphEventStore.load_projection_
 src/orchestrator/graph_runtime/store.py:863:15: GraphEventStore.advance_projection_snapshot: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 src/orchestrator/graph_runtime/store.py:873:25: GraphEventStore.advance_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:874:14: GraphEventStore.advance_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+src/orchestrator/graph_runtime/store.py:1266:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:1276:22: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1277:22: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1278:17: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -230,16 +255,18 @@ src/orchestrator/graph_runtime/store.py:1279:22: _assign_projection_snapshot: un
 src/orchestrator/graph_runtime/store.py:1280:25: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1281:26: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1283:25: _assign_projection_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+src/orchestrator/graph_runtime/store.py:1294:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph_runtime/store.py:1305:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/graph_runtime/store.py:1315:43: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:1329:36: _decisions_with_projection_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:1330:34: _decisions_with_projection_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+src/orchestrator/workflow/graph_driver.py:593:8: GraphRunDriver: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/workflow/graph_driver.py:829:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
+src/orchestrator/workflow/graph_driver.py:883:4: <module>: unsupported_binding: projection-shaped imported annotation is unresolved; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_event_store.py:87:21: _rebuild_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_event_store.py:88:4: _rebuild_projection: unsupported_binding: projection escapes through an unresolved return annotation; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_gatekeeper_flow.py:397:21: test_gatekeeper_secret_verdict_scrubs_compromised_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_node_detail_read_models.py:671:44: test_incremental_rich_lease_summaries_match_rebuild_and_canonical_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/integration/test_graph_read_models.py:409:23: _incident_projection_outcome: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/integration/test_graph_read_models.py:410:28: _incident_projection_outcome: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/integration/test_graph_read_models.py:413:26: _incident_projection_outcome: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/integration/test_graph_read_models.py:414:21: _incident_projection_outcome: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_routine_compile.py:51:11: test_routine_corpus_loads_and_compiles_cleanly: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_routine_compile.py:141:11: test_dynamic_graph_feature_compiles_to_single_initial_planner_head: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/integration/test_graph_routine_compile.py:142:11: test_dynamic_graph_feature_compiles_to_single_initial_planner_head: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
@@ -367,6 +394,25 @@ tests/unit/test_node_usage_events.py:142:11: test_node_usage_reducer_deduplicate
 tests/unit/test_node_usage_events.py:143:11: test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/unit/test_node_usage_events.py:144:11: test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/unit/test_node_usage_events.py:146:42: test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:109:13: test_required_pass_gated_final_check_from_recoverable_verifier_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:185:13: test_patch_stale_neutral_events_only_accepted: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:202:13: test_patch_stale_invalidating_event_in_read_set_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:224:13: test_patch_stale_invalidating_event_not_in_read_set_accepted: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:297:13: test_planner_cannot_create_check_with_hidden_oracle_command: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:339:13: test_planner_can_create_check_with_command_definition: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:377:13: test_planner_can_create_check_with_dynamic_feature_oracle_binding: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:499:13: test_create_edge_accepts_revision_attempt_embedded_worker_in_same_patch: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:535:13: test_create_edge_accepts_revision_attempt_embedded_worker_with_default_kind: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:570:13: test_create_edge_accepts_producer_class_source: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:820:13: test_create_edge_rejects_new_cycle: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:1065:13: test_set_resource_claims_escalation_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:1094:13: test_set_resource_claims_narrowing_accepted: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:1292:13: test_retire_running_node_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:1303:13: test_retire_planned_node_accepted: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:1312:13: test_gap_planner_cannot_retire_executable_node: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:1396:13: test_edge_unknown_port_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:1422:13: test_edge_selector_incompatible_with_source_port_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
+tests/unit/test_patch_validator.py:1459:13: test_multi_op_patch_one_fails_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
 tests/unit/test_planner_session_event_payloads.py:53:11: test_planner_session_reducer_preserves_explicit_null_carryover: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/unit/test_record_routing_event_payloads.py:113:11: test_verification_replay_ignores_contradictory_outcome: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/unit/test_record_routing_event_payloads.py:114:11: test_verification_replay_ignores_contradictory_outcome: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field

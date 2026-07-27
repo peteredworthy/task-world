@@ -1488,6 +1488,7 @@ def calls(value: Projection) -> None:
         ("reordered", "ready_nodes"),
     ]
     assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
         "unsupported_call",
         "unsupported_call",
         "unsupported_call",
@@ -1617,11 +1618,8 @@ def use() -> None:
 
     assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
         ("use", "run_state"),
-        ("use", "node_states"),
-        ("use", "run_state"),
     ]
     assert [item.code for item in inventory.diagnostics] == [
-        "unsupported_binding",
         "unsupported_binding",
         "unsupported_call",
     ]
@@ -1649,3 +1647,81 @@ def shadowed(value: GraphProjection) -> None:
 
     assert not inventory.occurrences
     assert not inventory.diagnostics
+
+
+def test_inventory_paths_enforces_exact_annotations_and_resolved_graph_module_symbols(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "remaining_task_1c.py"
+    source.write_text(
+        """
+import orchestrator.graph as graph
+from external import GraphProjection as ForeignProjection
+
+module_projection: graph.GraphProjection = graph.initial_projection()
+module_projection["run_state"]
+
+class LocalHolder:
+    projection: graph.GraphProjection
+
+def exact_producer() -> graph.GraphProjection:
+    return graph.initial_projection()
+
+def container_producer() -> list[graph.GraphProjection]:
+    return [graph.initial_projection()]
+
+def sink(value: graph.GraphProjection) -> None:
+    pass
+
+def use() -> None:
+    produced = exact_producer()
+    produced["node_states"]
+    container = container_producer()
+    container["ready_nodes"]
+    union: graph.GraphProjection | None = graph.initial_projection()
+    union["ready_nodes"]
+    boxed: list[graph.GraphProjection] = [graph.initial_projection()]
+    context: graph.GraphDispatchContext
+    context.graph_projection = graph.initial_projection()
+    context.graph_projection["run_state"]
+    context = object()
+    context.graph_projection["ready_nodes"]
+    holder: LocalHolder
+    holder.projection = graph.initial_projection()
+    holder.projection["node_states"]
+    holder.projection = object()
+    holder.projection["ready_nodes"]
+    constructed = graph.GraphDispatchContext(graph_projection=graph.initial_projection())
+    constructed.graph_projection["run_state"]
+    sink = lambda value: None
+    sink(produced)
+
+def foreign(value: ForeignProjection) -> None:
+    value["run_state"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("use", "node_states"),
+        ("use", "run_state"),
+        ("use", "node_states"),
+        ("use", "run_state"),
+    ]
+    assert [item.qualified_function for item in inventory.diagnostics] == [
+        "<module>",
+        "container_producer",
+        "use",
+        "use",
+        "use",
+        "<module>",
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_call",
+        "unsupported_binding",
+    ]

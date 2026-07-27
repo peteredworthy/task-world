@@ -237,6 +237,8 @@ _PROJECTION_FIELDS = {
     "GraphDispatchContext": frozenset({"graph_projection"}),
     "GraphProjectionCheckpoint": frozenset({"projection"}),
 }
+_CONTAINS_PROJECTION = "<contains GraphProjection>"
+_UNRESOLVED_PROJECTION = "<unresolved GraphProjection>"
 
 # A producer is trusted only when its imported origin is listed here.  Local
 # producers are separately admitted from an exact, resolved return annotation.
@@ -306,13 +308,18 @@ class _ModuleSymbols:
     """The deliberately small, deterministic namespace understood by the collector."""
 
     names: dict[str, str]
+    unresolved_projection_names: frozenset[str]
     class_fields: dict[str, frozenset[str]]
     call_symbols: dict[str, str]
     signatures: dict[str, _CallableSignature]
 
     @classmethod
     def from_source(
-        cls, source: str, *, allow_implicit_graph_projection: bool = False
+        cls,
+        source: str,
+        *,
+        allow_implicit_graph_projection: bool = False,
+        module_name: str | None = None,
     ) -> "_ModuleSymbols":
         names: dict[str, str] = (
             {
@@ -328,26 +335,32 @@ class _ModuleSymbols:
             if allow_implicit_graph_projection
             else {}
         )
-        class_fields: dict[str, frozenset[str]] = {}
+        class_fields: dict[str, frozenset[str]] = dict(_PROJECTION_FIELDS)
         call_symbols: dict[str, str] = {}
         signatures: dict[str, _CallableSignature] = {}
         try:
             tree = ast.parse(source)
         except SyntaxError:
-            return cls(names, class_fields, call_symbols, signatures)
+            return cls(names, frozenset(), class_fields, call_symbols, signatures)
+        unresolved_projection_names: set[str] = set()
         for node in tree.body:
             if isinstance(node, ast.Import):
                 for imported in node.names:
                     local = imported.asname or imported.name.split(".")[0]
-                    if imported.name == "typing":
+                    if imported.name in {"typing", "orchestrator.graph"}:
                         names[local] = imported.name
             elif isinstance(node, ast.ImportFrom) and node.module:
                 for imported in node.names:
                     if imported.name == "*":
                         continue
-                    resolved = f"{node.module}.{imported.name}"
+                    module = _resolve_import_module(node, module_name)
+                    if module is None:
+                        continue
+                    resolved = f"{module}.{imported.name}"
                     if resolved in _APPROVED_SYMBOLS | _APPROVED_PRODUCER_ORIGINS:
                         names[imported.asname or imported.name] = resolved
+                    elif "GraphProjection" in imported.name:
+                        unresolved_projection_names.add(imported.asname or imported.name)
         for node in tree.body:
             if isinstance(node, (ast.Assign, ast.AnnAssign, ast.ClassDef)):
                 targets = (
@@ -394,7 +407,9 @@ class _ModuleSymbols:
             owner = cls._projection_symbol(resolved)
             if owner in _PROJECTION_FIELDS:
                 class_fields[owner] = _PROJECTION_FIELDS[owner]
-        return cls(names, class_fields, call_symbols, signatures)
+        return cls(
+            names, frozenset(unresolved_projection_names), class_fields, call_symbols, signatures
+        )
 
     @staticmethod
     def _annotation(node: ast.expr | None, names: dict[str, str]) -> str | None:
@@ -402,10 +417,19 @@ class _ModuleSymbols:
             outer = _ModuleSymbols._annotation(node.value, names)
             if outer in {"typing.Any", "typing.Callable", "object"}:
                 return outer
-            return _ModuleSymbols._annotation_slice(node.slice, names)
+            nested = _ModuleSymbols._annotation_slice(node.slice, names)
+            return _CONTAINS_PROJECTION if nested == "GraphProjection" else nested
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            return _ModuleSymbols._annotation(node.left, names) or _ModuleSymbols._annotation(
-                node.right, names
+            annotations = (
+                _ModuleSymbols._annotation(node.left, names),
+                _ModuleSymbols._annotation(node.right, names),
+            )
+            return (
+                _CONTAINS_PROJECTION
+                if "GraphProjection" in annotations
+                else next(
+                    (annotation for annotation in annotations if annotation is not None), None
+                )
             )
         if isinstance(node, ast.Name):
             return _ModuleSymbols._projection_symbol(names.get(node.id, node.id))
@@ -428,10 +452,20 @@ class _ModuleSymbols:
             outer = self.annotation_name(node.value)
             if outer in {"typing.Any", "typing.Callable", "object"}:
                 return outer
-            return self._annotation_slice_cst(node.slice)
+            nested = self._annotation_slice_cst(node.slice)
+            return _CONTAINS_PROJECTION if nested == "GraphProjection" else nested
         if isinstance(node, cst.BinaryOperation) and isinstance(node.operator, cst.BitOr):
-            return self.annotation_name(node.left) or self.annotation_name(node.right)
+            annotations = (self.annotation_name(node.left), self.annotation_name(node.right))
+            return (
+                _CONTAINS_PROJECTION
+                if "GraphProjection" in annotations
+                else next(
+                    (annotation for annotation in annotations if annotation is not None), None
+                )
+            )
         if isinstance(node, cst.Name):
+            if node.value in self.unresolved_projection_names:
+                return _UNRESOLVED_PROJECTION
             resolved = self.names.get(node.value, node.value)
         elif isinstance(node, cst.Attribute) and isinstance(node.value, cst.Name):
             prefix = self.names.get(node.value.value)
@@ -472,11 +506,35 @@ def _ast_target_names(node: ast.expr) -> tuple[str, ...]:
 
 
 def _module_symbols(
-    source: str, *, allow_implicit_graph_projection: bool = False
+    source: str,
+    *,
+    allow_implicit_graph_projection: bool = False,
+    module_name: str | None = None,
 ) -> _ModuleSymbols:
     return _ModuleSymbols.from_source(
-        source, allow_implicit_graph_projection=allow_implicit_graph_projection
+        source,
+        allow_implicit_graph_projection=allow_implicit_graph_projection,
+        module_name=module_name,
     )
+
+
+def _resolve_import_module(node: ast.ImportFrom, module_name: str | None) -> str | None:
+    if node.level == 0:
+        return node.module
+    if module_name is None:
+        return None
+    package = module_name.split(".")[:-1]
+    if node.level > len(package):
+        return None
+    prefix = package[: len(package) - (node.level - 1)]
+    return ".".join((*prefix, *(node.module or "").split("."))).rstrip(".")
+
+
+def _module_name(relative_path: str) -> str | None:
+    path = Path(relative_path)
+    if path.suffix != ".py" or path.parts[:1] != ("src",):
+        return None
+    return ".".join(path.with_suffix("").parts[1:])
 
 
 class _Collector(cst.CSTVisitor):
@@ -487,19 +545,15 @@ class _Collector(cst.CSTVisitor):
         relative_path: str,
         baseline_revision: str,
         fields: dict[str, FieldOwnership],
-        known_returns: frozenset[str] = frozenset(),
-        typed_fields: dict[str, frozenset[str]] | None = None,
-        call_symbols: dict[str, str] | None = None,
         symbols: _ModuleSymbols | None = None,
     ) -> None:
         self.relative_path = relative_path
         self.baseline_revision = baseline_revision
         self.fields = fields
         self.symbols = symbols or _module_symbols("")
-        self.known_returns = known_returns
         self.tracked_attributes: dict[int, set[str]] = {}
-        self.typed_fields = {**self.symbols.class_fields, **(typed_fields or {})}
-        self.call_symbols = {**self.symbols.call_symbols, **(call_symbols or {})}
+        self.typed_fields = self.symbols.class_fields
+        self.call_symbols = self.symbols.call_symbols
         self.lexical_names: list[str] = []
         self.aliases: dict[int, set[str]] = {}
         self.known_aliases: dict[int, set[str]] = {}
@@ -579,6 +633,21 @@ class _Collector(cst.CSTVisitor):
         self.return_annotations.append(
             self._annotation_name(node.returns.annotation) if node.returns is not None else None
         )
+        for parameter in (
+            *node.params.posonly_params,
+            *node.params.params,
+            *node.params.kwonly_params,
+            *variadic,
+        ):
+            if (
+                parameter.annotation is not None
+                and self._annotation_name(parameter.annotation.annotation) == _UNRESOLVED_PROJECTION
+            ):
+                self._diagnostic(
+                    DiagnosticCode.UNSUPPORTED_BINDING,
+                    "projection-shaped imported annotation is unresolved",
+                    parameter,
+                )
 
     def leave_FunctionDef(self, original_node: cst.FunctionDef) -> None:
         self.return_annotations.pop()
@@ -859,9 +928,24 @@ class _Collector(cst.CSTVisitor):
         return field if field in self.fields else None
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
+        annotation = self._annotation_name(node.annotation.annotation)
+        if (
+            not self.lexical_names
+            and node.value is not None
+            and annotation == "GraphProjection"
+            and self._known_projection_value(node.value)
+        ):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_BINDING,
+                "module-level projection flow is unsupported",
+                node,
+            )
         if (
             node.value is not None
-            and self._is_escape_annotation(node.annotation.annotation)
+            and (
+                self._is_escape_annotation(node.annotation.annotation)
+                or annotation in {_CONTAINS_PROJECTION, _UNRESOLVED_PROJECTION}
+            )
             and self._known_projection_value(node.value)
         ):
             self._diagnostic(
@@ -885,7 +969,7 @@ class _Collector(cst.CSTVisitor):
         scope_id = id(self.get_metadata(ScopeProvider, node.target))
         annotation = self._annotation_name(node.annotation.annotation)
         self.binding_types.setdefault(scope_id, {})[node.target.value] = annotation
-        if annotation in _PROJECTION_FIELDS:
+        if annotation in self.typed_fields:
             self.receiver_types.setdefault(scope_id, {})[node.target.value] = annotation
         else:
             self.receiver_types.setdefault(scope_id, {}).pop(node.target.value, None)
@@ -993,15 +1077,14 @@ class _Collector(cst.CSTVisitor):
             len(node.targets) == 1
             and isinstance(node.targets[0].target, cst.Name)
             and isinstance(node.value, cst.Call)
-            and isinstance(node.value.func, cst.Name)
-            and node.value.func.value in self.typed_fields
+            and (owner := self._annotation_name(node.value.func)) in self.typed_fields
         ):
             scope_id = id(self.get_metadata(ScopeProvider, node.targets[0].target))
             self._discard_attributes_for(node.targets[0].target)
             for argument in node.value.args:
                 if (
                     argument.keyword is not None
-                    and argument.keyword.value in self.typed_fields[node.value.func.value]
+                    and argument.keyword.value in self.typed_fields[owner]
                     and self._known_projection_value(argument.value)
                 ):
                     self.tracked_attributes.setdefault(scope_id, set()).add(
@@ -1302,7 +1385,11 @@ class _Collector(cst.CSTVisitor):
                 node,
             )
             return
-        if isinstance(node.func, cst.Name) and node.func.value in self.symbols.signatures:
+        if (
+            isinstance(node.func, cst.Name)
+            and not self._symbol_is_shadowed(node.func)
+            and node.func.value in self.symbols.signatures
+        ):
             bound = self.symbols.signatures[node.func.value].bind(node.args)
             tracked_arguments = tuple(
                 self._projection_value(argument.value) and id(argument.value) not in self.handled
@@ -1619,65 +1706,10 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
         relative_path,
         baseline_revision,
         _manifest_fields(),
-        call_symbols=_imported_call_symbols(source),
         symbols=symbols,
     )
     MetadataWrapper(module).visit(collector)
     return collector.result()
-
-
-def _known_projection_returns(source: str) -> frozenset[str]:
-    """Return explicitly annotated local projection producers; never infer bodies."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return frozenset()
-    known = {"initial_projection", "build_projection", "reduce_event"}
-    for function in tree.body:
-        if (
-            isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and isinstance(function.returns, ast.Name)
-            and function.returns.id == "GraphProjection"
-        ):
-            known.add(function.name)
-    return frozenset(known)
-
-
-def _typed_projection_fields(source: str) -> dict[str, frozenset[str]]:
-    """Read exact local class field annotations used for bounded attribute provenance."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return {}
-    result: dict[str, frozenset[str]] = dict(_PROJECTION_FIELDS)
-    for node in tree.body:
-        if isinstance(node, ast.ClassDef):
-            fields = frozenset(
-                field.target.id
-                for field in node.body
-                if isinstance(field, ast.AnnAssign)
-                and isinstance(field.target, ast.Name)
-                and isinstance(field.annotation, ast.Name)
-                and field.annotation.id == "GraphProjection"
-            )
-            if fields:
-                result[node.name] = fields
-    return result
-
-
-def _imported_call_symbols(source: str) -> dict[str, str]:
-    """Resolve the tiny recognized-call table without name-based acceptance."""
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        return {}
-    symbols: dict[str, str] = {}
-    for node in tree.body:
-        if isinstance(node, ast.ImportFrom) and node.module == "typing":
-            for imported in node.names:
-                if imported.name == "cast":
-                    symbols[imported.asname or imported.name] = "typing.cast"
-    return symbols
 
 
 def inventory_paths(
@@ -1732,15 +1764,14 @@ def inventory_paths(
             )
             continue
         symbols = _module_symbols(
-            source, allow_implicit_graph_projection=allow_implicit_graph_projection
+            source,
+            allow_implicit_graph_projection=allow_implicit_graph_projection,
+            module_name=_module_name(relative_path),
         )
         collector = _Collector(
             relative_path,
             manifest.baseline_revision,
             {field.old_name: field for field in manifest.fields},
-            _known_projection_returns(source),
-            _typed_projection_fields(source),
-            _imported_call_symbols(source),
             symbols,
         )
         MetadataWrapper(module).visit(collector)

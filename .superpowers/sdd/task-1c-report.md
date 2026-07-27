@@ -303,3 +303,26 @@ exit 1 expected; 363 unresolved flows
 make test
 4932 passed, 3 skipped, 3 aiosqlite datetime-adapter warnings in 125.97s
 ```
+
+## Remaining Task 1c closure (2026-07-27)
+
+- Provenance now admits only exact `GraphProjection` annotations: generic and
+  union wrappers are boundaries, never seeds, and emit a fail-closed diagnostic
+  when a known projection crosses them.
+- Local callable signature binding checks lexical shadowing before lookup.
+  Projection-shaped imported aliases, unsupported module-level flow, and
+  shadowed producer/constructor/module aliases diagnose instead of inheriting
+  provenance.
+- `import orchestrator.graph as graph` resolves approved symbols; resolved
+  typed constructors and every resolved `typed_fields` receiver support
+  initialization, overwrite, and root-rebind invalidation.
+- Removed the obsolete parallel return/typed-field/import-call provenance
+  scanners. `_ModuleSymbols` is the sole resolver. The byte-exact artifact was
+  regenerated from the tracked repository.
+
+Authoritative outstanding inventory: **409** fail-closed diagnostics —
+**42** `unsupported_binding`, **302** `unsupported_call`, and **65**
+`unsupported_comparison`. These are migration work items, not accepted flows.
+
+Focused verification: `81 passed`; Ruff and Pyright passed. `--diagnose`
+intentionally exits 1 while the above diagnostics remain.
