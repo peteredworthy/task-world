@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import difflib
 import json
+import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import yaml
+from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api import (
     build_final_invariant_blockers_response,
@@ -17,8 +20,9 @@ from orchestrator.api import (
     build_graph_regions_response,
     build_graph_topology_response,
     build_scheduler_view_response,
+    create_app,
 )
-from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import init_db
 from orchestrator.graph import (
     FakeClock,
     GraphCommandContext,
@@ -43,14 +47,41 @@ from orchestrator.graph import (
     reduce_event,
     run_scenario,
 )
-from orchestrator.graph_runtime import GraphEventStore
 
 ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 GRAPH_FIXTURES = ROOT / "tests" / "fixtures" / "graph"
 GOLDEN_DIR = ROOT / "tests" / "fixtures" / "graph_projection_migration"
 REPLAY_GOLDENS = GOLDEN_DIR / "replay_goldens.json"
 PUBLIC_VIEW_GOLDENS = GOLDEN_DIR / "public_view_goldens.json"
+FR17_GOLDEN_RUN_ID = "fr17-public-golden"
 JsonValue = dict[str, Any] | list[Any] | str | int | float | bool | None
+
+
+def canonical_json(value: JsonValue) -> str:
+    """Return the sole checked-in JSON representation for graph goldens."""
+    return json.dumps(value, indent=2, sort_keys=True) + "\n"
+
+
+def check_canonical_json(path: Path, value: JsonValue) -> str | None:
+    """Return a bounded exact-text diff when *path* is not canonical *value*."""
+    expected = canonical_json(value)
+    actual = path.read_text() if path.exists() else ""
+    if actual == expected:
+        return None
+    diff = difflib.unified_diff(
+        actual.splitlines(keepends=True),
+        expected.splitlines(keepends=True),
+        fromfile=str(path),
+        tofile=f"expected/{path.name}",
+        n=3,
+    )
+    rendered = "".join(list(diff)[:80])
+    if actual and not actual.endswith("\n"):
+        rendered += "\\ No newline at end of file\n"
+    return rendered
 
 
 def _scenarios() -> list[dict[str, Any]]:
@@ -134,33 +165,73 @@ def build_replay_goldens() -> dict[str, JsonValue]:
 
 
 def build_public_view_goldens() -> dict[str, JsonValue]:
-    """Capture public presenter bodies for representative corpus scenarios."""
+    """Capture the complete public FR-17 HTTP readback contract."""
     return asyncio.run(_build_public_view_goldens())
 
 
 async def _build_public_view_goldens() -> dict[str, JsonValue]:
-    engine = create_engine(":memory:")
-    await init_db(engine)
-    session_factory = create_session_factory(engine)
+    from tests.graph_fr17_fixture import create_graph_run, seed_less_used_readback_graph
+
+    app = create_app(db_path=":memory:", routine_dirs=[])
+    await init_db(app.state.engine)
     try:
-        async with session_factory() as session:
-            store = GraphEventStore(session)
-            goldens: dict[str, JsonValue] = {}
-            selected = [
-                scenario for scenario in _scenarios() if scenario["name"].startswith("invariant_")
-            ]
-            for index, scenario in enumerate(selected, start=1):
-                run_id = f"public-golden-{index}"
-                events = [
-                    event.model_copy(update={"run_id": run_id}) for event in _events(scenario)
-                ]
-                await store.append_events(run_id, 0, events)
-                goldens[str(scenario["name"])] = public_view_bodies(
-                    await store.read_run_summary_rebuild(run_id)
-                )
-            return goldens
+        await create_graph_run(app.state.session_factory, FR17_GOLDEN_RUN_ID)
+        await seed_less_used_readback_graph(app.state.session_factory, FR17_GOLDEN_RUN_ID)
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            surfaces = await _read_complete_fr17_surfaces(client)
+        return {"fr17_complete": _normalize_volatile_run_transport_fields(surfaces)}
     finally:
-        await engine.dispose()
+        await app.state.engine.dispose()
+
+
+async def _read_complete_fr17_surfaces(client: AsyncClient) -> dict[str, JsonValue]:
+    run = FR17_GOLDEN_RUN_ID
+    return {
+        "run": await _get_json(client, f"/api/runs/{run}"),
+        "graph": await _get_json(client, f"/api/runs/{run}/graph"),
+        "events": await _get_json(client, f"/api/runs/{run}/graph/events?payload_mode=full"),
+        "topology": await _get_json(client, f"/api/runs/{run}/graph/topology"),
+        "scheduler": await _get_json(client, f"/api/runs/{run}/graph/scheduler"),
+        "decisions": await _get_json(client, f"/api/runs/{run}/graph/decisions"),
+        "patches": await _get_json(client, f"/api/runs/{run}/graph/patches"),
+        "regions": await _get_json(client, f"/api/runs/{run}/graph/regions"),
+        "final_blockers": await _get_json(client, f"/api/runs/{run}/graph/final-blockers"),
+        "recovery_node": await _get_json(
+            client, f"/api/runs/{run}/graph/nodes/recovery-1?payload_mode=full"
+        ),
+        "review_node": await _get_json(client, f"/api/runs/{run}/graph/nodes/review-1"),
+    }
+
+
+async def _get_json(client: AsyncClient, path: str) -> JsonValue:
+    response = await client.get(path)
+    response.raise_for_status()
+    return response.json()
+
+
+def _normalize_volatile_run_transport_fields(
+    surfaces: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
+    """Stabilize the run response's generated IDs and wall-clock timestamps.
+
+    These four fields originate in the run persistence/transport layer rather
+    than the deterministic FR-17 graph event stream.  Normalize only after the
+    router has constructed its real response body.
+    """
+    run = dict(surfaces["run"])
+    steps = run["steps"]
+    assert isinstance(steps, list)
+    run["created_at"] = "<volatile-created-at>"
+    run["updated_at"] = "<volatile-updated-at>"
+    run["steps"] = [
+        {
+            **step,
+            "id": "<volatile-step-id>",
+            "tasks": [{**task, "id": "<volatile-task-id>"} for task in step["tasks"]],
+        }
+        for step in steps
+    ]
+    return {**surfaces, "run": run}
 
 
 def public_view_bodies(events: list[Any], *, run_id: str = "golden-run") -> dict[str, JsonValue]:
@@ -191,7 +262,7 @@ def _storage_positioned_events(events: list[Any]) -> list[Any]:
 
 def _write_json(path: Path, value: dict[str, JsonValue]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+    path.write_text(canonical_json(value))
 
 
 def main() -> int:
@@ -208,14 +279,15 @@ def main() -> int:
         for path, value in generated.items():
             _write_json(path, value)
         return 0
-    return (
-        0
-        if all(
-            path.exists() and json.loads(path.read_text()) == value
-            for path, value in generated.items()
-        )
-        else 1
-    )
+    mismatches = [
+        (path, mismatch)
+        for path, value in generated.items()
+        if (mismatch := check_canonical_json(path, value)) is not None
+    ]
+    for path, mismatch in mismatches:
+        print(f"golden mismatch: {path}")
+        print(mismatch, end="" if mismatch.endswith("\n") else "\n")
+    return int(bool(mismatches))
 
 
 if __name__ == "__main__":

@@ -186,3 +186,74 @@ uv run pytest
 
 Result: `4952 passed, 3 skipped, 3 warnings in 118.29s`; warnings remain the
 existing Python 3.12 `aiosqlite` datetime-adapter deprecations.
+
+## Task 2b — Complete FR17 public goldens and canonical check
+
+### RED evidence
+
+1. Added canonical JSON check coverage before its implementation and ran:
+
+   ```console
+   uv run pytest tests/unit/test_graph_projection_goldens.py -q
+   ```
+
+   The focused test failed at collection because `canonical_json` was not yet
+   exported by the generator.
+
+2. Replaced the integration parity assertion with an independent HTTP read of
+   all FR-17 public surfaces through an in-memory SQLite app and reran:
+
+   ```console
+   uv run pytest tests/integration/test_graph_projection_public_parity.py -q
+   ```
+
+   It failed with the expected `KeyError: 'fr17_complete'` because the prior
+   public golden only contained the selected invariant corpus presenter views.
+
+### GREEN implementation
+
+- The public golden generator now creates one explicit
+  `fr17-public-golden` graph run, seeds the reviewed shared FR-17 fixture via
+  its real SQLite `GraphEventStore` helper, and reads the complete public
+  contract through actual FastAPI router requests.
+- `public_view_goldens.json` now includes run detail, graph projection, full
+  events, topology, scheduler, decisions, patches, regions, final blockers,
+  recovery-node detail, and review-node detail. Replay goldens were not
+  regenerated or changed.
+- The integration test independently creates and seeds the same real SQLite
+  state and independently issues every public request; it imports only the
+  shared fixture, never generator selection or presentation helpers.
+- Normalization occurs only after router response construction and is limited
+  to the documented volatile run transport fields: `created_at`, `updated_at`,
+  generated step ID, and generated task ID.
+- `canonical_json()` is the sole golden serializer (sorted two-space JSON plus
+  a terminal newline). `--check` now performs exact byte-text comparison,
+  reports every mismatched path with a bounded unified diff, and does not
+  write. Focused tests cover success plus key-order, indentation, and missing
+  terminal-newline drift.
+- Updating generator line positions required regenerating the existing
+  line-sensitive graph-projection inventory diagnostic fixture; its unresolved
+  diagnostic count and contents are otherwise unchanged.
+
+### Verification evidence
+
+```console
+uv run python scripts/generate_graph_projection_goldens.py --write
+uv run python scripts/generate_graph_projection_goldens.py --check
+uv run pytest tests/unit/test_graph_projection_goldens.py \
+  tests/unit/test_fixture_corpus.py \
+  tests/integration/test_graph_projection_public_parity.py \
+  tests/integration/test_graph_fr17_acceptance.py -q
+uv run ruff check scripts/generate_graph_projection_goldens.py \
+  tests/unit/test_graph_projection_goldens.py \
+  tests/integration/test_graph_projection_public_parity.py
+uv run pyright scripts/generate_graph_projection_goldens.py \
+  tests/unit/test_graph_projection_goldens.py \
+  tests/integration/test_graph_projection_public_parity.py
+uv run pytest
+```
+
+Results: focused tests `14 passed in 4.06s`; Ruff passed; Pyright reported
+`0 errors, 0 warnings, 0 informations`; full suite passed with `4955 passed,
+3 skipped, 3 warnings in 116.64s`. The three warnings are the existing Python
+3.12 SQLite datetime-adapter deprecations from `aiosqlite`.

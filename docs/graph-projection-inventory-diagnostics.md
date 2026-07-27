@@ -13,10 +13,10 @@ unsupported_binding: 66
 unsupported_call: 283
 unsupported_comparison: 50
 
-scripts/generate_graph_projection_goldens.py:95:8: _replay_views: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
-scripts/generate_graph_projection_goldens.py:95:22: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-scripts/generate_graph_projection_goldens.py:96:17: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-scripts/generate_graph_projection_goldens.py:117:34: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+scripts/generate_graph_projection_goldens.py:126:8: _replay_views: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
+scripts/generate_graph_projection_goldens.py:126:22: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+scripts/generate_graph_projection_goldens.py:127:17: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+scripts/generate_graph_projection_goldens.py:148:34: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/api/presenters/evidence_digest.py:143:18: _representative_nodes: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/api/presenters/evidence_digest.py:147:20: _representative_nodes: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/api/presenters/evidence_digest.py:212:8: build_run_evidence_digest_response: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
