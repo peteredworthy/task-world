@@ -343,63 +343,77 @@ class _ModuleSymbols:
         except SyntaxError:
             return cls(names, frozenset(), class_fields, call_symbols, signatures)
         unresolved_projection_names: set[str] = set()
+
+        def clear_local_binding(local: str) -> None:
+            names.pop(local, None)
+            unresolved_projection_names.discard(local)
+            class_fields.pop(local, None)
+            signatures.pop(local, None)
+
         for node in tree.body:
             if isinstance(node, ast.Import):
                 for imported in node.names:
                     local = imported.asname or imported.name.split(".")[0]
+                    clear_local_binding(local)
                     if imported.name in {"typing", "orchestrator.graph"}:
                         names[local] = imported.name
-            elif isinstance(node, ast.ImportFrom) and node.module:
+            elif isinstance(node, ast.ImportFrom):
                 for imported in node.names:
                     if imported.name == "*":
                         continue
+                    local = imported.asname or imported.name
+                    clear_local_binding(local)
                     module = _resolve_import_module(node, module_name)
                     if module is None:
                         continue
                     resolved = f"{module}.{imported.name}"
                     if resolved in _APPROVED_SYMBOLS | _APPROVED_PRODUCER_ORIGINS:
-                        names[imported.asname or imported.name] = resolved
-                    elif "GraphProjection" in imported.name:
-                        unresolved_projection_names.add(imported.asname or imported.name)
-        for node in tree.body:
-            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.ClassDef)):
-                targets = (
-                    node.targets
-                    if isinstance(node, ast.Assign)
-                    else (node.target,)
-                    if isinstance(node, ast.AnnAssign)
-                    else ()
-                )
-                for target in targets:
-                    for name in _ast_target_names(target):
-                        names.pop(name, None)
-        for node in tree.body:
+                        names[local] = resolved
+                    elif local == "GraphProjection" or "GraphProjection" in imported.name:
+                        unresolved_projection_names.add(local)
             if isinstance(node, ast.ClassDef):
                 fields = frozenset(
                     child.target.id
                     for child in node.body
                     if isinstance(child, ast.AnnAssign)
                     and isinstance(child.target, ast.Name)
-                    and cls._annotation(child.annotation, names) == "GraphProjection"
+                    and cls._annotation(child.annotation, names, unresolved_projection_names)
+                    == "GraphProjection"
                 )
+                clear_local_binding(node.name)
                 if fields:
                     class_fields[node.name] = fields
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 positional = tuple(
-                    (argument.arg, cls._annotation(argument.annotation, names))
+                    (
+                        argument.arg,
+                        cls._annotation(argument.annotation, names, unresolved_projection_names),
+                    )
                     for argument in (*node.args.posonlyargs, *node.args.args)
                 )
                 keyword_only = tuple(
-                    (argument.arg, cls._annotation(argument.annotation, names))
+                    (
+                        argument.arg,
+                        cls._annotation(argument.annotation, names, unresolved_projection_names),
+                    )
                     for argument in node.args.kwonlyargs
                 )
+                return_annotation = cls._annotation(
+                    node.returns, names, unresolved_projection_names
+                )
+                clear_local_binding(node.name)
                 signatures[node.name] = _CallableSignature(
                     positional,
                     keyword_only,
                     node.args.vararg is not None,
                     node.args.kwarg is not None,
-                    cls._annotation(node.returns, names),
+                    return_annotation,
                 )
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+                for target in targets:
+                    for name in _ast_target_names(target):
+                        clear_local_binding(name)
         for local, resolved in names.items():
             if resolved == "typing.cast":
                 call_symbols[local] = resolved
@@ -412,26 +426,43 @@ class _ModuleSymbols:
         )
 
     @staticmethod
-    def _annotation(node: ast.expr | None, names: dict[str, str]) -> str | None:
-        if isinstance(node, ast.Subscript):
-            outer = _ModuleSymbols._annotation(node.value, names)
-            if outer in {"typing.Any", "typing.Callable", "object"}:
-                return outer
-            nested = _ModuleSymbols._annotation_slice(node.slice, names)
-            return _CONTAINS_PROJECTION if nested == "GraphProjection" else nested
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            annotations = (
-                _ModuleSymbols._annotation(node.left, names),
-                _ModuleSymbols._annotation(node.right, names),
+    def _annotation(
+        node: ast.expr | None,
+        names: dict[str, str],
+        unresolved_projection_names: set[str] | frozenset[str] = frozenset(),
+    ) -> str | None:
+        """Normalize annotations identically across AST and CST callers."""
+        if node is None:
+            return None
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            return _ModuleSymbols._merge_annotation_members(
+                tuple(
+                    _ModuleSymbols._annotation(element, names, unresolved_projection_names)
+                    for element in node.elts
+                ),
+                nested=True,
             )
-            return (
-                _CONTAINS_PROJECTION
-                if "GraphProjection" in annotations
-                else next(
-                    (annotation for annotation in annotations if annotation is not None), None
-                )
+        if isinstance(node, ast.Subscript):
+            return _ModuleSymbols._merge_annotation_members(
+                (
+                    _ModuleSymbols._annotation(node.value, names, unresolved_projection_names),
+                    *_ModuleSymbols._annotation_members(
+                        node.slice, names, unresolved_projection_names
+                    ),
+                ),
+                nested=True,
+            )
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            return _ModuleSymbols._merge_annotation_members(
+                (
+                    _ModuleSymbols._annotation(node.left, names, unresolved_projection_names),
+                    _ModuleSymbols._annotation(node.right, names, unresolved_projection_names),
+                ),
+                nested=True,
             )
         if isinstance(node, ast.Name):
+            if node.id in unresolved_projection_names:
+                return _UNRESOLVED_PROJECTION
             return _ModuleSymbols._projection_symbol(names.get(node.id, node.id))
         if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
             prefix = names.get(node.value.id)
@@ -439,48 +470,34 @@ class _ModuleSymbols:
         return None
 
     @staticmethod
-    def _annotation_slice(node: ast.expr, names: dict[str, str]) -> str | None:
+    def _annotation_members(
+        node: ast.expr,
+        names: dict[str, str],
+        unresolved_projection_names: set[str] | frozenset[str],
+    ) -> tuple[str | None, ...]:
         if isinstance(node, ast.Tuple):
-            for element in node.elts:
-                if annotation := _ModuleSymbols._annotation(element, names):
-                    return annotation
-            return None
-        return _ModuleSymbols._annotation(node, names)
+            return tuple(
+                _ModuleSymbols._annotation(element, names, unresolved_projection_names)
+                for element in node.elts
+            )
+        return (_ModuleSymbols._annotation(node, names, unresolved_projection_names),)
+
+    @staticmethod
+    def _merge_annotation_members(
+        annotations: tuple[str | None, ...], *, nested: bool
+    ) -> str | None:
+        if _UNRESOLVED_PROJECTION in annotations:
+            return _UNRESOLVED_PROJECTION
+        if _CONTAINS_PROJECTION in annotations or (nested and "GraphProjection" in annotations):
+            return _CONTAINS_PROJECTION
+        return next((annotation for annotation in annotations if annotation is not None), None)
 
     def annotation_name(self, node: cst.BaseExpression) -> str | None:
-        if isinstance(node, cst.Subscript):
-            outer = self.annotation_name(node.value)
-            if outer in {"typing.Any", "typing.Callable", "object"}:
-                return outer
-            nested = self._annotation_slice_cst(node.slice)
-            return _CONTAINS_PROJECTION if nested == "GraphProjection" else nested
-        if isinstance(node, cst.BinaryOperation) and isinstance(node.operator, cst.BitOr):
-            annotations = (self.annotation_name(node.left), self.annotation_name(node.right))
-            return (
-                _CONTAINS_PROJECTION
-                if "GraphProjection" in annotations
-                else next(
-                    (annotation for annotation in annotations if annotation is not None), None
-                )
-            )
-        if isinstance(node, cst.Name):
-            if node.value in self.unresolved_projection_names:
-                return _UNRESOLVED_PROJECTION
-            resolved = self.names.get(node.value, node.value)
-        elif isinstance(node, cst.Attribute) and isinstance(node.value, cst.Name):
-            prefix = self.names.get(node.value.value)
-            resolved = f"{prefix}.{node.attr.value}" if prefix else ""
-        else:
+        try:
+            expression = ast.parse(cst.Module([]).code_for_node(node), mode="eval").body
+        except SyntaxError:
             return None
-        return self._projection_symbol(resolved)
-
-    def _annotation_slice_cst(self, slice_: tuple[cst.SubscriptElement, ...]) -> str | None:
-        for element in slice_:
-            if isinstance(element.slice, cst.Index) and (
-                annotation := self.annotation_name(element.slice.value)
-            ):
-                return annotation
-        return None
+        return self._annotation(expression, self.names, self.unresolved_projection_names)
 
     @staticmethod
     def _projection_symbol(resolved: str) -> str:
@@ -565,6 +582,15 @@ class _Collector(cst.CSTVisitor):
         self.diagnostics: list[tuple[str, str, str, int, int]] = []
         self.diagnostic_keys: set[tuple[int, DiagnosticCode]] = set()
         self.handled: set[int] = set()
+
+    def visit_Module(self, node: cst.Module) -> None:
+        """Seed module scope so declarations and flows use the same tables as functions."""
+        scope_id = id(self.get_metadata(ScopeProvider, node))
+        self.aliases.setdefault(scope_id, set())
+        self.known_aliases.setdefault(scope_id, set())
+        self.receiver_types.setdefault(scope_id, {})
+        self.binding_types.setdefault(scope_id, {})
+        self.shadowed_symbols.setdefault(scope_id, set())
 
     def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
         if self.lexical_names:
@@ -930,17 +956,6 @@ class _Collector(cst.CSTVisitor):
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
         annotation = self._annotation_name(node.annotation.annotation)
         if (
-            not self.lexical_names
-            and node.value is not None
-            and annotation == "GraphProjection"
-            and self._known_projection_value(node.value)
-        ):
-            self._diagnostic(
-                DiagnosticCode.UNSUPPORTED_BINDING,
-                "module-level projection flow is unsupported",
-                node,
-            )
-        if (
             node.value is not None
             and (
                 self._is_escape_annotation(node.annotation.annotation)
@@ -1081,6 +1096,8 @@ class _Collector(cst.CSTVisitor):
         ):
             scope_id = id(self.get_metadata(ScopeProvider, node.targets[0].target))
             self._discard_attributes_for(node.targets[0].target)
+            self.receiver_types.setdefault(scope_id, {})[node.targets[0].target.value] = owner
+            self.binding_types.setdefault(scope_id, {})[node.targets[0].target.value] = owner
             for argument in node.value.args:
                 if (
                     argument.keyword is not None
@@ -1111,9 +1128,10 @@ class _Collector(cst.CSTVisitor):
         self.receiver_types.setdefault(id(self.get_metadata(ScopeProvider, target)), {}).pop(
             target.value, None
         )
-        binding_type = self.binding_types.get(id(self.get_metadata(ScopeProvider, target)), {}).get(
-            target.value
+        binding_types = self.binding_types.setdefault(
+            id(self.get_metadata(ScopeProvider, target)), {}
         )
+        binding_type = binding_types.pop(target.value, None)
         if self._known_projection_value(node.value) and binding_type in {
             "typing.Any",
             "typing.Callable",
@@ -1854,6 +1872,8 @@ def diagnostic_artifact(inventory: AccessInventory) -> str:
     """Render the full checked-in repository diagnostic artifact."""
     return (
         "# GraphProjection Inventory Diagnostic Fixture\n\n"
+        "> **Authoritative:** This generated fixture is the complete, sorted record of "
+        "unresolved tracked GraphProjection flows for the manifest baseline.\n\n"
         "Generated from the tracked repository with the diagnostic command.\n"
         "The command intentionally exits nonzero while unresolved flows remain.\n\n"
         "## Complete sorted diagnostics\n\n"

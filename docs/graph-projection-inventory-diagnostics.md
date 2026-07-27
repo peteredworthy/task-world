@@ -1,5 +1,7 @@
 # GraphProjection Inventory Diagnostic Fixture
 
+> **Authoritative:** This generated fixture is the complete, sorted record of unresolved tracked GraphProjection flows for the manifest baseline.
+
 Generated from the tracked repository with the diagnostic command.
 The command intentionally exits nonzero while unresolved flows remain.
 

@@ -1704,13 +1704,13 @@ def foreign(value: ForeignProjection) -> None:
     inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
 
     assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("<module>", "run_state"),
         ("use", "node_states"),
         ("use", "run_state"),
         ("use", "node_states"),
         ("use", "run_state"),
     ]
     assert [item.qualified_function for item in inventory.diagnostics] == [
-        "<module>",
         "container_producer",
         "use",
         "use",
@@ -1721,7 +1721,126 @@ def foreign(value: ForeignProjection) -> None:
         "unsupported_binding",
         "unsupported_binding",
         "unsupported_binding",
-        "unsupported_binding",
         "unsupported_call",
         "unsupported_binding",
     ]
+
+
+def test_inventory_paths_uses_effective_module_bindings_for_producers(tmp_path: Path) -> None:
+    source = tmp_path / "effective_bindings.py"
+    source.write_text(
+        """
+from orchestrator.graph import GraphProjection, initial_projection
+
+def local_projection() -> GraphProjection:
+    return initial_projection()
+
+def initial_projection() -> object:
+    return object()
+
+from foreign import replacement as local_projection
+
+def use() -> None:
+    initial_projection()["run_state"]
+    local_projection()["node_states"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert not inventory.diagnostics
+
+
+def test_inventory_paths_marks_all_nested_projection_annotations_as_escapes(tmp_path: Path) -> None:
+    source = tmp_path / "nested_annotations.py"
+    source.write_text(
+        """
+from collections.abc import Callable, Mapping
+from orchestrator.graph import GraphProjection, initial_projection
+
+def use() -> None:
+    dictionary: dict[str, GraphProjection] = initial_projection()
+    tupled: tuple[str, GraphProjection] = initial_projection()
+    mapped: Mapping[str, tuple[str, GraphProjection]] = initial_projection()
+    callback: Callable[[GraphProjection], None] = initial_projection()
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_binding",
+    ]
+
+
+def test_inventory_paths_tracks_module_receiver_and_binding_tables(tmp_path: Path) -> None:
+    source = tmp_path / "module_receivers.py"
+    source.write_text(
+        """
+from orchestrator.graph import GraphDispatchContext, GraphProjectionCheckpoint, initial_projection
+
+context: GraphDispatchContext
+checkpoint: GraphProjectionCheckpoint
+context.graph_projection = initial_projection()
+checkpoint.projection = initial_projection()
+context.graph_projection["run_state"]
+checkpoint.projection["node_states"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("<module>", "run_state"),
+        ("<module>", "node_states"),
+    ]
+    assert not inventory.diagnostics
+
+
+def test_inventory_paths_keeps_typed_constructor_receiver_for_field_overwrite(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "constructor_receiver.py"
+    source.write_text(
+        """
+from orchestrator.graph import GraphDispatchContext, initial_projection
+
+def use() -> None:
+    context = GraphDispatchContext(graph_projection=initial_projection())
+    context.graph_projection = initial_projection()
+    context.graph_projection["run_state"]
+    context = object()
+    context.graph_projection["node_states"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("use", "run_state"),
+    ]
+    assert not inventory.diagnostics
+
+
+def test_inventory_paths_marks_reserved_local_foreign_projection_import_unresolved(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "unresolved_reserved_name.py"
+    source.write_text(
+        """
+from foreign import Something as GraphProjection
+
+def use(value: GraphProjection) -> None:
+    value["run_state"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]
