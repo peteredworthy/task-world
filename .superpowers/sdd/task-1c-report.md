@@ -162,3 +162,67 @@ uv run ruff format --check scripts/graph_projection_inventory.py tests/unit/test
 uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
 0 errors, 0 warnings, 0 informations
 ```
+
+## Authoritative final report (2026-07-27)
+
+### Completed provenance-first pass
+
+- Attribute provenance is admitted only for a declared `GraphProjection` field
+  on an explicitly resolved receiver type. Attribute overwrite and root-name
+  rebinding discard that provenance; unsupported projection attribute writes
+  diagnose rather than becoming tracked implicitly.
+- A deterministic module symbol table resolves imports, aliases, local
+  definitions, declared fields, annotations, `typing.cast` (including an
+  imported `typing` module alias), and bounded local callable signatures.
+  Shadowed or dynamic names are not accepted. Calls to local functions that
+  declare `GraphProjection` parameters are bounded pass-through calls; other
+  projection-bearing calls diagnose.
+- The collector diagnoses unbounded `Any`/`Callable`/`object` annotations,
+  assignment into an already unbounded binding, unresolved projection returns,
+  and collection-constructor escapes. It deliberately does not generalize into
+  inter-procedural inference.
+- `inventory_paths(paths, manifest)` now derives a common path root when the
+  caller omits one. `diagnostic_report()` renders each stored remediation (not
+  a recomputed fallback) and deterministically sorts totals and sites.
+- The default real Git tracked-path provider is covered for representative
+  prompts, dispatch, recovery, and store flows; its test verifies that
+  worktree/vendor paths are excluded. The checked diagnostics artifact now
+  contains every current sorted diagnostic, rather than representative samples.
+
+### Current diagnostic inventory
+
+`uv run python scripts/graph_projection_inventory.py --diagnose` exits **1**
+by design and reports **642** unresolved flows:
+
+| Code | Count |
+| --- | ---: |
+| `unsupported_binding` | 7 |
+| `unsupported_call` | 564 |
+| `unsupported_comparison` | 71 |
+
+The complete deterministic site list is checked in at
+`docs/graph-projection-inventory-diagnostics.md` (657 lines including its
+header and fenced report). These are outstanding migration sites, not silently
+accepted accesses. No general inter-procedural inference was added.
+
+### Final verification evidence
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+74 passed in 50.12s
+
+uv run python scripts/graph_projection_inventory.py --diagnose
+exit 1 expected; 642 sorted diagnostics
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run ruff format --check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+2 files already formatted
+
+uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+make test
+4926 passed, 3 skipped, 3 existing aiosqlite datetime-adapter warnings in 108.12s
+```

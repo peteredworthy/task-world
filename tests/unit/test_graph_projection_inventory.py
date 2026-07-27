@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 from pydantic import ValidationError
 import pytest
@@ -436,6 +437,7 @@ def test_diagnostic_report_is_sorted_and_includes_code_counts() -> None:
                 column=0,
                 code=DiagnosticCode.UNSUPPORTED_CALL,
                 message="z",
+                remediation="stored call remediation",
             ),
             InventoryDiagnostic(
                 relative_path="a.py",
@@ -444,6 +446,7 @@ def test_diagnostic_report_is_sorted_and_includes_code_counts() -> None:
                 column=0,
                 code=DiagnosticCode.REFLECTION,
                 message="a",
+                remediation="stored reflection remediation",
             ),
         ),
     )
@@ -453,8 +456,8 @@ def test_diagnostic_report_is_sorted_and_includes_code_counts() -> None:
         "reflection: 1\n"
         "unsupported_call: 1\n"
         "\n"
-        "a.py:1:0: a: reflection: a; replace reflection with an explicit typed projection field\n"
-        "z.py:2:0: z: unsupported_call: z; replace the dynamic call with a typed projection query\n"
+        "a.py:1:0: a: reflection: a; stored reflection remediation\n"
+        "z.py:2:0: z: unsupported_call: z; stored call remediation\n"
     )
 
 
@@ -1327,3 +1330,106 @@ def test_inventory_paths_does_not_parse_detached_attribute_fragments(tmp_path: P
 
     assert not inventory.occurrences
     assert not inventory.diagnostics
+
+
+def test_inventory_paths_enforces_provenance_first_symbols_and_bounded_escapes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "provenance.py"
+    source.write_text(
+        """
+import typing as t
+from typing import Any as Dynamic, Callable as Callback, cast as typed_cast
+from orchestrator.graph import GraphProjection as Projection
+
+class Holder:
+    projection: Projection
+
+def passthrough(value: Projection) -> Projection:
+    return value
+
+def unresolved(value: Projection):
+    return value
+
+def use(holder: Holder, projection: Projection, callback: Callback[..., object]) -> None:
+    holder.projection = projection
+    holder.projection["run_state"]
+    holder.projection = object()
+    holder.projection["node_states"]
+    holder.projection = projection
+    holder = Holder()
+    holder.projection["ready_nodes"]
+    accepted = passthrough(projection)
+    accepted["run_state"]
+    typed_cast(dict[str, str], projection["node_states"])
+    t.cast(dict[str, str], projection["ready_nodes"])
+    dynamic: Dynamic = projection
+    callback(projection)
+    old: object = object()
+    old = projection
+    nested = [projection, (projection,), {"projection": projection}, {projection}]
+    return unresolved(projection)
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH))
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("use", "run_state"),
+        ("use", "run_state"),
+        ("use", "node_states"),
+        ("use", "ready_nodes"),
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_call",
+        "unsupported_binding",
+        "unsupported_binding",
+    ]
+
+
+def test_inventory_repository_default_provider_covers_tracked_required_sites_and_excludes_untracked(
+    tmp_path: Path,
+) -> None:
+    for relative_path in (
+        "src/prompts.py",
+        "src/dispatch.py",
+        "src/recovery.py",
+        "src/store.py",
+        "untracked.py",
+    ):
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('def read(projection: GraphProjection):\n    projection["run_state"]\n')
+    subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
+    subprocess.run(
+        ("git", "add", "src/prompts.py", "src/dispatch.py", "src/recovery.py", "src/store.py"),
+        cwd=tmp_path,
+        check=True,
+    )
+
+    inventory = inventory_repository(tmp_path, load_manifest(MANIFEST_PATH))
+
+    assert [item.relative_path for item in inventory.occurrences] == [
+        "src/dispatch.py",
+        "src/prompts.py",
+        "src/recovery.py",
+        "src/store.py",
+    ]
+
+
+@pytest.mark.timeout(120)
+def test_default_tracked_provider_reports_real_prompt_dispatch_recovery_and_store_sites() -> None:
+    root = Path(__file__).parents[2]
+
+    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
+
+    diagnosed_paths = {item.relative_path for item in inventory.diagnostics}
+    assert {
+        "src/orchestrator/graph_runtime/prompts.py",
+        "src/orchestrator/graph_runtime/dispatch.py",
+        "src/orchestrator/graph_runtime/recovery.py",
+        "src/orchestrator/graph_runtime/store.py",
+    } <= diagnosed_paths
+    assert all("worktrees/" not in path and "vendor/" not in path for path in diagnosed_paths)
