@@ -141,3 +141,48 @@ uv run pytest
 
 Result: `4952 passed, 3 skipped, 3 warnings in 120.46s`. The warnings are the
 existing Python 3.12 `aiosqlite` datetime-adapter deprecations.
+
+### Task 2a review follow-up
+
+#### RED evidence
+
+Strengthened the deterministic fixture test with the exact 25-event type
+sequence and a SHA-256 signature of the complete JSON-normalized event stream.
+Before supplying the expected signature, the focused test failed as intended:
+
+```text
+AssertionError: '90297431aed70b324d374bb89f99b573844c633b270466bbc0d4e278c62680af' == ''
+```
+
+#### GREEN implementation
+
+- Physically removed the dormant FR-17 routine, run setup, seed, event,
+  decision-request, and event-builder helpers from the acceptance module,
+  along with their imports.
+- Changed shared-fixture imports to the public `orchestrator.config` and
+  `orchestrator.state` APIs.
+- Locked stream event ordering and complete normalized event content with the
+  deterministic signature assertion.
+
+#### Verification evidence
+
+```console
+uv run pytest tests/unit/test_graph_fr17_fixture.py \
+  tests/integration/test_graph_fr17_acceptance.py -v
+uv run ruff check tests/graph_fr17_fixture.py \
+  tests/unit/test_graph_fr17_fixture.py \
+  tests/integration/test_graph_fr17_acceptance.py
+uv run pyright tests/graph_fr17_fixture.py \
+  tests/unit/test_graph_fr17_fixture.py \
+  tests/integration/test_graph_fr17_acceptance.py
+```
+
+Result: focused tests `2 passed in 3.70s`; Ruff passed; Pyright reported
+`0 errors, 0 warnings, 0 informations`.
+
+```console
+uv run pytest
+```
+
+Result: `4952 passed, 3 skipped, 3 warnings in 118.29s`; warnings remain the
+existing Python 3.12 `aiosqlite` datetime-adapter deprecations.

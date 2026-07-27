@@ -7,12 +7,11 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.config import AgentRunnerType, RunStatus
-from orchestrator.config.models import RoutineConfig
+from orchestrator.config import AgentRunnerType, RoutineConfig, RunStatus
 from orchestrator.db import RunModel
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
-from orchestrator.state.factory import create_run_from_routine
+from orchestrator.state import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from tests.unit.graph_test_utils import canonical_event_payload
 
