@@ -366,6 +366,8 @@ def test_inventory_paths_uses_exact_qualified_producers_and_fields_with_shadowin
     source = tmp_path / "producer.py"
     source.write_text(
         """
+from orchestrator.graph import GraphController, GraphDispatchContext, GraphEventStore, GraphProjection, GraphProjectionCheckpoint
+
 class Checkpoint:
     projection: GraphProjection
 
@@ -1157,6 +1159,8 @@ def test_inventory_paths_follows_known_returns_pass_through_and_context_flow(
     source = tmp_path / "flow.py"
     source.write_text(
         """
+from orchestrator.graph import GraphDispatchContext, GraphProjection, initial_projection
+
 def make() -> GraphProjection:
     return initial_projection()
 
@@ -1190,6 +1194,7 @@ def test_inventory_paths_tracks_annotated_attributes_and_rejects_any_callbacks_a
         """
 from external import projection_alias
 from typing import Any, cast
+from orchestrator.graph import GraphProjection
 
 class Holder:
     projection: GraphProjection
@@ -1222,13 +1227,9 @@ def test_inventory_paths_uses_typed_constructor_and_checkpoint_provenance(tmp_pa
     source = tmp_path / "provenance.py"
     source.write_text(
         """
-class GraphDispatchContext:
-    graph_projection: GraphProjection
+from orchestrator.graph import GraphDispatchContext, GraphProjection, GraphProjectionCheckpoint, initial_projection
 
-class ProjectionCheckpoint:
-    projection: GraphProjection
-
-def read(checkpoint: ProjectionCheckpoint) -> None:
+def read(checkpoint: GraphProjectionCheckpoint) -> None:
     checkpoint.projection["run_state"]
 
 def dispatch() -> None:
@@ -1267,7 +1268,10 @@ def test_inventory_repository_excludes_generated_and_sorts_files(tmp_path: Path)
     ):
         path = tmp_path / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('def read(projection: GraphProjection):\n    projection["run_state"]\n')
+        path.write_text(
+            "from orchestrator.graph import GraphProjection\n\n"
+            'def read(projection: GraphProjection):\n    projection["run_state"]\n'
+        )
 
     inventory = inventory_repository(
         tmp_path,
@@ -1402,7 +1406,10 @@ def test_inventory_repository_default_provider_covers_tracked_required_sites_and
     ):
         path = tmp_path / relative_path
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text('def read(projection: GraphProjection):\n    projection["run_state"]\n')
+        path.write_text(
+            "from orchestrator.graph import GraphProjection\n\n"
+            'def read(projection: GraphProjection):\n    projection["run_state"]\n'
+        )
     subprocess.run(("git", "init", "-q"), cwd=tmp_path, check=True)
     subprocess.run(
         ("git", "add", "src/prompts.py", "src/dispatch.py", "src/recovery.py", "src/store.py"),
@@ -1527,3 +1534,118 @@ def test_checked_in_diagnostic_artifact_exactly_matches_full_repository_report()
         diagnostic_artifact(inventory)
         == (root / "docs/graph-projection-inventory-diagnostics.md").read_text()
     )
+
+
+def test_inventory_paths_resolves_only_unshadowed_exact_local_producers(tmp_path: Path) -> None:
+    source = tmp_path / "local_producers.py"
+    source.write_text(
+        """
+from orchestrator.graph import GraphProjection, initial_projection
+
+def producer() -> GraphProjection:
+    return initial_projection()
+
+def accepted() -> None:
+    first = producer()
+    second = initial_projection()
+    first["run_state"]
+    second["node_states"]
+
+def parameter_shadow(producer: object) -> None:
+    producer()["ready_nodes"]
+
+def assignment_shadow() -> None:
+    producer = lambda: object()
+    producer()["ready_nodes"]
+
+def nested_definition_shadow() -> None:
+    def producer() -> object:
+        return object()
+    producer()["ready_nodes"]
+
+def imported_shadow() -> None:
+    from foreign import producer
+    producer()["ready_nodes"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("accepted", "run_state"),
+        ("accepted", "node_states"),
+    ]
+
+
+def test_inventory_paths_normalizes_annotations_and_clears_local_receiver_types(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "annotations.py"
+    source.write_text(
+        """
+import typing as t
+from orchestrator.graph import GraphDispatchContext, GraphProjection, GraphProjectionCheckpoint, initial_projection
+
+def make() -> GraphProjection | None:
+    return initial_projection()
+
+def use() -> None:
+    context: GraphDispatchContext
+    checkpoint: GraphProjectionCheckpoint
+    context.graph_projection = make()
+    checkpoint.projection = make()
+    context.graph_projection["run_state"]
+    checkpoint.projection["node_states"]
+    context = object()
+    checkpoint = object()
+    context.graph_projection["ready_nodes"]
+    checkpoint.projection["ready_nodes"]
+    delayed_any: t.Any
+    delayed_callable: t.Callable[..., object]
+    delayed_object: object
+    delayed_any = make()
+    delayed_callable = make()
+    delayed_object = make()
+    projection = initial_projection()
+    t.cast(dict[str, str], projection["run_state"])
+    t = object()
+    t.cast(dict[str, str], projection["node_states"])
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("use", "run_state"),
+        ("use", "node_states"),
+        ("use", "run_state"),
+    ]
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_call",
+    ]
+
+
+def test_repository_mode_requires_explicit_approved_projection_origins(tmp_path: Path) -> None:
+    source = tmp_path / "origins.py"
+    source.write_text(
+        """
+def unapproved(value: GraphProjection) -> None:
+    value["run_state"]
+
+GraphProjection = object
+
+def shadowed(value: GraphProjection) -> None:
+    value["node_states"]
+"""
+    )
+
+    inventory = inventory_repository(
+        tmp_path,
+        load_manifest(MANIFEST_PATH),
+        tracked_paths=(source,),
+    )
+
+    assert not inventory.occurrences
+    assert not inventory.diagnostics

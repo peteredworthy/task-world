@@ -6,10 +6,10 @@ The command intentionally exits nonzero while unresolved flows remain.
 ## Complete sorted diagnostics
 
 ```text
-Unresolved GraphProjection flows: 646
+Unresolved GraphProjection flows: 363
 unsupported_binding: 9
-unsupported_call: 566
-unsupported_comparison: 71
+unsupported_call: 288
+unsupported_comparison: 66
 
 src/orchestrator/api/presenters/evidence_digest.py:143:18: _representative_nodes: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/api/presenters/evidence_digest.py:147:20: _representative_nodes: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -194,275 +194,9 @@ src/orchestrator/graph/patch_validator.py:580:11: _node_kind_role: unsupported_c
 src/orchestrator/graph/patch_validator.py:580:50: _node_kind_role: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/patch_validator.py:843:43: _existing_resource_claim_rank: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph/projection_queries.py:12:11: resource_claims_for_node: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:548:22: projection_to_checkpoint: unsupported_call: invalid cast projection call shape; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:549:32: projection_to_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:553:32: projection_to_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:557:31: projection_to_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:561:41: projection_to_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:570:31: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:574:29: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:583:30: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:587:33: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:593:33: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:599:31: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:603:37: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:607:32: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:611:33: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:615:42: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:619:37: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:632:30: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:639:30: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:643:34: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:647:26: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:651:39: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:655:33: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:657:48: projection_to_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:664:51: projection_to_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:673:32: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:677:32: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:681:32: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:685:36: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:689:35: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:693:32: projection_to_checkpoint: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1808:23: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1809:23: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1812:35: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1815:23: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1816:22: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1817:22: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1818:35: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1819:29: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1820:25: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1821:27: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1822:34: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1824:57: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1827:59: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1831:42: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1833:36: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1836:34: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1840:34: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1844:38: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1848:34: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1852:33: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1861:34: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1863:32: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1864:31: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1867:46: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1869:29: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1871:52: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1874:52: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1877:45: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1880:45: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1885:41: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1887:25: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1890:41: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1895:41: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1899:45: _clone_projection: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1901:32: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1902:30: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1904:30: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1907:38: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1911:38: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1913:51: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1917:31: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1918:28: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1919:34: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1920:41: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1921:38: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1922:33: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1923:33: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1924:39: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1925:28: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1926:33: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1927:36: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1928:34: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1929:34: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1930:30: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1931:31: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1932:31: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1935:36: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1938:39: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1941:40: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1943:32: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1946:40: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1950:45: _clone_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1953:31: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1954:26: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1955:31: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1956:35: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1957:40: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1958:36: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1959:36: _clone_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1974:28: reduce_event: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:1988:12: reduce_event: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2009:20: reduce_event: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2010:20: reduce_event: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2035:16: reduce_event: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2046:11: reduce_event: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
-src/orchestrator/graph/projections.py:2050:16: reduce_event: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2053:16: reduce_event: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2057:20: reduce_event: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2060:20: reduce_event: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2063:20: reduce_event: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2095:63: reduce_event: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2103:17: reduce_event: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
-src/orchestrator/graph/projections.py:2107:34: reduce_event: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2122:16: reduce_event: unsupported_call: projection field method pop is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2138:28: reduce_event: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2150:28: reduce_event: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2195:8: reduce_event: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2201:8: reduce_event: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2205:8: reduce_event: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2231:23: reduce_event: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2237:39: reduce_event: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2247:16: reduce_event: unsupported_call: projection field method pop is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2287:8: reduce_event: unsupported_call: projection field method pop is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2292:32: reduce_event: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2336:31: final_invariant_blockers_for_events: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2337:15: final_invariant_blockers_for_events: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2338:15: final_invariant_blockers_for_events: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2386:38: final_invariant_blockers_for_events: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2402:31: _node_fulfillment_blockers: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2424:25: _node_fulfillment_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2434:25: _impossible_input_blockers: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2442:11: _impossible_input_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2444:11: _impossible_input_blockers: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
-src/orchestrator/graph/projections.py:2452:21: _impossible_input_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2454:25: _impossible_input_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2465:25: _dead_required_input_blockers: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2473:23: _dead_required_input_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2476:23: _dead_required_input_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2479:18: _dead_required_input_blockers: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2492:25: _dead_required_input_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2510:31: _non_terminal_node_blockers: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2514:15: _non_terminal_node_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2523:25: _non_terminal_node_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2591:28: _failed_check_result_blockers_from_projection: unsupported_call: projection.get result method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2650:29: _completion_decision_blockers: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2665:27: _completion_decision_blockers: unsupported_call: projection.get result method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2687:29: _completion_decision_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2702:25: _completion_decision_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2747:23: _open_proposal_blockers: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2780:21: _suspect_node_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2830:23: _authority_revision_blockers: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2872:31: _blocked_requirement_node_blockers: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2873:11: _blocked_requirement_node_blockers: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2909:8: _record_open_proposal_blocker: unsupported_call: projection field method pop is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:2942:12: _record_authority_revision_blocker: unsupported_call: projection field method pop is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3019:29: project_planner_chain: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3046:18: project_planner_session: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3048:22: project_planner_session: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3080:17: project_planner_session: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3082:27: project_planner_session: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3083:31: project_planner_session: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3136:19: project_graph_topology: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3137:15: project_graph_topology: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3138:15: project_graph_topology: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3143:21: project_graph_topology: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3152:23: project_graph_topology: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3302:31: support_evidence_freshness_from_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3328:45: requirement_freshness_facts_from_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3331:19: requirement_freshness_facts_from_projection: unsupported_call: projection.get result method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3334:35: requirement_freshness_facts_from_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3505:26: project_decision_view_from_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3506:15: project_decision_view_from_projection: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3646:18: _edge_port_contracts: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3650:18: _edge_port_contracts: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3654:18: _edge_port_contracts: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3655:18: _edge_port_contracts: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3691:14: _binding_for_edge: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3694:17: _binding_for_edge: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:3726:34: _record_summaries_by_id: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4105:24: _project_missing_input_sources: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4230:4: _record_callback_idempotency_event: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4325:15: _gate_type: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4330:11: _gate_type: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4417:12: _planner_region_label: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4420:23: _planner_region_label: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4481:46: _record_candidate: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4489:25: _record_candidate: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4512:4: _record_candidate: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4546:4: _record_recovery_node: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4573:11: _record_verification_result: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
-src/orchestrator/graph/projections.py:4608:46: _record_check_result: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4655:12: _record_node_output_port: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4670:12: _record_accepted_output_record: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4702:4: _record_output_record: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4739:24: _record_open_appeal: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4794:25: _record_gate_decision: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4800:4: _record_gate_decision: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4819:8: _clear_authority_revision_blocker: unsupported_call: projection field method pop is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4950:33: _record_support_evidence: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:4982:31: _mark_superseded_support_stale: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5008:24: _support_stale_reason: unsupported_call: projection.get result method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5102:23: _record_input_binding: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5124:8: _record_input_binding: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5148:15: _edge_for_input_binding: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5151:16: _edge_for_input_binding: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5167:18: _target_port_for_binding: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5170:18: _target_port_for_binding: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5242:46: _record_environment_failure: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5319:13: _record_gatekeeper_verdicts: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5341:8: _record_cleanup_requested: unsupported_call: projection field method setdefault is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5346:13: _record_cleanup_requested: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5371:13: _record_cleanup_applied: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5587:22: _derive_task_states: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5588:4: _derive_task_states: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5589:4: _derive_task_states: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5590:4: _derive_task_states: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5591:4: _derive_task_states: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5594:21: _derive_task_states: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5597:4: _derive_task_states: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5601:27: _derive_task_states: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5610:27: _derive_task_states: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5611:25: _derive_task_states: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5613:24: _derive_task_states: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5616:18: _derive_task_states: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5640:13: _derive_task_states: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
-src/orchestrator/graph/projections.py:5655:38: _apply_accepted_region_supersessions: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5695:44: _task_region_node_ids: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5701:11: _contract_for_node: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5704:11: _contract_for_node: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5715:17: _node_contract_fulfilled: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5733:12: _missing_fulfillment_ports: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5742:17: _final_invariant_node_passed: unsupported_call: projection.get result method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5745:15: _final_invariant_node_passed: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5754:14: _verifier_requirement_passed: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5768:29: _verifier_requirement_passed: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5777:18: _task_file_state_accepted: unsupported_call: projection.get result method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5782:35: _task_file_state_accepted: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5796:23: _required_checks_passed: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5799:29: _required_checks_passed: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5807:17: _required_checks_passed: unsupported_call: projection.get result method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5853:20: _check_result_recovery_superseded: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5864:24: _failed_verification_recovery_superseded: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5872:24: _failed_verification_recovery_superseded: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5885:24: _recovery_lineage_has_complete_verification: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5892:18: _recovery_lineage_has_complete_verification: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5897:29: _recovery_lineage_has_complete_verification: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5900:27: _recovery_lineage_has_complete_verification: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5901:25: _recovery_lineage_has_complete_verification: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5916:24: _recovery_lineage_passed: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5920:18: _recovery_lineage_passed: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5923:33: _recovery_lineage_passed: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5933:16: _downstream_node_ids: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5978:21: _replacement_verification_passed: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5979:18: _replacement_verification_passed: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:5990:17: _has_active_task_lease: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/projections.py:6001:38: _task_region_for_candidate: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph/scenario.py:60:25: run_scenario: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/scenario.py:61:21: run_scenario: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/scenario.py:77:21: run_scenario: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/scenario.py:79:7: run_scenario: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
-src/orchestrator/graph/scenario.py:81:4: run_scenario: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/scenario.py:82:4: run_scenario: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-src/orchestrator/graph/scenario.py:83:27: run_scenario: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:908:12: _recovered_lease_still_active: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:1088:19: _guard_no_pending_compromised_file_state_bindings: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:1090:21: _guard_no_pending_compromised_file_state_bindings: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/prompts.py:288:15: _prompt_summary_input_ports: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/prompts.py:464:23: _planner_packet: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/prompts.py:478:30: _planner_packet: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:552:18: _planner_frontier: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:556:19: _planner_frontier: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:557:21: _planner_frontier: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
@@ -479,10 +213,9 @@ src/orchestrator/graph_runtime/prompts.py:888:21: _planner_outstanding_failures:
 src/orchestrator/graph_runtime/prompts.py:891:30: _planner_outstanding_failures: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:905:17: _planner_session_carryover_record: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:908:16: _planner_session_carryover_record: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/prompts.py:1307:29: _file_state_record_ids_for_task_region: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/prompts.py:1312:35: _file_state_record_ids_for_task_region: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
-src/orchestrator/graph_runtime/prompts.py:1327:15: _bound_record_ids_for_ports: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/recovery.py:80:7: reconcile_graph: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
+src/orchestrator/graph_runtime/store.py:679:11: GraphEventStore.read_projection_checkpoint: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
+src/orchestrator/graph_runtime/store.py:681:15: GraphEventStore.read_projection_checkpoint: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:704:22: GraphEventStore.load_projection_with_tail: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/store.py:706:19: GraphEventStore.load_projection_with_tail: unsupported_binding: projection escapes through a collection constructor; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:714:18: GraphEventStore.load_projection_with_tail: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -503,6 +236,10 @@ tests/integration/test_graph_event_store.py:87:21: _rebuild_projection: unsuppor
 tests/integration/test_graph_event_store.py:88:4: _rebuild_projection: unsupported_binding: projection escapes through an unresolved return annotation; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_gatekeeper_flow.py:397:21: test_gatekeeper_secret_verdict_scrubs_compromised_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_node_detail_read_models.py:671:44: test_incremental_rich_lease_summaries_match_rebuild_and_canonical_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/integration/test_graph_read_models.py:409:23: _incident_projection_outcome: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/integration/test_graph_read_models.py:410:28: _incident_projection_outcome: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/integration/test_graph_read_models.py:413:26: _incident_projection_outcome: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/integration/test_graph_read_models.py:414:21: _incident_projection_outcome: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_routine_compile.py:51:11: test_routine_corpus_loads_and_compiles_cleanly: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_routine_compile.py:141:11: test_dynamic_graph_feature_compiles_to_single_initial_planner_head: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/integration/test_graph_routine_compile.py:142:11: test_dynamic_graph_feature_compiles_to_single_initial_planner_head: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
@@ -630,26 +367,6 @@ tests/unit/test_node_usage_events.py:142:11: test_node_usage_reducer_deduplicate
 tests/unit/test_node_usage_events.py:143:11: test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/unit/test_node_usage_events.py:144:11: test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/unit/test_node_usage_events.py:146:42: test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:109:13: test_required_pass_gated_final_check_from_recoverable_verifier_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:185:13: test_patch_stale_neutral_events_only_accepted: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:202:13: test_patch_stale_invalidating_event_in_read_set_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:224:13: test_patch_stale_invalidating_event_not_in_read_set_accepted: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:297:13: test_planner_cannot_create_check_with_hidden_oracle_command: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:339:13: test_planner_can_create_check_with_command_definition: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:377:13: test_planner_can_create_check_with_dynamic_feature_oracle_binding: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:499:13: test_create_edge_accepts_revision_attempt_embedded_worker_in_same_patch: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:535:13: test_create_edge_accepts_revision_attempt_embedded_worker_with_default_kind: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:570:13: test_create_edge_accepts_producer_class_source: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:820:13: test_create_edge_rejects_new_cycle: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:940:13: test_gap_planner_no_op_allowed_when_classified_gap_successor_waits: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:1065:13: test_set_resource_claims_escalation_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:1094:13: test_set_resource_claims_narrowing_accepted: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:1292:13: test_retire_running_node_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:1303:13: test_retire_planned_node_accepted: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:1312:13: test_gap_planner_cannot_retire_executable_node: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:1396:13: test_edge_unknown_port_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:1422:13: test_edge_selector_incompatible_with_source_port_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
-tests/unit/test_patch_validator.py:1459:13: test_multi_op_patch_one_fails_rejected: unsupported_call: projection escapes through a non-projection or ambiguous callable parameter; replace the dynamic call with a typed projection query
 tests/unit/test_planner_session_event_payloads.py:53:11: test_planner_session_reducer_preserves_explicit_null_carryover: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/unit/test_record_routing_event_payloads.py:113:11: test_verification_replay_ignores_contradictory_outcome: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/unit/test_record_routing_event_payloads.py:114:11: test_verification_replay_ignores_contradictory_outcome: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field

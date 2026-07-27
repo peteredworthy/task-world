@@ -246,3 +246,60 @@ The regenerated authoritative artifact reports **646** unresolved flows:
 `unsupported_binding: 9`, `unsupported_call: 566`, and
 `unsupported_comparison: 71`. They are deliberate fail-closed migration
 diagnostics, not inferred safe flows.
+
+## Final approval-blocker closure (2026-07-27)
+
+### Scope and origin invariants
+
+- The approved-origin table now admits only explicit fully-qualified imports
+  for graph symbols and projection producers. Repository collection no longer
+  treats an unbound `GraphProjection` spelling as approved; isolated
+  `collect_source()` fixtures retain their explicit compatibility seed.
+- Local producer calls are accepted only when the module declaration has an
+  exact resolved `GraphProjection` return annotation. Parameter, assignment,
+  local-import, and nested-definition bindings shadow that declaration and
+  prevent its return provenance from being used.
+- Qualified roots are resolved before attributes: `typing as t` permits
+  `t.cast` only until `t` is rebound. The same lexical invalidation applies to
+  imported constructors and producer aliases.
+- Annotation normalization recognizes outer generic and union forms while
+  retaining `Any`, `Callable`, and `object` as delayed binding types. This
+  preserves the fail-closed diagnostic when a known projection is assigned
+  later.
+- Local annotations now seed receiver provenance for
+  `GraphDispatchContext` and `GraphProjectionCheckpoint`; assigning a new
+  root value clears that receiver type before a later attribute access.
+
+### Adversarial coverage and generated artifact
+
+Focused regressions cover local producer shadowing, approved producer origins,
+unbound repository names and top-level rebinding, a shadowed `typing` module
+alias, union/generic delayed bindings, and receiver-type population/clearing.
+The checked artifact was regenerated from `--diagnose` and is byte-for-byte
+asserted against a fresh full tracked-repository inventory.
+
+The authoritative generated diagnostic inventory is **363** unresolved flows:
+`unsupported_binding: 9`, `unsupported_call: 288`, and
+`unsupported_comparison: 66`.
+
+### Focused evidence
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+80 passed in 50.46s
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run ruff format --check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+2 files already formatted
+
+uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+uv run python scripts/graph_projection_inventory.py --diagnose
+exit 1 expected; 363 unresolved flows
+
+make test
+4932 passed, 3 skipped, 3 aiosqlite datetime-adapter warnings in 125.97s
+```
