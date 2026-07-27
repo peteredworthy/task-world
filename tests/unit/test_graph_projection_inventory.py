@@ -1495,6 +1495,51 @@ def calls(value: Projection) -> None:
     ]
 
 
+def test_inventory_accepts_unshadowed_controller_rebuild_projection_origin(tmp_path: Path) -> None:
+    source = tmp_path / "controller_projection.py"
+    source.write_text(
+        """
+from orchestrator.graph_runtime.controller import rebuild_projection
+
+def accepted(events: list[object]) -> None:
+    projection = rebuild_projection(events)
+    projection["input_bindings"]
+
+def shadowed(events: list[object], rebuild_projection: object) -> None:
+    projection = rebuild_projection(events)
+    projection["file_state_records"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("accepted", "input_bindings"),
+    ]
+
+
+@pytest.mark.timeout(120)
+def test_repository_inventory_includes_controller_rebuild_dispatch_reads() -> None:
+    root = Path(__file__).parents[2]
+    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
+    dispatch_diagnostics = {
+        (item.qualified_function, item.line)
+        for item in inventory.diagnostics
+        if item.relative_path == "src/orchestrator/graph_runtime/dispatch.py"
+    }
+
+    assert ("GraphDispatchExecutor._dispatch_snapshot_cleanup", 810) in dispatch_diagnostics
+    assert ("_requirements_for_node", 966) in dispatch_diagnostics
+    source_lines = (root / "src/orchestrator/graph_runtime/dispatch.py").read_text().splitlines()
+    assert (
+        source_lines[809].strip()
+        == 'compromised_record = projection["file_state_records"].get(record_id)'
+    )
+    assert source_lines[965].strip() == (
+        'for port, binding in projection["input_bindings"].get(node_id, {}).items():'
+    )
+
+
 def test_inventory_reports_one_outer_recursive_collection_escape_at_every_boundary(
     tmp_path: Path,
 ) -> None:

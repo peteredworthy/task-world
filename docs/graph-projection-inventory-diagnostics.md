@@ -8,10 +8,10 @@ The command intentionally exits nonzero while unresolved flows remain.
 ## Complete sorted diagnostics
 
 ```text
-Unresolved GraphProjection flows: 469
-unsupported_binding: 67
-unsupported_call: 351
-unsupported_comparison: 51
+Unresolved GraphProjection flows: 475
+unsupported_binding: 69
+unsupported_call: 353
+unsupported_comparison: 53
 
 scripts/generate_graph_projection_goldens.py:129:8: _replay_views: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
 scripts/generate_graph_projection_goldens.py:129:22: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -252,7 +252,9 @@ src/orchestrator/graph/projection_queries.py:173:12: lease_by_id: unsupported_ca
 src/orchestrator/graph/projection_queries.py:179:58: iter_leases: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/projection_queries.py:186:21: active_leases: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph/projection_queries.py:193:12: lease_generation: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph_runtime/dispatch.py:810:29: GraphDispatchExecutor._dispatch_snapshot_cleanup: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:908:12: _recovered_lease_still_active: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph_runtime/dispatch.py:966:25: _requirements_for_node: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:1088:19: _guard_no_pending_compromised_file_state_bindings: unsupported_call: calling a projection-derived value is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/dispatch.py:1090:21: _guard_no_pending_compromised_file_state_bindings: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:552:18: _planner_frontier: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
@@ -271,6 +273,7 @@ src/orchestrator/graph_runtime/prompts.py:888:21: _planner_outstanding_failures:
 src/orchestrator/graph_runtime/prompts.py:891:30: _planner_outstanding_failures: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:905:17: _planner_session_carryover_record: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
 src/orchestrator/graph_runtime/prompts.py:908:16: _planner_session_carryover_record: unsupported_call: projection field method get is unsupported; replace the dynamic call with a typed projection query
+src/orchestrator/graph_runtime/recovery.py:45:12: recover: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/recovery.py:80:7: reconcile_graph: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 src/orchestrator/graph_runtime/store.py:701:12: GraphEventStore.load_projection_with_tail: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
 src/orchestrator/graph_runtime/store.py:711:12: GraphEventStore.load_projection_with_tail: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
@@ -289,10 +292,13 @@ tests/integration/test_graph_event_store.py:87:21: _rebuild_projection: unsuppor
 tests/integration/test_graph_gatekeeper_flow.py:397:8: test_gatekeeper_secret_verdict_scrubs_compromised_snapshot: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_gatekeeper_flow.py:397:21: test_gatekeeper_secret_verdict_scrubs_compromised_snapshot: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_node_detail_read_models.py:671:44: test_incremental_rich_lease_summaries_match_rebuild_and_canonical_projection: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+tests/integration/test_graph_outbox_crash_points.py:523:11: test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_ack: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
+tests/integration/test_graph_outbox_crash_points.py:703:11: test_crash_point_4_agent_died_revokes_lease_and_allows_release: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/integration/test_graph_routine_compile.py:51:11: test_routine_corpus_loads_and_compiles_cleanly: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_routine_compile.py:141:11: test_dynamic_graph_feature_compiles_to_single_initial_planner_head: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/integration/test_graph_routine_compile.py:142:11: test_dynamic_graph_feature_compiles_to_single_initial_planner_head: unsupported_comparison: projection comparison is unsupported; compare an explicit typed projection field
 tests/integration/test_graph_routine_compile.py:144:42: test_dynamic_graph_feature_compiles_to_single_initial_planner_head: unsupported_call: projection field method items is unsupported; replace the dynamic call with a typed projection query
+tests/integration/test_graph_routine_compile.py:395:8: test_compile_seed_and_first_schedule_tick_overhead_is_bounded: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_routine_compile.py:416:8: _project: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
 tests/integration/test_graph_routine_compile.py:416:21: _project: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 tests/integration/test_graph_routine_compile.py:442:34: _count_nodes: unsupported_call: projection field method values is unsupported; replace the dynamic call with a typed projection query

@@ -72,3 +72,24 @@ independent of projection storage.
 Follow-up verification: focused graph suites **245 passed**; Ruff and Pyright
 passed; full suite **4,975 passed, 3 skipped** with the same three pre-existing
 aiosqlite deprecation warnings.
+
+## Inventory Closure Follow-up
+
+Added the exact approved producer origin
+`orchestrator.graph_runtime.controller.rebuild_projection`; no public runtime
+alias exists. Provenance and shadowing tests verify that only an unshadowed
+direct import becomes a projection producer. Repository regression assertions
+independently require the dispatch cleanup `file_state_records` read at line
+810 and requirements `input_bindings` read at line 966.
+
+The requirements binding read is an exact reviewed `query_transform` mapped to
+`input_bindings_for_node()`. Both dispatch file-state reads are deferred as
+`record_file_state` entries. Fresh target closure is now **33**
+`node_task_edge_binding` sites and **1** lease site, with zero target-domain
+unclassified sites. Deferred counts are `test_fixture` 247,
+`verification_recovery` 151, `planning_session` 16, `cleanup_callback` 14,
+`record_file_state` 13, and `governance_requirements` 11.
+
+Inventory-closure focused suites passed **247** tests; Ruff and Pyright passed;
+the full suite passed **4,977** tests with 3 skipped and the same three
+pre-existing aiosqlite deprecation warnings.

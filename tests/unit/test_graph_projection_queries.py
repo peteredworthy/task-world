@@ -446,15 +446,15 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
         if site.relative_path == "src/orchestrator/graph_runtime/dispatch.py"
         and "file_state_records" in site.normalized_source_pattern
     ]
-    assert len(dispatch_file_state_sites) == 1
-    assert dispatch_file_state_sites[0].domain == "record_file_state"
+    assert len(dispatch_file_state_sites) == 2
+    assert {site.domain for site in dispatch_file_state_sites} == {"record_file_state"}
     assert Counter(site.domain for site in ledger.unclassified_sites) == {
         "cleanup_callback": 14,
         "governance_requirements": 11,
         "planning_session": 16,
-        "record_file_state": 12,
-        "test_fixture": 236,
-        "verification_recovery": 150,
+        "record_file_state": 13,
+        "test_fixture": 247,
+        "verification_recovery": 151,
     }
     assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="lifecycle") == {
         "lifecycle": len(lifecycle_keys)

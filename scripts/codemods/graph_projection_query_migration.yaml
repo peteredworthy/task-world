@@ -1512,6 +1512,22 @@ dispositions:
   reason: Replace this direct node, task, topology, binding, or lease projection read
     with the permanent query API.
 - site_key:
+  - 9fb43efd
+  - 72d6532e
+  - eb3ed3f0
+  - '77352508'
+  - 0eebf6fa
+  - 5923d39c
+  - 68a62912
+  - eef2a983
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/dispatch.py
+  qualified_function: _requirements_for_node
+  normalized_source_pattern: 'for port, binding in projection["input_bindings"].get(node_id,
+    {}).items():'
+  diagnostic_code: unsupported_call
+  reason: Replace this direct input-binding projection read with input_bindings_for_node().
+- site_key:
   - 4db1bca9
   - e7e27845
   - e6c44619
@@ -1697,6 +1713,118 @@ unclassified_sites:
   normalized_source_pattern: projection['planner_generation_budget']
   diagnostic_code: null
   domain: verification_recovery
+- site_key:
+  - 93dc54a2
+  - 4d19c79d
+  - 735bb84a
+  - f65dfd6a
+  - 5fbb60ef
+  - 09ea80de
+  - 9451a882
+  - 7c6aaa40
+  relative_path: tests/integration/test_graph_fr15_acceptance.py
+  qualified_function: test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable
+  normalized_source_pattern: projection['file_state_records'][record_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 2296c906
+  - dbc3fb5e
+  - 7f061ecc
+  - 20472ebe
+  - ee29e6e9
+  - e1514e65
+  - 4215348e
+  - f11cd6b0
+  relative_path: tests/integration/test_graph_fr15_acceptance.py
+  qualified_function: test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable
+  normalized_source_pattern: projection['file_state_records'][superseding_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 4d101b8c
+  - b422ab5e
+  - 8f5ebe01
+  - 4ee2fe0f
+  - c3e5c5c1
+  - 41619e0e
+  - a196220d
+  - '54184432'
+  relative_path: tests/integration/test_graph_outbox_crash_points.py
+  qualified_function: test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_ack
+  normalized_source_pattern: projection['leases'][lease_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - fc3db2c0
+  - eedc7a33
+  - 06c7e98f
+  - e7b44c57
+  - 984f2920
+  - 54020a90
+  - 8fbb830e
+  - e14a0094
+  relative_path: tests/integration/test_graph_outbox_crash_points.py
+  qualified_function: test_crash_point_4_agent_died_revokes_lease_and_allows_release
+  normalized_source_pattern: projection_after_death['leases'][lease_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - d82f537c
+  - 72265e23
+  - a54957a3
+  - fdc5eb72
+  - 04a5e963
+  - 682b16a3
+  - 98ca0d1c
+  - 1cdd53c8
+  relative_path: tests/integration/test_graph_outbox_crash_points.py
+  qualified_function: test_crash_point_4_agent_died_revokes_lease_and_allows_release
+  normalized_source_pattern: projection_after_relearn['leases'][new_lease_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 68e541c1
+  - 14e8ccf9
+  - 561360bf
+  - e55664d3
+  - '29879939'
+  - ce9522de
+  - 0286bfcc
+  - 21c3fbb6
+  relative_path: tests/integration/test_graph_outbox_crash_points.py
+  qualified_function: test_snapshot_cleanup_recovers_after_ref_delete_before_record
+  normalized_source_pattern: projection['file_state_records'][record_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 1ecd299b
+  - 01766c4c
+  - 644baf7c
+  - 58bf032c
+  - 2873a028
+  - d3d9cc31
+  - 180f65de
+  - 4c7ad6e0
+  relative_path: tests/integration/test_graph_outbox_crash_points.py
+  qualified_function: test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect
+  normalized_source_pattern: projection['file_state_records'][record_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 9334e775
+  - 4f42d3a7
+  - 1cd304b8
+  - c1140cef
+  - 6379f7aa
+  - b616adc7
+  - 41c65de8
+  - 0bc46fb4
+  relative_path: tests/integration/test_graph_outbox_crash_points.py
+  qualified_function: test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect
+  normalized_source_pattern: projection['file_state_records'][superseding_id]
+  diagnostic_code: null
+  domain: test_fixture
 - site_key:
   - eb5c53b6
   - 23a6d9cc
@@ -4638,6 +4766,20 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: governance_requirements
 - site_key:
+  - aea301e1
+  - 42df4d35
+  - 05579e0a
+  - e2724cae
+  - ddec2781
+  - 9bcdfebc
+  - dae7a6ae
+  - 2d02f14a
+  relative_path: src/orchestrator/graph_runtime/dispatch.py
+  qualified_function: GraphDispatchExecutor._dispatch_snapshot_cleanup
+  normalized_source_pattern: compromised_record = projection["file_state_records"].get(record_id)
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
   - d7dfdd5d
   - 8c25aa6a
   - b21c3cef
@@ -4878,6 +5020,20 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: planning_session
 - site_key:
+  - 08fe6a4f
+  - 02a9e9ad
+  - 49aabb21
+  - 60b50a7d
+  - 2b67b220
+  - f55a2c9f
+  - 6807367a
+  - d8fc53c1
+  relative_path: src/orchestrator/graph_runtime/recovery.py
+  qualified_function: recover
+  normalized_source_pattern: projection = rebuild_projection(events)
+  diagnostic_code: unsupported_binding
+  domain: verification_recovery
+- site_key:
   - c5aafa32
   - '96379520'
   - 09d166c9
@@ -5103,6 +5259,35 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: test_fixture
 - site_key:
+  - '56295608'
+  - a9043cf5
+  - ff071e85
+  - 1a1e2a38
+  - cbdd8f53
+  - 4bfee558
+  - cf01cfbb
+  - a11600ee
+  relative_path: tests/integration/test_graph_outbox_crash_points.py
+  qualified_function: test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_ack
+  normalized_source_pattern: assert projection["node_states"]["worker-1"] == "leased"
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 81d03930
+  - feb7c623
+  - 2f73b7fc
+  - a5b0ad68
+  - 0a9ffb20
+  - 4ade607e
+  - cfd506ea
+  - cf80b886
+  relative_path: tests/integration/test_graph_outbox_crash_points.py
+  qualified_function: test_crash_point_4_agent_died_revokes_lease_and_allows_release
+  normalized_source_pattern: assert projection_after_death["node_states"]["worker-1"]
+    == "ready"
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
   - 2f96b292
   - 68d28ab4
   - db5955c8
@@ -5159,6 +5344,20 @@ unclassified_sites:
   normalized_source_pattern: node_id for node_id, node_kind in projection["node_kinds"].items()
     if node_kind == "planner"
   diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 51823c0a
+  - 87633d8c
+  - 1bdd5843
+  - 2e812b01
+  - e788349d
+  - d1b391eb
+  - d66aca03
+  - 39232e3e
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: test_compile_seed_and_first_schedule_tick_overhead_is_bounded
+  normalized_source_pattern: projection = rebuild_projection(stored_events)
+  diagnostic_code: unsupported_binding
   domain: test_fixture
 - site_key:
   - 1710f8cf

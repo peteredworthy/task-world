@@ -404,6 +404,10 @@ def _site_domain(
         old_field_name == "file_state_records" or "file_state_records" in normalized_source_pattern
     ):
         return "record_file_state"
+    if relative_path.endswith("/graph_runtime/dispatch.py") and (
+        old_field_name == "input_bindings" or "input_bindings" in normalized_source_pattern
+    ):
+        return "node_task_edge_binding"
     if relative_path.startswith("tests/"):
         return "test_fixture"
     if relative_path.endswith("/_commands.py"):
@@ -706,6 +710,7 @@ _APPROVED_PRODUCER_ORIGINS = frozenset(
         "orchestrator.graph.initial_projection",
         "orchestrator.graph.build_projection",
         "orchestrator.graph.reduce_event",
+        "orchestrator.graph_runtime.controller.rebuild_projection",
     }
 )
 
