@@ -1939,7 +1939,7 @@ Projection = object
     assert not inventory.diagnostics
 
 
-def test_inventory_paths_uses_source_ordered_compound_statement_declarations(
+def test_inventory_paths_treats_compound_statement_imports_as_unresolved(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "compound_declarations.py"
@@ -2006,24 +2006,19 @@ def foreign_module(value: foreign.GraphProjection) -> None:
 
     inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
 
-    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
-        ("after_for", "edges"),
-        ("after_if", "run_state"),
-        ("after_match", "node_states"),
-        ("after_try", "node_states"),
-        ("after_while", "leases"),
-        ("after_with", "ready_nodes"),
-    ]
+    assert not inventory.occurrences
     assert [item.qualified_function for item in inventory.diagnostics] == [
+        "after_if",
+        "after_try",
+        "after_with",
+        "after_for",
+        "after_while",
+        "after_match",
         "foreign",
         "foreign_alias",
         "foreign_module",
     ]
-    assert [item.code for item in inventory.diagnostics] == [
-        "unsupported_binding",
-        "unsupported_binding",
-        "unsupported_binding",
-    ]
+    assert all(item.code == "unsupported_binding" for item in inventory.diagnostics)
 
 
 def test_inventory_paths_fails_closed_for_foreign_modules_parameter_shadows_and_missing_args(
@@ -2061,4 +2056,88 @@ def calls(projection: GraphProjection) -> None:
         ("foreign_module", "unsupported_binding"),
         ("foreign_module_alias", "unsupported_binding"),
         ("calls", "unsupported_call"),
+    ]
+
+
+def test_inventory_paths_diagnoses_delayed_any_and_callable_alias_escapes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "delayed_escape.py"
+    source.write_text(
+        """
+from typing import Any as Dynamic, Callable as Callback
+from orchestrator.graph import GraphProjection
+
+def escapes(projection: GraphProjection) -> None:
+    dynamic: Dynamic
+    dynamic = projection
+    dynamic["run_state"]
+    callback: Callback
+    callback = projection
+    callback["ready_nodes"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+    ]
+
+
+def test_inventory_paths_retains_fail_closed_provenance_at_control_flow_joins(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "control_flow.py"
+    source.write_text(
+        """
+from orchestrator.graph import GraphProjection
+
+def conditional_rebind(projection: GraphProjection, condition: bool) -> None:
+    alias = projection
+    if condition:
+        alias = {}
+    alias["run_state"]
+
+def inverse_branch(projection: GraphProjection, condition: bool) -> None:
+    if condition:
+        alias = projection
+    else:
+        alias = {}
+    alias["ready_nodes"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [(item.qualified_function, item.code) for item in inventory.diagnostics] == [
+        ("conditional_rebind", "unsupported_binding"),
+        ("inverse_branch", "unsupported_binding"),
+    ]
+
+
+def test_inventory_paths_treats_conditional_imports_as_unresolved(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "conditional_import.py"
+    source.write_text(
+        """
+from orchestrator.graph import GraphProjection
+
+while False:
+    from foreign import GraphProjection
+
+def access(projection: GraphProjection) -> None:
+    projection["run_state"]
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [(item.qualified_function, item.code) for item in inventory.diagnostics] == [
+        ("access", "unsupported_binding"),
     ]

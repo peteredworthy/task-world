@@ -535,8 +535,16 @@ class _ModuleSymbols:
                     names.pop(statement.name, None)
                     unresolved.discard(statement.name)
                 else:
-                    for block in _lexical_statement_blocks(statement):
-                        visit_statements(block, names, unresolved)
+                    blocks = _lexical_statement_blocks(statement)
+                    if not blocks:
+                        continue
+                    branch_states = [(dict(names), set(unresolved))]
+                    for block in blocks:
+                        branch_names = dict(names)
+                        branch_unresolved = set(unresolved)
+                        visit_statements(block, branch_names, branch_unresolved)
+                        branch_states.append((branch_names, branch_unresolved))
+                    merge_control_flow_bindings(names, unresolved, branch_states)
 
         def clear_targets(
             targets: Iterable[ast.expr], names: dict[str, str], unresolved: set[str]
@@ -585,6 +593,38 @@ class _ModuleSymbols:
             ):
                 names.pop(parameter.arg, None)
                 unresolved.discard(parameter.arg)
+
+        def merge_control_flow_bindings(
+            names: dict[str, str],
+            unresolved: set[str],
+            branch_states: list[tuple[dict[str, str], set[str]]],
+        ) -> None:
+            """Retain only bindings certain on every path; projection-shaped joins fail closed."""
+            all_locals = set().union(
+                *(
+                    set(branch_names) | unresolved_names
+                    for branch_names, unresolved_names in branch_states
+                )
+            )
+            for local in all_locals:
+                resolved = tuple(branch_names.get(local) for branch_names, _ in branch_states)
+                branch_unresolved = any(
+                    local in unresolved_names for _, unresolved_names in branch_states
+                )
+                if not branch_unresolved and all(
+                    symbol == resolved[0] and symbol is not None for symbol in resolved
+                ):
+                    names[local] = resolved[0]
+                    unresolved.discard(local)
+                    continue
+                names.pop(local, None)
+                if branch_unresolved or any(
+                    symbol is not None and symbol.endswith(".GraphProjection")
+                    for symbol in resolved
+                ):
+                    unresolved.add(local)
+                else:
+                    unresolved.discard(local)
 
         visit_statements(tree.body, dict(initial_names), set())
         return facts
@@ -784,6 +824,7 @@ class _Collector(cst.CSTVisitor):
         self.lexical_names: list[str] = []
         self.aliases: dict[int, set[str]] = {}
         self.known_aliases: dict[int, set[str]] = {}
+        self.possible_aliases: dict[int, set[str]] = {}
         self.receiver_types: dict[int, dict[str, str]] = {}
         self.binding_types: dict[int, dict[str, str | None]] = {}
         self.shadowed_symbols: dict[int, set[str]] = {}
@@ -798,6 +839,7 @@ class _Collector(cst.CSTVisitor):
         scope_id = id(self.get_metadata(ScopeProvider, node))
         self.aliases.setdefault(scope_id, set())
         self.known_aliases.setdefault(scope_id, set())
+        self.possible_aliases.setdefault(scope_id, set())
         self.receiver_types.setdefault(scope_id, {})
         self.binding_types.setdefault(scope_id, {})
         self.shadowed_symbols.setdefault(scope_id, set())
@@ -825,6 +867,7 @@ class _Collector(cst.CSTVisitor):
         scope_id = id(self.get_metadata(ScopeProvider, node.body))
         self.aliases[scope_id] = seeds
         self.known_aliases[scope_id] = set(seeds)
+        self.possible_aliases[scope_id] = set()
         self.receiver_types[scope_id] = {
             parameter.name.value: self._declaration_annotation_name(parameter.annotation.annotation)
             for parameter in (
@@ -986,7 +1029,13 @@ class _Collector(cst.CSTVisitor):
 
     def _is_escape_annotation(self, annotation: cst.BaseExpression) -> bool:
         """Accept only the bounded GraphProjection annotation for projection values."""
-        return self.symbols.annotation_name(annotation) in {
+        return self._is_unbounded_annotation(self.symbols.annotation_name(annotation))
+
+    @staticmethod
+    def _is_unbounded_annotation(annotation: str | None) -> bool:
+        return annotation in {
+            "Any",
+            "Callable",
             "typing.Any",
             "typing.Callable",
             "object",
@@ -1009,6 +1058,11 @@ class _Collector(cst.CSTVisitor):
 
     def _known_alias(self, node: cst.Name) -> bool:
         return node.value in self.known_aliases.get(
+            id(self.get_metadata(ScopeProvider, node)), set()
+        )
+
+    def _possible_alias(self, node: cst.Name) -> bool:
+        return node.value in self.possible_aliases.get(
             id(self.get_metadata(ScopeProvider, node)), set()
         )
 
@@ -1083,6 +1137,7 @@ class _Collector(cst.CSTVisitor):
         scope_id = id(self.get_metadata(ScopeProvider, node))
         self.aliases.get(scope_id, set()).discard(node.value)
         self.known_aliases.get(scope_id, set()).discard(node.value)
+        self.possible_aliases.get(scope_id, set()).discard(node.value)
 
     def _discard_live_alias(self, node: cst.Name) -> None:
         self.aliases.get(id(self.get_metadata(ScopeProvider, node)), set()).discard(node.value)
@@ -1091,6 +1146,44 @@ class _Collector(cst.CSTVisitor):
         scope_id = id(self.get_metadata(ScopeProvider, node))
         self.aliases.setdefault(scope_id, set()).add(node.value)
         self.known_aliases.setdefault(scope_id, set()).add(node.value)
+
+    def _add_possible_alias(self, node: cst.Name) -> None:
+        scope_id = id(self.get_metadata(ScopeProvider, node))
+        self.aliases.setdefault(scope_id, set()).discard(node.value)
+        self.known_aliases.setdefault(scope_id, set()).add(node.value)
+        self.possible_aliases.setdefault(scope_id, set()).add(node.value)
+
+    def _inside_control_flow(self, node: cst.CSTNode) -> bool:
+        current: cst.CSTNode | None = node
+        while current is not None:
+            if isinstance(
+                current,
+                (cst.If, cst.For, cst.While, cst.Try, cst.With, cst.Match, cst.ExceptHandler),
+            ):
+                return True
+            if isinstance(current, (cst.Module, cst.FunctionDef, cst.ClassDef)):
+                return False
+            current = self.get_metadata(ParentNodeProvider, current, None)
+        return False
+
+    def _unresolved_control_binding(
+        self, target: cst.Name, value: cst.BaseExpression | None, node: cst.CSTNode
+    ) -> bool:
+        if not self._inside_control_flow(node) or not (
+            (value is not None and self._known_projection_value(value))
+            or self._known_alias(target)
+            or self._possible_alias(target)
+        ):
+            return False
+        was_possible = self._possible_alias(target)
+        self._add_possible_alias(target)
+        if not was_possible:
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_BINDING,
+                "control-flow projection binding is unresolved",
+                node,
+            )
+        return True
 
     def _target_names(self, node: cst.BaseAssignTargetExpression) -> tuple[cst.Name, ...]:
         if isinstance(node, cst.Name):
@@ -1215,7 +1308,8 @@ class _Collector(cst.CSTVisitor):
         else:
             self.receiver_types.setdefault(scope_id, {}).pop(node.target.value, None)
         if annotation == "GraphProjection":
-            self._add_alias(node.target)
+            if not self._unresolved_control_binding(node.target, node.value, node):
+                self._add_alias(node.target)
         else:
             if node.value is not None and self._tracked(node.value):
                 self._diagnostic(
@@ -1359,6 +1453,8 @@ class _Collector(cst.CSTVisitor):
         )
         binding_type = binding_types.pop(target.value, None)
         if self._known_projection_value(node.value) and binding_type in {
+            "Any",
+            "Callable",
             "typing.Any",
             "typing.Callable",
             "object",
@@ -1368,7 +1464,11 @@ class _Collector(cst.CSTVisitor):
                 "projection escapes through a previously unbounded binding",
                 node,
             )
+            self._discard_alias(target)
+            return
         self._discard_attributes_for(target)
+        if self._unresolved_control_binding(target, node.value, node):
+            return
         if self._known_projection_value(node.value):
             self._add_alias(target)
         else:
@@ -1392,9 +1492,8 @@ class _Collector(cst.CSTVisitor):
 
     def visit_For(self, node: cst.For) -> None:
         for target in self._target_names(node.target):
-            scope = self.aliases.get(id(self.get_metadata(ScopeProvider, target)))
-            if scope is not None and self._known_alias(target):
-                self._discard_live_alias(target)
+            if self._known_alias(target):
+                self._add_possible_alias(target)
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING, "loop rebinds projection alias", node
                 )
@@ -1403,9 +1502,8 @@ class _Collector(cst.CSTVisitor):
 
     def visit_NamedExpr(self, node: cst.NamedExpr) -> None:
         if isinstance(node.target, cst.Name):
-            scope = self.aliases.get(id(self.get_metadata(ScopeProvider, node.target)))
-            if scope is not None and self._known_alias(node.target):
-                scope.discard(node.target.value)
+            if self._known_alias(node.target):
+                self._add_possible_alias(node.target)
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING,
                     "assignment expression rebinds projection alias",
@@ -1415,22 +1513,18 @@ class _Collector(cst.CSTVisitor):
     def visit_With(self, node: cst.With) -> None:
         for item in node.items:
             if item.asname is not None and self._known_alias(item.asname.name):
+                self._add_possible_alias(item.asname.name)
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING, "with target rebinds projection alias", node
                 )
-                self.aliases.get(
-                    id(self.get_metadata(ScopeProvider, item.asname.name)), set()
-                ).discard(item.asname.name.value)
 
     def visit_ExceptHandler(self, node: cst.ExceptHandler) -> None:
         if node.name is not None and self._known_alias(node.name.name):
+            self._add_possible_alias(node.name.name)
             self._diagnostic(
                 DiagnosticCode.UNSUPPORTED_BINDING,
                 "exception target rebinds projection alias",
                 node,
-            )
-            self.aliases.get(id(self.get_metadata(ScopeProvider, node.name.name)), set()).discard(
-                node.name.name.value
             )
 
     def visit_Call(self, node: cst.Call) -> None:
