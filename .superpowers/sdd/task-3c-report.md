@@ -18,7 +18,10 @@
 
 - Dispositions: 58 `approved_core`, 58 `query_transform`, 65 `projection_neutral`.
 - Unclassified Task 3c target sites: 0.
-- Deferred unclassified sites: 321 `test_fixture`; 151 `verification_recovery`.
+- **Authoritative final deferred inventory:** 349 `test_fixture`; 151
+  `verification_recovery`.
+- The earlier `321` `test_fixture` count is superseded by the added fixture/query
+  inventory below; it is retained only as historical context in prior drafts.
 
 ## Verification
 
@@ -45,5 +48,24 @@ and progress ledger are intentionally excluded from this commit.
 - Extended positive and isolation coverage for output payloads, approval and authority
   decisions, requirement/support records, cleanup requests, and environment failures.
 - Updated closure after the added test inventory: 0 Task 3c target sites remain
-  unclassified; deferred counts are 349 `test_fixture` and 151
-  `verification_recovery`.
+  unclassified. The earlier follow-up count is superseded by the authoritative
+  final inventory summary above.
+
+## Final blocker closure
+
+- Enriched the shared FR-17 readback fixture with a nondefault planner budget
+  (`13`) and a positive latest routine snapshot record.
+- Added explicit isolation regressions for oversight decisions, pending decision
+  requests, authority-revision blockers, requirement revisions, support evidence,
+  keyed environment failures, and the ordered environment-failure collection;
+  nested mutable values are deep-copy checked and frozen models reject assignment.
+- The Task 3c query-family coverage now also asserts the positive snapshot and
+  budget values from the shared fixture while preserving the default/missing cases.
+
+## Final verification
+
+- Focused graph/query, inventory, export, projection, and fixture suites: **252 passed**.
+- Public parity and golden suites after regenerating the enriched FR-17 readback: **7 passed**.
+- `uv run ruff check .` and `uv run ruff format --check .`: passed.
+- `uv run pyright`: 0 errors, 0 warnings, 0 informations.
+- `make test`: **4,981 passed, 3 skipped**, with the same 3 aiosqlite datetime-adapter warnings.

@@ -218,6 +218,7 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
         "failure-record-2",
     )
     assert planner_successor(projection, "planner-fr17") == "planner-next"
+    assert planner_generation_budget(projection) == 13
     assert accepted_graph_patch_ids(projection, "planner-fr17") == ("patch-1", "patch-2")
     assert accepted_no_successor_patch_ids(projection, "planner-fr17") == ("no-successor-1",)
     assert accepted_no_successor_patch_id(projection, "planner-fr17") == "no-successor-1"
@@ -227,6 +228,11 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     assert planner_session_current_node(projection, "session-1") == "planner-fr17"
     assert planner_session_carryover(projection, "session-1") == "carryover-1"
     assert planner_region_label(projection, "planner-fr17") == "region-1"
+    snapshot = latest_routine_snapshot_record(projection)
+    assert snapshot is not None
+    assert snapshot.record_id == "routine-snapshot-fr17"
+    assert snapshot.producer_node_id == "root-fr17"
+    assert snapshot.port == "snapshot"
     assert decision_request(projection, "gate-pending") is not None
     assert approval_decision(projection, "approval-1") is not None
     assert authority_decision(projection, "authority-1") is not None
@@ -250,6 +256,11 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     reasons = blocker["reasons"]
     assert isinstance(reasons, list)
     reasons.append("changed")
+    authority_blocker = authority_revision_blocker(projection, "revision-1")
+    assert authority_blocker is not None
+    authority_reasons = authority_blocker["reasons"]
+    assert isinstance(authority_reasons, list)
+    authority_reasons.append("changed")
     callback = callback_idempotency_event(projection, "key-1")
     assert callback is not None and callback.payload is not None
     nested = callback.payload["nested"]
@@ -270,8 +281,35 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     cleanup = cleanup_request(projection, "cleanup-1")
     assert cleanup is not None
     cleanup.paths.append("changed")
+    request = decision_request(projection, "gate-pending")
+    assert request is not None and request.options is not None
+    request.options.append("changed")
+    oversight = oversight_decision(projection, "oversight-1")
+    assert oversight is not None and oversight.scope is not None
+    oversight.scope["items"].append("changed")
+
+    snapshot = latest_routine_snapshot_record(projection)
+    assert snapshot is not None
+    with pytest.raises(ValidationError):
+        snapshot.record_id = "changed"
+    revision = requirement_revision(projection, "version-1")
+    assert revision is not None
+    with pytest.raises(ValidationError):
+        revision.position = 99
+    support = support_evidence(projection, "support-1")
+    assert support is not None
+    with pytest.raises(ValidationError):
+        support.status = "changed"
+    environment = environment_failure(projection, "region-1")
+    assert environment is not None
+    with pytest.raises(ValidationError):
+        environment.position = 99
+    environment_collection = environment_failures(projection)
+    with pytest.raises(ValidationError):
+        environment_collection[0][1].position = 99
 
     assert open_proposal_blocker(projection, "proposal-1") == {"reasons": ["original"]}
+    assert authority_revision_blocker(projection, "revision-1") == {"reasons": ["original"]}
     fresh_callback = callback_idempotency_event(projection, "key-1")
     assert fresh_callback is not None and fresh_callback.payload == {"nested": ["original"]}
     fresh_file_state = file_state_record(projection, "file-state-query")
@@ -286,14 +324,26 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     assert fresh_authority is not None and fresh_authority.scope == {"items": ["original"]}
     fresh_cleanup = cleanup_request(projection, "cleanup-1")
     assert fresh_cleanup is not None and fresh_cleanup.paths == ["secret"]
+    fresh_request = decision_request(projection, "gate-pending")
+    assert fresh_request is not None and fresh_request.options == ["approved", "rejected"]
+    fresh_oversight = oversight_decision(projection, "oversight-1")
+    assert fresh_oversight is not None
+    assert fresh_oversight.scope == {"items": ["original"]}
+    fresh_snapshot = latest_routine_snapshot_record(projection)
+    assert fresh_snapshot is not None
+    assert fresh_snapshot.record_id == "routine-snapshot-fr17"
     fresh_requirement = requirement_revision(projection, "version-1")
     assert fresh_requirement is not projection["requirement_revisions"]["version-1"]
+    assert fresh_requirement.position == 1
     fresh_support = support_evidence(projection, "support-1")
     assert fresh_support is not projection["support_evidence"]["support-1"]
+    assert fresh_support.status == "current"
     fresh_environment = environment_failure(projection, "region-1")
     assert fresh_environment is not projection["environment_failures"]["region-1"]
+    assert fresh_environment.position == 1
     environments = environment_failures(projection)
     assert environments[0][1] is not projection["environment_failures"]["region-2"]
+    assert tuple(failure.position for _, failure in environments) == (2, 1)
 
 
 def test_lifecycle_queries_read_active_and_completed_event_projections() -> None:

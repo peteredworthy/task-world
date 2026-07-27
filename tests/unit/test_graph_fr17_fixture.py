@@ -20,6 +20,8 @@ def test_less_used_events_are_deterministic_and_scoped_to_run() -> None:
     assert [event.event_type for event in first] == [
         "run_lifecycle_changed",
         "node_created",
+        "output_record_accepted",
+        "node_created",
         "node_created",
         "node_created",
         "node_created",
@@ -51,5 +53,5 @@ def test_less_used_events_are_deterministic_and_scoped_to_run() -> None:
     )
     assert (
         sha256(signature.encode()).hexdigest()
-        == "90297431aed70b324d374bb89f99b573844c633b270466bbc0d4e278c62680af"
+        == "6d4e64ee75a4cca61af1837cb8e7dfe08e6ffe5bf43f95f5eb2072392c864c07"
     )

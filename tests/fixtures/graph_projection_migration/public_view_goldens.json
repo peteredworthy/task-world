@@ -8,7 +8,7 @@
           "state": "completed"
         }
       ],
-      "event_count": 25,
+      "event_count": 27,
       "pending_gates": [
         {
           "consequence_summary": "FR-17 acceptance fixture.",
@@ -59,9 +59,10 @@
         "event_id": "fr17-event-2",
         "event_type": "node_created",
         "payload": {
-          "kind": "planner",
-          "node_id": "planner-fr17",
-          "role": "planner",
+          "kind": "root",
+          "node_id": "root-fr17",
+          "planner_generation_budget": 13,
+          "role": "root",
           "state": "completed"
         },
         "position": 2,
@@ -70,6 +71,53 @@
       },
       {
         "event_id": "fr17-event-3",
+        "event_type": "output_record_accepted",
+        "payload": {
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "graph_position": 3,
+          "payload": {
+            "content_hash": "fr17-routine-hash",
+            "name": "FR-17 Acceptance",
+            "routine_id": "fr17-acceptance",
+            "step_count": 1,
+            "task_count": 1
+          },
+          "port": "snapshot",
+          "producer_node_id": "root-fr17",
+          "producer_port": "snapshot",
+          "record_id": "routine-snapshot-fr17",
+          "record_kind": "graph_record",
+          "record_type": "routine_snapshot",
+          "run_id": "fr17-public-golden",
+          "schema": "RoutineSnapshot",
+          "schema_version": 1,
+          "value": {
+            "content_hash": "fr17-routine-hash",
+            "name": "FR-17 Acceptance",
+            "routine_id": "fr17-acceptance",
+            "step_count": 1,
+            "task_count": 1
+          }
+        },
+        "position": 3,
+        "run_id": "fr17-public-golden",
+        "timestamp": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "event_id": "fr17-event-4",
+        "event_type": "node_created",
+        "payload": {
+          "kind": "planner",
+          "node_id": "planner-fr17",
+          "role": "planner",
+          "state": "completed"
+        },
+        "position": 4,
+        "run_id": "fr17-public-golden",
+        "timestamp": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "event_id": "fr17-event-5",
         "event_type": "node_created",
         "payload": {
           "allowed_actions": [
@@ -91,12 +139,12 @@
           "state": "completed",
           "task_region_id": "task-fr17"
         },
-        "position": 3,
+        "position": 5,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-4",
+        "event_id": "fr17-event-6",
         "event_type": "node_created",
         "payload": {
           "command_definition": {
@@ -112,12 +160,12 @@
           "state": "running",
           "task_region_id": "task-fr17"
         },
-        "position": 4,
+        "position": 6,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-5",
+        "event_id": "fr17-event-7",
         "event_type": "node_created",
         "payload": {
           "allowed_actions": [
@@ -129,44 +177,16 @@
           "state": "ready",
           "task_region_id": "task-fr17"
         },
-        "position": 5,
-        "run_id": "fr17-public-golden",
-        "timestamp": "2026-01-01T00:00:00+00:00"
-      },
-      {
-        "event_id": "fr17-event-6",
-        "event_type": "node_deferred",
-        "payload": {
-          "node_id": "review-1",
-          "reason": "merge_conflicts"
-        },
-        "position": 6,
-        "run_id": "fr17-public-golden",
-        "timestamp": "2026-01-01T00:00:00+00:00"
-      },
-      {
-        "event_id": "fr17-event-7",
-        "event_type": "node_created",
-        "payload": {
-          "kind": "appeal",
-          "node_id": "appeal-1",
-          "state": "completed",
-          "task_region_id": "task-fr17"
-        },
         "position": 7,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
         "event_id": "fr17-event-8",
-        "event_type": "node_created",
+        "event_type": "node_deferred",
         "payload": {
-          "gate_type": "human_approval",
-          "kind": "human_gate",
-          "node_id": "gate-pending",
-          "prompt": "Approve FR-17 pending work?",
-          "state": "ready",
-          "task_region_id": "task-fr17"
+          "node_id": "review-1",
+          "reason": "merge_conflicts"
         },
         "position": 8,
         "run_id": "fr17-public-golden",
@@ -176,11 +196,9 @@
         "event_id": "fr17-event-9",
         "event_type": "node_created",
         "payload": {
-          "gate_type": "human_approval",
-          "kind": "human_gate",
-          "node_id": "gate-decision",
-          "prompt": "Approve FR-17 completed readback fixture?",
-          "state": "ready",
+          "kind": "appeal",
+          "node_id": "appeal-1",
+          "state": "completed",
           "task_region_id": "task-fr17"
         },
         "position": 9,
@@ -191,9 +209,10 @@
         "event_id": "fr17-event-10",
         "event_type": "node_created",
         "payload": {
-          "kind": "worker",
-          "node_id": "consumer-1",
-          "role": "builder",
+          "gate_type": "human_approval",
+          "kind": "human_gate",
+          "node_id": "gate-pending",
+          "prompt": "Approve FR-17 pending work?",
           "state": "ready",
           "task_region_id": "task-fr17"
         },
@@ -203,6 +222,35 @@
       },
       {
         "event_id": "fr17-event-11",
+        "event_type": "node_created",
+        "payload": {
+          "gate_type": "human_approval",
+          "kind": "human_gate",
+          "node_id": "gate-decision",
+          "prompt": "Approve FR-17 completed readback fixture?",
+          "state": "ready",
+          "task_region_id": "task-fr17"
+        },
+        "position": 11,
+        "run_id": "fr17-public-golden",
+        "timestamp": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "event_id": "fr17-event-12",
+        "event_type": "node_created",
+        "payload": {
+          "kind": "worker",
+          "node_id": "consumer-1",
+          "role": "builder",
+          "state": "ready",
+          "task_region_id": "task-fr17"
+        },
+        "position": 12,
+        "run_id": "fr17-public-golden",
+        "timestamp": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "event_id": "fr17-event-13",
         "event_type": "edge_created",
         "payload": {
           "binding_policy": "bind_first",
@@ -216,16 +264,16 @@
           "to_node_id": "recovery-1",
           "to_port": "failure_record"
         },
-        "position": 11,
+        "position": 13,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-12",
+        "event_id": "fr17-event-14",
         "event_type": "output_record_accepted",
         "payload": {
           "created_at": "2026-01-01T00:00:00+00:00",
-          "graph_position": 12,
+          "graph_position": 14,
           "payload": {
             "error_class": "agent_error",
             "failed_node_id": "worker-source",
@@ -248,12 +296,12 @@
             "retryable": true
           }
         },
-        "position": 12,
+        "position": 14,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-13",
+        "event_id": "fr17-event-15",
         "event_type": "input_bound",
         "payload": {
           "bound_at_position": 12,
@@ -265,12 +313,12 @@
           "to_port": "failure_record",
           "trigger": "record_accepted"
         },
-        "position": 13,
+        "position": 15,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-14",
+        "event_id": "fr17-event-16",
         "event_type": "lease_granted",
         "payload": {
           "execution_id": "exec-recovery",
@@ -279,16 +327,16 @@
           "lease_id": "lease-recovery",
           "node_id": "recovery-1"
         },
-        "position": 14,
+        "position": 16,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-15",
+        "event_id": "fr17-event-17",
         "event_type": "output_record_accepted",
         "payload": {
           "created_at": "2026-01-01T00:00:00+00:00",
-          "graph_position": 15,
+          "graph_position": 17,
           "payload": {
             "action": "retry",
             "graph_changes": [
@@ -317,36 +365,36 @@
             "responsible_actor": "recovery-1"
           }
         },
-        "position": 15,
-        "run_id": "fr17-public-golden",
-        "timestamp": "2026-01-01T00:00:00+00:00"
-      },
-      {
-        "event_id": "fr17-event-16",
-        "event_type": "node_state_changed",
-        "payload": {
-          "new_state": "completed",
-          "node_id": "recovery-1",
-          "trigger": "recovery_plan_recorded"
-        },
-        "position": 16,
-        "run_id": "fr17-public-golden",
-        "timestamp": "2026-01-01T00:00:00+00:00"
-      },
-      {
-        "event_id": "fr17-event-17",
-        "event_type": "lease_released",
-        "payload": {
-          "generation": 1,
-          "lease_id": "lease-recovery",
-          "node_id": "recovery-1"
-        },
         "position": 17,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
         "event_id": "fr17-event-18",
+        "event_type": "node_state_changed",
+        "payload": {
+          "new_state": "completed",
+          "node_id": "recovery-1",
+          "trigger": "recovery_plan_recorded"
+        },
+        "position": 18,
+        "run_id": "fr17-public-golden",
+        "timestamp": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "event_id": "fr17-event-19",
+        "event_type": "lease_released",
+        "payload": {
+          "generation": 1,
+          "lease_id": "lease-recovery",
+          "node_id": "recovery-1"
+        },
+        "position": 19,
+        "run_id": "fr17-public-golden",
+        "timestamp": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "event_id": "fr17-event-20",
         "event_type": "edge_created",
         "payload": {
           "binding_policy": "bind_latest",
@@ -360,12 +408,12 @@
           "to_node_id": "consumer-1",
           "to_port": "outstanding_failures"
         },
-        "position": 18,
+        "position": 20,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-19",
+        "event_id": "fr17-event-21",
         "event_type": "input_bound",
         "payload": {
           "bound_at_position": 19,
@@ -377,16 +425,16 @@
           "to_port": "outstanding_failures",
           "trigger": "record_accepted"
         },
-        "position": 19,
+        "position": 21,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-20",
+        "event_id": "fr17-event-22",
         "event_type": "output_record_accepted",
         "payload": {
           "created_at": "2026-01-01T00:00:00+00:00",
-          "graph_position": 20,
+          "graph_position": 22,
           "payload": {
             "consequence_summary": "FR-17 acceptance fixture.",
             "decision_type": "approval",
@@ -415,16 +463,16 @@
             ]
           }
         },
-        "position": 20,
+        "position": 22,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-21",
+        "event_id": "fr17-event-23",
         "event_type": "output_record_accepted",
         "payload": {
           "created_at": "2026-01-01T00:00:00+00:00",
-          "graph_position": 21,
+          "graph_position": 23,
           "payload": {
             "consequence_summary": "FR-17 acceptance fixture.",
             "decision_type": "approval",
@@ -453,12 +501,12 @@
             ]
           }
         },
-        "position": 21,
+        "position": 23,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-22",
+        "event_id": "fr17-event-24",
         "event_type": "edge_created",
         "payload": {
           "binding_policy": "bind_latest",
@@ -470,12 +518,12 @@
           "to_node_id": "consumer-1",
           "to_port": "approval"
         },
-        "position": 22,
+        "position": 24,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-23",
+        "event_id": "fr17-event-25",
         "event_type": "appeal_opened",
         "payload": {
           "appeal_type": "invalid_test",
@@ -484,12 +532,12 @@
           "node_id": "appeal-1",
           "task_region_id": "task-fr17"
         },
-        "position": 23,
+        "position": 25,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-24",
+        "event_id": "fr17-event-26",
         "event_type": "oversight_decision_recorded",
         "payload": {
           "appeal_node_id": "appeal-1",
@@ -500,14 +548,19 @@
           "decision": "rejected",
           "decision_type": "oversight",
           "node_id": "oversight-1",
+          "scope": {
+            "items": [
+              "original"
+            ]
+          },
           "task_region_id": "task-fr17"
         },
-        "position": 24,
+        "position": 26,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-25",
+        "event_id": "fr17-event-27",
         "event_type": "graph_patch_rejected",
         "payload": {
           "actor_role": "planner",
@@ -523,7 +576,7 @@
           "proposed_by_node_id": "planner-fr17",
           "reason": "invalid macro expansion for FR-17 fixture"
         },
-        "position": 25,
+        "position": 27,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       }
@@ -626,11 +679,11 @@
           "to_port": null
         }
       ],
-      "event_count": 25,
+      "event_count": 27,
       "run_id": "fr17-public-golden"
     },
     "graph": {
-      "event_count": 25,
+      "event_count": 27,
       "leases": {
         "lease-recovery": {
           "execution_id": "exec-recovery",
@@ -651,6 +704,7 @@
         "planner-fr17": "completed",
         "recovery-1": "completed",
         "review-1": "ready",
+        "root-fr17": "completed",
         "worker-source": "completed"
       },
       "ready_nodes": [
@@ -673,7 +727,7 @@
           "base_graph_position": 3,
           "created_edge_ids": [],
           "created_node_ids": [],
-          "current_graph_position": 25,
+          "current_graph_position": 27,
           "diagnostics": {
             "actor_role": "planner",
             "created_edge_ids": [],
@@ -687,13 +741,13 @@
           "patch_id": "patch-fr17-rejected",
           "proposed_by_node_id": "planner-fr17",
           "read_set_diff": null,
-          "rejected_event_id": "fr17-event-25",
-          "rejected_position": 25,
+          "rejected_event_id": "fr17-event-27",
+          "rejected_position": 27,
           "rejection_reason": "invalid macro expansion for FR-17 fixture",
           "status": "rejected"
         }
       ],
-      "current_graph_position": 25,
+      "current_graph_position": 27,
       "run_id": "fr17-public-golden"
     },
     "recovery_node": {
@@ -761,7 +815,7 @@
       },
       "events": [
         {
-          "event_id": "fr17-event-4",
+          "event_id": "fr17-event-6",
           "event_type": "node_created",
           "payload": {
             "command_definition": {
@@ -777,12 +831,12 @@
             "state": "running",
             "task_region_id": "task-fr17"
           },
-          "position": 4,
+          "position": 6,
           "run_id": "fr17-public-golden",
           "timestamp": "2026-01-01T00:00:00+00:00"
         },
         {
-          "event_id": "fr17-event-11",
+          "event_id": "fr17-event-13",
           "event_type": "edge_created",
           "payload": {
             "binding_policy": "bind_first",
@@ -796,12 +850,12 @@
             "to_node_id": "recovery-1",
             "to_port": "failure_record"
           },
-          "position": 11,
+          "position": 13,
           "run_id": "fr17-public-golden",
           "timestamp": "2026-01-01T00:00:00+00:00"
         },
         {
-          "event_id": "fr17-event-13",
+          "event_id": "fr17-event-15",
           "event_type": "input_bound",
           "payload": {
             "bound_at_position": 12,
@@ -813,12 +867,12 @@
             "to_port": "failure_record",
             "trigger": "record_accepted"
           },
-          "position": 13,
+          "position": 15,
           "run_id": "fr17-public-golden",
           "timestamp": "2026-01-01T00:00:00+00:00"
         },
         {
-          "event_id": "fr17-event-14",
+          "event_id": "fr17-event-16",
           "event_type": "lease_granted",
           "payload": {
             "execution_id": "exec-recovery",
@@ -827,16 +881,16 @@
             "lease_id": "lease-recovery",
             "node_id": "recovery-1"
           },
-          "position": 14,
+          "position": 16,
           "run_id": "fr17-public-golden",
           "timestamp": "2026-01-01T00:00:00+00:00"
         },
         {
-          "event_id": "fr17-event-15",
+          "event_id": "fr17-event-17",
           "event_type": "output_record_accepted",
           "payload": {
             "created_at": "2026-01-01T00:00:00+00:00",
-            "graph_position": 15,
+            "graph_position": 17,
             "payload": {},
             "port": "recovery_plan",
             "producer_node_id": "recovery-1",
@@ -847,36 +901,36 @@
             "schema": "RecoveryPlan",
             "schema_version": 1
           },
-          "position": 15,
-          "run_id": "fr17-public-golden",
-          "timestamp": "2026-01-01T00:00:00+00:00"
-        },
-        {
-          "event_id": "fr17-event-16",
-          "event_type": "node_state_changed",
-          "payload": {
-            "new_state": "completed",
-            "node_id": "recovery-1",
-            "trigger": "recovery_plan_recorded"
-          },
-          "position": 16,
-          "run_id": "fr17-public-golden",
-          "timestamp": "2026-01-01T00:00:00+00:00"
-        },
-        {
-          "event_id": "fr17-event-17",
-          "event_type": "lease_released",
-          "payload": {
-            "generation": 1,
-            "lease_id": "lease-recovery",
-            "node_id": "recovery-1"
-          },
           "position": 17,
           "run_id": "fr17-public-golden",
           "timestamp": "2026-01-01T00:00:00+00:00"
         },
         {
           "event_id": "fr17-event-18",
+          "event_type": "node_state_changed",
+          "payload": {
+            "new_state": "completed",
+            "node_id": "recovery-1",
+            "trigger": "recovery_plan_recorded"
+          },
+          "position": 18,
+          "run_id": "fr17-public-golden",
+          "timestamp": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "event_id": "fr17-event-19",
+          "event_type": "lease_released",
+          "payload": {
+            "generation": 1,
+            "lease_id": "lease-recovery",
+            "node_id": "recovery-1"
+          },
+          "position": 19,
+          "run_id": "fr17-public-golden",
+          "timestamp": "2026-01-01T00:00:00+00:00"
+        },
+        {
+          "event_id": "fr17-event-20",
           "event_type": "edge_created",
           "payload": {
             "binding_policy": "bind_latest",
@@ -890,7 +944,7 @@
             "to_node_id": "consumer-1",
             "to_port": "outstanding_failures"
           },
-          "position": 18,
+          "position": 20,
           "run_id": "fr17-public-golden",
           "timestamp": "2026-01-01T00:00:00+00:00"
         }
@@ -906,7 +960,7 @@
       "output_records": [
         {
           "created_at": "2026-01-01T00:00:00+00:00",
-          "graph_position": 15,
+          "graph_position": 17,
           "payload": {
             "action": "retry",
             "graph_changes": [
@@ -947,7 +1001,7 @@
       "task_region_id": "task-fr17"
     },
     "regions": {
-      "event_count": 25,
+      "event_count": 27,
       "regions": [
         {
           "blockers": [
@@ -1107,7 +1161,7 @@
       },
       "events": [
         {
-          "event_id": "fr17-event-5",
+          "event_id": "fr17-event-7",
           "event_type": "node_created",
           "payload": {
             "allowed_actions": [
@@ -1119,18 +1173,18 @@
             "state": "ready",
             "task_region_id": "task-fr17"
           },
-          "position": 5,
+          "position": 7,
           "run_id": "fr17-public-golden",
           "timestamp": "2026-01-01T00:00:00+00:00"
         },
         {
-          "event_id": "fr17-event-6",
+          "event_id": "fr17-event-8",
           "event_type": "node_deferred",
           "payload": {
             "node_id": "review-1",
             "reason": "merge_conflicts"
           },
-          "position": 6,
+          "position": 8,
           "run_id": "fr17-public-golden",
           "timestamp": "2026-01-01T00:00:00+00:00"
         }
@@ -1314,7 +1368,7 @@
       "worktree_relative_path": null
     },
     "scheduler": {
-      "event_count": 25,
+      "event_count": 27,
       "leases": {
         "active": [],
         "suspended": []
@@ -1441,7 +1495,7 @@
           },
           "bound_records": [
             {
-              "position": 15,
+              "position": 17,
               "producer_node_id": "recovery-1",
               "producer_port": "recovery_plan",
               "record_id": "recovery-plan-1",
@@ -1478,7 +1532,7 @@
           "to_port": "outstanding_failures"
         }
       ],
-      "event_count": 25,
+      "event_count": 27,
       "nodes": [
         {
           "contract": {
@@ -2307,6 +2361,58 @@
           "node_id": "review-1",
           "role": null,
           "state": "ready"
+        },
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "none",
+              "required_outputs": []
+            },
+            "handler_type": "controller",
+            "input_ports": {},
+            "node_type": "run_root",
+            "output_ports": {
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": true,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "run_context": {
+                "cardinality": "one",
+                "record_types": [
+                  "run_context"
+                ],
+                "required": true,
+                "schemas": [
+                  "RunContext"
+                ]
+              }
+            },
+            "roles": [
+              "run_root"
+            ]
+          },
+          "kind": "root",
+          "node_id": "root-fr17",
+          "role": "root",
+          "state": "completed"
         },
         {
           "contract": {

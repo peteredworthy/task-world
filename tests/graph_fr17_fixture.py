@@ -45,6 +45,34 @@ def less_used_events(run_id: str) -> list[EventEnvelope]:
         ("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
         (
             "node_created",
+            {
+                "node_id": "root-fr17",
+                "kind": "root",
+                "role": "root",
+                "state": "completed",
+                "planner_generation_budget": 13,
+            },
+        ),
+        (
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-fr17",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "root-fr17",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "fr17-acceptance",
+                    "name": "FR-17 Acceptance",
+                    "content_hash": "fr17-routine-hash",
+                    "step_count": 1,
+                    "task_count": 1,
+                },
+            },
+        ),
+        (
+            "node_created",
             {"node_id": "planner-fr17", "kind": "planner", "role": "planner", "state": "completed"},
         ),
         (
@@ -274,6 +302,7 @@ def less_used_events(run_id: str) -> list[EventEnvelope]:
                 "candidate_id": "candidate-fr17",
                 "task_region_id": "task-fr17",
                 "appeal_type": "invalid_test",
+                "scope": {"items": ["original"]},
                 "decision": "rejected",
             },
         ),
