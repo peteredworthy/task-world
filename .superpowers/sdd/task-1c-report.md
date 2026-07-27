@@ -374,3 +374,65 @@ authoritative, byte-exact output of a fresh full tracked-repository
 The prior closure counts above are retained as dated historical evidence only;
 they are not final inventory claims. The current artifact summary is the sole
 authoritative count.
+
+## Task 1c blocking fix (2026-07-27)
+
+### Diagnosis and RED
+
+The collector already records declaration annotations in source order, but
+`visit_AnnAssign` recomputed `Any`/`Callable` through the final module symbol
+table. A later module-level alias rebind therefore erased the escape type and
+allowed initialized `initial_projection()` values through. Separately,
+`leave_AnnAssign` checked only `_tracked`, so it missed known producer values
+that had not first been assigned to a tracked alias.
+
+The new focused regressions failed before the fix:
+
+```text
+test_inventory_paths_uses_ordered_escape_annotations_before_later_alias_rebind
+AssertionError: assert [] == ['unsupported_binding', 'unsupported_binding']
+
+test_inventory_paths_diagnoses_known_producer_lost_by_annotated_assignment
+AssertionError: assert [] == ['unsupported_binding']
+```
+
+### GREEN
+
+- `visit_AnnAssign` now checks the already position-correct resolved
+  annotation for unbounded `Any`/`Callable` escapes, including initialized
+  known producer values.
+- `leave_AnnAssign` now uses `_known_projection_value` when diagnosing a
+  projection assigned to a non-projection annotation.
+- Added regressions covering later `Any` and `Callable` alias rebinds and the
+  initialized known-producer assignment boundary.
+
+### Verification
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+96 passed
+
+uv run python scripts/graph_projection_inventory.py --diagnose
+exit 1 (expected); 395 unresolved flows
+unsupported_binding: 65
+unsupported_call: 280
+unsupported_comparison: 50
+```
+
+The fresh diagnose output is byte-identical to
+`docs/graph-projection-inventory-diagnostics.md`; no artifact content change
+was required.
+
+```text
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run ruff format --check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+2 files already formatted
+
+uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+uv run pytest
+4948 passed, 3 skipped, 3 aiosqlite datetime-adapter warnings in 127.87s
+```

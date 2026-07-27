@@ -1027,10 +1027,6 @@ class _Collector(cst.CSTVisitor):
             name
         )
 
-    def _is_escape_annotation(self, annotation: cst.BaseExpression) -> bool:
-        """Accept only the bounded GraphProjection annotation for projection values."""
-        return self._is_unbounded_annotation(self.symbols.annotation_name(annotation))
-
     @staticmethod
     def _is_unbounded_annotation(annotation: str | None) -> bool:
         return annotation in {
@@ -1277,7 +1273,7 @@ class _Collector(cst.CSTVisitor):
         if (
             node.value is not None
             and (
-                self._is_escape_annotation(node.annotation.annotation)
+                self._is_unbounded_annotation(annotation)
                 or annotation in {_CONTAINS_PROJECTION, _UNRESOLVED_PROJECTION}
             )
             and self._known_projection_value(node.value)
@@ -1311,7 +1307,7 @@ class _Collector(cst.CSTVisitor):
             if not self._unresolved_control_binding(node.target, node.value, node):
                 self._add_alias(node.target)
         else:
-            if node.value is not None and self._tracked(node.value):
+            if node.value is not None and self._known_projection_value(node.value):
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING,
                     "annotated assignment loses projection type",

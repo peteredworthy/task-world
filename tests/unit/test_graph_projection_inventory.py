@@ -2087,6 +2087,49 @@ def escapes(projection: GraphProjection) -> None:
     ]
 
 
+def test_inventory_paths_uses_ordered_escape_annotations_before_later_alias_rebind(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "later_alias_rebind.py"
+    source.write_text(
+        """
+from typing import Any as Dynamic, Callable as Callback
+from orchestrator.graph import initial_projection
+
+any_value: Dynamic = initial_projection()
+callable_value: Callback[..., object] = initial_projection()
+Dynamic = object
+Callback = object
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+    ]
+
+
+def test_inventory_paths_diagnoses_known_producer_lost_by_annotated_assignment(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "annotated_producer.py"
+    source.write_text(
+        """
+from orchestrator.graph import initial_projection
+
+value: int = initial_projection()
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_binding"]
+
+
 def test_inventory_paths_retains_fail_closed_provenance_at_control_flow_joins(
     tmp_path: Path,
 ) -> None:
