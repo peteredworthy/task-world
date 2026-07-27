@@ -16,6 +16,7 @@ from scripts.graph_projection_inventory import (
     DiagnosticCode,
     InventoryDiagnostic,
     collect_source,
+    diagnostic_report,
     inventory_paths,
     inventory_repository,
     load_manifest,
@@ -205,8 +206,8 @@ def fixture() -> GraphProjection:
         baseline_revision="baseline",
     )
 
-    assert not inventory.diagnostics
-    assert len(inventory.occurrences) == 19
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_call"]
+    assert len(inventory.occurrences) == 18
     assert {occurrence.kind for occurrence in inventory.occurrences} == {
         "literal_subscript_read",
         "get",
@@ -222,7 +223,6 @@ def fixture() -> GraphProjection:
         "delete_pop",
         "unpack_cast",
         "fixture_construction",
-        "untyped_escape",
     }
     assert [occurrence.kind for occurrence in inventory.occurrences].count("append_extend") == 2
     assert all(
@@ -324,6 +324,138 @@ def rejected(projection: GraphProjection) -> None:
         "unsupported_call",
         "projection_unpacking",
     ]
+
+
+def test_collect_source_diagnoses_every_unrecognized_tracked_argument() -> None:
+    inventory = collect_source(
+        """
+def rejected(projection: GraphProjection) -> None:
+    consumer(projection)
+""",
+        relative_path="calls.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_call"]
+    assert (
+        inventory.diagnostics[0].remediation
+        == "replace the dynamic call with a typed projection query"
+    )
+
+
+def test_collect_source_requires_a_qualified_recognized_cast_symbol() -> None:
+    inventory = collect_source(
+        """
+def rejected(projection: GraphProjection) -> None:
+    cast(dict[str, str], projection["node_states"])
+""",
+        relative_path="unqualified-cast.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_call"]
+
+
+def test_inventory_paths_uses_exact_qualified_producers_and_fields_with_shadowing(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "producer.py"
+    source.write_text(
+        """
+class Checkpoint:
+    projection: GraphProjection
+
+async def use(
+    controller: GraphController,
+    store: GraphEventStore,
+    checkpoint: GraphProjectionCheckpoint,
+    run_id: str,
+) -> None:
+    first = await controller.read_projection(run_id)
+    first["run_state"]
+    second, _, _ = await store.load_projection_with_tail(run_id)
+    second["node_states"]
+    checkpoint.projection["ready_nodes"]
+
+async def shadow(controller: object, store: object, checkpoint: object, run_id: str) -> None:
+    first = await controller.read_projection(run_id)
+    first["run_state"]
+    second, _, _ = await store.load_projection_with_tail(run_id)
+    second["node_states"]
+    checkpoint.projection["ready_nodes"]
+"""
+    )
+    manifest = load_manifest(MANIFEST_PATH)
+
+    inventory = inventory_paths((source,), manifest, root=tmp_path)
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("use", "run_state"),
+        ("use", "node_states"),
+        ("use", "ready_nodes"),
+    ]
+    assert not inventory.diagnostics
+
+
+def test_collect_source_rejects_reflection_and_callable_annotation_escapes() -> None:
+    inventory = collect_source(
+        """
+from typing import Any, Callable
+
+def rejected(projection: GraphProjection) -> None:
+    setattr(projection, "run_state", "active")
+    vars(projection)
+    projection.__dict__
+    escape: Callable[..., object] = projection
+    unknown: Any = projection
+""",
+        relative_path="escapes.py",
+        baseline_revision="baseline",
+    )
+
+    assert [item.code for item in inventory.diagnostics] == [
+        "reflection",
+        "reflection",
+        "reflection",
+        "unsupported_binding",
+        "unsupported_binding",
+    ]
+
+
+def test_diagnostic_report_is_sorted_and_includes_code_counts() -> None:
+    inventory = AccessInventory(
+        baseline_revision="baseline",
+        occurrences=(),
+        diagnostics=(
+            InventoryDiagnostic(
+                relative_path="z.py",
+                qualified_function="z",
+                line=2,
+                column=0,
+                code=DiagnosticCode.UNSUPPORTED_CALL,
+                message="z",
+            ),
+            InventoryDiagnostic(
+                relative_path="a.py",
+                qualified_function="a",
+                line=1,
+                column=0,
+                code=DiagnosticCode.REFLECTION,
+                message="a",
+            ),
+        ),
+    )
+
+    assert diagnostic_report(inventory) == (
+        "Unresolved GraphProjection flows: 2\n"
+        "reflection: 1\n"
+        "unsupported_call: 1\n"
+        "\n"
+        "a.py:1:0: a: reflection: a; replace reflection with an explicit typed projection field\n"
+        "z.py:2:0: z: unsupported_call: z; replace the dynamic call with a typed projection query\n"
+    )
 
 
 def test_collect_source_fails_closed_for_unsupported_bindings_and_construction() -> None:
@@ -1156,6 +1288,35 @@ def test_inventory_repository_excludes_generated_and_sorts_files(tmp_path: Path)
         "tests/a.py",
     ]
     assert AccessInventory.model_config.get("frozen") is True
+
+
+def test_real_repository_inventory_reports_production_projection_flows() -> None:
+    root = Path(__file__).parents[2]
+    inventory = inventory_repository(
+        root,
+        load_manifest(MANIFEST_PATH),
+        tracked_paths=(
+            root / "src/orchestrator/graph_runtime/recovery.py",
+            root / "src/orchestrator/graph_runtime/store.py",
+        ),
+    )
+    report = diagnostic_report(inventory)
+
+    assert any(
+        item.relative_path == "src/orchestrator/graph_runtime/recovery.py"
+        and item.qualified_function == "reconcile_graph"
+        and item.code is DiagnosticCode.UNSUPPORTED_COMPARISON
+        for item in inventory.diagnostics
+    )
+    assert inventory.diagnostics
+    assert all(
+        item.relative_path
+        and item.qualified_function
+        and item.message
+        and item.remediation
+        and f"{item.relative_path}:{item.line}:{item.column}:" in report
+        for item in inventory.diagnostics
+    )
 
 
 def test_inventory_paths_does_not_parse_detached_attribute_fragments(tmp_path: Path) -> None:

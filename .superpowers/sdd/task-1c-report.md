@@ -104,3 +104,61 @@ uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_proje
 make test
 4917 passed, 3 skipped, 3 existing aiosqlite warnings in 98.82s
 ```
+
+## Remaining-gap closure (2026-07-27)
+
+### RED/GREEN
+
+- Added focused failing tests for unrecognized tracked callable arguments,
+  exact `GraphController.read_projection` and
+  `GraphEventStore.load_projection_with_tail` provenance (including untyped
+  shadowing), `GraphProjectionCheckpoint.projection`, `getattr`/`setattr`/
+  `vars`/`__dict__`, `Any` and `Callable` annotation escapes, and a sorted
+  report with category counts. The initial RED failed because
+  `diagnostic_report` did not exist.
+- Replaced the former generic `UNTYPED_ESCAPE` occurrence for a tracked call
+  argument with an `unsupported_call` diagnostic. Every tracked argument sent
+  to a callable outside the bounded recognized call handling now has tailored
+  remediation; it cannot be hidden by an ordinary occurrence record.
+- Added exact receiver-type/method and type/field tables. Only a receiver
+  annotated as `GraphController` or `GraphEventStore` seeds its corresponding
+  awaited producer; only `GraphDispatchContext.graph_projection` and
+  `GraphProjectionCheckpoint.projection` seed the explicit field flow.
+  Same-spelling values annotated as `object` are intentionally not tracked.
+- Added deterministic `diagnostic_report()` and the checked representative
+  fixture `docs/graph-projection-inventory-diagnostics.md`. A real-production
+  inventory test injects tracked `recovery.py` and `store.py` paths, asserts the
+  production recovery flow is present, and verifies every unresolved result has
+  a report line and remediation. Injecting paths keeps that unit test below its
+  30-second timeout; the full tracked-repository scan remains the CLI check.
+
+### Final diagnose result
+
+```text
+uv run python scripts/graph_projection_inventory.py --diagnose
+exit 1 (expected while unresolved sites remain)
+
+Unresolved GraphProjection flows: 891
+unsupported_call: 820
+unsupported_comparison: 71
+```
+
+The inventory is deliberately **not zero**. The remaining diagnostics are
+explicitly reported bounded call and comparison flows; this task does not claim
+they have been migrated.
+
+### Verification
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+71 passed
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run ruff format --check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+2 files already formatted
+
+uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+```

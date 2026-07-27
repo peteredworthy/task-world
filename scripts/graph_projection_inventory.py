@@ -225,6 +225,17 @@ _SUPPORTED_PROJECTION_METHODS = frozenset(
     {"get", "pop", "setdefault", "keys", "values", "items", "append", "extend"}
 )
 
+# These are intentionally tables, rather than inferred method names.  A matching
+# receiver must carry the exact annotation named here in the current scope.
+_PROJECTION_PRODUCERS = {
+    ("GraphController", "read_projection"): "value",
+    ("GraphEventStore", "load_projection_with_tail"): "first_tuple_item",
+}
+_PROJECTION_FIELDS = {
+    "GraphDispatchContext": frozenset({"graph_projection"}),
+    "GraphProjectionCheckpoint": frozenset({"projection"}),
+}
+
 
 class _Collector(cst.CSTVisitor):
     METADATA_DEPENDENCIES = (PositionProvider, ParentNodeProvider, ScopeProvider)
@@ -236,6 +247,7 @@ class _Collector(cst.CSTVisitor):
         fields: dict[str, FieldOwnership],
         known_returns: frozenset[str] = frozenset(),
         typed_fields: dict[str, frozenset[str]] | None = None,
+        call_symbols: dict[str, str] | None = None,
     ) -> None:
         self.relative_path = relative_path
         self.baseline_revision = baseline_revision
@@ -243,9 +255,11 @@ class _Collector(cst.CSTVisitor):
         self.known_returns = known_returns
         self.tracked_attributes: dict[int, set[str]] = {}
         self.typed_fields = typed_fields or {}
+        self.call_symbols = call_symbols or {}
         self.lexical_names: list[str] = []
         self.aliases: dict[int, set[str]] = {}
         self.known_aliases: dict[int, set[str]] = {}
+        self.receiver_types: dict[int, dict[str, str]] = {}
         self.records: list[tuple[str, str, str | None, AccessKind, int, int]] = []
         self.diagnostics: list[tuple[str, str, str, int, int]] = []
         self.diagnostic_keys: set[tuple[int, DiagnosticCode]] = set()
@@ -271,6 +285,17 @@ class _Collector(cst.CSTVisitor):
         scope_id = id(self.get_metadata(ScopeProvider, node.body))
         self.aliases[scope_id] = seeds
         self.known_aliases[scope_id] = set(seeds)
+        self.receiver_types[scope_id] = {
+            parameter.name.value: _name(parameter.annotation.annotation)
+            for parameter in (
+                *node.params.posonly_params,
+                *node.params.params,
+                *node.params.kwonly_params,
+                *variadic,
+            )
+            if parameter.annotation is not None
+            and _name(parameter.annotation.annotation) is not None
+        }
         for parameter in (
             *node.params.posonly_params,
             *node.params.params,
@@ -306,11 +331,53 @@ class _Collector(cst.CSTVisitor):
     def _known_projection_value(self, node: cst.BaseExpression) -> bool:
         if self._tracked(node):
             return True
+        if isinstance(node, cst.Await):
+            return self._known_projection_value(node.expression)
+        if self._producer_shape(node) == "value":
+            return True
         return (
             isinstance(node, cst.Call)
             and isinstance(node.func, cst.Name)
             and node.func.value in self.known_returns
         )
+
+    def _producer_shape(self, node: cst.BaseExpression) -> str | None:
+        """Return an explicit producer result shape, never a name-based guess."""
+        if isinstance(node, cst.Await):
+            return self._producer_shape(node.expression)
+        if not isinstance(node, cst.Call) or not isinstance(node.func, cst.Attribute):
+            return None
+        if not isinstance(node.func.value, cst.Name):
+            return None
+        scope_id = id(self.get_metadata(ScopeProvider, node.func.value))
+        receiver_type = self.receiver_types.get(scope_id, {}).get(node.func.value.value)
+        return _PROJECTION_PRODUCERS.get((receiver_type, node.func.attr.value))
+
+    def _call_symbol(self, node: cst.BaseExpression) -> str | None:
+        """Resolve only imported aliases or already-qualified callable symbols."""
+        if isinstance(node, cst.Name):
+            return self.call_symbols.get(node.value)
+        return _attribute_key(node) if isinstance(node, cst.Attribute) else None
+
+    @staticmethod
+    def _is_escape_annotation(annotation: cst.BaseExpression) -> bool:
+        """Accept only the bounded GraphProjection annotation for projection values."""
+        return _name(annotation) in {"Any", "Callable"}
+
+    def _tracks_reflection_argument(self, node: cst.Call) -> bool:
+        return bool(node.args) and self._projection_derived(node.args[0].value)
+
+    def _is_reflective_attribute(self, node: cst.Attribute) -> bool:
+        return node.attr.value == "__dict__" and self._projection_derived(node.value)
+
+    def _unpack_first_producer_target(self, node: cst.Assign) -> cst.Name | None:
+        if self._producer_shape(node.value) != "first_tuple_item" or len(node.targets) != 1:
+            return None
+        target = node.targets[0].target
+        if not isinstance(target, cst.Tuple) or not target.elements:
+            return None
+        first = target.elements[0]
+        return first.value if isinstance(first.value, cst.Name) else None
 
     def _known_alias(self, node: cst.Name) -> bool:
         return node.value in self.known_aliases.get(
@@ -480,12 +547,12 @@ class _Collector(cst.CSTVisitor):
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
         if (
             node.value is not None
-            and _name(node.annotation.annotation) == "Any"
+            and self._is_escape_annotation(node.annotation.annotation)
             and self._known_projection_value(node.value)
         ):
             self._diagnostic(
                 DiagnosticCode.UNSUPPORTED_BINDING,
-                "projection escapes through Any",
+                "projection escapes through an unbounded annotation",
                 node,
             )
         return
@@ -560,6 +627,9 @@ class _Collector(cst.CSTVisitor):
                 if attribute is not None:
                     scope_id = id(self.get_metadata(ScopeProvider, node.targets[0].target))
                     self.tracked_attributes.setdefault(scope_id, set()).add(attribute)
+            return
+        if producer_target := self._unpack_first_producer_target(node):
+            self._add_alias(producer_target)
             return
         if (
             len(node.targets) == 1
@@ -655,9 +725,11 @@ class _Collector(cst.CSTVisitor):
                 node,
             )
             return
-        if _name(node.func) == "getattr" and node.args and self._tracked(node.args[0].value):
+        if _name(node.func) in {"getattr", "setattr", "vars"} and self._tracks_reflection_argument(
+            node
+        ):
             self._diagnostic(
-                DiagnosticCode.REFLECTION, "getattr on GraphProjection is unsupported", node
+                DiagnosticCode.REFLECTION, "reflection on GraphProjection is unsupported", node
             )
             return
         if _name(node.func) == "dict" and node.args and self._tracked(node.args[0].value):
@@ -756,7 +828,7 @@ class _Collector(cst.CSTVisitor):
                     self._record(AccessKind.APPEND_EXTEND, field, node)
                 return
         if (
-            _name(node.func) == "cast"
+            self._call_symbol(node.func) == "typing.cast"
             and len(node.args) == 2
             and not any(argument.star or argument.keyword is not None for argument in node.args)
             and isinstance(node.args[1].value, cst.Subscript)
@@ -767,7 +839,7 @@ class _Collector(cst.CSTVisitor):
                 self._record(AccessKind.UNPACK_CAST, field, node)
                 self._handle_subscript_chain(node.args[1].value)
             return
-        if _name(node.func) == "cast" and any(
+        if self._call_symbol(node.func) == "typing.cast" and any(
             self._projection_operand(arg.value) for arg in node.args
         ):
             self._diagnostic(
@@ -823,9 +895,21 @@ class _Collector(cst.CSTVisitor):
                 node,
             )
             return
-        for argument in node.args:
-            if self._tracked(argument.value):
-                self._record(AccessKind.UNTYPED_ESCAPE, None, node)
+        if any(self._projection_derived(argument.value) for argument in node.args):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_CALL,
+                "projection escapes through an unrecognized callable",
+                node,
+            )
+            for argument in node.args:
+                if self._projection_derived(argument.value):
+                    self._handle_projection_derived(argument.value)
+
+    def visit_Attribute(self, node: cst.Attribute) -> None:
+        if self._is_reflective_attribute(node):
+            self._diagnostic(
+                DiagnosticCode.REFLECTION, "__dict__ on GraphProjection is unsupported", node
+            )
 
     @staticmethod
     def _valid_method_shape(method: str, args: tuple[cst.Arg, ...]) -> bool:
@@ -1047,7 +1131,12 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
                 ),
             ),
         )
-    collector = _Collector(relative_path, baseline_revision, _manifest_fields())
+    collector = _Collector(
+        relative_path,
+        baseline_revision,
+        _manifest_fields(),
+        call_symbols=_imported_call_symbols(source),
+    )
     MetadataWrapper(module).visit(collector)
     return collector.result()
 
@@ -1075,7 +1164,7 @@ def _typed_projection_fields(source: str) -> dict[str, frozenset[str]]:
         tree = ast.parse(source)
     except SyntaxError:
         return {}
-    result: dict[str, frozenset[str]] = {}
+    result: dict[str, frozenset[str]] = dict(_PROJECTION_FIELDS)
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             fields = frozenset(
@@ -1089,6 +1178,21 @@ def _typed_projection_fields(source: str) -> dict[str, frozenset[str]]:
             if fields:
                 result[node.name] = fields
     return result
+
+
+def _imported_call_symbols(source: str) -> dict[str, str]:
+    """Resolve the tiny recognized-call table without name-based acceptance."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return {}
+    symbols: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and node.module == "typing":
+            for imported in node.names:
+                if imported.name == "cast":
+                    symbols[imported.asname or imported.name] = "typing.cast"
+    return symbols
 
 
 def inventory_paths(
@@ -1118,6 +1222,7 @@ def inventory_paths(
             {field.old_name: field for field in manifest.fields},
             _known_projection_returns(source),
             _typed_projection_fields(source),
+            _imported_call_symbols(source),
         )
         MetadataWrapper(module).visit(collector)
         inventories.append(collector.result())
@@ -1173,6 +1278,28 @@ def inventory_repository(
     return inventory_paths(paths, manifest, root=root)
 
 
+def diagnostic_report(inventory: AccessInventory) -> str:
+    """Render the deterministic checked remediation report used by ``--diagnose``."""
+    counts = {
+        code: sum(diagnostic.code == code for diagnostic in inventory.diagnostics)
+        for code in sorted({diagnostic.code for diagnostic in inventory.diagnostics})
+    }
+    summary = [f"Unresolved GraphProjection flows: {len(inventory.diagnostics)}"]
+    summary.extend(f"{code}: {count}" for code, count in counts.items())
+    sites = [
+        (
+            f"{diagnostic.relative_path}:{diagnostic.line}:{diagnostic.column}: "
+            f"{diagnostic.qualified_function}: {diagnostic.code}: {diagnostic.message}; "
+            f"{_remediation(diagnostic.code)}"
+        )
+        for diagnostic in sorted(
+            inventory.diagnostics,
+            key=lambda item: (item.relative_path, item.line, item.column, item.code),
+        )
+    ]
+    return "\n".join((*summary, "", *sites, ""))
+
+
 def main() -> int:
     """Print unresolved-site remediation without writing a baseline."""
     parser = argparse.ArgumentParser()
@@ -1183,12 +1310,7 @@ def main() -> int:
     root = Path(__file__).parents[1]
     manifest = load_manifest(root / "scripts/codemods/graph_projection_manifest.yaml")
     inventory = inventory_repository(root, manifest)
-    for diagnostic in inventory.diagnostics:
-        print(
-            f"{diagnostic.relative_path}:{diagnostic.line}:{diagnostic.column}: "
-            f"{diagnostic.qualified_function}: {diagnostic.code}: {diagnostic.message}; "
-            f"{diagnostic.remediation}"
-        )
+    print(diagnostic_report(inventory), end="")
     return 1 if inventory.diagnostics else 0
 
 
