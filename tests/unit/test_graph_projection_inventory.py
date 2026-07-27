@@ -412,3 +412,117 @@ def invalid(projection: GraphProjection) -> None:
         "projection_unpacking",
         "unsupported_call",
     }
+
+
+def test_collect_source_ignores_unrelated_chains_and_rejects_projection_chains() -> None:
+    inventory = collect_source(
+        """
+def comparisons(projection: GraphProjection) -> None:
+    unrelated = 1 < 2 < 3
+    involved = "run_state" in projection == projection
+    subscript_involved = projection["node_states"] < 2 < 3
+""",
+        relative_path="comparisons.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_comparison",
+        "unsupported_comparison",
+    ]
+
+
+def test_collect_source_seeds_zero_parameter_local_and_variadic_annotations() -> None:
+    inventory = collect_source(
+        """
+def local() -> None:
+    projection: GraphProjection
+    projection["run_state"]
+
+def variadic(*args: GraphProjection, **kwargs: GraphProjection) -> None:
+    args["node_states"]
+    kwargs["ready_nodes"]
+""",
+        relative_path="seeds.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("local", "run_state"),
+        ("variadic", "node_states"),
+        ("variadic", "ready_nodes"),
+    ]
+
+
+def test_collect_source_rejects_subscript_methods_outside_append_extend() -> None:
+    inventory = collect_source(
+        """
+def methods(projection: GraphProjection) -> None:
+    projection["node_states"].update({})
+    projection["ready_nodes"].clear()
+    projection["run_state"].replace("a", "b")
+""",
+        relative_path="methods.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_call",
+        "unsupported_call",
+        "unsupported_call",
+    ]
+
+
+def test_collect_source_removes_aliases_after_unsupported_rebinding() -> None:
+    inventory = collect_source(
+        """
+def rebindings(projection: GraphProjection) -> None:
+    augmented = projection
+    augmented += other
+    augmented["run_state"]
+    contextual = projection
+    with context() as contextual:
+        pass
+    contextual["node_states"]
+    exceptional = projection
+    try:
+        pass
+    except ValueError as exceptional:
+        pass
+    exceptional["ready_nodes"]
+""",
+        relative_path="rebindings.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_binding",
+    ]
+
+
+def test_collect_source_uses_lexical_qualified_function_identity() -> None:
+    inventory = collect_source(
+        """
+def outer() -> None:
+    class Nested:
+        def method(projection: GraphProjection) -> None:
+            projection["run_state"]
+
+class Nested:
+    def outer() -> None:
+        def method(projection: GraphProjection) -> None:
+            projection["node_states"]
+""",
+        relative_path="lexical_scopes.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("Nested.outer.method", "node_states"),
+        ("outer.Nested.method", "run_state"),
+    ]

@@ -33,3 +33,9 @@ Task 15 findings 2/3 remediation: complete (typed action transition variants, ex
 Task 16: complete (deterministic blocker-first review projection and non-promoting feedback import; isolated review-tool coverage passed).
 Task 17: complete (offline Phase 3 reality/capability checkpoint, generated review index, and local feedback controls; review-tool and E2E coverage passed).
 Task 18: complete-blocked (final Phase 3 publication; one final child snapshot hashes the validator and foundation integration test and declares generated status manifests; human settlement remains required for Q-5, Q-4, Q-1, Q-2, and Q-3).
+
+## Plan: 2026-07-26-immutable-graph-projection.md
+Workspace: `worktrees/immutable-graph-projection`
+Baseline: 4851 passed, 3 skipped, 3 pre-existing aiosqlite warnings.
+Task 1a: complete (commits cff9e1c69..f3e1e3108, review clean).
+Task 1b: complete (collector review fixes, focused suite 24 passed; full suite 4876 passed, 3 skipped).

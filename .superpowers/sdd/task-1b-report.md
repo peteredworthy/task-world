@@ -147,3 +147,65 @@ make test
 
 The collector now rejects typed alias loss, augmented and destructured-loop rebinding, with and
 exception targets, starred projection call arguments, and invalid supported-method call shapes.
+
+## Final Completion Evidence (2026-07-26)
+
+### RED
+
+The preserved collector suite was expanded before production changes to cover the remaining
+comparison, seed, method-call, stale-alias, and lexical-qualification cases:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+5 failed, 19 passed in 3.54s
+```
+
+The failures showed unrelated chained comparisons were diagnosed, zero-parameter and variadic
+annotation seeds were absent, subscript method calls produced false reads, unsupported rebinding
+left aliases live, and interleaved scopes were ordered as `Nested.outer.method`. A second
+test-first refinement added a chained subscript operand and correctly failed before suppression:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+1 failed, 23 passed in 3.19s
+```
+
+The lexical identity fixture was strengthened to demonstrate the former collision between
+`outer.Nested.method` and `Nested.outer.method`; the pre-fix stack ordering failed it:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py::test_collect_source_uses_lexical_qualified_function_identity -q
+1 failed in 2.92s
+```
+
+### GREEN
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+24 passed in 2.91s
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run pyright scripts/graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+make test
+4876 passed, 3 skipped, 3 warnings in 80.42s
+```
+
+The three full-suite warnings are the existing `aiosqlite` Python 3.12 datetime-adapter
+deprecations in `tests/unit/test_projectors.py`.
+
+### Final fixes
+
+- Chained comparisons are ignored unless a tracked projection (including a direct tracked
+  subscript operand) participates; projection chains diagnose and suppress child read records.
+- Function scope seeding consistently uses the function body scope, which supports no-parameter
+  functions, local `GraphProjection` annotations, and annotated `*args` / `**kwargs`.
+- Calls on `projection["field"]` permit only exact `append` and `extend` shapes. Every other
+  method diagnoses as unsupported and suppresses its child subscript read.
+- Augmented assignment, `with ... as`, and `except ... as` diagnostics now discard the affected
+  tracked alias before later source is collected.
+- A single lexical definition stack preserves actual function/class nesting order in qualified
+  function identities.
