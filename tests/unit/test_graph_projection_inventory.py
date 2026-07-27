@@ -2024,3 +2024,41 @@ def foreign_module(value: foreign.GraphProjection) -> None:
         "unsupported_binding",
         "unsupported_binding",
     ]
+
+
+def test_inventory_paths_fails_closed_for_foreign_modules_parameter_shadows_and_missing_args(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "final_task_1c_boundaries.py"
+    source.write_text(
+        """
+import foreign
+import foreign as foreign_alias
+from orchestrator.graph import GraphProjection
+
+def foreign_module(value: foreign.GraphProjection) -> None:
+    value["run_state"]
+
+def foreign_module_alias(value: foreign_alias.GraphProjection) -> None:
+    value["node_states"]
+
+def outer(GraphProjection: object) -> None:
+    def nested(value: GraphProjection) -> None:
+        value["ready_nodes"]
+
+def accepts(value: GraphProjection, required: object) -> None:
+    pass
+
+def calls(projection: GraphProjection) -> None:
+    accepts(projection)
+"""
+    )
+
+    inventory = inventory_paths((source,), load_manifest(MANIFEST_PATH), root=tmp_path)
+
+    assert not inventory.occurrences
+    assert [(item.qualified_function, item.code) for item in inventory.diagnostics] == [
+        ("foreign_module", "unsupported_binding"),
+        ("foreign_module_alias", "unsupported_binding"),
+        ("calls", "unsupported_call"),
+    ]

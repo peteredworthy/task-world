@@ -163,7 +163,7 @@ uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_proje
 0 errors, 0 warnings, 0 informations
 ```
 
-## Authoritative final report (2026-07-27)
+## Historical provenance report (2026-07-27)
 
 ### Superseded partial provenance-first pass
 
@@ -304,7 +304,7 @@ make test
 4932 passed, 3 skipped, 3 aiosqlite datetime-adapter warnings in 125.97s
 ```
 
-## Remaining Task 1c closure (2026-07-27)
+## Historical Task 1c closure (2026-07-27)
 
 - Provenance now admits only exact `GraphProjection` annotations: generic and
   union wrappers are boundaries, never seeds, and emit a fail-closed diagnostic
@@ -327,7 +327,7 @@ Authoritative outstanding inventory: **409** fail-closed diagnostics —
 Focused verification: `81 passed`; Ruff and Pyright passed. `--diagnose`
 intentionally exits 1 while the above diagnostics remain.
 
-## Final blocker verification (2026-07-27)
+## Historical blocker verification (2026-07-27)
 
 - Ordered AST declaration facts now preserve function, class, and variable
   annotation provenance at the declaration position. The CST pass consumes
@@ -362,3 +362,15 @@ uv run pyright scripts/graph_projection_inventory.py tests/unit/test_graph_proje
 uv run pytest
 4940 passed, 3 skipped, 3 aiosqlite datetime-adapter warnings in 124.02s
 ```
+
+## Authoritative final report (2026-07-27)
+
+The checked `docs/graph-projection-inventory-diagnostics.md` fixture is the
+authoritative, byte-exact output of a fresh full tracked-repository
+`--diagnose` run. It reports **402** unresolved flows:
+**35** `unsupported_binding`, **302** `unsupported_call`, and **65**
+`unsupported_comparison`.
+
+The prior closure counts above are retained as dated historical evidence only;
+they are not final inventory claims. The current artifact summary is the sole
+authoritative count.

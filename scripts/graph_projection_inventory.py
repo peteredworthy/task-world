@@ -270,8 +270,9 @@ _APPROVED_SYMBOLS = frozenset(
 
 @dataclass(frozen=True)
 class _CallableSignature:
-    positional: tuple[tuple[str, str | None], ...]
-    keyword_only: tuple[tuple[str, str | None], ...]
+    positional: tuple[tuple[str, str | None, bool], ...]
+    keyword_only: tuple[tuple[str, str | None, bool], ...]
+    positional_only: frozenset[str]
     has_varargs: bool
     has_kwargs: bool
     return_annotation: str | None
@@ -281,7 +282,8 @@ class _CallableSignature:
         if self.has_varargs or self.has_kwargs or any(arg.star for arg in args):
             return None
         positional = list(self.positional)
-        keywords = dict(self.keyword_only)
+        positional_annotations = {name: annotation for name, annotation, _ in positional}
+        keywords = {name: annotation for name, annotation, _ in self.keyword_only}
         bound: list[str | None] = []
         consumed: set[str] = set()
         position = 0
@@ -289,17 +291,26 @@ class _CallableSignature:
             if arg.keyword is None:
                 if position >= len(positional):
                     return None
-                name, annotation = positional[position]
+                name, annotation, _ = positional[position]
                 position += 1
             else:
                 name = arg.keyword.value
-                if name in consumed:
+                if name in consumed or name in self.positional_only:
                     return None
-                annotation = dict(positional).get(name, keywords.get(name))
-                if annotation is None and name not in dict(positional) and name not in keywords:
+                annotation = positional_annotations.get(name, keywords.get(name))
+                if (
+                    annotation is None
+                    and name not in positional_annotations
+                    and name not in keywords
+                ):
                     return None
             consumed.add(name)
             bound.append(annotation)
+        required = {
+            name for name, _, is_required in (*self.positional, *self.keyword_only) if is_required
+        }
+        if not required <= consumed:
+            return None
         return tuple(bound)
 
 
@@ -401,19 +412,25 @@ class _ModuleSymbols:
                 if fields:
                     class_fields[node.name] = fields
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                positional_arguments = (*node.args.posonlyargs, *node.args.args)
+                positional_required_count = len(positional_arguments) - len(node.args.defaults)
                 positional = tuple(
                     (
                         argument.arg,
                         cls._annotation(argument.annotation, names, unresolved_projection_names),
+                        index < positional_required_count,
                     )
-                    for argument in (*node.args.posonlyargs, *node.args.args)
+                    for index, argument in enumerate(positional_arguments)
                 )
                 keyword_only = tuple(
                     (
                         argument.arg,
                         cls._annotation(argument.annotation, names, unresolved_projection_names),
+                        default is None,
                     )
-                    for argument in node.args.kwonlyargs
+                    for argument, default in zip(
+                        node.args.kwonlyargs, node.args.kw_defaults, strict=True
+                    )
                 )
                 return_annotation = cls._annotation(
                     node.returns, names, unresolved_projection_names
@@ -422,6 +439,7 @@ class _ModuleSymbols:
                 signatures[node.name] = _CallableSignature(
                     positional,
                     keyword_only,
+                    frozenset(argument.arg for argument in node.args.posonlyargs),
                     node.args.vararg is not None,
                     node.args.kwarg is not None,
                     return_annotation,
@@ -508,6 +526,7 @@ class _ModuleSymbols:
                     unresolved.discard(statement.name)
                     body_names = dict(names)
                     body_unresolved = set(unresolved)
+                    shadow_function_parameters(statement, body_names, body_unresolved)
                     visit_statements(statement.body, body_names, body_unresolved)
                 elif isinstance(statement, ast.ClassDef):
                     body_names = dict(names)
@@ -551,6 +570,21 @@ class _ModuleSymbols:
                     record_annotation(parameter.annotation, names, unresolved)
             if node.returns is not None:
                 record_annotation(node.returns, names, unresolved)
+
+        def shadow_function_parameters(
+            node: ast.FunctionDef | ast.AsyncFunctionDef,
+            names: dict[str, str],
+            unresolved: set[str],
+        ) -> None:
+            for parameter in (
+                *node.args.posonlyargs,
+                *node.args.args,
+                *node.args.kwonlyargs,
+                *((node.args.vararg,) if node.args.vararg is not None else ()),
+                *((node.args.kwarg,) if node.args.kwarg is not None else ()),
+            ):
+                names.pop(parameter.arg, None)
+                unresolved.discard(parameter.arg)
 
         visit_statements(tree.body, dict(initial_names), set())
         return facts
@@ -598,7 +632,10 @@ class _ModuleSymbols:
             if node.value.id in unresolved_projection_names:
                 return _UNRESOLVED_PROJECTION
             prefix = names.get(node.value.id)
-            return _ModuleSymbols._projection_symbol(f"{prefix}.{node.attr}" if prefix else "")
+            resolved = f"{prefix}.{node.attr}" if prefix else ""
+            if node.attr == "GraphProjection" and resolved not in _APPROVED_SYMBOLS:
+                return _UNRESOLVED_PROJECTION
+            return _ModuleSymbols._projection_symbol(resolved)
         return None
 
     @staticmethod
