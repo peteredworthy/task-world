@@ -121,36 +121,6 @@ dispositions:
   diagnostic_code: null
   reason: Replace this direct lifecycle projection read with the permanent query API.
 - site_key:
-  - 5d566a0d
-  - 4bf025c3
-  - 6088b472
-  - b6b6977d
-  - a219843d
-  - ff004d30
-  - '55861251'
-  - dd1cec2c
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: completion_decision_passed
-  normalized_source_pattern: projection['completion_decision_passed']
-  diagnostic_code: null
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
-  - 32cacfb3
-  - 6a836903
-  - 37597a2f
-  - 16c5e7ea
-  - e169dfd3
-  - '65926717'
-  - ac185392
-  - d49ee28c
-  disposition: approved_core
-  relative_path: src/orchestrator/graph/projection_queries.py
-  qualified_function: run_state
-  normalized_source_pattern: projection['run_state']
-  diagnostic_code: null
-  reason: The exact approved query implementation owns this physical storage read.
-- site_key:
   - 02358157
   - ab0a6687
   - 7c71cd60
@@ -446,6 +416,1077 @@ dispositions:
   diagnostic_code: unsupported_binding
   reason: The exact source invokes a query or preserves type provenance without a
     physical projection storage read.
+- site_key:
+  - 270166f5
+  - 31bd13b8
+  - 2ac56c60
+  - b600a9c6
+  - c3ff5b26
+  - b943f604
+  - bf68fe2c
+  - a66fbdb8
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/recovery.py
+  qualified_function: reconcile_graph
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  reason: Replace this direct lifecycle projection read with the permanent query API.
+- site_key:
+  - b0f55fd5
+  - fb5443a1
+  - a0f1f735
+  - d63769b5
+  - 4959021d
+  - af898283
+  - 1a6475cb
+  - 095346ac
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _decisions_with_projection_checkpoint
+  normalized_source_pattern: '_CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),'
+  diagnostic_code: unsupported_call
+  reason: Replace this direct lifecycle projection read with the permanent query API.
+- site_key:
+  - fd1bb8dc
+  - c8c87e29
+  - d7b53fff
+  - 507b6d7b
+  - eb01086c
+  - 321c8856
+  - c80bed70
+  - 6bf0ac29
+  disposition: query_transform
+  relative_path: tests/unit/test_final_review_contracts.py
+  qualified_function: test_canonical_lifecycle_serialization_preserves_reducer_semantics
+  normalized_source_pattern: assert projection["run_state"] == "active"
+  diagnostic_code: unsupported_comparison
+  reason: Replace this direct lifecycle projection read with the permanent query API.
+- site_key:
+  - 2cc29dbe
+  - a7a8c12f
+  - 1c2e003a
+  - a06bcd29
+  - ec27d973
+  - 4e627c1e
+  - d043e67c
+  - 49e03e3c
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
+  normalized_source_pattern: assert run_state(projection) is None
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 00650ca3
+  - c5a09783
+  - '21600493'
+  - 2bead136
+  - 610daf5b
+  - de24c87e
+  - ff888250
+  - f06e1ac2
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
+  normalized_source_pattern: assert completion_decision_passed(projection) is False
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 90a3e9dc
+  - 942f30ea
+  - '67203965'
+  - c6288ae3
+  - b8ae7d01
+  - 830568d6
+  - a93ae952
+  - 107f0ab2
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
+  normalized_source_pattern: assert run_state(active) == "active"
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 1792f1fe
+  - 7fc42d3e
+  - e48ae8c7
+  - 41bceedd
+  - e2b88d5f
+  - 463a3f1c
+  - f547c659
+  - 8ff7ac15
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
+  normalized_source_pattern: assert run_state(completed) == "completed"
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 334ce879
+  - f7f11606
+  - 521d96ac
+  - 1ac0fade
+  - 5bb41e61
+  - b04ef98f
+  - 815b5bbf
+  - 05e4714c
+  disposition: projection_neutral
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
+  normalized_source_pattern: assert completion_decision_passed(completed) is True
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 5d566a0d
+  - 4bf025c3
+  - 6088b472
+  - b6b6977d
+  - a219843d
+  - ff004d30
+  - '55861251'
+  - dd1cec2c
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: completion_decision_passed
+  normalized_source_pattern: projection['completion_decision_passed']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - e00fcb5e
+  - 97fa6384
+  - 297a899a
+  - ecacd18e
+  - 4eabf252
+  - f9ce62f4
+  - 1571186c
+  - df4ba7a7
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: latest_routine_snapshot_record
+  normalized_source_pattern: projection['latest_routine_snapshot_record']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 755a5258
+  - 445a60c9
+  - 2e74fb71
+  - ec5e574d
+  - 26950faf
+  - 7c2a1e83
+  - d781a035
+  - 75ea6b0d
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_generation_budget
+  normalized_source_pattern: projection['planner_generation_budget']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 32cacfb3
+  - 6a836903
+  - 37597a2f
+  - 16c5e7ea
+  - e169dfd3
+  - '65926717'
+  - ac185392
+  - d49ee28c
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: run_state
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - f88edae4
+  - 56c1f8f8
+  - 427d54e2
+  - faeb0eb6
+  - 1bbddf23
+  - 40519ed8
+  - 1b8ee02d
+  - 311baf5a
+  disposition: projection_neutral
+  relative_path: scripts/generate_graph_projection_goldens.py
+  qualified_function: _replay_views
+  normalized_source_pattern: incremental = reduce_event(incremental, event)
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - e67719cd
+  - 164f233f
+  - 9ecf1306
+  - c215afcf
+  - 9256ce0d
+  - 7598366e
+  - dcebf9fc
+  - df46f64b
+  disposition: projection_neutral
+  relative_path: scripts/generate_graph_projection_goldens.py
+  qualified_function: _replay_views
+  normalized_source_pattern: incremental = reduce_event(incremental, event)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 0523954f
+  - 26ebc106
+  - 01b1b44c
+  - eb6f5cec
+  - e76adac7
+  - 0d61fa86
+  - fcc48d37
+  - ff3d8549
+  disposition: projection_neutral
+  relative_path: scripts/generate_graph_projection_goldens.py
+  qualified_function: _replay_views
+  normalized_source_pattern: checkpoint = projection_to_checkpoint(replay)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - c3274ae7
+  - 6056d4ca
+  - cf22deb4
+  - a09039d6
+  - 5e910d3a
+  - 28f8e34d
+  - 9b2fb681
+  - 05b10acf
+  disposition: projection_neutral
+  relative_path: scripts/generate_graph_projection_goldens.py
+  qualified_function: _replay_views
+  normalized_source_pattern: '"golden-run", project_graph_projection_snapshot(events,
+    projection=replay)'
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 0d606e42
+  - 530dcd77
+  - e294e652
+  - 40d30252
+  - 71f9e736
+  - 2005cff1
+  - 9213e443
+  - 208be011
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/presenters/evidence_digest.py
+  qualified_function: _representative_nodes
+  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - d9e86df7
+  - 7af80dfa
+  - 124ea590
+  - 31fc52ad
+  - b1cd943e
+  - 58d2ce9a
+  - 9bf4496d
+  - b3b2857c
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/presenters/evidence_digest.py
+  qualified_function: _representative_nodes
+  normalized_source_pattern: node_metadata = project_node_metadata(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 153e054d
+  - 85f6ab1f
+  - 9b4514ba
+  - 7a07bc87
+  - f6dda0b2
+  - d6ab9068
+  - 9d096726
+  - 17431af8
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/presenters/evidence_digest.py
+  qualified_function: build_run_evidence_digest_response
+  normalized_source_pattern: projection = build_projection(events)
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 77cf7e4e
+  - f98a105f
+  - 1cfb3e53
+  - 5514ae27
+  - '66784031'
+  - 88daa4e8
+  - fcff1ccf
+  - 4470f43f
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: node_states=project_node_states(events, projection=projection),
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 3a422f69
+  - 59c31a41
+  - de7ca378
+  - dd54e04c
+  - 9663b386
+  - 67613b99
+  - 9dd66f90
+  - fa09a205
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: task_states=project_task_states(events, projection=projection),
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 0cd2322f
+  - 58ee30e2
+  - 1da07cf7
+  - 328bf8e0
+  - a7f3c133
+  - 4a9f2464
+  - 6457c212
+  - cb40eb40
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: leases=project_leases(events, projection=projection),
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 704a13f0
+  - 7c0bda2a
+  - d675253e
+  - 1b88a9c2
+  - 8436465e
+  - 10a0ad53
+  - 94ed3ff6
+  - b3b71879
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: ready_nodes=project_ready_nodes(events, projection=projection),
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 4feec316
+  - a3708edd
+  - 7a8b29f4
+  - 728a6aa9
+  - 7fb11667
+  - c64274be
+  - c6a5690c
+  - 4df91ab1
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_regions_response
+  normalized_source_pattern: task_states = project_task_states(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - fa1d8b89
+  - 956eb81a
+  - ff8badd4
+  - ce9d8601
+  - 500f6fe7
+  - 7e503d97
+  - 11df684d
+  - d34466d1
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_regions_response
+  normalized_source_pattern: blockers = project_final_invariant_blockers(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - d2eb202f
+  - 385346ba
+  - 3a1044e5
+  - 8ab599d9
+  - fdb3e996
+  - c2d2b890
+  - 9cf68528
+  - ca5dedf1
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_scheduler_view_response
+  normalized_source_pattern: scheduler_view = project_scheduler_view(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 27ace910
+  - f489f664
+  - 4c1740c8
+  - 1b5351a4
+  - 2637d488
+  - 7c0c58d6
+  - 6e7a9c4d
+  - eeb27f21
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_scheduler_view_response
+  normalized_source_pattern: lease_view = project_lease_view(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 4a8788ed
+  - 8127eb32
+  - 96445e97
+  - 86e204f3
+  - cc35edcf
+  - 4701e1e8
+  - 9a5b176f
+  - a9ba65c6
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: scheduler = project_scheduler_view(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 77c08e11
+  - c90b2aab
+  - 78d7e240
+  - fafb66f4
+  - b8ee73de
+  - 596a1e8d
+  - f50e2936
+  - 1cd85016
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: leases = project_leases(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - c40991b7
+  - 4c0c12c6
+  - 53ebef40
+  - 8dad0d24
+  - db329bf4
+  - 811a858b
+  - 5b182745
+  - 94c06f9f
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: decisions = project_decision_view(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 5109f1da
+  - '67336575'
+  - 4cc924e6
+  - 5c281654
+  - 08b2d18c
+  - 2989cdd5
+  - 5fbc069d
+  - ee067122
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 261280f0
+  - 638aca9e
+  - 66271c56
+  - 01840975
+  - 4367e405
+  - 287dc63e
+  - 2e0a14e8
+  - 60ecc305
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: for blocker in project_final_invariant_blockers(events,
+    projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 68077f5a
+  - 53b847ac
+  - f924d0f4
+  - 4e3a60ec
+  - 4cf48a53
+  - 988119df
+  - 109528c9
+  - 1c89c30d
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_node_detail_response
+  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 05ab0edb
+  - 7afcd881
+  - 36d012b0
+  - d27e7333
+  - f83e1d14
+  - 059b3197
+  - 03a9cd81
+  - 34357b8d
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_node_detail_response
+  normalized_source_pattern: node_metadata = project_node_metadata(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 5c2f18c5
+  - 8ee651f0
+  - 07dfb2d4
+  - 44550d7a
+  - 7cf61bc0
+  - 92ffd146
+  - f2ccd66b
+  - 2bdd05e6
+  disposition: projection_neutral
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_node_detail_response
+  normalized_source_pattern: leases = project_leases(events, projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - ba610965
+  - 625de842
+  - 7b469a00
+  - 00d4d6c1
+  - ca9ca0ba
+  - d3d835da
+  - 1cdc9b7c
+  - 71f83195
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: validate_callback
+  normalized_source_pattern: lease = projection["leases"].get(request.lease_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 1332426b
+  - a852b80e
+  - f6d5ee4b
+  - d26a275a
+  - c8b86573
+  - 68ad6262
+  - e76d0759
+  - 2ebc0e2a
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: validate_callback
+  normalized_source_pattern: node_state = projection["node_states"].get(request.node_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 5a7a882f
+  - b69fc3ff
+  - 09036ee3
+  - da35ff65
+  - a0085064
+  - bd2ad2b1
+  - '51946532'
+  - 9ff70dec
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: _validate_expired_lease_callback
+  normalized_source_pattern: node_state = projection["node_states"].get(request.node_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 1596ba1b
+  - 90761f2c
+  - ced72b94
+  - 6b7955d2
+  - 6b2178ba
+  - dd5ce12e
+  - 4df68c0e
+  - a1a7e872
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: _has_replacement_active_lease
+  normalized_source_pattern: 'for lease_id, lease in projection["leases"].items():'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - '73663115'
+  - da20b5e3
+  - '48118177'
+  - 464c6905
+  - 5c528519
+  - 6d57f7e3
+  - a2bc28f3
+  - 94fd39cc
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: _validate_idempotency
+  normalized_source_pattern: projected = projection.get("callback_idempotency_events",
+    {}).get(
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 6ce0287a
+  - 96c371ca
+  - 2115168a
+  - fcded5b6
+  - 019b0af5
+  - 579b3daf
+  - e22985b4
+  - 4fe03f7b
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/__init__.py
+  qualified_function: apply_command
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 5bf6fdd2
+  - 8a1bcb15
+  - 3775c1e9
+  - 81993c25
+  - 7ad0f547
+  - 42cc5d97
+  - c6df6766
+  - ec4140ee
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_submit_callback
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 12b9c7fc
+  - 88c8a8fd
+  - 97c20061
+  - 924ef391
+  - 17f8bf07
+  - 15489f93
+  - 030e4aa9
+  - 9dbac3aa
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_acknowledge_start
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - db50b94a
+  - c4698c87
+  - 1e4fc20f
+  - 16518af0
+  - 828e34a0
+  - d0d290ae
+  - 1f64f544
+  - e89dc50a
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_raise_appeal
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 1c9335ca
+  - 4edf3038
+  - 27bac4a4
+  - 765c4797
+  - bc64480c
+  - bceda3c0
+  - 409a3910
+  - 83d35101
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_decision
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 4cc1b353
+  - 92167aa2
+  - 4b5d2c08
+  - df67a8bb
+  - feffa30b
+  - 7fdbc9ab
+  - 2f36965d
+  - 8566d9bf
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_gatekeeper_verdicts
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - '80227730'
+  - 6d9de604
+  - 7e1a9ffb
+  - 7dd68466
+  - 5d9c5f71
+  - be7ba829
+  - 35820cca
+  - 344ae2da
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_node_usage
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 662c0280
+  - a1baa706
+  - 39a7e41a
+  - e7d9cba0
+  - 66aecbf7
+  - bc0c451d
+  - deadf94c
+  - c8c65202
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_requirement_revision
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 18b1e0d8
+  - 9a6ae006
+  - 73fcfdcf
+  - 94a7997b
+  - 9340c843
+  - b18c4c95
+  - c1da23a4
+  - 7d073f4b
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_support_evidence
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - fadece83
+  - da6623d3
+  - f0eaf5ee
+  - 70f69f6c
+  - 95522ab8
+  - 0e5a4e22
+  - 3250ccb5
+  - 317d1fa1
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_cleanup_applied
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 85e74d65
+  - 2f6520c5
+  - '46742663'
+  - d5e09bed
+  - 5f07c2f8
+  - 09c35668
+  - '70367366'
+  - b3ec2f91
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/patches.py
+  qualified_function: handle_submit_patch
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 9f19dbea
+  - d3625cd9
+  - 8d19dfd5
+  - fe9b81ca
+  - '10737852'
+  - 7f37cdd8
+  - f331cce0
+  - b84229b4
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/records.py
+  qualified_function: handle_evaluate_join
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 083e86d1
+  - 370557a3
+  - 96044a90
+  - d21fa11f
+  - d80709d5
+  - 720f7f2a
+  - 0c102d08
+  - d40c45e8
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/records.py
+  qualified_function: handle_evaluate_final_gate
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 7a94d5c7
+  - 5035d6c5
+  - 066f6e7d
+  - 43dc0208
+  - 2168da31
+  - c5251f12
+  - 76f4f387
+  - bbc918d2
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/records.py
+  qualified_function: handle_agent_died
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 656109d7
+  - d4549d4c
+  - c262a6f7
+  - f9148344
+  - 2988a4ad
+  - a5fc93f2
+  - b99b9f83
+  - fd1c69ff
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/schedule.py
+  qualified_function: handle_seed_compiled_events
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 5c6bce89
+  - 5f2420ec
+  - 5c7d448c
+  - e5c49948
+  - 36cd94ad
+  - a0ddab13
+  - 09e0fb6b
+  - dc7e34e2
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/schedule.py
+  qualified_function: handle_schedule_tick
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 1f1f2b07
+  - 9ad47535
+  - aebb67ed
+  - 8a416fdf
+  - 95ef0869
+  - 5feacd4a
+  - b6419631
+  - ae6a33aa
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/schedule.py
+  qualified_function: handle_reconcile
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact source invokes a query or preserves type provenance without a
+    physical projection storage read.
+- site_key:
+  - 6cf80001
+  - d7dae086
+  - 4313718f
+  - bfaba6dc
+  - 43cb505e
+  - 1fe6e220
+  - 54fd731a
+  - c94cface
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: validate_patch
+  normalized_source_pattern: and projection["node_kinds"].get(node_id) in {"worker",
+    "verifier", "check"}
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 5299be7d
+  - 3de2d7bd
+  - 40831bc2
+  - cbb0b5cb
+  - a7f926a5
+  - fd61a837
+  - 62b533ab
+  - d19cf07c
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: validate_patch
+  normalized_source_pattern: and projection["node_states"].get(node_id) in RUNNING_STATES
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 08c65890
+  - fc119591
+  - 1f26dd9c
+  - 05740adb
+  - 55f25fff
+  - fd63b53e
+  - 8cc7ca3d
+  - 015ebaac
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _validate_typed_topology
+  normalized_source_pattern: 'if edge_id in seen_edge_ids or edge_id in projection["edges"]:'
+  diagnostic_code: unsupported_comparison
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 6a9d2fe0
+  - ae8b4993
+  - b610d727
+  - 4f1d29b7
+  - 7fc79ba6
+  - 7fec27d1
+  - 93c05f48
+  - d6a41739
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _register_created_node
+  normalized_source_pattern: 'if node_id in seen_node_ids or node_id in projection["node_kinds"]:'
+  diagnostic_code: unsupported_comparison
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 918b6692
+  - 08c34ae0
+  - 03c07543
+  - f6f7ba26
+  - 139b9ee3
+  - e6f863f6
+  - 187fcfd4
+  - d9b7f8cc
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _node_contract_identity
+  normalized_source_pattern: kind = projection["node_kinds"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 8e149705
+  - bf322da6
+  - d507f99b
+  - 2998c516
+  - fd904132
+  - 6c6aec15
+  - 890a94c4
+  - 1b63eaaa
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _node_contract_identity
+  normalized_source_pattern: role = projection.get("node_roles", {}).get(node_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - d8c954db
+  - 927c947b
+  - 221168cd
+  - 3261a732
+  - 984d51dd
+  - 32d0a8fc
+  - 2613df42
+  - 8ff3df0e
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _validate_no_forbidden_cycles
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - a0d9a52e
+  - 949d5f90
+  - c9e25f6e
+  - 4a943b12
+  - d2ce3542
+  - 1b043dfe
+  - 1d376b38
+  - d42b99c6
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _validate_no_poisoned_final_invariant_edges
+  normalized_source_pattern: existing_edges = projection["edges"].values()
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - ee5f99bf
+  - 38e4bb1e
+  - 14dc8490
+  - bb30961e
+  - a8b7d1d5
+  - 813b4efe
+  - ca6c3352
+  - 92156e11
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _node_kind_role
+  normalized_source_pattern: return projection["node_kinds"].get(node_id), projection["node_roles"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 1f133001
+  - e7e21e93
+  - 6890d0c9
+  - ebc70bd7
+  - 904ecbe2
+  - 13474bc9
+  - 8f1a95b4
+  - 20b9430d
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _node_kind_role
+  normalized_source_pattern: return projection["node_kinds"].get(node_id), projection["node_roles"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 89a4ede6
+  - '12673993'
+  - 8ecc4cb3
+  - 72b45e78
+  - ac27be41
+  - cd1c001f
+  - f39e40c8
+  - d934e7ce
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _existing_resource_claim_rank
+  normalized_source_pattern: for claim in _resource_claim_dicts(resource_claims_for_node(projection,
+    node_id))
+  diagnostic_code: unsupported_call
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
 - site_key:
   - de4f2497
   - 57eb6a9b
@@ -873,628 +1914,414 @@ dispositions:
   diagnostic_code: unsupported_call
   reason: The exact approved query implementation owns this physical storage read.
 - site_key:
-  - 270166f5
-  - 31bd13b8
-  - 2ac56c60
-  - b600a9c6
-  - c3ff5b26
-  - b943f604
-  - bf68fe2c
-  - a66fbdb8
+  - b7c82c8b
+  - aa268cd6
+  - 83aaa883
+  - 15aff151
+  - fb203725
+  - 9f239689
+  - 2a0eaaf0
+  - 62f55823
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: output_record_payload
+  normalized_source_pattern: payload = projection["output_record_payloads"].get(record_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - b8f667be
+  - f5b9e997
+  - 663da43e
+  - 5dbb1a81
+  - 799dc034
+  - 872d2e93
+  - 66a29910
+  - bf82c735
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: file_state_record
+  normalized_source_pattern: record = projection["file_state_records"].get(record_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 4b577f1a
+  - 8d234835
+  - 565ecd79
+  - b11cbd68
+  - 77b27043
+  - b86acfb1
+  - 5388aca8
+  - acff7b62
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: output_record_ids_for_node_port
+  normalized_source_pattern: return tuple(projection["node_output_ports"].get(node_id,
+    {}).get(port, ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - aa9c71aa
+  - c22fdcb4
+  - 0f61c0d9
+  - 27cc558d
+  - d98586c5
+  - cca78977
+  - 22792ac9
+  - 44d3fccc
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_successor
+  normalized_source_pattern: return projection["planner_successors"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 4162491b
+  - 521cc4df
+  - f603d44a
+  - 3a1b6e0f
+  - b7e6b7bb
+  - ea1e9a1f
+  - c1e29698
+  - fd6b2756
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: accepted_graph_patch_ids
+  normalized_source_pattern: return tuple(projection["accepted_graph_patches_by_node"].get(node_id,
+    ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 9b7e40e0
+  - cfba5a8b
+  - 5b6349ab
+  - 0a2f5daf
+  - e31e9d30
+  - f24bb205
+  - 00938bae
+  - 1a64bf2c
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: accepted_no_successor_patch_ids
+  normalized_source_pattern: return tuple(projection["accepted_no_successor_patches_by_node"].get(node_id,
+    ()))
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 7573b119
+  - ff1b1dfe
+  - e3a749e0
+  - 75f8fd88
+  - 5f0af772
+  - f751bd79
+  - d1d5c5cf
+  - fc6cce14
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: accepted_no_successor_patch_id
+  normalized_source_pattern: return projection["accepted_no_successor_patch_ids_by_node"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 5a621d53
+  - a3c80ffc
+  - 86e45b67
+  - a8a7b328
+  - 96e980f6
+  - 4e17b506
+  - 4d58c30b
+  - '35741066'
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_generation
+  normalized_source_pattern: return projection["planner_generations"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 272708e1
+  - 15302dfc
+  - a867b205
+  - 19630dd6
+  - 0ba59018
+  - f0a51b3c
+  - 57b76dc4
+  - c0de13ff
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_session
+  normalized_source_pattern: return projection["planner_sessions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 9921650a
+  - 3dd59cb3
+  - b69a7af9
+  - ec44ae82
+  - 769b5ae2
+  - 9d5ecfe3
+  - c31de23f
+  - fb85da2c
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_session_state
+  normalized_source_pattern: return projection["planner_session_states"].get(session_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a7dc06aa
+  - 3791a28d
+  - 45f7860e
+  - 9c726876
+  - 79cef819
+  - f1fc3c9a
+  - 269c1b98
+  - 44580e75
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_session_current_node
+  normalized_source_pattern: return projection["planner_session_current_nodes"].get(session_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 43fe7964
+  - df0c3f3b
+  - 885b2263
+  - 0999b87b
+  - 5aa8274b
+  - 9c9cd381
+  - c0c7068d
+  - 8ed3e077
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_session_carryover
+  normalized_source_pattern: return projection["planner_session_carryovers"].get(session_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 2d2d39f4
+  - 6f3a0983
+  - 0852250d
+  - 9cb972fb
+  - c9650636
+  - b892c54a
+  - cb666598
+  - 2263afb0
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: planner_region_label
+  normalized_source_pattern: return projection["planner_region_labels"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 38f793ce
+  - 4045c024
+  - 53fbd6bf
+  - fece8b3c
+  - ea00b211
+  - 612aa4a9
+  - c70ee69c
+  - ca9d1360
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: approval_decision
+  normalized_source_pattern: decision = projection["approval_decisions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 05e0d9bd
+  - 9d378cb5
+  - 589fed82
+  - 153bbce3
+  - 435a1adb
+  - f2d7a56e
+  - 5c4fb0fd
+  - 34640f60
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: authority_decision
+  normalized_source_pattern: decision = projection["authority_decisions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 11b4fbf0
+  - f72a0fa6
+  - 1ec32f75
+  - dfc91972
+  - 483cd27a
+  - 42c9e6dd
+  - 4b143314
+  - 4b20cb7a
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: oversight_decision
+  normalized_source_pattern: decision = projection["oversight_decisions"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - c854ab76
+  - 5f4fde2e
+  - a3377f00
+  - ba615b6e
+  - d62ceae7
+  - 09bbf816
+  - 846b4d96
+  - 6af75c7f
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: decision_request
+  normalized_source_pattern: request = projection["decision_request_details"].get(node_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - f46a71cb
+  - 99451dc6
+  - 4d947db2
+  - 9b7d18df
+  - c140d20e
+  - f156354c
+  - 32f80ed4
+  - a2715f69
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: open_proposal_blocker
+  normalized_source_pattern: blocker = projection["open_proposal_blockers"].get(proposal_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - d602cd9b
+  - b545687a
+  - 90dbdd22
+  - e6365b68
+  - 4532b612
+  - '34055049'
+  - 529a91a9
+  - c51a5f77
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: authority_revision_blocker
+  normalized_source_pattern: blocker = projection["authority_revision_blockers"].get(revision_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a50f78b2
+  - 613299db
+  - ac604a3b
+  - 205d7f09
+  - 3ad23156
+  - 83d552aa
+  - f1a269d2
+  - 4d550c32
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: requirement_revision
+  normalized_source_pattern: revision = projection["requirement_revisions"].get(version_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - e77424b6
+  - 3b79bb3c
+  - fc801a58
+  - ef5efb21
+  - 30da73ba
+  - 836df412
+  - db1795d5
+  - 2323fd11
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: active_requirement_version
+  normalized_source_pattern: return projection["active_requirement_versions"].get(requirement_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - f3de2369
+  - c43106d3
+  - b9531f17
+  - 4f9799ea
+  - e7c53b29
+  - a6ef933a
+  - 75da4396
+  - 267174ad
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: support_evidence
+  normalized_source_pattern: evidence = projection["support_evidence"].get(support_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a65c8067
+  - f32d4467
+  - ce5d7084
+  - 401180da
+  - 4448c043
+  - 7bad784d
+  - a9d6ba0c
+  - 10cedc06
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: cleanup_request
+  normalized_source_pattern: request = projection["cleanup_requested_events"].get(cleanup_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a53d1747
+  - 38c7b856
+  - 241d562b
+  - b75d665f
+  - ae59d0a4
+  - '11716184'
+  - 8cd01a18
+  - ba5f3937
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: cleanup_applied
+  normalized_source_pattern: return projection["cleanup_applied_ids"].get(cleanup_id,
+    False)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 952c458c
+  - ad966479
+  - d9af380c
+  - f4b3e732
+  - 102cbfe0
+  - 8b3672c6
+  - db4bcd9c
+  - 7d72c68f
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: callback_idempotency_event
+  normalized_source_pattern: event = projection["callback_idempotency_events"].get(idempotency_key)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 01d29eb9
+  - 59023b76
+  - f7e6a96b
+  - e7908334
+  - 662a212a
+  - 3e38c914
+  - e9966707
+  - aaabdcb5
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: environment_failure
+  normalized_source_pattern: failure = projection["environment_failures"].get(task_region_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - aea301e1
+  - 42df4d35
+  - 05579e0a
+  - e2724cae
+  - ddec2781
+  - 9bcdfebc
+  - dae7a6ae
+  - 2d02f14a
   disposition: query_transform
-  relative_path: src/orchestrator/graph_runtime/recovery.py
-  qualified_function: reconcile_graph
-  normalized_source_pattern: 'if projection["run_state"] != "active":'
-  diagnostic_code: unsupported_comparison
-  reason: Replace this direct lifecycle projection read with the permanent query API.
-- site_key:
-  - b0f55fd5
-  - fb5443a1
-  - a0f1f735
-  - d63769b5
-  - 4959021d
-  - af898283
-  - 1a6475cb
-  - 095346ac
-  disposition: query_transform
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _decisions_with_projection_checkpoint
-  normalized_source_pattern: '_CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),'
+  relative_path: src/orchestrator/graph_runtime/dispatch.py
+  qualified_function: GraphDispatchExecutor._dispatch_snapshot_cleanup
+  normalized_source_pattern: compromised_record = projection["file_state_records"].get(record_id)
   diagnostic_code: unsupported_call
-  reason: Replace this direct lifecycle projection read with the permanent query API.
-- site_key:
-  - fd1bb8dc
-  - c8c87e29
-  - d7b53fff
-  - 507b6d7b
-  - eb01086c
-  - 321c8856
-  - c80bed70
-  - 6bf0ac29
-  disposition: query_transform
-  relative_path: tests/unit/test_final_review_contracts.py
-  qualified_function: test_canonical_lifecycle_serialization_preserves_reducer_semantics
-  normalized_source_pattern: assert projection["run_state"] == "active"
-  diagnostic_code: unsupported_comparison
-  reason: Replace this direct lifecycle projection read with the permanent query API.
-- site_key:
-  - 2cc29dbe
-  - a7a8c12f
-  - 1c2e003a
-  - a06bcd29
-  - ec27d973
-  - 4e627c1e
-  - d043e67c
-  - 49e03e3c
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
-  normalized_source_pattern: assert run_state(projection) is None
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 00650ca3
-  - c5a09783
-  - '21600493'
-  - 2bead136
-  - 610daf5b
-  - de24c87e
-  - ff888250
-  - f06e1ac2
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
-  normalized_source_pattern: assert completion_decision_passed(projection) is False
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 90a3e9dc
-  - 942f30ea
-  - '67203965'
-  - c6288ae3
-  - b8ae7d01
-  - 830568d6
-  - a93ae952
-  - 107f0ab2
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
-  normalized_source_pattern: assert run_state(active) == "active"
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 1792f1fe
-  - 7fc42d3e
-  - e48ae8c7
-  - 41bceedd
-  - e2b88d5f
-  - 463a3f1c
-  - f547c659
-  - 8ff7ac15
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
-  normalized_source_pattern: assert run_state(completed) == "completed"
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 334ce879
-  - f7f11606
-  - 521d96ac
-  - 1ac0fade
-  - 5bb41e61
-  - b04ef98f
-  - 815b5bbf
-  - 05e4714c
-  disposition: projection_neutral
-  relative_path: tests/unit/test_graph_projection_queries.py
-  qualified_function: test_lifecycle_queries_read_active_and_completed_event_projections
-  normalized_source_pattern: assert completion_decision_passed(completed) is True
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - f88edae4
-  - 56c1f8f8
-  - 427d54e2
-  - faeb0eb6
-  - 1bbddf23
-  - 40519ed8
-  - 1b8ee02d
-  - 311baf5a
-  disposition: projection_neutral
-  relative_path: scripts/generate_graph_projection_goldens.py
-  qualified_function: _replay_views
-  normalized_source_pattern: incremental = reduce_event(incremental, event)
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - e67719cd
-  - 164f233f
-  - 9ecf1306
-  - c215afcf
-  - 9256ce0d
-  - 7598366e
-  - dcebf9fc
-  - df46f64b
-  disposition: projection_neutral
-  relative_path: scripts/generate_graph_projection_goldens.py
-  qualified_function: _replay_views
-  normalized_source_pattern: incremental = reduce_event(incremental, event)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 0523954f
-  - 26ebc106
-  - 01b1b44c
-  - eb6f5cec
-  - e76adac7
-  - 0d61fa86
-  - fcc48d37
-  - ff3d8549
-  disposition: projection_neutral
-  relative_path: scripts/generate_graph_projection_goldens.py
-  qualified_function: _replay_views
-  normalized_source_pattern: checkpoint = projection_to_checkpoint(replay)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - c3274ae7
-  - 6056d4ca
-  - cf22deb4
-  - a09039d6
-  - 5e910d3a
-  - 28f8e34d
-  - 9b2fb681
-  - 05b10acf
-  disposition: projection_neutral
-  relative_path: scripts/generate_graph_projection_goldens.py
-  qualified_function: _replay_views
-  normalized_source_pattern: '"golden-run", project_graph_projection_snapshot(events,
-    projection=replay)'
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 0d606e42
-  - 530dcd77
-  - e294e652
-  - 40d30252
-  - 71f9e736
-  - 2005cff1
-  - 9213e443
-  - 208be011
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/presenters/evidence_digest.py
-  qualified_function: _representative_nodes
-  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - d9e86df7
-  - 7af80dfa
-  - 124ea590
-  - 31fc52ad
-  - b1cd943e
-  - 58d2ce9a
-  - 9bf4496d
-  - b3b2857c
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/presenters/evidence_digest.py
-  qualified_function: _representative_nodes
-  normalized_source_pattern: node_metadata = project_node_metadata(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 153e054d
-  - 85f6ab1f
-  - 9b4514ba
-  - 7a07bc87
-  - f6dda0b2
-  - d6ab9068
-  - 9d096726
-  - 17431af8
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/presenters/evidence_digest.py
-  qualified_function: build_run_evidence_digest_response
-  normalized_source_pattern: projection = build_projection(events)
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 77cf7e4e
-  - f98a105f
-  - 1cfb3e53
-  - 5514ae27
-  - '66784031'
-  - 88daa4e8
-  - fcff1ccf
-  - 4470f43f
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_projection_response
-  normalized_source_pattern: node_states=project_node_states(events, projection=projection),
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 3a422f69
-  - 59c31a41
-  - de7ca378
-  - dd54e04c
-  - 9663b386
-  - 67613b99
-  - 9dd66f90
-  - fa09a205
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_projection_response
-  normalized_source_pattern: task_states=project_task_states(events, projection=projection),
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 0cd2322f
-  - 58ee30e2
-  - 1da07cf7
-  - 328bf8e0
-  - a7f3c133
-  - 4a9f2464
-  - 6457c212
-  - cb40eb40
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_projection_response
-  normalized_source_pattern: leases=project_leases(events, projection=projection),
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 704a13f0
-  - 7c0bda2a
-  - d675253e
-  - 1b88a9c2
-  - 8436465e
-  - 10a0ad53
-  - 94ed3ff6
-  - b3b71879
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_projection_response
-  normalized_source_pattern: ready_nodes=project_ready_nodes(events, projection=projection),
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 4feec316
-  - a3708edd
-  - 7a8b29f4
-  - 728a6aa9
-  - 7fb11667
-  - c64274be
-  - c6a5690c
-  - 4df91ab1
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_regions_response
-  normalized_source_pattern: task_states = project_task_states(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - fa1d8b89
-  - 956eb81a
-  - ff8badd4
-  - ce9d8601
-  - 500f6fe7
-  - 7e503d97
-  - 11df684d
-  - d34466d1
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_regions_response
-  normalized_source_pattern: blockers = project_final_invariant_blockers(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - d2eb202f
-  - 385346ba
-  - 3a1044e5
-  - 8ab599d9
-  - fdb3e996
-  - c2d2b890
-  - 9cf68528
-  - ca5dedf1
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_scheduler_view_response
-  normalized_source_pattern: scheduler_view = project_scheduler_view(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 27ace910
-  - f489f664
-  - 4c1740c8
-  - 1b5351a4
-  - 2637d488
-  - 7c0c58d6
-  - 6e7a9c4d
-  - eeb27f21
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_scheduler_view_response
-  normalized_source_pattern: lease_view = project_lease_view(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 4a8788ed
-  - 8127eb32
-  - 96445e97
-  - 86e204f3
-  - cc35edcf
-  - 4701e1e8
-  - 9a5b176f
-  - a9ba65c6
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_health_response
-  normalized_source_pattern: scheduler = project_scheduler_view(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 77c08e11
-  - c90b2aab
-  - 78d7e240
-  - fafb66f4
-  - b8ee73de
-  - 596a1e8d
-  - f50e2936
-  - 1cd85016
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_health_response
-  normalized_source_pattern: leases = project_leases(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - c40991b7
-  - 4c0c12c6
-  - 53ebef40
-  - 8dad0d24
-  - db329bf4
-  - 811a858b
-  - 5b182745
-  - 94c06f9f
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_health_response
-  normalized_source_pattern: decisions = project_decision_view(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 5109f1da
-  - '67336575'
-  - 4cc924e6
-  - 5c281654
-  - 08b2d18c
-  - 2989cdd5
-  - 5fbc069d
-  - ee067122
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_health_response
-  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 261280f0
-  - 638aca9e
-  - 66271c56
-  - 01840975
-  - 4367e405
-  - 287dc63e
-  - 2e0a14e8
-  - 60ecc305
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_graph_health_response
-  normalized_source_pattern: for blocker in project_final_invariant_blockers(events,
-    projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 68077f5a
-  - 53b847ac
-  - f924d0f4
-  - 4e3a60ec
-  - 4cf48a53
-  - 988119df
-  - 109528c9
-  - 1c89c30d
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_node_detail_response
-  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 05ab0edb
-  - 7afcd881
-  - 36d012b0
-  - d27e7333
-  - f83e1d14
-  - 059b3197
-  - 03a9cd81
-  - 34357b8d
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_node_detail_response
-  normalized_source_pattern: node_metadata = project_node_metadata(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 5c2f18c5
-  - 8ee651f0
-  - 07dfb2d4
-  - 44550d7a
-  - 7cf61bc0
-  - 92ffd146
-  - f2ccd66b
-  - 2bdd05e6
-  disposition: projection_neutral
-  relative_path: src/orchestrator/api/routers/graph.py
-  qualified_function: build_node_detail_response
-  normalized_source_pattern: leases = project_leases(events, projection=projection)
-  diagnostic_code: unsupported_call
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 6ce0287a
-  - 96c371ca
-  - 2115168a
-  - fcded5b6
-  - 019b0af5
-  - 579b3daf
-  - e22985b4
-  - 4fe03f7b
-  disposition: projection_neutral
-  relative_path: src/orchestrator/graph/commands/__init__.py
-  qualified_function: apply_command
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 85e74d65
-  - 2f6520c5
-  - '46742663'
-  - d5e09bed
-  - 5f07c2f8
-  - 09c35668
-  - '70367366'
-  - b3ec2f91
-  disposition: projection_neutral
-  relative_path: src/orchestrator/graph/commands/patches.py
-  qualified_function: handle_submit_patch
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 9f19dbea
-  - d3625cd9
-  - 8d19dfd5
-  - fe9b81ca
-  - '10737852'
-  - 7f37cdd8
-  - f331cce0
-  - b84229b4
-  disposition: projection_neutral
-  relative_path: src/orchestrator/graph/commands/records.py
-  qualified_function: handle_evaluate_join
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 083e86d1
-  - 370557a3
-  - 96044a90
-  - d21fa11f
-  - d80709d5
-  - 720f7f2a
-  - 0c102d08
-  - d40c45e8
-  disposition: projection_neutral
-  relative_path: src/orchestrator/graph/commands/records.py
-  qualified_function: handle_evaluate_final_gate
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 7a94d5c7
-  - 5035d6c5
-  - 066f6e7d
-  - 43dc0208
-  - 2168da31
-  - c5251f12
-  - 76f4f387
-  - bbc918d2
-  disposition: projection_neutral
-  relative_path: src/orchestrator/graph/commands/records.py
-  qualified_function: handle_agent_died
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 656109d7
-  - d4549d4c
-  - c262a6f7
-  - f9148344
-  - 2988a4ad
-  - a5fc93f2
-  - b99b9f83
-  - fd1c69ff
-  disposition: projection_neutral
-  relative_path: src/orchestrator/graph/commands/schedule.py
-  qualified_function: handle_seed_compiled_events
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 5c6bce89
-  - 5f2420ec
-  - 5c7d448c
-  - e5c49948
-  - 36cd94ad
-  - a0ddab13
-  - 09e0fb6b
-  - dc7e34e2
-  disposition: projection_neutral
-  relative_path: src/orchestrator/graph/commands/schedule.py
-  qualified_function: handle_schedule_tick
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
-- site_key:
-  - 1f1f2b07
-  - 9ad47535
-  - aebb67ed
-  - 8a416fdf
-  - 95ef0869
-  - 5feacd4a
-  - b6419631
-  - ae6a33aa
-  disposition: projection_neutral
-  relative_path: src/orchestrator/graph/commands/schedule.py
-  qualified_function: handle_reconcile
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  reason: The exact source invokes a query or preserves type provenance without a
-    physical projection storage read.
+  reason: Replace this exact direct projection read with the permanent query API.
 - site_key:
   - 7a61e7f2
   - b04afa12
@@ -1544,6 +2371,436 @@ dispositions:
   diagnostic_code: unsupported_call
   reason: Replace this direct node, task, topology, binding, or lease projection read
     with the permanent query API.
+- site_key:
+  - d7dfdd5d
+  - 8c25aa6a
+  - b21c3cef
+  - ecc1cbee
+  - 9613c096
+  - de233c2e
+  - c0dd55c4
+  - 54bf5914
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/dispatch.py
+  qualified_function: _guard_no_pending_compromised_file_state_bindings
+  normalized_source_pattern: record = projection["file_state_records"].get(raw_record_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 974f7d49
+  - 1fe9338b
+  - 991a7f30
+  - 6841db7e
+  - 1e6def16
+  - a8a9dbe2
+  - 9035ae08
+  - c812a991
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_frontier
+  normalized_source_pattern: ready_nodes = sorted(projection["ready_nodes"])
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 974f79ea
+  - c1e5b809
+  - 6cd20d18
+  - f7e54fbf
+  - b8c84393
+  - c2c12cf1
+  - 859391d4
+  - 51d2966e
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_frontier
+  normalized_source_pattern: 'for node_id in sorted(projection["node_states"]):'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 20f6aad4
+  - daeba6fe
+  - 2d6afad6
+  - 0f951e36
+  - b11c67ba
+  - fbcb61a5
+  - abbd4936
+  - 20b14fa6
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_frontier
+  normalized_source_pattern: node_state = projection["node_states"].get(node_id, "")
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 7422428f
+  - 4ad2b95d
+  - 228e7492
+  - e3a4578c
+  - a2042f0d
+  - bfcde70e
+  - b70d4ec3
+  - 577d459e
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'for edge_id, edge in sorted(projection["edges"].items()):'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 1925d543
+  - 382c2b73
+  - 03db9ea1
+  - 2f81d13f
+  - 1217616e
+  - 80eac0a0
+  - 4372253a
+  - 0fbe123d
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'if projection["node_states"].get(to_node_id) in terminal_states:'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 8f4f526a
+  - a8f901e7
+  - 823763cf
+  - ebfd95c8
+  - fd09f0da
+  - 4f00ca91
+  - 7f775b66
+  - 4ee8778f
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'if to_port in projection["input_bindings"].get(to_node_id,
+    {}):'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - cf58a0d6
+  - b78163a0
+  - c7282980
+  - 03d2e562
+  - 2cf6002d
+  - 79bba3af
+  - 169115c2
+  - aed990b7
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'if projection["node_states"].get(node_id) in terminal_states:'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 2f65fc92
+  - 1b0ed5a9
+  - ebcc23f7
+  - 4250c9bd
+  - 9e9de6bd
+  - 1cd96958
+  - e7efc1c7
+  - edd20573
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'if projection["node_kinds"].get(node_id) != "check":'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - '37516683'
+  - 046eadbe
+  - 47c586cb
+  - 7031bfc3
+  - 247c6707
+  - a9505c36
+  - 85f0b822
+  - 3ab8eae4
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_evidence
+  normalized_source_pattern: bindings = projection["input_bindings"].get(context.node_id,
+    {})
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 360cb0ee
+  - 0e5b327f
+  - 3289aed5
+  - 5225c946
+  - bc797a9d
+  - 461326cb
+  - 0a0eb16d
+  - b17def8b
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_evidence
+  normalized_source_pattern: 'if raw_record_id in projection["file_state_records"]:'
+  diagnostic_code: unsupported_comparison
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 97d58adb
+  - 5bb86fa5
+  - 152099d1
+  - 563dbc9e
+  - ab962048
+  - 5017beec
+  - 7a16d25a
+  - 75e4771e
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_evidence
+  normalized_source_pattern: record_payload=_compact_file_state_record(
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 8c04dd81
+  - 68c7d651
+  - f24ae276
+  - e814ab43
+  - 1cf8c670
+  - bce91913
+  - 708b025a
+  - 2ef8f6b9
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _hydration_policy_for_binding
+  normalized_source_pattern: edge = projection["edges"].get(edge_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 38d51456
+  - 6b1a0097
+  - 3e7e17b8
+  - 4f19228e
+  - ca6ee0e7
+  - 87b852c9
+  - 418a201e
+  - a9ef9224
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_outstanding_failures
+  normalized_source_pattern: task_region_id = projection["node_task_regions"].get(context.node_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 4b33b265
+  - eccb5b9f
+  - be9abb74
+  - cf61e937
+  - 590f67ca
+  - e39c774d
+  - '13729833'
+  - b8834bd0
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_outstanding_failures
+  normalized_source_pattern: 'for region_id, failure in projection["environment_failures"].items():'
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 0e955196
+  - 5d18fc39
+  - cfd7aaf5
+  - 81c4ca3d
+  - 5cbfbff9
+  - e649301c
+  - 43ea93ec
+  - e2a0d48d
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_session_carryover_record
+  normalized_source_pattern: session_id = projection["planner_sessions"].get(context.node_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 091bb3a4
+  - 089e5607
+  - 6e068497
+  - 1b105987
+  - c2d1dc75
+  - cdc6404a
+  - 82d4520b
+  - 9d4ad7a6
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_session_carryover_record
+  normalized_source_pattern: carryover = projection["planner_session_carryovers"].get(session_id)
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - c5aafa32
+  - '96379520'
+  - 09d166c9
+  - b5f97a37
+  - 0635adea
+  - 0b29f616
+  - '68680657'
+  - 1ef2a78e
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: GraphEventStore.load_projection_with_tail
+  normalized_source_pattern: projection = _projection_from_events(events)
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - ffc9e0b2
+  - 0f245dc3
+  - b3bc3813
+  - e5793e9f
+  - 5121f0ab
+  - 68f9a55a
+  - b68d10ef
+  - afd6db3a
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: GraphEventStore.load_projection_with_tail
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - a2ea50a5
+  - e1f75248
+  - 39327b92
+  - 423102ea
+  - 061031c0
+  - f1d350f5
+  - 39be8d3a
+  - '66603807'
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: GraphEventStore.advance_projection_snapshot
+  normalized_source_pattern: projection = initial_projection()
+  diagnostic_code: unsupported_binding
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 000b48d2
+  - 95d78ba7
+  - ff8b200b
+  - 88f29d68
+  - 4cf65d19
+  - 59df4a45
+  - 1a074505
+  - 57aeaa3b
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.node_states = dict(projection["node_states"])
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - f0ffaf5c
+  - 90006fa6
+  - 60a16a3d
+  - 1fb2b592
+  - e674cb16
+  - c6d88938
+  - '47218407'
+  - 7f726712
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.task_states = dict(projection["task_states"])
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 8d2052fe
+  - b367a28f
+  - 471ff0fc
+  - fe0de20c
+  - '13121809'
+  - df2a7527
+  - 5515eb20
+  - e46d0516
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.leases = project_leases([], projection=projection)
+  diagnostic_code: unsupported_call
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - bc2733a8
+  - 48ee6e59
+  - a8be2a4b
+  - e5297f63
+  - 4b8af8b6
+  - 4ddd92cf
+  - 6147ee43
+  - 2836538c
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.ready_nodes = list(projection["ready_nodes"])
+  diagnostic_code: unsupported_call
+  reason: Replace this exact direct projection read with the permanent query API.
+- site_key:
+  - 290ff557
+  - 2f8362a4
+  - bec464c7
+  - 73759b90
+  - b1fabd68
+  - 0bc9690e
+  - 625f5a21
+  - bcff5a3b
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.scheduler = dict(project_scheduler_view([], projection=projection))
+  diagnostic_code: unsupported_call
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 05c7d221
+  - d3f61265
+  - 896e1410
+  - 40d2c49d
+  - c19f0a63
+  - 2f81d10e
+  - d5757544
+  - fc2be1d2
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.lease_view = dict(project_lease_view([], projection=projection))
+  diagnostic_code: unsupported_call
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - 761a8973
+  - '24283143'
+  - 2b80215e
+  - 327a2803
+  - 7729c31a
+  - ab5c17e4
+  - ed302998
+  - ebd183da
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: decisions = dict(project_decision_view_from_projection(projection))
+  diagnostic_code: unsupported_call
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
+- site_key:
+  - ec009ff5
+  - 23b7323f
+  - df10011d
+  - 6265b2a0
+  - 3041487b
+  - a908ee4d
+  - 0e21db46
+  - b18cf386
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _decisions_with_projection_checkpoint
+  normalized_source_pattern: '_CHECKPOINT_PROJECTION_KEY: projection_to_checkpoint(projection),'
+  diagnostic_code: unsupported_call
+  reason: The exact source preserves projection provenance without a physical storage
+    read.
 unclassified_sites:
 - site_key:
   - 70d01b49
@@ -2061,6 +3318,286 @@ unclassified_sites:
   relative_path: tests/unit/test_graph_projection_inventory.py
   qualified_function: test_resource_claim_query_returns_an_immutable_sequence
   normalized_source_pattern: projection['node_resource_claims']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 3ef47a57
+  - 10c560c5
+  - 977f3f5c
+  - afa871a1
+  - 28c54f32
+  - 0f06963e
+  - e2de13d1
+  - e629783e
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['file_state_records']['file-state-query']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 68ab53a9
+  - 001d0fda
+  - 6110151b
+  - 0ce0b682
+  - e43435ef
+  - 1b24c1ec
+  - c5aadc0e
+  - 355560e4
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['node_output_ports']['worker-source']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 9cc213a5
+  - 83c2955a
+  - fccec753
+  - 894b958e
+  - 7ae6cf26
+  - b744d28c
+  - 5051ef28
+  - 1ffc2dfd
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['planner_successors']['planner-fr17']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - e1e5b631
+  - b6d61197
+  - 0ebf2837
+  - 55bf71ec
+  - 6805f9a0
+  - 0888e8af
+  - d824de6d
+  - eb827d7d
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['accepted_graph_patches_by_node']['planner-fr17']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 1cad29a0
+  - 19cf9685
+  - d73bb4fc
+  - 65d4a0c7
+  - f59fc00d
+  - 075bbfc9
+  - 3b9a4e6a
+  - 498d6904
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['accepted_no_successor_patches_by_node']['planner-fr17']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 945b3f74
+  - d2efc50d
+  - 77fa77f6
+  - '27979901'
+  - 7877cc35
+  - 4a7ad593
+  - 1e02dfb5
+  - f7350c74
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['accepted_no_successor_patch_ids_by_node']['planner-fr17']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - ac540d53
+  - 91cebd5c
+  - 5cd860b2
+  - d396f4e5
+  - 99255f6c
+  - 12ceb826
+  - 32939cf4
+  - '83141539'
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['planner_generations']['planner-fr17']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 239f240b
+  - 9d1d3901
+  - 028a3769
+  - f8c6c1a7
+  - fee236d0
+  - fa7fd793
+  - 33d7862b
+  - 28a2701d
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['planner_sessions']['planner-fr17']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - '24209664'
+  - 18bcb750
+  - 1a5058a5
+  - d4773c99
+  - 0e4c0085
+  - 26fb751c
+  - 05b1da56
+  - d257b500
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['planner_session_states']['session-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 27b3993e
+  - e90be3af
+  - 38dc0e4f
+  - 0c9501c4
+  - 6a5ab21d
+  - 538f6724
+  - 44e4c0d5
+  - 9a53404e
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['planner_session_current_nodes']['session-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 12fcc563
+  - '31740793'
+  - 59e10bac
+  - 05149079
+  - 20df769e
+  - 84fa9ed9
+  - 34bb4839
+  - 5073ec07
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['planner_session_carryovers']['session-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - d9434e09
+  - cd311ffc
+  - 2b28ba7c
+  - 22d8c077
+  - 863ad029
+  - ac1914fe
+  - 4e023c18
+  - 25ce79a2
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['planner_region_labels']['planner-fr17']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - ec940c1d
+  - 91c20e8d
+  - 987dd0e4
+  - b705c745
+  - e21217f7
+  - bb243b8f
+  - e2182a1f
+  - 41c0d720
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['open_proposal_blockers']['proposal-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 41f5571c
+  - 7464abf9
+  - 5acd8767
+  - bbcd2c97
+  - 5275c997
+  - 5df1b448
+  - 63c77628
+  - 6a3187e9
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['authority_revision_blockers']['revision-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - cc361379
+  - 751b77eb
+  - 4cbf64ae
+  - f6ce1665
+  - 919576e0
+  - e68912b1
+  - 034fd265
+  - 560279ef
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['requirement_revisions']['version-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 703a3c57
+  - '21328414'
+  - d8a4276f
+  - 94d8e110
+  - 2997d781
+  - 444a300c
+  - 0e9d8586
+  - c4456a5b
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['active_requirement_versions']['requirement-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 82cdc4d7
+  - 8f3b8b4b
+  - 9680b68a
+  - da6b045e
+  - dd859154
+  - 3dcd9dd3
+  - 52ad1b55
+  - 2ef0731e
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['support_evidence']['support-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 7ae62c57
+  - b882f999
+  - 735259f4
+  - e2b02ca8
+  - 971e1640
+  - ae177d4b
+  - 7911a93b
+  - ffb849ca
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['cleanup_requested_events']['cleanup-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - a40295ae
+  - 97df0045
+  - d2448c6c
+  - 3232fe35
+  - e7e4b358
+  - 654d203c
+  - 8acae6c0
+  - 22e6ad77
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['cleanup_applied_ids']['cleanup-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - '78850590'
+  - a1d042ac
+  - 62cf3c00
+  - 63d0077b
+  - 9a928022
+  - 649a4f64
+  - 8d5f2495
+  - 9485474a
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: projection['callback_idempotency_events']['key-1']
   diagnostic_code: null
   domain: test_fixture
 - site_key:
@@ -4413,613 +5950,6 @@ unclassified_sites:
   diagnostic_code: unsupported_call
   domain: verification_recovery
 - site_key:
-  - ba610965
-  - 625de842
-  - 7b469a00
-  - 00d4d6c1
-  - ca9ca0ba
-  - d3d835da
-  - 1cdc9b7c
-  - 71f83195
-  relative_path: src/orchestrator/graph/callbacks.py
-  qualified_function: validate_callback
-  normalized_source_pattern: lease = projection["leases"].get(request.lease_id)
-  diagnostic_code: unsupported_call
-  domain: cleanup_callback
-- site_key:
-  - 1332426b
-  - a852b80e
-  - f6d5ee4b
-  - d26a275a
-  - c8b86573
-  - 68ad6262
-  - e76d0759
-  - 2ebc0e2a
-  relative_path: src/orchestrator/graph/callbacks.py
-  qualified_function: validate_callback
-  normalized_source_pattern: node_state = projection["node_states"].get(request.node_id)
-  diagnostic_code: unsupported_call
-  domain: cleanup_callback
-- site_key:
-  - 5a7a882f
-  - b69fc3ff
-  - 09036ee3
-  - da35ff65
-  - a0085064
-  - bd2ad2b1
-  - '51946532'
-  - 9ff70dec
-  relative_path: src/orchestrator/graph/callbacks.py
-  qualified_function: _validate_expired_lease_callback
-  normalized_source_pattern: node_state = projection["node_states"].get(request.node_id)
-  diagnostic_code: unsupported_call
-  domain: cleanup_callback
-- site_key:
-  - 1596ba1b
-  - 90761f2c
-  - ced72b94
-  - 6b7955d2
-  - 6b2178ba
-  - dd5ce12e
-  - 4df68c0e
-  - a1a7e872
-  relative_path: src/orchestrator/graph/callbacks.py
-  qualified_function: _has_replacement_active_lease
-  normalized_source_pattern: 'for lease_id, lease in projection["leases"].items():'
-  diagnostic_code: unsupported_call
-  domain: cleanup_callback
-- site_key:
-  - '73663115'
-  - da20b5e3
-  - '48118177'
-  - 464c6905
-  - 5c528519
-  - 6d57f7e3
-  - a2bc28f3
-  - 94fd39cc
-  relative_path: src/orchestrator/graph/callbacks.py
-  qualified_function: _validate_idempotency
-  normalized_source_pattern: projected = projection.get("callback_idempotency_events",
-    {}).get(
-  diagnostic_code: unsupported_call
-  domain: cleanup_callback
-- site_key:
-  - 5bf6fdd2
-  - 8a1bcb15
-  - 3775c1e9
-  - 81993c25
-  - 7ad0f547
-  - 42cc5d97
-  - c6df6766
-  - ec4140ee
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_submit_callback
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - 12b9c7fc
-  - 88c8a8fd
-  - 97c20061
-  - 924ef391
-  - 17f8bf07
-  - 15489f93
-  - 030e4aa9
-  - 9dbac3aa
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_acknowledge_start
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - db50b94a
-  - c4698c87
-  - 1e4fc20f
-  - 16518af0
-  - 828e34a0
-  - d0d290ae
-  - 1f64f544
-  - e89dc50a
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_raise_appeal
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - 1c9335ca
-  - 4edf3038
-  - 27bac4a4
-  - 765c4797
-  - bc64480c
-  - bceda3c0
-  - 409a3910
-  - 83d35101
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_record_decision
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - 4cc1b353
-  - 92167aa2
-  - 4b5d2c08
-  - df67a8bb
-  - feffa30b
-  - 7fdbc9ab
-  - 2f36965d
-  - 8566d9bf
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_record_gatekeeper_verdicts
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - '80227730'
-  - 6d9de604
-  - 7e1a9ffb
-  - 7dd68466
-  - 5d9c5f71
-  - be7ba829
-  - 35820cca
-  - 344ae2da
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_record_node_usage
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - 662c0280
-  - a1baa706
-  - 39a7e41a
-  - e7d9cba0
-  - 66aecbf7
-  - bc0c451d
-  - deadf94c
-  - c8c65202
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_record_requirement_revision
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - 18b1e0d8
-  - 9a6ae006
-  - 73fcfdcf
-  - 94a7997b
-  - 9340c843
-  - b18c4c95
-  - c1da23a4
-  - 7d073f4b
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_record_support_evidence
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - fadece83
-  - da6623d3
-  - f0eaf5ee
-  - 70f69f6c
-  - 95522ab8
-  - 0e5a4e22
-  - 3250ccb5
-  - 317d1fa1
-  relative_path: src/orchestrator/graph/commands/callbacks.py
-  qualified_function: handle_record_cleanup_applied
-  normalized_source_pattern: 'projection: GraphProjection,'
-  diagnostic_code: unsupported_binding
-  domain: cleanup_callback
-- site_key:
-  - 6cf80001
-  - d7dae086
-  - 4313718f
-  - bfaba6dc
-  - 43cb505e
-  - 1fe6e220
-  - 54fd731a
-  - c94cface
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: validate_patch
-  normalized_source_pattern: and projection["node_kinds"].get(node_id) in {"worker",
-    "verifier", "check"}
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - 5299be7d
-  - 3de2d7bd
-  - 40831bc2
-  - cbb0b5cb
-  - a7f926a5
-  - fd61a837
-  - 62b533ab
-  - d19cf07c
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: validate_patch
-  normalized_source_pattern: and projection["node_states"].get(node_id) in RUNNING_STATES
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - 08c65890
-  - fc119591
-  - 1f26dd9c
-  - 05740adb
-  - 55f25fff
-  - fd63b53e
-  - 8cc7ca3d
-  - 015ebaac
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _validate_typed_topology
-  normalized_source_pattern: 'if edge_id in seen_edge_ids or edge_id in projection["edges"]:'
-  diagnostic_code: unsupported_comparison
-  domain: governance_requirements
-- site_key:
-  - 6a9d2fe0
-  - ae8b4993
-  - b610d727
-  - 4f1d29b7
-  - 7fc79ba6
-  - 7fec27d1
-  - 93c05f48
-  - d6a41739
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _register_created_node
-  normalized_source_pattern: 'if node_id in seen_node_ids or node_id in projection["node_kinds"]:'
-  diagnostic_code: unsupported_comparison
-  domain: governance_requirements
-- site_key:
-  - 918b6692
-  - 08c34ae0
-  - 03c07543
-  - f6f7ba26
-  - 139b9ee3
-  - e6f863f6
-  - 187fcfd4
-  - d9b7f8cc
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _node_contract_identity
-  normalized_source_pattern: kind = projection["node_kinds"].get(node_id)
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - 8e149705
-  - bf322da6
-  - d507f99b
-  - 2998c516
-  - fd904132
-  - 6c6aec15
-  - 890a94c4
-  - 1b63eaaa
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _node_contract_identity
-  normalized_source_pattern: role = projection.get("node_roles", {}).get(node_id)
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - d8c954db
-  - 927c947b
-  - 221168cd
-  - 3261a732
-  - 984d51dd
-  - 32d0a8fc
-  - 2613df42
-  - 8ff3df0e
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _validate_no_forbidden_cycles
-  normalized_source_pattern: 'for edge in projection["edges"].values():'
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - a0d9a52e
-  - 949d5f90
-  - c9e25f6e
-  - 4a943b12
-  - d2ce3542
-  - 1b043dfe
-  - 1d376b38
-  - d42b99c6
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _validate_no_poisoned_final_invariant_edges
-  normalized_source_pattern: existing_edges = projection["edges"].values()
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - ee5f99bf
-  - 38e4bb1e
-  - 14dc8490
-  - bb30961e
-  - a8b7d1d5
-  - 813b4efe
-  - ca6c3352
-  - 92156e11
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _node_kind_role
-  normalized_source_pattern: return projection["node_kinds"].get(node_id), projection["node_roles"].get(node_id)
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - 1f133001
-  - e7e21e93
-  - 6890d0c9
-  - ebc70bd7
-  - 904ecbe2
-  - 13474bc9
-  - 8f1a95b4
-  - 20b9430d
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _node_kind_role
-  normalized_source_pattern: return projection["node_kinds"].get(node_id), projection["node_roles"].get(node_id)
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - 89a4ede6
-  - '12673993'
-  - 8ecc4cb3
-  - 72b45e78
-  - ac27be41
-  - cd1c001f
-  - f39e40c8
-  - d934e7ce
-  relative_path: src/orchestrator/graph/patch_validator.py
-  qualified_function: _existing_resource_claim_rank
-  normalized_source_pattern: for claim in _resource_claim_dicts(resource_claims_for_node(projection,
-    node_id))
-  diagnostic_code: unsupported_call
-  domain: governance_requirements
-- site_key:
-  - aea301e1
-  - 42df4d35
-  - 05579e0a
-  - e2724cae
-  - ddec2781
-  - 9bcdfebc
-  - dae7a6ae
-  - 2d02f14a
-  relative_path: src/orchestrator/graph_runtime/dispatch.py
-  qualified_function: GraphDispatchExecutor._dispatch_snapshot_cleanup
-  normalized_source_pattern: compromised_record = projection["file_state_records"].get(record_id)
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - d7dfdd5d
-  - 8c25aa6a
-  - b21c3cef
-  - ecc1cbee
-  - 9613c096
-  - de233c2e
-  - c0dd55c4
-  - 54bf5914
-  relative_path: src/orchestrator/graph_runtime/dispatch.py
-  qualified_function: _guard_no_pending_compromised_file_state_bindings
-  normalized_source_pattern: record = projection["file_state_records"].get(raw_record_id)
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - 974f7d49
-  - 1fe9338b
-  - 991a7f30
-  - 6841db7e
-  - 1e6def16
-  - a8a9dbe2
-  - 9035ae08
-  - c812a991
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_frontier
-  normalized_source_pattern: ready_nodes = sorted(projection["ready_nodes"])
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 974f79ea
-  - c1e5b809
-  - 6cd20d18
-  - f7e54fbf
-  - b8c84393
-  - c2c12cf1
-  - 859391d4
-  - 51d2966e
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_frontier
-  normalized_source_pattern: 'for node_id in sorted(projection["node_states"]):'
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 20f6aad4
-  - daeba6fe
-  - 2d6afad6
-  - 0f951e36
-  - b11c67ba
-  - fbcb61a5
-  - abbd4936
-  - 20b14fa6
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_frontier
-  normalized_source_pattern: node_state = projection["node_states"].get(node_id, "")
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 7422428f
-  - 4ad2b95d
-  - 228e7492
-  - e3a4578c
-  - a2042f0d
-  - bfcde70e
-  - b70d4ec3
-  - 577d459e
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _gap_analysis_obligations
-  normalized_source_pattern: 'for edge_id, edge in sorted(projection["edges"].items()):'
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 1925d543
-  - 382c2b73
-  - 03db9ea1
-  - 2f81d13f
-  - 1217616e
-  - 80eac0a0
-  - 4372253a
-  - 0fbe123d
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _gap_analysis_obligations
-  normalized_source_pattern: 'if projection["node_states"].get(to_node_id) in terminal_states:'
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 8f4f526a
-  - a8f901e7
-  - 823763cf
-  - ebfd95c8
-  - fd09f0da
-  - 4f00ca91
-  - 7f775b66
-  - 4ee8778f
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _gap_analysis_obligations
-  normalized_source_pattern: 'if to_port in projection["input_bindings"].get(to_node_id,
-    {}):'
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - cf58a0d6
-  - b78163a0
-  - c7282980
-  - 03d2e562
-  - 2cf6002d
-  - 79bba3af
-  - 169115c2
-  - aed990b7
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _gap_analysis_obligations
-  normalized_source_pattern: 'if projection["node_states"].get(node_id) in terminal_states:'
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 2f65fc92
-  - 1b0ed5a9
-  - ebcc23f7
-  - 4250c9bd
-  - 9e9de6bd
-  - 1cd96958
-  - e7efc1c7
-  - edd20573
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _gap_analysis_obligations
-  normalized_source_pattern: 'if projection["node_kinds"].get(node_id) != "check":'
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - '37516683'
-  - 046eadbe
-  - 47c586cb
-  - 7031bfc3
-  - 247c6707
-  - a9505c36
-  - 85f0b822
-  - 3ab8eae4
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_evidence
-  normalized_source_pattern: bindings = projection["input_bindings"].get(context.node_id,
-    {})
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 360cb0ee
-  - 0e5b327f
-  - 3289aed5
-  - 5225c946
-  - bc797a9d
-  - 461326cb
-  - 0a0eb16d
-  - b17def8b
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_evidence
-  normalized_source_pattern: 'if raw_record_id in projection["file_state_records"]:'
-  diagnostic_code: unsupported_comparison
-  domain: planning_session
-- site_key:
-  - 97d58adb
-  - 5bb86fa5
-  - 152099d1
-  - 563dbc9e
-  - ab962048
-  - 5017beec
-  - 7a16d25a
-  - 75e4771e
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_evidence
-  normalized_source_pattern: record_payload=_compact_file_state_record(
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 8c04dd81
-  - 68c7d651
-  - f24ae276
-  - e814ab43
-  - 1cf8c670
-  - bce91913
-  - 708b025a
-  - 2ef8f6b9
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _hydration_policy_for_binding
-  normalized_source_pattern: edge = projection["edges"].get(edge_id)
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 38d51456
-  - 6b1a0097
-  - 3e7e17b8
-  - 4f19228e
-  - ca6ee0e7
-  - 87b852c9
-  - 418a201e
-  - a9ef9224
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_outstanding_failures
-  normalized_source_pattern: task_region_id = projection["node_task_regions"].get(context.node_id)
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 4b33b265
-  - eccb5b9f
-  - be9abb74
-  - cf61e937
-  - 590f67ca
-  - e39c774d
-  - '13729833'
-  - b8834bd0
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_outstanding_failures
-  normalized_source_pattern: 'for region_id, failure in projection["environment_failures"].items():'
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 0e955196
-  - 5d18fc39
-  - cfd7aaf5
-  - 81c4ca3d
-  - 5cbfbff9
-  - e649301c
-  - 43ea93ec
-  - e2a0d48d
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_session_carryover_record
-  normalized_source_pattern: session_id = projection["planner_sessions"].get(context.node_id)
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
-  - 091bb3a4
-  - 089e5607
-  - 6e068497
-  - 1b105987
-  - c2d1dc75
-  - cdc6404a
-  - 82d4520b
-  - 9d4ad7a6
-  relative_path: src/orchestrator/graph_runtime/prompts.py
-  qualified_function: _planner_session_carryover_record
-  normalized_source_pattern: carryover = projection["planner_session_carryovers"].get(session_id)
-  diagnostic_code: unsupported_call
-  domain: planning_session
-- site_key:
   - 08fe6a4f
   - 02a9e9ad
   - 49aabb21
@@ -5033,160 +5963,6 @@ unclassified_sites:
   normalized_source_pattern: projection = rebuild_projection(events)
   diagnostic_code: unsupported_binding
   domain: verification_recovery
-- site_key:
-  - c5aafa32
-  - '96379520'
-  - 09d166c9
-  - b5f97a37
-  - 0635adea
-  - 0b29f616
-  - '68680657'
-  - 1ef2a78e
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: GraphEventStore.load_projection_with_tail
-  normalized_source_pattern: projection = _projection_from_events(events)
-  diagnostic_code: unsupported_binding
-  domain: record_file_state
-- site_key:
-  - ffc9e0b2
-  - 0f245dc3
-  - b3bc3813
-  - e5793e9f
-  - 5121f0ab
-  - 68f9a55a
-  - b68d10ef
-  - afd6db3a
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: GraphEventStore.load_projection_with_tail
-  normalized_source_pattern: projection = reduce_event(projection, event)
-  diagnostic_code: unsupported_binding
-  domain: record_file_state
-- site_key:
-  - a2ea50a5
-  - e1f75248
-  - 39327b92
-  - 423102ea
-  - 061031c0
-  - f1d350f5
-  - 39be8d3a
-  - '66603807'
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: GraphEventStore.advance_projection_snapshot
-  normalized_source_pattern: projection = initial_projection()
-  diagnostic_code: unsupported_binding
-  domain: record_file_state
-- site_key:
-  - 000b48d2
-  - 95d78ba7
-  - ff8b200b
-  - 88f29d68
-  - 4cf65d19
-  - 59df4a45
-  - 1a074505
-  - 57aeaa3b
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _assign_projection_snapshot
-  normalized_source_pattern: row.node_states = dict(projection["node_states"])
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - f0ffaf5c
-  - 90006fa6
-  - 60a16a3d
-  - 1fb2b592
-  - e674cb16
-  - c6d88938
-  - '47218407'
-  - 7f726712
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _assign_projection_snapshot
-  normalized_source_pattern: row.task_states = dict(projection["task_states"])
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - 8d2052fe
-  - b367a28f
-  - 471ff0fc
-  - fe0de20c
-  - '13121809'
-  - df2a7527
-  - 5515eb20
-  - e46d0516
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _assign_projection_snapshot
-  normalized_source_pattern: row.leases = project_leases([], projection=projection)
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - bc2733a8
-  - 48ee6e59
-  - a8be2a4b
-  - e5297f63
-  - 4b8af8b6
-  - 4ddd92cf
-  - 6147ee43
-  - 2836538c
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _assign_projection_snapshot
-  normalized_source_pattern: row.ready_nodes = list(projection["ready_nodes"])
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - 290ff557
-  - 2f8362a4
-  - bec464c7
-  - 73759b90
-  - b1fabd68
-  - 0bc9690e
-  - 625f5a21
-  - bcff5a3b
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _assign_projection_snapshot
-  normalized_source_pattern: row.scheduler = dict(project_scheduler_view([], projection=projection))
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - 05c7d221
-  - d3f61265
-  - 896e1410
-  - 40d2c49d
-  - c19f0a63
-  - 2f81d10e
-  - d5757544
-  - fc2be1d2
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _assign_projection_snapshot
-  normalized_source_pattern: row.lease_view = dict(project_lease_view([], projection=projection))
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - 761a8973
-  - '24283143'
-  - 2b80215e
-  - 327a2803
-  - 7729c31a
-  - ab5c17e4
-  - ed302998
-  - ebd183da
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _assign_projection_snapshot
-  normalized_source_pattern: decisions = dict(project_decision_view_from_projection(projection))
-  diagnostic_code: unsupported_call
-  domain: record_file_state
-- site_key:
-  - ec009ff5
-  - 23b7323f
-  - df10011d
-  - 6265b2a0
-  - 3041487b
-  - a908ee4d
-  - 0e21db46
-  - b18cf386
-  relative_path: src/orchestrator/graph_runtime/store.py
-  qualified_function: _decisions_with_projection_checkpoint
-  normalized_source_pattern: '_CHECKPOINT_PROJECTION_KEY: projection_to_checkpoint(projection),'
-  diagnostic_code: unsupported_call
-  domain: record_file_state
 - site_key:
   - 978f4b30
   - e51a9801
@@ -5780,6 +6556,799 @@ unclassified_sites:
   qualified_function: test_resource_claim_query_returns_an_immutable_sequence
   normalized_source_pattern: assert resource_claims_for_node(projection, "missing")
     == ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 292db198
+  - c639242d
+  - 58faa02c
+  - 34b01ade
+  - 2681e654
+  - 5f8cb25b
+  - a70b9a99
+  - 8aa0a155
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert output_record_payload(projection, "missing") is
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 4896851f
+  - 7d729f31
+  - 2b9a4c64
+  - 89ea884c
+  - a85ccee6
+  - 73c3bc46
+  - b36723fa
+  - 58b94450
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert file_state_record(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 74e08383
+  - 46c33516
+  - 6796ca10
+  - cbe9b528
+  - 190a0758
+  - 81a7c572
+  - 2f7533ce
+  - 1bab4e92
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert output_record_ids_for_node_port(projection, "missing",
+    "missing") == ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 76e69056
+  - '33336252'
+  - 2aa6e11a
+  - f11367d5
+  - 65d4494e
+  - 3f055926
+  - 0561a9c3
+  - a6dcff2b
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert planner_generation_budget(projection) == 8
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 817a2e50
+  - 66f1e32d
+  - 68148dfb
+  - 00c2395e
+  - 638b6dec
+  - d7932ce0
+  - 2ee38fb8
+  - 9882dede
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert planner_successor(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 948af966
+  - 50ebb8c3
+  - d4e7bc05
+  - 098ec1e8
+  - 4bb4b16f
+  - 0ef04df4
+  - 98f2d503
+  - bfdd5ec1
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert planner_generation(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a875e970
+  - 1a61a688
+  - a774aa53
+  - 52a7aa67
+  - 4c02b0a1
+  - 186babb5
+  - 4bb141a8
+  - f0906d6b
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert planner_session(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ad0ae977
+  - b3780fc5
+  - f9d74ddf
+  - 23194e17
+  - 40a7db9c
+  - 6dfb9d05
+  - 021daa16
+  - 6c7db74f
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert planner_session_state(projection, "missing") is
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 933d64cd
+  - 73d7b71a
+  - 6e4ea57c
+  - c509a198
+  - 158b36e5
+  - 7b783b95
+  - '33267597'
+  - c47680b7
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert planner_session_current_node(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - bb3249ac
+  - 55cbef5a
+  - bfb66537
+  - c69f16ae
+  - bb4a2165
+  - 7ad6e8c2
+  - 2ce0e5cb
+  - ccc4fd26
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert planner_session_carryover(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 03306bd7
+  - 68a43960
+  - a7caf4e7
+  - 311a36e3
+  - 5d1216c7
+  - b3a96567
+  - 50270c72
+  - 763df218
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert planner_region_label(projection, "missing") is
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 6717cc18
+  - 4562a7a8
+  - a78ea70b
+  - c01d9804
+  - d29b83bb
+  - 9a5a8025
+  - 0823af7b
+  - 2ff217a5
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert latest_routine_snapshot_record(projection) is
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 5071c644
+  - c12124e8
+  - d94249fa
+  - 40ce65d0
+  - '37624411'
+  - d352cb4a
+  - 4e9c5c45
+  - 4dafb5b0
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert approval_decision(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - db737f67
+  - 1c779144
+  - 45a78b03
+  - d299329d
+  - a5703f40
+  - bcf90de5
+  - 69268e6a
+  - 012cb550
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert authority_decision(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1f96ea07
+  - 207c57ba
+  - 2621e268
+  - fc6ecbe9
+  - 976e69e9
+  - ec830961
+  - 6cdc9798
+  - da2abe3b
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert oversight_decision(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 479cf9fb
+  - d1a506f8
+  - f39290b2
+  - 6c75fd13
+  - a7ec5ee2
+  - c80b1f6d
+  - 1e589243
+  - 1e18c41b
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert decision_request(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ebf586e1
+  - 857bc319
+  - 92ad120e
+  - 84e16a0d
+  - 122270c1
+  - 660d1d04
+  - 296b0d34
+  - 5813f0cd
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert open_proposal_blocker(projection, "missing") is
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1a46e58d
+  - ed4674a2
+  - 48f87e63
+  - 4a7813fc
+  - a3bed9c4
+  - ca69f030
+  - '37707681'
+  - a4b7da81
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert authority_revision_blocker(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 477cd08f
+  - 4a339e46
+  - 80fe725e
+  - edaade4a
+  - 9f3c2e72
+  - 1a8aaffc
+  - 8b3bb81f
+  - 8d61add9
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert requirement_revision(projection, "missing") is
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 4054cb33
+  - 02ccdec3
+  - b6024b03
+  - a5df0ca8
+  - e44d2355
+  - 77f34434
+  - cca2d744
+  - 0252199d
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert active_requirement_version(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - b06e7275
+  - b4aa7f86
+  - 15e4279a
+  - e9946bb1
+  - e77d031a
+  - 3b7b75da
+  - 72b27c14
+  - df1772d0
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert support_evidence(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 5b50f630
+  - e4682c00
+  - 5fc7a4b2
+  - 05ca6b57
+  - 8505ca53
+  - 7f52fda1
+  - e9984634
+  - f7f89c94
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert cleanup_request(projection, "missing") is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 7261f8d0
+  - b62b0951
+  - e93a4568
+  - 2bb49454
+  - eaa49c17
+  - 541b89a0
+  - 25729a5b
+  - a85225d8
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert cleanup_applied(projection, "missing") is False
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - bce255df
+  - 1291d7eb
+  - 38dbc43c
+  - c1e02e4c
+  - 88d1a948
+  - '86476991'
+  - d492ddca
+  - 44842c95
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert callback_idempotency_event(projection, "missing")
+    is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 5acfd7e3
+  - 0341dbb5
+  - 35a7229d
+  - cc3de71f
+  - 0c1af3e0
+  - 7076152d
+  - 6dc137fe
+  - 9b7dc03d
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_missing_values_and_planner_default
+  normalized_source_pattern: assert environment_failure(projection, "missing") is
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 601e7f8d
+  - a6b69dfe
+  - e1b0dcc7
+  - e492a0ef
+  - b690dcae
+  - e0a735a1
+  - c02bbe0c
+  - 2e743f9e
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert output_record_payload(projection, "recovery-plan-1")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 587e70de
+  - 0e32c03f
+  - d61431f8
+  - 7161fd1b
+  - 0ead4a60
+  - cdfc4a2c
+  - fc6bda77
+  - 67dd18be
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert file_state_record(projection, "file-state-query")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 47c1d500
+  - 1425d6ce
+  - 52ab19c7
+  - 17fd43be
+  - 83d5b633
+  - 80273d96
+  - 7084c073
+  - 3fab09b0
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert output_record_ids_for_node_port(projection, "worker-source",
+    "failure_record") == (
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d7fa6e24
+  - 2e5a2b83
+  - 2b875920
+  - 37ddf0d0
+  - 4bf98ddf
+  - 3b8d2344
+  - cb77644d
+  - 50f427ef
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert planner_successor(projection, "planner-fr17")
+    == "planner-next"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 5f0e697d
+  - 52f2b76e
+  - '80242542'
+  - 8fa95d88
+  - 61cfb55c
+  - eb2f55cd
+  - 19450bb6
+  - 6ec373b2
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert accepted_graph_patch_ids(projection, "planner-fr17")
+    == ("patch-1", "patch-2")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ed91d8aa
+  - c39694aa
+  - 5a55a9d5
+  - cf040d96
+  - c047308b
+  - 853c27de
+  - 95e3c2d0
+  - cdc2aeae
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert accepted_no_successor_patch_ids(projection, "planner-fr17")
+    == ("no-successor-1",)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e374a321
+  - 1546e7b3
+  - 712f5317
+  - c3e5bb7c
+  - e1ebefbf
+  - 06b85fb0
+  - 1a44d2df
+  - 4f002e7b
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert accepted_no_successor_patch_id(projection, "planner-fr17")
+    == "no-successor-1"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 642b85dc
+  - 030b23df
+  - 63bd5aa5
+  - aff1322c
+  - 4c6609ac
+  - f68933a4
+  - 8e3c53b1
+  - e3bc24b9
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert planner_generation(projection, "planner-fr17")
+    == 3
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 9cbea9d1
+  - 32d14113
+  - c1392fb2
+  - 47299a6b
+  - 7e721471
+  - da1097e7
+  - 29f448f4
+  - 458835d3
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert planner_session(projection, "planner-fr17") ==
+    "session-1"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 997378a2
+  - 2738bc36
+  - dd1ed95d
+  - 2399ef30
+  - 63c891fc
+  - 23a46871
+  - 4dc7f9a5
+  - cc5274bc
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert planner_session_state(projection, "session-1")
+    == "active"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - '57445369'
+  - a2fb0f44
+  - e4400f54
+  - 1dcd7fa5
+  - eb15bbb7
+  - 0a29f297
+  - 2846b341
+  - e945358d
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert planner_session_current_node(projection, "session-1")
+    == "planner-fr17"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - deb8c375
+  - 5f71e5b7
+  - 0f006bce
+  - 3a7e92b8
+  - e2cdbdd7
+  - 81b73c83
+  - e4c7828a
+  - 29e8e384
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert planner_session_carryover(projection, "session-1")
+    == "carryover-1"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a1675a7a
+  - 4a8b7eee
+  - 0e8d387e
+  - a8cdb12f
+  - c123380d
+  - 9d769481
+  - b10d16b9
+  - 23ecfa4d
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert planner_region_label(projection, "planner-fr17")
+    == "region-1"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 3ef89406
+  - fbd7a42a
+  - 5f8ba2e4
+  - 6f1eacb5
+  - 4409f6d7
+  - d3c8f5ba
+  - 5b66e163
+  - 0907c8d9
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert decision_request(projection, "gate-pending") is
+    not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - da60fc89
+  - 756dba09
+  - 59def23a
+  - 339423a1
+  - 5aa3ec0d
+  - aca15aa1
+  - 120f8935
+  - 893d2761
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert oversight_decision(projection, "oversight-1")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 6da21975
+  - 96f865c6
+  - ffc75976
+  - a46bbdf0
+  - b61c8d26
+  - 9e38c000
+  - 1e8948fe
+  - fc697ac9
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: 'assert open_proposal_blocker(projection, "proposal-1")
+    == {"reasons": ["original"]}'
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e20354ef
+  - 3f281e1e
+  - 8da8da8d
+  - db3e56c4
+  - 52bb15a1
+  - f6922ffe
+  - c93d16ec
+  - eab0dd9d
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: 'assert authority_revision_blocker(projection, "revision-1")
+    == {"reasons": ["original"]}'
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c6eb73fc
+  - af41eff7
+  - 9e7e22b3
+  - 2344a378
+  - bde5b4db
+  - 398b6b4f
+  - c8dd7e15
+  - 050097d9
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert requirement_revision(projection, "version-1")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - fb19a285
+  - 6a6c2794
+  - aaa3d4a8
+  - 0a35a132
+  - 8853b776
+  - 4527a335
+  - 37d00d3a
+  - 726e8d9a
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert active_requirement_version(projection, "requirement-1")
+    == "version-1"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a138a816
+  - d83daae7
+  - 99ad3c6f
+  - f23186bf
+  - 2d98edd6
+  - ecbee9a9
+  - a296dead
+  - d80bdccb
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert support_evidence(projection, "support-1") is not
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1c09c5f2
+  - cba0ac1a
+  - 9d2cef48
+  - 680c1b6f
+  - ac805dfa
+  - 42a7a6fc
+  - 690421ce
+  - 5851c5cd
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert cleanup_request(projection, "cleanup-1") is not
+    None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - f36d0d08
+  - f6224ff0
+  - 72a23b73
+  - 9562c2b5
+  - 55a2d2e1
+  - da9f03bd
+  - f12b2b12
+  - a401c992
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert cleanup_applied(projection, "cleanup-1") is True
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1e742e5d
+  - dd33dffe
+  - 097b534e
+  - 94e3eee9
+  - 9c2f71cc
+  - 2f3d34d9
+  - 1359e004
+  - 3205d918
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: assert callback_idempotency_event(projection, "key-1")
+    is not None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 13d45c3f
+  - 67e27cae
+  - f4e0ec9e
+  - 8e13cd73
+  - 4393101f
+  - 98a56397
+  - 982e9bcb
+  - 94426a5e
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: blocker = open_proposal_blocker(projection, "proposal-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1a1d320d
+  - dd1e65ba
+  - c3eef019
+  - 0b1da3dc
+  - b01ae7de
+  - e127f1db
+  - bfa2fffd
+  - 46a225b6
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: callback = callback_idempotency_event(projection, "key-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - f6ed0aa6
+  - 1028f83b
+  - b2859036
+  - ad87fb2e
+  - aac0ca38
+  - afc8d4c1
+  - 5b196b9d
+  - 492af155
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: file_state = file_state_record(projection, "file-state-query")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 85d5fadc
+  - 647a97c7
+  - 6b344455
+  - 0c4bdab6
+  - 29278a0c
+  - 847e0c7c
+  - 1b2db1b6
+  - '65259411'
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: 'assert open_proposal_blocker(projection, "proposal-1")
+    == {"reasons": ["original"]}'
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 92fb0978
+  - 73386f29
+  - 33d7077b
+  - d2a52682
+  - '70807281'
+  - 5fd73a96
+  - c921b0a2
+  - 5abc2917
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_callback = callback_idempotency_event(projection,
+    "key-1")
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a99e7058
+  - aeb7d530
+  - 8919ece7
+  - 8410c151
+  - b8208cc3
+  - e18e8b91
+  - 7f2f8ee4
+  - 2af882ee
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_task_3c_queries_preserve_present_values_order_and_mutation_isolation
+  normalized_source_pattern: fresh_file_state = file_state_record(projection, "file-state-query")
   diagnostic_code: unsupported_call
   domain: test_fixture
 - site_key:

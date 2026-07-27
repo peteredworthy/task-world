@@ -8,13 +8,24 @@ from copy import deepcopy
 from collections.abc import Mapping
 
 from orchestrator.graph.models import (
+    AcceptedOutputRecordPayload,
+    ApprovalDecisionProjection,
+    AuthorityDecisionProjection,
+    CallbackIdempotencyEvent,
     CandidateProjection,
+    CleanupRequestedProjection,
     EdgeProjection,
+    EnvironmentFailureProjection,
+    FileStateRecord,
     InputBindingProjection,
     LeaseProjection,
+    OversightDecisionProjection,
+    PendingGateDecisionProjection,
+    RequirementRevisionProjection,
     ResourceClaimProjection,
+    SupportEvidenceProjection,
 )
-from orchestrator.graph.projections import GraphProjection
+from orchestrator.graph.projections import GraphProjection, LatestRoutineSnapshotRecord
 
 
 def resource_claims_for_node(
@@ -202,3 +213,185 @@ def run_state(projection: GraphProjection) -> str | None:
 def completion_decision_passed(projection: GraphProjection) -> bool:
     """Return whether the latest lifecycle completion decision passed."""
     return projection["completion_decision_passed"]
+
+
+def output_record_payload(
+    projection: GraphProjection, record_id: str
+) -> AcceptedOutputRecordPayload | None:
+    """Return an independent accepted output-record payload, if present."""
+    payload = projection["output_record_payloads"].get(record_id)
+    return payload.model_copy(deep=True) if payload is not None else None
+
+
+def file_state_record(projection: GraphProjection, record_id: str) -> FileStateRecord | None:
+    """Return an independent file-state record, if present."""
+    record = projection["file_state_records"].get(record_id)
+    return record.model_copy(deep=True) if record is not None else None
+
+
+def output_record_ids_for_node_port(
+    projection: GraphProjection, node_id: str, port: str
+) -> tuple[str, ...]:
+    """Return output record identifiers for a node port in projection order."""
+    return tuple(projection["node_output_ports"].get(node_id, {}).get(port, ()))
+
+
+def planner_generation_budget(projection: GraphProjection) -> int:
+    """Return the configured planner generation budget."""
+    return projection["planner_generation_budget"]
+
+
+def planner_successor(projection: GraphProjection, node_id: str) -> str | None:
+    """Return a planner node's successor, if recorded."""
+    return projection["planner_successors"].get(node_id)
+
+
+def accepted_graph_patch_ids(projection: GraphProjection, node_id: str) -> tuple[str, ...]:
+    """Return accepted graph patch identifiers in projection order."""
+    return tuple(projection["accepted_graph_patches_by_node"].get(node_id, ()))
+
+
+def accepted_no_successor_patch_ids(projection: GraphProjection, node_id: str) -> tuple[str, ...]:
+    """Return accepted no-successor patch identifiers in projection order."""
+    return tuple(projection["accepted_no_successor_patches_by_node"].get(node_id, ()))
+
+
+def accepted_no_successor_patch_id(projection: GraphProjection, node_id: str) -> str | None:
+    """Return the latest accepted no-successor patch identifier, if recorded."""
+    return projection["accepted_no_successor_patch_ids_by_node"].get(node_id)
+
+
+def latest_routine_snapshot_record(
+    projection: GraphProjection,
+) -> LatestRoutineSnapshotRecord | None:
+    """Return an independent latest routine snapshot record, if present."""
+    record = projection["latest_routine_snapshot_record"]
+    return record.model_copy(deep=True) if record is not None else None
+
+
+def planner_generation(projection: GraphProjection, node_id: str) -> int | None:
+    """Return a planner node's generation, if recorded."""
+    return projection["planner_generations"].get(node_id)
+
+
+def planner_session(projection: GraphProjection, node_id: str) -> str | None:
+    """Return a planner node's session identifier, if recorded."""
+    return projection["planner_sessions"].get(node_id)
+
+
+def planner_session_state(projection: GraphProjection, session_id: str) -> str | None:
+    """Return a planner session's state, if recorded."""
+    return projection["planner_session_states"].get(session_id)
+
+
+def planner_session_current_node(projection: GraphProjection, session_id: str) -> str | None:
+    """Return a planner session's current node, if recorded."""
+    return projection["planner_session_current_nodes"].get(session_id)
+
+
+def planner_session_carryover(projection: GraphProjection, session_id: str) -> str | None:
+    """Return a planner session's carryover record, if recorded."""
+    return projection["planner_session_carryovers"].get(session_id)
+
+
+def planner_region_label(projection: GraphProjection, node_id: str) -> str | None:
+    """Return a planner node's region label, if recorded."""
+    return projection["planner_region_labels"].get(node_id)
+
+
+def approval_decision(
+    projection: GraphProjection, node_id: str
+) -> ApprovalDecisionProjection | None:
+    """Return an independent approval decision, if present."""
+    decision = projection["approval_decisions"].get(node_id)
+    return decision.model_copy(deep=True) if decision is not None else None
+
+
+def authority_decision(
+    projection: GraphProjection, node_id: str
+) -> AuthorityDecisionProjection | None:
+    """Return an independent authority decision, if present."""
+    decision = projection["authority_decisions"].get(node_id)
+    return decision.model_copy(deep=True) if decision is not None else None
+
+
+def oversight_decision(
+    projection: GraphProjection, node_id: str
+) -> OversightDecisionProjection | None:
+    """Return an independent oversight decision, if present."""
+    decision = projection["oversight_decisions"].get(node_id)
+    return decision.model_copy(deep=True) if decision is not None else None
+
+
+def decision_request(
+    projection: GraphProjection, node_id: str
+) -> PendingGateDecisionProjection | None:
+    """Return an independent pending decision request, if present."""
+    request = projection["decision_request_details"].get(node_id)
+    return request.model_copy(deep=True) if request is not None else None
+
+
+def open_proposal_blocker(
+    projection: GraphProjection, proposal_id: str
+) -> Mapping[str, object] | None:
+    """Return an independent open-proposal blocker, if present."""
+    blocker = projection["open_proposal_blockers"].get(proposal_id)
+    return deepcopy(blocker) if blocker is not None else None
+
+
+def authority_revision_blocker(
+    projection: GraphProjection, revision_id: str
+) -> Mapping[str, object] | None:
+    """Return an independent authority-revision blocker, if present."""
+    blocker = projection["authority_revision_blockers"].get(revision_id)
+    return deepcopy(blocker) if blocker is not None else None
+
+
+def requirement_revision(
+    projection: GraphProjection, version_id: str
+) -> RequirementRevisionProjection | None:
+    """Return an independent requirement revision, if present."""
+    revision = projection["requirement_revisions"].get(version_id)
+    return revision.model_copy(deep=True) if revision is not None else None
+
+
+def active_requirement_version(projection: GraphProjection, requirement_id: str) -> str | None:
+    """Return a requirement's active version identifier, if recorded."""
+    return projection["active_requirement_versions"].get(requirement_id)
+
+
+def support_evidence(
+    projection: GraphProjection, support_id: str
+) -> SupportEvidenceProjection | None:
+    """Return independent support evidence, if present."""
+    evidence = projection["support_evidence"].get(support_id)
+    return evidence.model_copy(deep=True) if evidence is not None else None
+
+
+def cleanup_request(
+    projection: GraphProjection, cleanup_id: str
+) -> CleanupRequestedProjection | None:
+    """Return an independent cleanup request, if present."""
+    request = projection["cleanup_requested_events"].get(cleanup_id)
+    return request.model_copy(deep=True) if request is not None else None
+
+
+def cleanup_applied(projection: GraphProjection, cleanup_id: str) -> bool:
+    """Return whether a cleanup identifier has been applied."""
+    return projection["cleanup_applied_ids"].get(cleanup_id, False)
+
+
+def callback_idempotency_event(
+    projection: GraphProjection, idempotency_key: str
+) -> CallbackIdempotencyEvent | None:
+    """Return an independent callback idempotency event, if present."""
+    event = projection["callback_idempotency_events"].get(idempotency_key)
+    return event.model_copy(deep=True) if event is not None else None
+
+
+def environment_failure(
+    projection: GraphProjection, task_region_id: str
+) -> EnvironmentFailureProjection | None:
+    """Return an independent environment failure, if present."""
+    failure = projection["environment_failures"].get(task_region_id)
+    return failure.model_copy(deep=True) if failure is not None else None

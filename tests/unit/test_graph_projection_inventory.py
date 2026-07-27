@@ -1540,6 +1540,32 @@ def test_repository_inventory_includes_controller_rebuild_dispatch_reads() -> No
     )
 
 
+def test_repository_inventory_keeps_representative_task_3c_physical_reads() -> None:
+    root = Path(__file__).parents[2]
+    source_lines = {
+        relative_path: (root / relative_path).read_text().splitlines()
+        for relative_path in (
+            "src/orchestrator/graph_runtime/dispatch.py",
+            "src/orchestrator/graph_runtime/prompts.py",
+            "src/orchestrator/graph/callbacks.py",
+            "src/orchestrator/graph/patch_validator.py",
+        )
+    }
+
+    assert source_lines["src/orchestrator/graph_runtime/dispatch.py"][809].strip() == (
+        'compromised_record = projection["file_state_records"].get(record_id)'
+    )
+    assert source_lines["src/orchestrator/graph_runtime/prompts.py"][551].strip() == (
+        'ready_nodes = sorted(projection["ready_nodes"])'
+    )
+    assert source_lines["src/orchestrator/graph/callbacks.py"][68].strip() == (
+        'lease = projection["leases"].get(request.lease_id)'
+    )
+    assert source_lines["src/orchestrator/graph/patch_validator.py"][145].strip() == (
+        'and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}'
+    )
+
+
 def test_inventory_reports_one_outer_recursive_collection_escape_at_every_boundary(
     tmp_path: Path,
 ) -> None:

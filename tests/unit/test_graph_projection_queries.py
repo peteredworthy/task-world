@@ -11,14 +11,32 @@ from pydantic import ValidationError
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CallbackIdempotencyEvent,
+    CleanupRequestedProjection,
     EventEnvelope,
+    FileStateRecord,
+    RequirementRevisionProjection,
+    SupportEvidenceProjection,
     active_leases,
+    active_requirement_version,
+    accepted_graph_patch_ids,
+    accepted_no_successor_patch_id,
+    accepted_no_successor_patch_ids,
+    approval_decision,
+    authority_decision,
+    authority_revision_blocker,
     bound_record_ids,
+    callback_idempotency_event,
+    cleanup_applied,
+    cleanup_request,
+    decision_request,
     build_projection,
     completion_decision_passed,
     edge_by_id,
     edges_from_node,
     edges_to_node,
+    environment_failure,
+    file_state_record,
     input_binding_for_port,
     input_bindings_for_node,
     initial_projection,
@@ -26,6 +44,7 @@ from orchestrator.graph import (
     iter_leases,
     lease_by_id,
     lease_generation,
+    latest_routine_snapshot_record,
     node_allowed_actions,
     node_attempt,
     node_candidate_id,
@@ -40,10 +59,24 @@ from orchestrator.graph import (
     node_role,
     node_state,
     node_task_region,
+    open_proposal_blocker,
+    output_record_ids_for_node_port,
+    output_record_payload,
+    oversight_decision,
+    planner_generation,
+    planner_generation_budget,
+    planner_region_label,
+    planner_session,
+    planner_session_carryover,
+    planner_session_current_node,
+    planner_session_state,
+    planner_successor,
+    requirement_revision,
     resource_claims_for_node,
     run_state,
     task_candidates,
     task_state,
+    support_evidence,
 )
 from scripts.graph_projection_inventory import (
     AccessInventory,
@@ -76,6 +109,134 @@ def test_lifecycle_queries_preserve_missing_and_default_values() -> None:
 
     assert run_state(projection) is None
     assert completion_decision_passed(projection) is False
+
+
+def test_task_3c_queries_preserve_missing_values_and_planner_default() -> None:
+    projection = initial_projection()
+
+    assert output_record_payload(projection, "missing") is None
+    assert file_state_record(projection, "missing") is None
+    assert output_record_ids_for_node_port(projection, "missing", "missing") == ()
+    assert planner_generation_budget(projection) == 8
+    assert planner_successor(projection, "missing") is None
+    assert planner_generation(projection, "missing") is None
+    assert planner_session(projection, "missing") is None
+    assert planner_session_state(projection, "missing") is None
+    assert planner_session_current_node(projection, "missing") is None
+    assert planner_session_carryover(projection, "missing") is None
+    assert planner_region_label(projection, "missing") is None
+    assert latest_routine_snapshot_record(projection) is None
+    assert approval_decision(projection, "missing") is None
+    assert authority_decision(projection, "missing") is None
+    assert oversight_decision(projection, "missing") is None
+    assert decision_request(projection, "missing") is None
+    assert open_proposal_blocker(projection, "missing") is None
+    assert authority_revision_blocker(projection, "missing") is None
+    assert requirement_revision(projection, "missing") is None
+    assert active_requirement_version(projection, "missing") is None
+    assert support_evidence(projection, "missing") is None
+    assert cleanup_request(projection, "missing") is None
+    assert cleanup_applied(projection, "missing") is False
+    assert callback_idempotency_event(projection, "missing") is None
+    assert environment_failure(projection, "missing") is None
+
+
+def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() -> None:
+    projection = build_projection(less_used_events("task-3c-query"))
+    projection["file_state_records"]["file-state-query"] = FileStateRecord(
+        record_id="file-state-query", record_type="file_state", cleanup_excluded_paths=["secret"]
+    )
+    projection["node_output_ports"]["worker-source"] = {
+        "failure_record": ["failure-record-1", "failure-record-2"]
+    }
+    projection["planner_successors"]["planner-fr17"] = "planner-next"
+    projection["accepted_graph_patches_by_node"]["planner-fr17"] = ["patch-1", "patch-2"]
+    projection["accepted_no_successor_patches_by_node"]["planner-fr17"] = ["no-successor-1"]
+    projection["accepted_no_successor_patch_ids_by_node"]["planner-fr17"] = "no-successor-1"
+    projection["planner_generations"]["planner-fr17"] = 3
+    projection["planner_sessions"]["planner-fr17"] = "session-1"
+    projection["planner_session_states"]["session-1"] = "active"
+    projection["planner_session_current_nodes"]["session-1"] = "planner-fr17"
+    projection["planner_session_carryovers"]["session-1"] = "carryover-1"
+    projection["planner_region_labels"]["planner-fr17"] = "region-1"
+    projection["open_proposal_blockers"]["proposal-1"] = {"reasons": ["original"]}
+    projection["authority_revision_blockers"]["revision-1"] = {"reasons": ["original"]}
+    projection["requirement_revisions"]["version-1"] = RequirementRevisionProjection(
+        requirement_id="requirement-1",
+        version_id="version-1",
+        change_classification="clarification",
+        requires_authority=False,
+        position=1,
+        validation_strengthening=False,
+    )
+    projection["active_requirement_versions"]["requirement-1"] = "version-1"
+    projection["support_evidence"]["support-1"] = SupportEvidenceProjection(
+        support_id="support-1",
+        evidence_id="evidence-1",
+        requirement_id="requirement-1",
+        requirement_version_id="version-1",
+        status="current",
+        position=1,
+    )
+    projection["cleanup_requested_events"]["cleanup-1"] = CleanupRequestedProjection(
+        cleanup_id="cleanup-1", position=1, paths=["secret"]
+    )
+    projection["cleanup_applied_ids"]["cleanup-1"] = True
+    projection["callback_idempotency_events"]["key-1"] = CallbackIdempotencyEvent(
+        event_type="callback_accepted",
+        node_id="worker-source",
+        idempotency_key="key-1",
+        outcome="accepted",
+        payload={"nested": ["original"]},
+    )
+
+    assert output_record_payload(projection, "recovery-plan-1") is not None
+    assert file_state_record(projection, "file-state-query") is not None
+    assert output_record_ids_for_node_port(projection, "worker-source", "failure_record") == (
+        "failure-record-1",
+        "failure-record-2",
+    )
+    assert planner_successor(projection, "planner-fr17") == "planner-next"
+    assert accepted_graph_patch_ids(projection, "planner-fr17") == ("patch-1", "patch-2")
+    assert accepted_no_successor_patch_ids(projection, "planner-fr17") == ("no-successor-1",)
+    assert accepted_no_successor_patch_id(projection, "planner-fr17") == "no-successor-1"
+    assert planner_generation(projection, "planner-fr17") == 3
+    assert planner_session(projection, "planner-fr17") == "session-1"
+    assert planner_session_state(projection, "session-1") == "active"
+    assert planner_session_current_node(projection, "session-1") == "planner-fr17"
+    assert planner_session_carryover(projection, "session-1") == "carryover-1"
+    assert planner_region_label(projection, "planner-fr17") == "region-1"
+    assert decision_request(projection, "gate-pending") is not None
+    assert oversight_decision(projection, "oversight-1") is not None
+    assert open_proposal_blocker(projection, "proposal-1") == {"reasons": ["original"]}
+    assert authority_revision_blocker(projection, "revision-1") == {"reasons": ["original"]}
+    assert requirement_revision(projection, "version-1") is not None
+    assert active_requirement_version(projection, "requirement-1") == "version-1"
+    assert support_evidence(projection, "support-1") is not None
+    assert cleanup_request(projection, "cleanup-1") is not None
+    assert cleanup_applied(projection, "cleanup-1") is True
+    assert callback_idempotency_event(projection, "key-1") is not None
+
+    blocker = open_proposal_blocker(projection, "proposal-1")
+    assert blocker is not None
+    reasons = blocker["reasons"]
+    assert isinstance(reasons, list)
+    reasons.append("changed")
+    callback = callback_idempotency_event(projection, "key-1")
+    assert callback is not None and callback.payload is not None
+    nested = callback.payload["nested"]
+    assert isinstance(nested, list)
+    nested.append("changed")
+    file_state = file_state_record(projection, "file-state-query")
+    assert file_state is not None
+    file_state.cleanup_excluded_paths.append("changed")
+
+    assert open_proposal_blocker(projection, "proposal-1") == {"reasons": ["original"]}
+    fresh_callback = callback_idempotency_event(projection, "key-1")
+    assert fresh_callback is not None and fresh_callback.payload == {"nested": ["original"]}
+    fresh_file_state = file_state_record(projection, "file-state-query")
+    assert fresh_file_state is not None
+    assert fresh_file_state.cleanup_excluded_paths == ["secret"]
 
 
 def test_lifecycle_queries_read_active_and_completed_event_projections() -> None:
@@ -378,6 +539,43 @@ def test_node_and_lease_classification_covers_their_generated_domains() -> None:
     assert raised.value.remaining_counts == {"lease": 1}
 
 
+def test_closed_domain_classification_accepts_only_reviewed_approved_core_keys() -> None:
+    inventory = AccessInventory(
+        baseline_revision="baseline",
+        occurrences=(
+            AccessOccurrence(
+                occurrence_id="f" * 64,
+                relative_path="src/orchestrator/graph/projection_queries.py",
+                qualified_function="approved_query",
+                normalized_expression='projection["file_state_records"]',
+                same_expression_ordinal=0,
+                old_field_name="file_state_records",
+                kind=AccessKind.LITERAL_SUBSCRIPT_READ,
+                line=1,
+                column=0,
+                ordering_sensitivity_disposition="insensitive",
+            ),
+        ),
+        diagnostics=(),
+    )
+    reviewed = MigrationDisposition(
+        site_key="f" * 64,
+        disposition="approved_core",
+        relative_path="src/orchestrator/graph/projection_queries.py",
+        qualified_function="approved_query",
+        normalized_source_pattern='projection["file_state_records"]',
+        diagnostic_code=None,
+        reason="Reviewed exact query storage read.",
+    )
+
+    classified = classify_node_task_edge_binding_and_lease_domains(
+        query_migration_skeleton(inventory, Path.cwd()), (reviewed,)
+    )
+
+    assert classified.dispositions == (reviewed,)
+    assert not classified.unclassified_sites
+
+
 @pytest.mark.timeout(120)
 def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
     inventory = inventory_repository(ROOT, load_manifest(MANIFEST_PATH))
@@ -426,7 +624,14 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
         if 'projection["' not in disposition.normalized_source_pattern
         and disposition.diagnostic_code is not None
     )
-    target_domains = {"node_task_edge_binding", "lease"}
+    target_domains = {
+        "cleanup_callback",
+        "governance_requirements",
+        "lease",
+        "node_task_edge_binding",
+        "planning_session",
+        "record_file_state",
+    }
     for domain in target_domains:
         domain_keys = {
             site.site_key for site in skeleton.unclassified_sites if site.domain == domain
@@ -440,20 +645,8 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
         assert validate_query_migration_manifest(ledger, inventory, ROOT, domain=domain) == {
             domain: len(domain_keys)
         }
-    dispatch_file_state_sites = [
-        site
-        for site in ledger.unclassified_sites
-        if site.relative_path == "src/orchestrator/graph_runtime/dispatch.py"
-        and "file_state_records" in site.normalized_source_pattern
-    ]
-    assert len(dispatch_file_state_sites) == 2
-    assert {site.domain for site in dispatch_file_state_sites} == {"record_file_state"}
     assert Counter(site.domain for site in ledger.unclassified_sites) == {
-        "cleanup_callback": 14,
-        "governance_requirements": 11,
-        "planning_session": 16,
-        "record_file_state": 13,
-        "test_fixture": 247,
+        "test_fixture": 321,
         "verification_recovery": 151,
     }
     assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="lifecycle") == {

@@ -553,17 +553,13 @@ def query_migration_skeleton(inventory: AccessInventory, root: Path) -> QueryMig
 def classify_lifecycle_domain(skeleton: QueryMigrationManifest) -> QueryMigrationManifest:
     """Apply the reviewed lifecycle-domain dispositions to a generated skeleton."""
     classified_sites = tuple(
-        site
-        for site in skeleton.unclassified_sites
-        if site.domain == "lifecycle" or site.relative_path in _APPROVED_CORE_STORAGE_FILES
+        site for site in skeleton.unclassified_sites if site.domain == "lifecycle"
     )
     dispositions = tuple(
         MigrationDisposition(
             site_key=site.site_key,
             disposition=(
-                "approved_core"
-                if site.relative_path in _APPROVED_CORE_STORAGE_FILES
-                else "query_transform"
+                "query_transform"
                 if site.diagnostic_code is None or 'projection["' in site.normalized_source_pattern
                 else "projection_neutral"
             ),
@@ -572,9 +568,7 @@ def classify_lifecycle_domain(skeleton: QueryMigrationManifest) -> QueryMigratio
             normalized_source_pattern=site.normalized_source_pattern,
             diagnostic_code=site.diagnostic_code,
             reason=(
-                "The exact approved query implementation owns this physical storage read."
-                if site.relative_path in _APPROVED_CORE_STORAGE_FILES
-                else "Replace this direct lifecycle projection read with the permanent query API."
+                "Replace this direct lifecycle projection read with the permanent query API."
                 if site.diagnostic_code is None or 'projection["' in site.normalized_source_pattern
                 else "The exact source invokes a query or preserves type provenance without a physical projection storage read."
             ),
@@ -585,9 +579,7 @@ def classify_lifecycle_domain(skeleton: QueryMigrationManifest) -> QueryMigratio
         baseline_revision=skeleton.baseline_revision,
         dispositions=(*skeleton.dispositions, *dispositions),
         unclassified_sites=tuple(
-            site
-            for site in skeleton.unclassified_sites
-            if site.domain != "lifecycle" and site.relative_path not in _APPROVED_CORE_STORAGE_FILES
+            site for site in skeleton.unclassified_sites if site.domain != "lifecycle"
         ),
     )
 
@@ -602,12 +594,23 @@ def classify_node_task_edge_binding_and_lease_domains(
     a newly discovered target-domain site must remain unclassified until a
     reviewer adds its exact site key and disposition to the ledger.
     """
-    target_domains = frozenset({"node_task_edge_binding", "lease"})
+    target_domains = frozenset(
+        {
+            "cleanup_callback",
+            "governance_requirements",
+            "lease",
+            "node_task_edge_binding",
+            "planning_session",
+            "record_file_state",
+            "approved_core",
+        }
+    )
     reviewed_by_key = {
         disposition.site_key: disposition
         for disposition in reviewed_dispositions
         if disposition.site_key
-        and disposition.disposition in {"query_transform", "projection_neutral", "rejected"}
+        and disposition.disposition
+        in {"approved_core", "query_transform", "projection_neutral", "rejected"}
     }
     classified_sites = tuple(
         site
