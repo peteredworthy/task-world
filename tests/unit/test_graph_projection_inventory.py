@@ -170,6 +170,7 @@ def access(projection: GraphProjection) -> None:
     read = alias["run_state"]
     gotten = projection.get("run_state")
     member = "run_state" in projection
+    not_member = "run_state" not in projection
     keys = projection.keys()
     values = projection.values()
     items = projection.items()
@@ -194,6 +195,7 @@ def fixture() -> GraphProjection:
     )
 
     assert not inventory.diagnostics
+    assert len(inventory.occurrences) == 19
     assert {occurrence.kind for occurrence in inventory.occurrences} == {
         "literal_subscript_read",
         "get",
@@ -212,6 +214,20 @@ def fixture() -> GraphProjection:
         "untyped_escape",
     }
     assert [occurrence.kind for occurrence in inventory.occurrences].count("append_extend") == 2
+    assert all(
+        occurrence.qualified_function in {"access", "fixture"}
+        for occurrence in inventory.occurrences
+    )
+    assert all(
+        occurrence.ordering_sensitivity_disposition
+        in {
+            "not_applicable",
+            "insensitive",
+            "sorted",
+            "explicit_index",
+        }
+        for occurrence in inventory.occurrences
+    )
 
 
 def test_collect_source_rejects_invalid_or_ambiguous_accesses() -> None:
@@ -274,7 +290,7 @@ def test_occurrence_identity_ignores_positions_and_uses_deterministic_ordinals()
     ]
     assert [item.same_expression_ordinal for item in first.occurrences] == [0, 1]
     assert first.occurrences[0].occurrence_id == occurrence_id(
-        "baseline", "identity.py", "read", 'projection["run_state"]', 0
+        "baseline", "identity.py", "read", "projection['run_state']", 0
     )
 
 
@@ -297,3 +313,69 @@ def rejected(projection: GraphProjection) -> None:
         "unsupported_call",
         "projection_unpacking",
     ]
+
+
+def test_collect_source_fails_closed_for_unsupported_bindings_and_construction() -> None:
+    inventory = collect_source(
+        """
+def bindings(projection: GraphProjection) -> None:
+    first = second = projection
+    left, right = projection
+    projection, other = other, projection
+    built = GraphProjection("active")
+    built = GraphProjection(**{"run_state": "active"})
+    for projection in ():
+        pass
+    value = (projection := {})
+""",
+        relative_path="bindings.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_construction",
+        "unsupported_construction",
+        "unsupported_binding",
+        "unsupported_binding",
+    ]
+
+
+def test_collect_source_uses_class_qualified_scopes_and_isolates_aliases() -> None:
+    inventory = collect_source(
+        """
+class Worker:
+    def method(self, projection: GraphProjection) -> None:
+        alias = projection
+        alias["run_state"]
+        def nested() -> None:
+            alias["node_states"]
+        values = [alias["node_states"] for alias in ()]
+        callback = lambda: alias["ready_nodes"]
+""",
+        relative_path="scopes.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.qualified_function, item.old_field_name) for item in inventory.occurrences] == [
+        ("Worker.method", "run_state")
+    ]
+
+
+def test_normalized_expression_ignores_formatting_comments_quotes_and_lines() -> None:
+    first = collect_source(
+        'def read(projection: GraphProjection):\n    return projection["run_state"]\n',
+        relative_path="normal.py",
+        baseline_revision="baseline",
+    )
+    second = collect_source(
+        "def read(projection: GraphProjection):\n\n    return projection [ # comment\n        'run_state' ]\n",
+        relative_path="normal.py",
+        baseline_revision="baseline",
+    )
+
+    assert first.occurrences[0].normalized_expression == second.occurrences[0].normalized_expression
+    assert first.occurrences[0].occurrence_id == second.occurrences[0].occurrence_id
