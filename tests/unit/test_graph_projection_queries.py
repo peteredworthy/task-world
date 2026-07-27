@@ -28,6 +28,7 @@ from orchestrator.graph import (
     active_leases,
     active_requirement_version,
     accepted_graph_patch_ids,
+    accepted_output_records,
     accepted_output_records_for_node_port,
     accepted_no_successor_patch_id,
     accepted_no_successor_patch_ids,
@@ -52,6 +53,7 @@ from orchestrator.graph import (
     file_state_record,
     failed_verification_candidate_ids,
     failed_verification_result,
+    failed_verification_results,
     gate_decision,
     input_binding_for_port,
     input_bindings_for_node,
@@ -93,6 +95,8 @@ from orchestrator.graph import (
     planner_successor,
     passed_verification_candidate_ids,
     passed_verification_result,
+    passed_verification_results,
+    recovery_nodes,
     recovery_nodes_for_record,
     requirement_revision,
     resource_claims_for_node,
@@ -230,9 +234,26 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
     assert failed_verification_result(projection, "failed-1") is not None
     assert passed_verification_candidate_ids(projection) == ("candidate-2", "candidate-1")
     assert failed_verification_candidate_ids(projection) == ("candidate-3", "candidate-2")
+    assert tuple(record_id for record_id, _ in passed_verification_results(projection)) == (
+        "passed-1",
+    )
+    assert tuple(record_id for record_id, _ in failed_verification_results(projection)) == (
+        "failed-1",
+    )
     assert tuple(entry.node_id for entry in recovery_nodes_for_record(projection, "failed-1")) == (
         "recovery-2",
         "recovery-1",
+    )
+    assert tuple(record_id for record_id, _ in recovery_nodes(projection)) == ("failed-1",)
+    projection["accepted_output_records_by_node_port"]["node-2"] = {
+        "out": [{"record_id": "record-2", "payload": {"nested": ["original"]}}]
+    }
+    projection["accepted_output_records_by_node_port"]["node-1"] = {
+        "out": [{"record_id": "record-1", "payload": {"nested": ["original"]}}]
+    }
+    assert tuple((node_id, port) for node_id, port, _ in accepted_output_records(projection)) == (
+        ("node-1", "out"),
+        ("node-2", "out"),
     )
     assert tuple(node_id for node_id, _ in check_results(projection)) == ("check-2", "check-1")
     assert tuple(region_id for region_id, _ in invalid_test_blocks(projection)) == (

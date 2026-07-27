@@ -267,6 +267,17 @@ def accepted_output_records_for_node_port(
     )
 
 
+def accepted_output_records(
+    projection: GraphProjection,
+) -> tuple[tuple[str, str, tuple[AcceptedOutputRecord, ...]], ...]:
+    """Return outputs by sorted node/port keys and stored record order."""
+    return tuple(
+        (node_id, port, accepted_output_records_for_node_port(projection, node_id, port))
+        for node_id, ports in sorted(projection["accepted_output_records_by_node_port"].items())
+        for port in sorted(ports)
+    )
+
+
 def planner_generation_budget(projection: GraphProjection) -> int:
     """Return the configured planner generation budget."""
     return projection["planner_generation_budget"]
@@ -462,6 +473,26 @@ def failed_verification_result(
     return result.model_copy(deep=True) if result is not None else None
 
 
+def passed_verification_results(
+    projection: GraphProjection,
+) -> tuple[tuple[str, VerificationResultProjection], ...]:
+    """Return passed verification results in projection insertion order."""
+    return tuple(
+        (key, value.model_copy(deep=True))
+        for key, value in projection["passed_verification_results_by_record_id"].items()
+    )
+
+
+def failed_verification_results(
+    projection: GraphProjection,
+) -> tuple[tuple[str, VerificationResultProjection], ...]:
+    """Return failed verification results in projection insertion order."""
+    return tuple(
+        (key, value.model_copy(deep=True))
+        for key, value in projection["failed_verification_results_by_record_id"].items()
+    )
+
+
 def passed_verification_candidate_ids(projection: GraphProjection) -> tuple[str, ...]:
     """Return passed verification candidate identifiers in projection order."""
     return tuple(projection["passed_verification_candidate_ids"])
@@ -479,6 +510,16 @@ def recovery_nodes_for_record(
     return tuple(
         entry.model_copy(deep=True)
         for entry in projection["recovery_nodes_by_record_id"].get(record_id, ())
+    )
+
+
+def recovery_nodes(
+    projection: GraphProjection,
+) -> tuple[tuple[str, tuple[RecoveryNodeIndexEntry, ...]], ...]:
+    """Return the complete recovery-node index in projection insertion order."""
+    return tuple(
+        (record_id, recovery_nodes_for_record(projection, record_id))
+        for record_id in projection["recovery_nodes_by_record_id"]
     )
 
 

@@ -4217,6 +4217,21 @@ dispositions:
   diagnostic_code: null
   reason: The exact approved query implementation owns this physical storage read.
 - site_key:
+  - 9c5eefe8
+  - c9348447
+  - e9013e24
+  - 2714882e
+  - 7f72a01c
+  - d2ac627c
+  - c6e2f25e
+  - 925c8421
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: recovery_nodes
+  normalized_source_pattern: projection['recovery_nodes_by_record_id']
+  diagnostic_code: null
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
   - 32cacfb3
   - 6a836903
   - 37597a2f
@@ -4743,6 +4758,21 @@ dispositions:
   diagnostic_code: unsupported_call
   reason: The exact approved query implementation owns this physical storage read.
 - site_key:
+  - 9e79d49b
+  - ae47ede4
+  - 9e6a0bfc
+  - f5e092f2
+  - 1ee40b15
+  - 95a74f2b
+  - 1d0c8454
+  - f96c9682
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: accepted_output_records
+  normalized_source_pattern: for node_id, ports in sorted(projection["accepted_output_records_by_node_port"].items())
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
   - aa9c71aa
   - c22fdcb4
   - 0f61c0d9
@@ -5146,6 +5176,36 @@ dispositions:
   relative_path: src/orchestrator/graph/projection_queries.py
   qualified_function: failed_verification_result
   normalized_source_pattern: result = projection["failed_verification_results_by_record_id"].get(record_id)
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - a83c3b54
+  - 62a7256f
+  - c2ae2b59
+  - 9c95a403
+  - cdb0dddd
+  - 286fa146
+  - 39cbcb36
+  - e1f5255d
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: passed_verification_results
+  normalized_source_pattern: for key, value in projection["passed_verification_results_by_record_id"].items()
+  diagnostic_code: unsupported_call
+  reason: The exact approved query implementation owns this physical storage read.
+- site_key:
+  - 4f5acb10
+  - d89de499
+  - 89201d1d
+  - 827c29b9
+  - cc26266a
+  - 4dccaaaa
+  - f2d8fe14
+  - 6e0e6222
+  disposition: approved_core
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: failed_verification_results
+  normalized_source_pattern: for key, value in projection["failed_verification_results_by_record_id"].items()
   diagnostic_code: unsupported_call
   reason: The exact approved query implementation owns this physical storage read.
 - site_key:
