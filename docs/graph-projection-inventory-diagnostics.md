@@ -8,11 +8,15 @@ The command intentionally exits nonzero while unresolved flows remain.
 ## Complete sorted diagnostics
 
 ```text
-Unresolved GraphProjection flows: 395
-unsupported_binding: 65
-unsupported_call: 280
+Unresolved GraphProjection flows: 399
+unsupported_binding: 66
+unsupported_call: 283
 unsupported_comparison: 50
 
+scripts/generate_graph_projection_goldens.py:95:8: _replay_views: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding
+scripts/generate_graph_projection_goldens.py:95:22: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+scripts/generate_graph_projection_goldens.py:96:17: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
+scripts/generate_graph_projection_goldens.py:117:34: _replay_views: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/api/presenters/evidence_digest.py:143:18: _representative_nodes: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/api/presenters/evidence_digest.py:147:20: _representative_nodes: unsupported_call: projection escapes through an unrecognized callable; replace the dynamic call with a typed projection query
 src/orchestrator/api/presenters/evidence_digest.py:212:8: build_run_evidence_digest_response: unsupported_binding: control-flow projection binding is unresolved; retain the GraphProjection annotation through this binding

@@ -149,3 +149,4 @@
 | §27.2 | reader output bound to incompatible snapshot rejected | invariants.yaml::invariant_snapshot_mismatch_not_consumed |
 | §27.2 | human approval gates block successors | invariants.yaml::invariant_human_gate_blocks_successors |
 | §27.2 | file-state rejects undeclared residue | invariants.yaml::invariant_file_state_rejects_residue |
+| Migration oracle | replay, checkpoint, and public presenter behavior | tests/fixtures/graph_projection_migration/*.json |

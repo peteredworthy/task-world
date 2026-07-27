@@ -1,0 +1,4131 @@
+{
+  "invariant_file_state_rejects_residue": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "worker-invariant-10",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "running",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 3,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 3,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 3,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 3,
+      "leases": {
+        "active": [],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [],
+      "event_count": 3,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "worker-invariant-10",
+          "role": null,
+          "state": "running"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_human_gate_approval_releases_successor": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "successor-invariant-9b",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "leased",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 11,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 11,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 11,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 11,
+      "leases": {
+        "active": [
+          {
+            "execution_id": "exec-11",
+            "expires_at": "2026-01-01T00:05:00+00:00",
+            "generation": 1,
+            "lease_id": "lease-10",
+            "node_id": "successor-invariant-9b",
+            "state": "active"
+          }
+        ],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [
+        {
+          "accepted_record_selector": null,
+          "binding": {
+            "binding_policy": "bind_first",
+            "bound_at_position": 6,
+            "edge_id": "edge-invariant-9b",
+            "record_bound_positions": {
+              "approval-invariant-9b": 6
+            },
+            "record_ids": [
+              "approval-invariant-9b"
+            ],
+            "to_node_id": "successor-invariant-9b",
+            "to_port": "approval",
+            "trigger": null
+          },
+          "bound_records": [],
+          "dependency_type": "input_binding",
+          "edge_id": "edge-invariant-9b",
+          "from_node_id": "gate-invariant-9b",
+          "from_node_kind": null,
+          "from_node_role": null,
+          "from_port": "decision",
+          "metadata": {},
+          "record_types": [
+            "decision_record"
+          ],
+          "required": true,
+          "source_port_contract": {
+            "cardinality": "one",
+            "record_types": [
+              "decision_record"
+            ],
+            "required": true,
+            "schemas": [
+              "DecisionRecord"
+            ]
+          },
+          "target_port_contract": {
+            "cardinality": "one",
+            "record_types": [
+              "decision_record"
+            ],
+            "required": false,
+            "schemas": [
+              "ApprovalDecision"
+            ]
+          },
+          "to_node_id": "successor-invariant-9b",
+          "to_port": "approval"
+        }
+      ],
+      "event_count": 11,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "none",
+              "required_outputs": []
+            },
+            "handler_type": "human",
+            "input_ports": {
+              "decision_request": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_request"
+                ],
+                "required": true,
+                "schemas": [
+                  "DecisionRequest"
+                ]
+              }
+            },
+            "node_type": "human_gate",
+            "output_ports": {
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": true,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "decision": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": true,
+                "schemas": [
+                  "DecisionRecord"
+                ]
+              },
+              "decision_record": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": true,
+                "schemas": [
+                  "DecisionRecord"
+                ]
+              }
+            },
+            "roles": null
+          },
+          "kind": "gate",
+          "node_id": "gate-invariant-9b",
+          "role": null,
+          "state": "completed"
+        },
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "successor-invariant-9b",
+          "role": null,
+          "state": "leased"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_human_gate_blocks_successors": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "successor-invariant-9",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "blocked",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 7,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 7,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 7,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 7,
+      "leases": {
+        "active": [],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [
+          {
+            "node_id": "successor-invariant-9",
+            "reason": "gate_not_approved:gate-invariant-9"
+          }
+        ],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [
+        {
+          "accepted_record_selector": null,
+          "binding": {
+            "binding_policy": "bind_first",
+            "bound_at_position": 5,
+            "edge_id": "edge-invariant-9",
+            "record_bound_positions": {
+              "approval-invariant-9": 5
+            },
+            "record_ids": [
+              "approval-invariant-9"
+            ],
+            "to_node_id": "successor-invariant-9",
+            "to_port": "approval",
+            "trigger": null
+          },
+          "bound_records": [],
+          "dependency_type": "input_binding",
+          "edge_id": "edge-invariant-9",
+          "from_node_id": "gate-invariant-9",
+          "from_node_kind": null,
+          "from_node_role": null,
+          "from_port": "decision",
+          "metadata": {},
+          "record_types": [
+            "decision_record"
+          ],
+          "required": true,
+          "source_port_contract": {
+            "cardinality": "one",
+            "record_types": [
+              "decision_record"
+            ],
+            "required": true,
+            "schemas": [
+              "DecisionRecord"
+            ]
+          },
+          "target_port_contract": {
+            "cardinality": "one",
+            "record_types": [
+              "decision_record"
+            ],
+            "required": false,
+            "schemas": [
+              "ApprovalDecision"
+            ]
+          },
+          "to_node_id": "successor-invariant-9",
+          "to_port": "approval"
+        }
+      ],
+      "event_count": 7,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "none",
+              "required_outputs": []
+            },
+            "handler_type": "human",
+            "input_ports": {
+              "decision_request": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_request"
+                ],
+                "required": true,
+                "schemas": [
+                  "DecisionRequest"
+                ]
+              }
+            },
+            "node_type": "human_gate",
+            "output_ports": {
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": true,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "decision": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": true,
+                "schemas": [
+                  "DecisionRecord"
+                ]
+              },
+              "decision_record": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": true,
+                "schemas": [
+                  "DecisionRecord"
+                ]
+              }
+            },
+            "roles": null
+          },
+          "kind": "gate",
+          "node_id": "gate-invariant-9",
+          "role": null,
+          "state": "completed"
+        },
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "successor-invariant-9",
+          "role": null,
+          "state": "blocked"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_no_callback_without_valid_lease": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "worker-invariant-3",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "running",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 3,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 3,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 3,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 3,
+      "leases": {
+        "active": [],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [],
+      "event_count": 3,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "worker-invariant-3",
+          "role": null,
+          "state": "running"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_no_conflicting_write_leases": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "writer-active",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "leased",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        },
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "writer-conflict",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "ready",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 6,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 6,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 6,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 6,
+      "leases": {
+        "active": [
+          {
+            "execution_id": null,
+            "expires_at": null,
+            "generation": null,
+            "lease_id": "lease-writer-active",
+            "node_id": "writer-active",
+            "state": "active"
+          }
+        ],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [
+          "writer-conflict"
+        ],
+        "waiting_gates": [],
+        "waiting_resources": [
+          {
+            "node_id": "writer-conflict",
+            "reason": "resource_conflict"
+          }
+        ]
+      }
+    },
+    "topology": {
+      "edges": [],
+      "event_count": 6,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "writer-active",
+          "role": null,
+          "state": "leased"
+        },
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "writer-conflict",
+          "role": null,
+          "state": "ready"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_planner_authority_scoped": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "worker-1",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "planned",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 3,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [
+        {
+          "accepted_event_id": null,
+          "accepted_position": null,
+          "base_graph_position": null,
+          "created_edge_ids": [],
+          "created_node_ids": [],
+          "current_graph_position": 3,
+          "diagnostics": {
+            "actor_role": "planner",
+            "budget": null,
+            "count": null,
+            "diagnostics": null,
+            "rejection_reason": null
+          },
+          "patch_id": "patch-planner-scope",
+          "proposed_by_node_id": "planner-invariant-6",
+          "read_set_diff": null,
+          "rejected_event_id": "event-3",
+          "rejected_position": 3,
+          "rejection_reason": "actor role planner cannot perform create_gate",
+          "status": "rejected"
+        }
+      ],
+      "current_graph_position": 3,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 3,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 3,
+      "leases": {
+        "active": [],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [],
+      "event_count": 3,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "worker-1",
+          "role": null,
+          "state": "planned"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_replay_is_deterministic": {
+    "final_blockers": {
+      "blockers": [],
+      "event_count": 3,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 3,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 3,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 3,
+      "leases": {
+        "active": [],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [],
+      "event_count": 3,
+      "nodes": [],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_retired_nodes_cannot_run": {
+    "final_blockers": {
+      "blockers": [],
+      "event_count": 4,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 4,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 4,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 4,
+      "leases": {
+        "active": [
+          {
+            "execution_id": null,
+            "expires_at": null,
+            "generation": 1,
+            "lease_id": "lease-retired-5",
+            "node_id": "retired-invariant-5",
+            "state": "active"
+          }
+        ],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [],
+      "event_count": 4,
+      "nodes": [
+        {
+          "contract": null,
+          "kind": null,
+          "node_id": "retired-invariant-5",
+          "role": null,
+          "state": "retired"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_snapshot_mismatch_not_consumed": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "reader-invariant-8",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "running",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 4,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 4,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 4,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 4,
+      "leases": {
+        "active": [
+          {
+            "execution_id": "exec-8",
+            "expires_at": null,
+            "generation": 1,
+            "lease_id": "lease-reader-8",
+            "node_id": "reader-invariant-8",
+            "state": "active"
+          }
+        ],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [],
+      "event_count": 4,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "reader-invariant-8",
+          "role": null,
+          "state": "running"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_successor_releases_after_required_input": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "successor-invariant-4b",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "leased",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 10,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 10,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 10,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 10,
+      "leases": {
+        "active": [
+          {
+            "execution_id": "exec-10",
+            "expires_at": "2026-01-01T00:05:00+00:00",
+            "generation": 1,
+            "lease_id": "lease-9",
+            "node_id": "successor-invariant-4b",
+            "state": "active"
+          }
+        ],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [
+        {
+          "accepted_record_selector": null,
+          "binding": {
+            "binding_policy": "bind_first",
+            "bound_at_position": 5,
+            "edge_id": "edge-invariant-4b",
+            "record_bound_positions": {
+              "candidate-invariant-4b": 5
+            },
+            "record_ids": [
+              "candidate-invariant-4b"
+            ],
+            "to_node_id": "successor-invariant-4b",
+            "to_port": "candidate",
+            "trigger": null
+          },
+          "bound_records": [],
+          "dependency_type": "input_binding",
+          "edge_id": "edge-invariant-4b",
+          "from_node_id": "producer-invariant-4b",
+          "from_node_kind": null,
+          "from_node_role": null,
+          "from_port": "candidate",
+          "metadata": {},
+          "record_types": [
+            "candidate"
+          ],
+          "required": true,
+          "source_port_contract": {
+            "cardinality": "one",
+            "record_types": [
+              "candidate"
+            ],
+            "required": true,
+            "schemas": [
+              "ImplementationCandidate"
+            ]
+          },
+          "target_port_contract": {
+            "cardinality": "one",
+            "record_types": [
+              "candidate"
+            ],
+            "required": false,
+            "schemas": [
+              "ImplementationCandidate"
+            ]
+          },
+          "to_node_id": "successor-invariant-4b",
+          "to_port": "candidate"
+        }
+      ],
+      "event_count": 10,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "producer-invariant-4b",
+          "role": null,
+          "state": "completed"
+        },
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "successor-invariant-4b",
+          "role": null,
+          "state": "leased"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_successor_requires_inputs": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "successor-invariant-4",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "blocked",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        }
+      ],
+      "event_count": 6,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [],
+      "current_graph_position": 6,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 6,
+      "regions": [],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 6,
+      "leases": {
+        "active": [],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [
+          {
+            "node_id": "successor-invariant-4",
+            "reason": "missing_required_input:candidate"
+          }
+        ],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [
+        {
+          "accepted_record_selector": null,
+          "binding": null,
+          "bound_records": [],
+          "dependency_type": "input_binding",
+          "edge_id": "edge-invariant-4",
+          "from_node_id": "producer-invariant-4",
+          "from_node_kind": null,
+          "from_node_role": null,
+          "from_port": "candidate",
+          "metadata": {},
+          "record_types": [
+            "candidate"
+          ],
+          "required": true,
+          "source_port_contract": {
+            "cardinality": "one",
+            "record_types": [
+              "candidate"
+            ],
+            "required": true,
+            "schemas": [
+              "ImplementationCandidate"
+            ]
+          },
+          "target_port_contract": {
+            "cardinality": "one",
+            "record_types": [
+              "candidate"
+            ],
+            "required": false,
+            "schemas": [
+              "ImplementationCandidate"
+            ]
+          },
+          "to_node_id": "successor-invariant-4",
+          "to_port": "candidate"
+        }
+      ],
+      "event_count": 6,
+      "nodes": [
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "producer-invariant-4",
+          "role": null,
+          "state": "completed"
+        },
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "task_acceptance",
+              "required_outputs": [
+                "candidate",
+                "file_state"
+              ]
+            },
+            "handler_type": "agent",
+            "input_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "approval": {
+                "cardinality": "one",
+                "record_types": [
+                  "decision_record"
+                ],
+                "required": false,
+                "schemas": [
+                  "ApprovalDecision"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "authority": {
+                "cardinality": "one",
+                "record_types": [
+                  "authority_decision"
+                ],
+                "required": false,
+                "schemas": [
+                  "AuthorityDecision"
+                ]
+              },
+              "base_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": false,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "check_result": {
+                "cardinality": "one",
+                "record_types": [
+                  "check_result"
+                ],
+                "required": false,
+                "schemas": [
+                  "CheckResult"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": true,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "fan_out_inputs": {
+                "cardinality": "one",
+                "record_types": [
+                  "fan_out_inputs"
+                ],
+                "required": true,
+                "schemas": [
+                  "FanOutJoinedInputs"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": false,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "prior_step_completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "root_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": false,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "routine_snapshot": {
+                "cardinality": "one",
+                "record_types": [
+                  "routine_snapshot"
+                ],
+                "required": true,
+                "schemas": [
+                  "RoutineSnapshot"
+                ]
+              },
+              "verification_report": {
+                "cardinality": "one",
+                "record_types": [
+                  "verification_report"
+                ],
+                "required": false,
+                "schemas": [
+                  "VerificationReport"
+                ]
+              }
+            },
+            "node_type": "worker",
+            "output_ports": {
+              "analysis_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              },
+              "artifact_reference": {
+                "cardinality": "one",
+                "record_types": [
+                  "artifact_reference"
+                ],
+                "required": false,
+                "schemas": []
+              },
+              "candidate": {
+                "cardinality": "one",
+                "record_types": [
+                  "candidate"
+                ],
+                "required": true,
+                "schemas": [
+                  "ImplementationCandidate"
+                ]
+              },
+              "classified_gap": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "completion": {
+                "cardinality": "one",
+                "record_types": [
+                  "completion"
+                ],
+                "required": false,
+                "schemas": [
+                  "NodeCompletion"
+                ]
+              },
+              "file_state": {
+                "cardinality": "one",
+                "record_types": [
+                  "file_state"
+                ],
+                "required": true,
+                "schemas": [
+                  "FileStateRecord"
+                ]
+              },
+              "gap_classification": {
+                "cardinality": "one",
+                "record_types": [
+                  "classified_gap"
+                ],
+                "required": false,
+                "schemas": [
+                  "GapClassification"
+                ]
+              },
+              "region_summary": {
+                "cardinality": "one",
+                "record_types": [
+                  "analysis_summary"
+                ],
+                "required": false,
+                "schemas": [
+                  "AnalysisSummary"
+                ]
+              }
+            },
+            "roles": [
+              "builder",
+              "discovery",
+              "fixer",
+              "implementer",
+              "reviewer",
+              "summarizer"
+            ]
+          },
+          "kind": "worker",
+          "node_id": "successor-invariant-4",
+          "role": null,
+          "state": "blocked"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  },
+  "invariant_verification_failure_preserves_builder": {
+    "final_blockers": {
+      "blockers": [
+        {
+          "edge_id": null,
+          "kind": "pending_node",
+          "node_id": "verifier-invariant-7",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "running",
+          "support_ids": null,
+          "task_region_id": null,
+          "to_port": null
+        },
+        {
+          "edge_id": null,
+          "kind": "task_not_accepted",
+          "node_id": null,
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "task region has not reached accepted",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "needs_revision",
+          "support_ids": null,
+          "task_region_id": "task-invariant-7",
+          "to_port": null
+        }
+      ],
+      "event_count": 6,
+      "run_id": "golden-run"
+    },
+    "patches": {
+      "attempts": [
+        {
+          "accepted_event_id": null,
+          "accepted_position": null,
+          "base_graph_position": null,
+          "created_edge_ids": [],
+          "created_node_ids": [],
+          "current_graph_position": 6,
+          "diagnostics": {
+            "actor_role": "planner",
+            "budget": null,
+            "count": null,
+            "diagnostics": null,
+            "rejection_reason": null
+          },
+          "patch_id": "patch-retire-builder-7",
+          "proposed_by_node_id": "planner-invariant-7",
+          "read_set_diff": null,
+          "rejected_event_id": "event-6",
+          "rejected_position": 6,
+          "rejection_reason": "cannot retire active node: verifier-invariant-7",
+          "status": "rejected"
+        }
+      ],
+      "current_graph_position": 6,
+      "run_id": "golden-run"
+    },
+    "regions": {
+      "event_count": 6,
+      "regions": [
+        {
+          "blockers": [
+            {
+              "edge_id": null,
+              "kind": "task_not_accepted",
+              "node_id": null,
+              "outbox_attempts": null,
+              "outbox_event_id": null,
+              "outbox_id": null,
+              "outbox_kind": null,
+              "outbox_last_error": null,
+              "proposal_id": null,
+              "reason": "task region has not reached accepted",
+              "requirement_id": null,
+              "revision_id": null,
+              "run_id": null,
+              "state": "needs_revision",
+              "support_ids": null,
+              "task_region_id": "task-invariant-7",
+              "to_port": null
+            }
+          ],
+          "state": "needs_revision",
+          "task_region_id": "task-invariant-7"
+        }
+      ],
+      "run_id": "golden-run"
+    },
+    "scheduler": {
+      "event_count": 6,
+      "leases": {
+        "active": [],
+        "suspended": []
+      },
+      "run_id": "golden-run",
+      "scheduler": {
+        "blocked": [],
+        "ready": [],
+        "waiting_gates": [],
+        "waiting_resources": []
+      }
+    },
+    "topology": {
+      "edges": [],
+      "event_count": 6,
+      "nodes": [
+        {
+          "contract": null,
+          "kind": null,
+          "node_id": "builder-invariant-7",
+          "role": null,
+          "state": "completed"
+        },
+        {
+          "contract": null,
+          "kind": null,
+          "node_id": "verifier-invariant-7",
+          "role": null,
+          "state": "running"
+        }
+      ],
+      "run_id": "golden-run"
+    }
+  }
+}
