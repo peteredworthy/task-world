@@ -116,3 +116,34 @@ make test
   across whitespace, comments, quote style, and line shifts.
 - Added `not in` classification and strengthened fixture assertions for exact occurrence count,
   scope, ordering disposition, and fail-closed one-to-one diagnostics.
+
+## Remaining Review-Fix Evidence
+
+### RED
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+1 failed, 18 passed
+```
+
+The new binding/call-shape fixture initially exposed silent augmented/destructured binding and
+starred-call handling, plus a subscript read emitted beneath an invalid append call.
+
+### GREEN
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+19 passed in 2.92s
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run pyright scripts/graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+make test
+4871 passed, 3 skipped, 3 warnings in 86.49s
+```
+
+The collector now rejects typed alias loss, augmented and destructured-loop rebinding, with and
+exception targets, starred projection call arguments, and invalid supported-method call shapes.

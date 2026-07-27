@@ -379,3 +379,36 @@ def test_normalized_expression_ignores_formatting_comments_quotes_and_lines() ->
 
     assert first.occurrences[0].normalized_expression == second.occurrences[0].normalized_expression
     assert first.occurrences[0].occurrence_id == second.occurrences[0].occurrence_id
+
+
+def test_collect_source_rejects_remaining_binding_and_call_shapes() -> None:
+    inventory = collect_source(
+        """
+def invalid(projection: GraphProjection) -> None:
+    consume(*projection)
+    consume(**projection)
+    projection.get("run_state", None)
+    projection.keys(extra=True)
+    projection["ready_nodes"].append("node", "other")
+    typed: object = projection
+    typed += projection
+    for left, projection in ():
+        pass
+    with context() as projection:
+        pass
+    try:
+        pass
+    except ValueError as projection:
+        pass
+""",
+        relative_path="invalid_shapes.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert len(inventory.diagnostics) == 10
+    assert {item.code for item in inventory.diagnostics} >= {
+        "unsupported_binding",
+        "projection_unpacking",
+        "unsupported_call",
+    }

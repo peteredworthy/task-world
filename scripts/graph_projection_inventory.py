@@ -304,7 +304,21 @@ class _Collector(cst.CSTVisitor):
                 id(self.get_metadata(ScopeProvider, node.target)), set()
             ).add(node.target.value)
         else:
+            if node.value is not None and self._tracked(node.value):
+                self._diagnostic(
+                    DiagnosticCode.UNSUPPORTED_BINDING,
+                    "annotated assignment loses projection type",
+                    node,
+                )
             scope.discard(node.target.value)
+
+    def visit_AugAssign(self, node: cst.AugAssign) -> None:
+        if (isinstance(node.target, cst.Name) and self._known_alias(node.target)) or self._tracked(
+            node.value
+        ):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_BINDING, "augmented projection binding", node
+            )
 
     def visit_Assign(self, node: cst.Assign) -> None:
         if len(node.targets) != 1 or not isinstance(node.targets[0].target, cst.Name):
@@ -333,10 +347,10 @@ class _Collector(cst.CSTVisitor):
             scope.discard(target)
 
     def visit_For(self, node: cst.For) -> None:
-        if isinstance(node.target, cst.Name):
-            scope = self.aliases.get(id(self.get_metadata(ScopeProvider, node.target)))
-            if scope is not None and self._known_alias(node.target):
-                scope.discard(node.target.value)
+        for target in self._target_names(node.target):
+            scope = self.aliases.get(id(self.get_metadata(ScopeProvider, target)))
+            if scope is not None and self._known_alias(target):
+                scope.discard(target.value)
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING, "loop rebinds projection alias", node
                 )
@@ -354,7 +368,31 @@ class _Collector(cst.CSTVisitor):
                     node,
                 )
 
+    def visit_With(self, node: cst.With) -> None:
+        for item in node.items:
+            if item.asname is not None and self._known_alias(item.asname.name):
+                self._diagnostic(
+                    DiagnosticCode.UNSUPPORTED_BINDING, "with target rebinds projection alias", node
+                )
+
+    def visit_ExceptHandler(self, node: cst.ExceptHandler) -> None:
+        if node.name is not None and self._known_alias(node.name.name):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_BINDING,
+                "exception target rebinds projection alias",
+                node,
+            )
+
     def visit_Call(self, node: cst.Call) -> None:
+        if any(
+            argument.star in {"*", "**"} and self._tracked(argument.value) for argument in node.args
+        ):
+            self._diagnostic(
+                DiagnosticCode.PROJECTION_UNPACKING,
+                "unpacking GraphProjection is unsupported",
+                node,
+            )
+            return
         if _name(node.func) == "getattr" and node.args and self._tracked(node.args[0].value):
             self._diagnostic(
                 DiagnosticCode.REFLECTION, "getattr on GraphProjection is unsupported", node
@@ -376,6 +414,14 @@ class _Collector(cst.CSTVisitor):
                 "setdefault",
                 "pop",
             }:
+                if not self._valid_method_shape(method, node.args):
+                    self._diagnostic(
+                        DiagnosticCode.UNSUPPORTED_CALL,
+                        f"invalid projection.{method} call shape",
+                        node,
+                    )
+                    self.handled.add(id(receiver))
+                    return
                 field = None
                 if method in {"get", "setdefault", "pop"}:
                     if not node.args:
@@ -408,6 +454,14 @@ class _Collector(cst.CSTVisitor):
                 )
                 return
             if isinstance(receiver, cst.Subscript) and method in {"append", "extend"}:
+                if not self._valid_method_shape(method, node.args):
+                    self._diagnostic(
+                        DiagnosticCode.UNSUPPORTED_CALL,
+                        f"invalid projection.{method} call shape",
+                        node,
+                    )
+                    self.handled.add(id(receiver))
+                    return
                 field = self._field_from_subscript(receiver)
                 if field is not None:
                     self._record(AccessKind.APPEND_EXTEND, field, node)
@@ -445,6 +499,22 @@ class _Collector(cst.CSTVisitor):
         for argument in node.args:
             if self._tracked(argument.value):
                 self._record(AccessKind.UNTYPED_ESCAPE, None, node)
+
+    @staticmethod
+    def _valid_method_shape(method: str, args: tuple[cst.Arg, ...]) -> bool:
+        if any(argument.star or argument.keyword is not None for argument in args):
+            return False
+        arities = {
+            "keys": {0},
+            "values": {0},
+            "items": {0},
+            "get": {1},
+            "pop": {1},
+            "setdefault": {1, 2},
+            "append": {1},
+            "extend": {1},
+        }
+        return len(args) in arities[method]
 
     def visit_StarredElement(self, node: cst.StarredElement) -> None:
         if self._tracked(node.value):
