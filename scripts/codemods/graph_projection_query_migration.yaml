@@ -1,0 +1,6671 @@
+baseline_revision: 49e3f3bb03502530e52abb7304c5a31ecc5d4340
+dispositions:
+- site_key:
+  - 69eda20c
+  - 20a194de
+  - 2b081b75
+  - bb516932
+  - 809093f2
+  - 5a190c57
+  - 1b701202
+  - d177820e
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_lifecycle_command
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - 73b542f6
+  - f677a8a2
+  - 002bac65
+  - 559d8516
+  - af0b52c9
+  - 3c99df6c
+  - f2aa06bb
+  - 440077b4
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_patch_command
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - 97fef48c
+  - a6357555
+  - 289d757d
+  - 0b9cdc71
+  - '79582960'
+  - 1a8ec3b1
+  - c4763406
+  - '69810377'
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_reconcile
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - cba2a08c
+  - bec05b3a
+  - 910e1bcf
+  - 4bf9ae49
+  - 4946d359
+  - 34c389d0
+  - 1bd6e01b
+  - 9475410d
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_decision
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - c0241056
+  - e5edf556
+  - 95ea3182
+  - 660fe1ad
+  - bb719da1
+  - eda343a2
+  - 47079de2
+  - 086c81c9
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_schedule_tick
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - 01a84019
+  - e5bec29a
+  - 96975a03
+  - 0dca487b
+  - 6b88df42
+  - cbc2f444
+  - 963740ea
+  - 04b1af7c
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_schedule_tick
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - ae4fa4f0
+  - a851fb0e
+  - 093d8092
+  - f50ec820
+  - 9898a731
+  - 6aa3fa66
+  - 50965a25
+  - 85948ab0
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_passed_completion_decision
+  normalized_source_pattern: projection['completion_decision_passed']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - 7123e450
+  - c2247dab
+  - 6a6df2b3
+  - 35def3cd
+  - 9733b7e0
+  - da549760
+  - c8dd097d
+  - 4c99c877
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: validate_callback
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - 5d566a0d
+  - 4bf025c3
+  - 6088b472
+  - b6b6977d
+  - a219843d
+  - ff004d30
+  - '55861251'
+  - dd1cec2c
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: completion_decision_passed
+  normalized_source_pattern: projection['completion_decision_passed']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - 32cacfb3
+  - 6a836903
+  - 37597a2f
+  - 16c5e7ea
+  - e169dfd3
+  - '65926717'
+  - ac185392
+  - d49ee28c
+  disposition: query_transform
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: run_state
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - 02358157
+  - ab0a6687
+  - 7c71cd60
+  - 02d76648
+  - ecddd24c
+  - 1e7aca11
+  - 1a540fda
+  - 3abd6bc3
+  disposition: query_transform
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - 3efb8aca
+  - e09fe2c9
+  - 43f1a2bd
+  - 2c1fb64d
+  - 36b84c57
+  - 87ecd7a6
+  - 699ac7b5
+  - f324e73d
+  disposition: query_transform
+  relative_path: tests/unit/test_callbacks.py
+  qualified_function: _projection
+  normalized_source_pattern: projection['run_state']
+  diagnostic_code: null
+  reason: Use the permanent lifecycle query API during the consumer codemod.
+- site_key:
+  - c264fd21
+  - 36ea576a
+  - 431f5c70
+  - a25e5bda
+  - 0f89d98e
+  - d652fad8
+  - 88d80bec
+  - eef663fc
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: _handle_lifecycle
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 74a501b2
+  - 004b662f
+  - 7343fc18
+  - fb326a17
+  - 54545eed
+  - 00562768
+  - 942785d6
+  - 4524ce66
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: handle_accept_run
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - caf571fe
+  - 275d3b02
+  - 9938132a
+  - 05d14ee1
+  - 96a6d598
+  - afe158ba
+  - df39394a
+  - 2ae51500
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: handle_start
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - aa557c05
+  - f6d9cfee
+  - 842567ac
+  - 0b87365e
+  - 338aacd2
+  - bf413f2c
+  - 4dec4636
+  - 5daded46
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: handle_pause
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - cd209c5b
+  - 5c14f9b9
+  - 5d82551f
+  - 070b90c8
+  - 75b26c5d
+  - 4e24a9ef
+  - 95252f5e
+  - fa745abb
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: handle_resume
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - f20df6b8
+  - a5ffe52e
+  - 61008f83
+  - 7f6bd0d0
+  - aa70d107
+  - 38bf2092
+  - 737ca0b6
+  - 72b3f02c
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: handle_cancel
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 37aa76fd
+  - f00afbf2
+  - e63dd704
+  - f1f033e0
+  - 54d279f9
+  - 4b1d77a8
+  - 20635fa0
+  - 4e184072
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: handle_complete
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - 1bf1858f
+  - 949382fe
+  - f9475c05
+  - d8f97501
+  - 9305b469
+  - 958e10d0
+  - f870840d
+  - '91030895'
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: handle_fail
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+- site_key:
+  - b0616872
+  - 92389ae1
+  - 80a36b22
+  - 2601bc87
+  - 98dcf3cb
+  - 746ef4db
+  - 53f0ef58
+  - dcb06898
+  disposition: projection_neutral
+  relative_path: src/orchestrator/graph/commands/lifecycle.py
+  qualified_function: handle_record_heartbeat
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  reason: The exact lifecycle command annotation is not a physical projection storage
+    read.
+unclassified_sites:
+- site_key:
+  - 70d01b49
+  - e0807445
+  - 14198b5a
+  - 65beb28f
+  - ed66ee8d
+  - adb6c0bd
+  - b4368cae
+  - 66c76f53
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_cleanup_applied
+  normalized_source_pattern: projection['file_state_records'][record_id]
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - 44c480ca
+  - 3dc77891
+  - c4758e60
+  - 9b48e23a
+  - 2666cc8e
+  - 5e114ae2
+  - a745cf8c
+  - 6a652750
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_seed_compiled_events
+  normalized_source_pattern: projection['node_states']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - b3bfba2c
+  - e058f88a
+  - dbe26e9c
+  - 5dd1a2b1
+  - 2cecdb87
+  - a7d875c7
+  - d58546a5
+  - 278a46dd
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_seed_compiled_events
+  normalized_source_pattern: projection['edges']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - 436458c6
+  - a51a6133
+  - b74e6295
+  - 539cecc5
+  - f9024e07
+  - ace665bf
+  - b2faf130
+  - bf122b06
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_seed_compiled_events
+  normalized_source_pattern: projection['input_bindings']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - 615f4674
+  - 4c941fb2
+  - 8bd48926
+  - 092e783c
+  - 1f8d734a
+  - d49d1e19
+  - 9aa0a847
+  - 836ac1bd
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_failed_verification_results
+  normalized_source_pattern: projection['passed_verification_candidate_ids']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - eeba146d
+  - b28b527a
+  - 8857956a
+  - 872a8055
+  - fc5c495d
+  - f821d93e
+  - 3f9dba14
+  - 6812f694
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_passed_verification_results
+  normalized_source_pattern: projection['failed_verification_candidate_ids']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - 8cd06082
+  - 3967227c
+  - '52704791'
+  - 78960b47
+  - 31fabcc0
+  - 4da15a5a
+  - fdfc6f74
+  - 1b4a7d53
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_verification_recovery_events
+  normalized_source_pattern: projection['ready_nodes']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - 8e131de5
+  - 19af86df
+  - 9604e763
+  - 1f9704e9
+  - 5a5f98f4
+  - 030c1615
+  - a992bffb
+  - 152cbfd1
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _latest_routine_snapshot_record
+  normalized_source_pattern: projection.get('latest_routine_snapshot_record')
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - 9b58b02c
+  - 205b879b
+  - 1d88ade9
+  - 7272a77b
+  - 0272bc34
+  - e06ff78e
+  - 007f7e6b
+  - f020dfa7
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _no_successor_recovery_terminal_failure_events
+  normalized_source_pattern: projection['ready_nodes']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - c3ea223b
+  - be5198c0
+  - 0aafaf1f
+  - df15114f
+  - 3c19e8f8
+  - bc76f59a
+  - 7d0cbec6
+  - 14e115a5
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _passed_check_terminalization_events
+  normalized_source_pattern: projection['ready_nodes']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - 83d6f85b
+  - fd129c4b
+  - a859d305
+  - 2b21158d
+  - 88a3f0e1
+  - fbd1f116
+  - 39dcf2c6
+  - 0852e102
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _passed_verification_terminalization_events
+  normalized_source_pattern: projection['ready_nodes']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - 96990cf0
+  - b32d0788
+  - 5a224ab1
+  - '29779186'
+  - 5607e1a0
+  - a8165a81
+  - d4938a2a
+  - 35f2708c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _planner_budget_rejection
+  normalized_source_pattern: projection['planner_generation_budget']
+  diagnostic_code: null
+  domain: verification_recovery
+- site_key:
+  - eb5c53b6
+  - 23a6d9cc
+  - 7c40dc01
+  - 81934b67
+  - 63230c7d
+  - ef48d8d4
+  - 24450ae4
+  - 6320eab8
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: test_dynamic_graph_feature_compiles_to_single_initial_planner_head
+  normalized_source_pattern: projection['input_bindings'][planner_ids[0]]['routine_snapshot']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - baac9e75
+  - 4e8877bf
+  - c423d254
+  - 15b0ab25
+  - 871551d0
+  - 151f1a39
+  - fecb2631
+  - 5d2062b5
+  relative_path: tests/unit/test_artifact_prompt_hydration.py
+  qualified_function: test_default_planner_evidence_keeps_check_output_tails_without_references
+  normalized_source_pattern: projection['input_bindings']['planner-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - c50a68e1
+  - 5ab72e05
+  - e31728df
+  - f13360d0
+  - c18c9fdf
+  - 1a64e1ff
+  - 5d560bb0
+  - 33ca3734
+  relative_path: tests/unit/test_callbacks.py
+  qualified_function: _projection
+  normalized_source_pattern: projection['node_states']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - f09572a0
+  - dd45473f
+  - 1b76190a
+  - 02ca064d
+  - 0a620ad4
+  - bff74d35
+  - 80dc8b1f
+  - 0642e85b
+  relative_path: tests/unit/test_callbacks.py
+  qualified_function: _projection
+  normalized_source_pattern: projection['leases']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 4e735aba
+  - 7a2d418b
+  - 1a00e069
+  - be089e9f
+  - 9d0b1f3c
+  - ff2ea621
+  - 0b0c488d
+  - a738f2f7
+  relative_path: tests/unit/test_graph_horizon_templates.py
+  qualified_function: _projection_for_template
+  normalized_source_pattern: projection['node_kinds'][node_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - a4b87b77
+  - '90676108'
+  - e6b4ad1d
+  - 3b4007b9
+  - 02638f24
+  - c566476d
+  - ef4b2d99
+  - fbbde90e
+  relative_path: tests/unit/test_graph_horizon_templates.py
+  qualified_function: _projection_for_template
+  normalized_source_pattern: projection['node_roles'][node_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 3ae6a8ed
+  - 88b3fb9b
+  - 60a2934c
+  - ebf34e9b
+  - 8c1c0511
+  - cf78baf3
+  - 102f58ee
+  - 802153c8
+  relative_path: tests/unit/test_graph_horizon_templates.py
+  qualified_function: _projection_for_template
+  normalized_source_pattern: projection['node_states'][node_id]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 8c938736
+  - 811f6c23
+  - 5a8ffc1c
+  - 94c41d09
+  - 2f88f2e4
+  - f98f88c5
+  - 85416c83
+  - a14dd2af
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_create_join_macro_uses_distinct_source_record_ports
+  normalized_source_pattern: projection['node_kinds']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - f67b6399
+  - 8604ff99
+  - 7ca7a310
+  - 68df3974
+  - e988dd53
+  - 381ebf7b
+  - 1aab1b2c
+  - 9b357cde
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_create_join_macro_uses_distinct_source_record_ports
+  normalized_source_pattern: projection['node_roles']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - dfbc9b9c
+  - 529d9783
+  - 6bfc6eb9
+  - a833941a
+  - 47418f92
+  - 159eaf89
+  - 821a98c3
+  - '70412310'
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_create_join_macro_uses_distinct_source_record_ports
+  normalized_source_pattern: projection['node_states']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - be7530dc
+  - acd41596
+  - 049fe5e2
+  - c6caf94f
+  - a392ebc6
+  - 9df18abe
+  - 45aaf3d3
+  - 6d5f6269
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_create_join_macro_uses_distinct_source_record_ports
+  normalized_source_pattern: projection['node_kinds']['check-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - d3362d56
+  - 1e1f65ab
+  - aae6848f
+  - cec8ee25
+  - 800a4c6d
+  - 51e839c9
+  - 989397d4
+  - bd76dde0
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_create_join_macro_uses_distinct_source_record_ports
+  normalized_source_pattern: projection['node_roles']['check-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 29dd5ec5
+  - 6c226a21
+  - e2c126be
+  - 8a1f15cf
+  - 61e6052b
+  - 3263f9e5
+  - 3c69f8f4
+  - 507d315b
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_create_join_macro_uses_distinct_source_record_ports
+  normalized_source_pattern: projection['node_states']['check-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - c67b415c
+  - 5666bb44
+  - 92924c49
+  - c943a13f
+  - 16b4bd9f
+  - 628ac4e5
+  - 2641c9fd
+  - c3304950
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_gap_planner_corrective_region_macro_expands_to_valid_patch
+  normalized_source_pattern: projection['node_kinds']['planner-gap']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 467e9421
+  - a048b7b5
+  - b04179f5
+  - 6c7e9f2d
+  - dc866dfb
+  - 10b33c9f
+  - d69e298b
+  - ef53dd4a
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_gap_planner_corrective_region_macro_expands_to_valid_patch
+  normalized_source_pattern: projection['node_roles']['planner-gap']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - ddf9e77f
+  - a8b751c8
+  - 9374db02
+  - ae06b6ca
+  - d5c86a64
+  - 707f72c5
+  - 59ff2388
+  - b3eced4c
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_gap_planner_corrective_region_macro_expands_to_valid_patch
+  normalized_source_pattern: projection['node_states']['planner-gap']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - f0551493
+  - 2de5a784
+  - 079f0ce8
+  - c1baada1
+  - 8fe77226
+  - 2de10ef7
+  - 27946be4
+  - 814ba7b5
+  relative_path: tests/unit/test_graph_projection_inventory.py
+  qualified_function: test_resource_claim_query_returns_an_immutable_sequence
+  normalized_source_pattern: projection['node_resource_claims']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 059ffd53
+  - 0f67ff84
+  - 21af95cd
+  - de7af112
+  - 218bd4da
+  - 07de6bc8
+  - 5b4306e2
+  - 8779befa
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_approval_decision_projection_uses_typed_payload
+  normalized_source_pattern: projection['approval_decisions']['gate-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - b9efb724
+  - 4021106e
+  - 7ae6130f
+  - 7fdf3012
+  - d1b974fe
+  - 6d6025b3
+  - 0e3b679e
+  - 5a583c5a
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_authority_decision_projection_uses_typed_payload
+  normalized_source_pattern: projection['authority_decisions']['authority-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 686c714a
+  - 0b23fe58
+  - 240ff31e
+  - daa7e2c5
+  - e9d27b9e
+  - 089dab2d
+  - a445afd4
+  - 28a1a410
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_callback_idempotency_projection_allows_empty_callback_payload
+  normalized_source_pattern: projection['callback_idempotency_events']['worker-1\x00key-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 8913f33d
+  - 1f67dbc6
+  - 805cf9ac
+  - adc33405
+  - 670fc108
+  - b0301785
+  - 8e595033
+  - '77771819'
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_callback_idempotency_projection_uses_typed_payload
+  normalized_source_pattern: projection['callback_idempotency_events']['worker-1\x00key-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 455283b0
+  - 41c451f8
+  - cb235296
+  - f582501a
+  - 9693a5a2
+  - db510936
+  - 48445ea4
+  - f8aeacd9
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_check_result_projection_summary_is_typed_at_fold
+  normalized_source_pattern: projection['check_results']['check-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 57f83a9f
+  - d4cec331
+  - cc5c6860
+  - 65867cd4
+  - 9e11121b
+  - 9af67826
+  - 463134d0
+  - 3dd6b9a3
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_clone_projection_covers_initial_keys_without_nested_aliasing
+  normalized_source_pattern: state['node_output_ports']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - b58d2bf3
+  - 82b18002
+  - 64f121ac
+  - 969ebf96
+  - e6d482ef
+  - c56ad4dd
+  - 23246a8f
+  - e7e3c2f9
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_decision_projection_accepts_canonical_decision_payloads
+  normalized_source_pattern: projection['approval_decisions']['gate-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - a3acb5b6
+  - b6107c3c
+  - 908119e3
+  - 7142fea5
+  - 6b38379c
+  - a92d77ce
+  - e0d3304e
+  - abc7a36c
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_decision_projection_accepts_canonical_decision_payloads
+  normalized_source_pattern: projection['authority_decisions']['authority-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - db360f40
+  - 9c0ae03d
+  - '68784042'
+  - 413c0235
+  - 077f2976
+  - 17fbfcd6
+  - 761981f5
+  - b33a1572
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_environment_failure_projection_derives_missing_reason_from_check_record
+  normalized_source_pattern: projection['environment_failures']['task-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 0f62d71b
+  - b4986378
+  - 71827ee6
+  - 96cbbf6e
+  - 74c6c0ea
+  - 8943f0f2
+  - ea978c00
+  - e30fe153
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_environment_failure_projection_uses_check_result_record
+  normalized_source_pattern: projection['environment_failures']['task-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - c61eabcb
+  - cc6d37db
+  - fa65d8a9
+  - bd9cc638
+  - 0d7165ca
+  - 4ba9e4c1
+  - fd11dc6c
+  - d957d612
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_file_state_projection_uses_direct_membership_fields
+  normalized_source_pattern: projection['file_state_records']['file-state-cand-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 6c8307e5
+  - ea8da828
+  - 643aa089
+  - a923ea66
+  - ff77fc39
+  - 199aad4b
+  - 47e385b1
+  - 0a38401a
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_file_state_projection_uses_typed_payload
+  normalized_source_pattern: projection['file_state_records']['file-state-cand-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - f1b002dc
+  - 5a491881
+  - 7be49cc6
+  - 981d6407
+  - 49d72300
+  - 57e846b0
+  - 831311b4
+  - e8daf19b
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_lease_projection_uses_typed_payload_and_preserves_public_shape
+  normalized_source_pattern: projection['leases']['lease-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - ae890e88
+  - 7e87ff98
+  - f5c5980c
+  - baf658fe
+  - 90ef6de6
+  - f39b6d97
+  - 1abd736d
+  - 3a3a3ea1
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_node_creation_projection_retains_first_typed_retry_limit
+  normalized_source_pattern: projection['node_creation_payloads']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 839c9a0d
+  - 821e1eee
+  - 7b72d519
+  - 4a49c524
+  - 66a93924
+  - 5a19c23a
+  - e5ab77e3
+  - a2cac54a
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_node_creation_projection_uses_typed_payload
+  normalized_source_pattern: projection['node_creation_payloads']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 6ade75f8
+  - 553e4503
+  - 89e1f16b
+  - 3af765f8
+  - c341d94f
+  - 643e6c44
+  - '13459362'
+  - e1333ae5
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_output_record_payloads_are_typed_at_fold
+  normalized_source_pattern: projection['output_record_payloads']['summary-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 3d439447
+  - a5a0fdf3
+  - bf3f2510
+  - 4f45e0ea
+  - aff2c691
+  - 21dc2f0d
+  - 5707f353
+  - edcff076
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_output_record_payloads_are_typed_at_fold
+  normalized_source_pattern: projection['output_records_by_node_port']['fanout-reader-1']['reader_output'][0]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 21a39ba8
+  - f4151e2f
+  - f925efbf
+  - 94a82e88
+  - e34cd531
+  - b78e7cc1
+  - c97d0486
+  - f5e7df71
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_output_record_payloads_are_typed_at_fold
+  normalized_source_pattern: projection['accepted_output_records_by_node_port']['fanout-reader-1']['reader_output'][0]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - edfbf80f
+  - d6203ef7
+  - edd93ef8
+  - 3e700f15
+  - cd940084
+  - 675b1ec1
+  - 333fa6cd
+  - 8eec859a
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_requirement_revision_projection_uses_typed_payload
+  normalized_source_pattern: projection['requirement_revisions']['R-1.v2']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 2d91f551
+  - 78229c51
+  - 7f6aac53
+  - 7205bbd5
+  - 0c7e4c5c
+  - 7902d7e1
+  - dda739c6
+  - 3cab182c
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_sparse_check_result_fixture_is_completed_to_a_canonical_failed_summary
+  normalized_source_pattern: projection['check_results']['check-legacy']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 293edd92
+  - 762e91c8
+  - 6243d286
+  - 701efd44
+  - b56538d1
+  - d66bb7e7
+  - 8a83fe91
+  - 1a052684
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_task_candidate_projection_uses_typed_payload
+  normalized_source_pattern: projection['task_candidates']['task-1'][0]
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - ec327a7c
+  - '57094751'
+  - d14209fd
+  - f988340e
+  - 2cba4394
+  - ec05904c
+  - 14d4df70
+  - 6cd5f53c
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_verifier_verdict_projection_uses_typed_payload
+  normalized_source_pattern: projection['verifier_verdicts']['candidate-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - d438528c
+  - 4cb2d334
+  - d7c49a51
+  - 83b10371
+  - cedc97e4
+  - 3e005557
+  - a91ffb6a
+  - 682384e4
+  relative_path: tests/unit/test_lease_event_payloads.py
+  qualified_function: test_lease_reducer_projects_canonical_fields
+  normalized_source_pattern: projection['leases']['lease-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 9c70df41
+  - 312fe085
+  - a34fbb29
+  - 21d87512
+  - ffb03967
+  - 989b02a1
+  - 475080d0
+  - 7c5f78cf
+  relative_path: tests/unit/test_lease_event_payloads.py
+  qualified_function: test_lease_reducer_projects_canonical_fields
+  normalized_source_pattern: projection['leases']['lease-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - fcba4d8b
+  - 04e45245
+  - 0ff643f2
+  - 8dd38f40
+  - 160749a5
+  - cf014353
+  - fad7d404
+  - 7ec6d1a0
+  relative_path: tests/unit/test_node_created_event_payloads.py
+  qualified_function: test_direct_authority_controls_take_precedence_over_nested_authority
+  normalized_source_pattern: projection['node_creation_payloads']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 1889ec39
+  - 91a123ea
+  - be06788f
+  - acf19cc7
+  - 85c71585
+  - 8e47e197
+  - 0e3ca00c
+  - b024dea4
+  relative_path: tests/unit/test_node_created_event_payloads.py
+  qualified_function: test_explicit_empty_direct_controls_take_precedence_on_node_created
+  normalized_source_pattern: projection['node_creation_payloads']['worker-1']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - 5285d045
+  - 0f86b935
+  - 1351f22c
+  - 5af3f0ea
+  - a89ce6ed
+  - 44160bb6
+  - 94665b3c
+  - 62970b98
+  relative_path: tests/unit/test_w5_compatibility_removal.py
+  qualified_function: test_output_replay_accepts_each_explicit_generic_discriminator
+  normalized_source_pattern: projection['accepted_output_records_by_node_port']
+  diagnostic_code: null
+  domain: test_fixture
+- site_key:
+  - f88edae4
+  - 56c1f8f8
+  - 427d54e2
+  - faeb0eb6
+  - 1bbddf23
+  - 40519ed8
+  - 1b8ee02d
+  - 311baf5a
+  relative_path: scripts/generate_graph_projection_goldens.py
+  qualified_function: _replay_views
+  normalized_source_pattern: incremental = reduce_event(incremental, event)
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - e67719cd
+  - 164f233f
+  - 9ecf1306
+  - c215afcf
+  - 9256ce0d
+  - 7598366e
+  - dcebf9fc
+  - df46f64b
+  relative_path: scripts/generate_graph_projection_goldens.py
+  qualified_function: _replay_views
+  normalized_source_pattern: incremental = reduce_event(incremental, event)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 0523954f
+  - 26ebc106
+  - 01b1b44c
+  - eb6f5cec
+  - e76adac7
+  - 0d61fa86
+  - fcc48d37
+  - ff3d8549
+  relative_path: scripts/generate_graph_projection_goldens.py
+  qualified_function: _replay_views
+  normalized_source_pattern: checkpoint = projection_to_checkpoint(replay)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - c3274ae7
+  - 6056d4ca
+  - cf22deb4
+  - a09039d6
+  - 5e910d3a
+  - 28f8e34d
+  - 9b2fb681
+  - 05b10acf
+  relative_path: scripts/generate_graph_projection_goldens.py
+  qualified_function: _replay_views
+  normalized_source_pattern: '"golden-run", project_graph_projection_snapshot(events,
+    projection=replay)'
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 0d606e42
+  - 530dcd77
+  - e294e652
+  - 40d30252
+  - 71f9e736
+  - 2005cff1
+  - 9213e443
+  - 208be011
+  relative_path: src/orchestrator/api/presenters/evidence_digest.py
+  qualified_function: _representative_nodes
+  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - d9e86df7
+  - 7af80dfa
+  - 124ea590
+  - 31fc52ad
+  - b1cd943e
+  - 58d2ce9a
+  - 9bf4496d
+  - b3b2857c
+  relative_path: src/orchestrator/api/presenters/evidence_digest.py
+  qualified_function: _representative_nodes
+  normalized_source_pattern: node_metadata = project_node_metadata(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 153e054d
+  - 85f6ab1f
+  - 9b4514ba
+  - 7a07bc87
+  - f6dda0b2
+  - d6ab9068
+  - 9d096726
+  - 17431af8
+  relative_path: src/orchestrator/api/presenters/evidence_digest.py
+  qualified_function: build_run_evidence_digest_response
+  normalized_source_pattern: projection = build_projection(events)
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - ce65d320
+  - fd15893b
+  - 765b30a2
+  - 484f7c2d
+  - fc8cf8a8
+  - 0d519641
+  - e88a03bd
+  - b860f731
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: run_state=project_run_state(events, projection=projection),
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 77cf7e4e
+  - f98a105f
+  - 1cfb3e53
+  - 5514ae27
+  - '66784031'
+  - 88daa4e8
+  - fcff1ccf
+  - 4470f43f
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: node_states=project_node_states(events, projection=projection),
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 3a422f69
+  - 59c31a41
+  - de7ca378
+  - dd54e04c
+  - 9663b386
+  - 67613b99
+  - 9dd66f90
+  - fa09a205
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: task_states=project_task_states(events, projection=projection),
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 0cd2322f
+  - 58ee30e2
+  - 1da07cf7
+  - 328bf8e0
+  - a7f3c133
+  - 4a9f2464
+  - 6457c212
+  - cb40eb40
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: leases=project_leases(events, projection=projection),
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 704a13f0
+  - 7c0bda2a
+  - d675253e
+  - 1b88a9c2
+  - 8436465e
+  - 10a0ad53
+  - 94ed3ff6
+  - b3b71879
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_projection_response
+  normalized_source_pattern: ready_nodes=project_ready_nodes(events, projection=projection),
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 4feec316
+  - a3708edd
+  - 7a8b29f4
+  - 728a6aa9
+  - 7fb11667
+  - c64274be
+  - c6a5690c
+  - 4df91ab1
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_regions_response
+  normalized_source_pattern: task_states = project_task_states(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - fa1d8b89
+  - 956eb81a
+  - ff8badd4
+  - ce9d8601
+  - 500f6fe7
+  - 7e503d97
+  - 11df684d
+  - d34466d1
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_regions_response
+  normalized_source_pattern: blockers = project_final_invariant_blockers(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - d2eb202f
+  - 385346ba
+  - 3a1044e5
+  - 8ab599d9
+  - fdb3e996
+  - c2d2b890
+  - 9cf68528
+  - ca5dedf1
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_scheduler_view_response
+  normalized_source_pattern: scheduler_view = project_scheduler_view(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 27ace910
+  - f489f664
+  - 4c1740c8
+  - 1b5351a4
+  - 2637d488
+  - 7c0c58d6
+  - 6e7a9c4d
+  - eeb27f21
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_scheduler_view_response
+  normalized_source_pattern: lease_view = project_lease_view(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 4a8788ed
+  - 8127eb32
+  - 96445e97
+  - 86e204f3
+  - cc35edcf
+  - 4701e1e8
+  - 9a5b176f
+  - a9ba65c6
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: scheduler = project_scheduler_view(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 77c08e11
+  - c90b2aab
+  - 78d7e240
+  - fafb66f4
+  - b8ee73de
+  - 596a1e8d
+  - f50e2936
+  - 1cd85016
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: leases = project_leases(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - c40991b7
+  - 4c0c12c6
+  - 53ebef40
+  - 8dad0d24
+  - db329bf4
+  - 811a858b
+  - 5b182745
+  - 94c06f9f
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: decisions = project_decision_view(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 5109f1da
+  - '67336575'
+  - 4cc924e6
+  - 5c281654
+  - 08b2d18c
+  - 2989cdd5
+  - 5fbc069d
+  - ee067122
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 261280f0
+  - 638aca9e
+  - 66271c56
+  - 01840975
+  - 4367e405
+  - 287dc63e
+  - 2e0a14e8
+  - 60ecc305
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: for blocker in project_final_invariant_blockers(events,
+    projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 2c6ce9b7
+  - f8e63485
+  - 11c2c799
+  - 48f31b8d
+  - 46b8d291
+  - 677fae63
+  - 7bac2383
+  - 7b5c4b55
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_graph_health_response
+  normalized_source_pattern: run_state = project_run_state(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 68077f5a
+  - 53b847ac
+  - f924d0f4
+  - 4e3a60ec
+  - 4cf48a53
+  - 988119df
+  - 109528c9
+  - 1c89c30d
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_node_detail_response
+  normalized_source_pattern: node_states = project_node_states(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 05ab0edb
+  - 7afcd881
+  - 36d012b0
+  - d27e7333
+  - f83e1d14
+  - 059b3197
+  - 03a9cd81
+  - 34357b8d
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_node_detail_response
+  normalized_source_pattern: node_metadata = project_node_metadata(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 5c2f18c5
+  - 8ee651f0
+  - 07dfb2d4
+  - 44550d7a
+  - 7cf61bc0
+  - 92ffd146
+  - f2ccd66b
+  - 2bdd05e6
+  relative_path: src/orchestrator/api/routers/graph.py
+  qualified_function: build_node_detail_response
+  normalized_source_pattern: leases = project_leases(events, projection=projection)
+  diagnostic_code: unsupported_call
+  domain: node_task_edge_binding
+- site_key:
+  - 92d021d7
+  - f573fbbf
+  - 720ee93f
+  - 06a0fe6c
+  - dce11e3a
+  - 0649be06
+  - ad4b58cc
+  - 783123b5
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_lifecycle_command
+  normalized_source_pattern: blockers = final_invariant_blockers_for_events(events,
+    projection)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 5e65f580
+  - 8c6039ed
+  - 800db9bc
+  - 0c80d812
+  - a223586c
+  - 3819935e
+  - 68a6d83a
+  - 92bc796b
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_heartbeat
+  normalized_source_pattern: lease = projection["leases"].get(lease_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 3540e614
+  - 295bbaff
+  - fd63f5d9
+  - f52202d1
+  - b4dc91fb
+  - e76a2b78
+  - f52809b8
+  - c8a881fb
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_heartbeat
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - f5514810
+  - 4e5c87c1
+  - 6abba5c5
+  - 7cafd9fd
+  - 7af24c66
+  - 4622aee8
+  - 18a63d70
+  - 7218c164
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_node_usage
+  normalized_source_pattern: 'if usage_key in projection["recorded_node_usage_keys"]:'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - dcd7b399
+  - e13ab5fe
+  - 73beed8a
+  - 491c1825
+  - b69612d1
+  - c717a232
+  - 24c4553b
+  - b43f3bff
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _cancel_active_lease_events
+  normalized_source_pattern: 'for lease_id, lease in sorted(projection["leases"].items()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - b205cdd2
+  - a8e80951
+  - 69c88179
+  - 8f799c10
+  - bf9e7bcd
+  - 4c13311f
+  - 8115fdde
+  - f71b1dbf
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _cancel_active_lease_events
+  normalized_source_pattern: node_state = projection["node_states"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 29b3a41f
+  - cef40a69
+  - 478af042
+  - a49bc47b
+  - 5cc6154a
+  - 91b525fe
+  - e9498c05
+  - ddc70d21
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_evaluate_final_gate
+  normalized_source_pattern: 'if projection["node_kinds"].get(node_id) != "final_gate":'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - e861fd15
+  - d006b5d1
+  - 5ba22ad2
+  - ea2c609f
+  - b803fbe4
+  - a34c9ada
+  - 4f66a0be
+  - 7b9978f6
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_evaluate_final_gate
+  normalized_source_pattern: blockers = final_invariant_blockers_for_events(
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 253ea8ff
+  - 0ceac133
+  - 720f9649
+  - 818ba6c5
+  - a982b58b
+  - b5d700b8
+  - 6bddda2e
+  - 0889df4e
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_evaluate_join
+  normalized_source_pattern: 'if projection["node_kinds"].get(node_id) != "join":'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 99dd2389
+  - 94b3b28e
+  - 330b4531
+  - 989fe2fb
+  - 14ef9012
+  - a00b009a
+  - fa9c2a72
+  - 793bb31c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _join_source_record_ids
+  normalized_source_pattern: bindings = projection["input_bindings"].get(node_id,
+    {})
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 1dd89d2b
+  - 64b72a10
+  - c7a3c133
+  - a9632c9c
+  - 97a9ef92
+  - a6d7926b
+  - 23c96486
+  - eb406997
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _release_active_node_leases
+  normalized_source_pattern: 'for lease_id, lease in sorted(projection["leases"].items()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 40d77e15
+  - 4f0b92c0
+  - e8995c30
+  - f9023e4f
+  - 7abd4086
+  - aa570eef
+  - 45d95402
+  - 0d16a31c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_callback_command
+  normalized_source_pattern: result = validate_callback(request, projection, events)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 77be8588
+  - '03223501'
+  - bf891069
+  - 1dbb54f2
+  - ea516006
+  - 2dd8680e
+  - bd3cd70f
+  - ff65e3ca
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _lease_node_id
+  normalized_source_pattern: lease = projection["leases"].get(lease_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - b4057197
+  - 0a038eee
+  - bf3e330d
+  - af9097ed
+  - 2f85eee6
+  - 723461df
+  - 54edc237
+  - '87554664'
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _file_state_authority_conflict
+  normalized_source_pattern: lease = projection["leases"].get(request.lease_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 34e17674
+  - e3d7df26
+  - 479822fc
+  - 165e1c50
+  - 8f6e9094
+  - 7750487e
+  - c2de28b1
+  - 5d1f412d
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _file_state_authority_conflict
+  normalized_source_pattern: 'if projection["node_kinds"].get(node_id) != "worker":'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 843a0173
+  - 548c05c2
+  - 0048df59
+  - 38550faa
+  - bdad1a30
+  - 2ad7b5ea
+  - 38ef1e94
+  - fab738e7
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _output_record_contract_conflict
+  normalized_source_pattern: node_kind = projection["node_kinds"].get(expected_producer_node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 143b6c8b
+  - d7443307
+  - cab5574b
+  - 05fba73e
+  - fa517c7e
+  - 0ad5ad24
+  - 589ab228
+  - 05ea2cd9
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _output_record_contract_conflict
+  normalized_source_pattern: node_role = projection["node_roles"].get(expected_producer_node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - c1b2a149
+  - 36fb510a
+  - 913a4057
+  - d13c09b0
+  - e1921684
+  - 3d8b1f71
+  - 07b7e79c
+  - b59aafeb
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _verification_record_conflict
+  normalized_source_pattern: 'if projection["node_kinds"].get(expected_producer_node_id)
+    != "verifier":'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 6e2a48d2
+  - cdeb77e6
+  - 16cce6a2
+  - bd5e9da6
+  - 2af23b1a
+  - f4702361
+  - be925415
+  - dff64a91
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _required_output_record_conflict
+  normalized_source_pattern: node_kind = projection["node_kinds"].get(expected_producer_node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 83bf1b1c
+  - 7e4a418d
+  - b4098928
+  - 721c2580
+  - 12cee4ff
+  - 9bbc2780
+  - 2b7e43f9
+  - 3c83e4e4
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _required_output_record_conflict
+  normalized_source_pattern: node_role = projection["node_roles"].get(expected_producer_node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 23beeb56
+  - 5b78dd0c
+  - f0bd39a9
+  - 1b033361
+  - ca2dc684
+  - ef524354
+  - df648ce0
+  - f77c22c2
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _accepted_verification_record_events
+  normalized_source_pattern: task_region_id = projection["node_task_regions"].get(expected_producer_node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 52479d8a
+  - b1555339
+  - 6c63c373
+  - beb26609
+  - f7eabb04
+  - c7b93000
+  - f93bc3a6
+  - 60eec1f6
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _candidate_is_bound_to_verifier
+  normalized_source_pattern: binding = projection["input_bindings"].get(verifier_node_id,
+    {}).get("candidate_under_test")
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 7df9bf86
+  - 2bf4dbc6
+  - c643ee2a
+  - e3432050
+  - dfbddd39
+  - feee26d5
+  - 844a9a88
+  - df44ba06
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _file_state_record_ids_for_candidate_records
+  normalized_source_pattern: 'for candidates in projection["task_candidates"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 8af5921e
+  - 18d9385d
+  - 2ff1ab87
+  - f33b70da
+  - c0f28e2c
+  - 6f199c90
+  - 0c4a3e4c
+  - 12fc70a5
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _file_state_record_ids_for_candidate_records
+  normalized_source_pattern: 'for record in projection["file_state_records"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 8e85d06b
+  - 03ecfcf1
+  - 0d253eca
+  - 716aa631
+  - a4e26e46
+  - b6e8d49b
+  - 5b7eaa7b
+  - 0ccc5d62
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _bound_record_ids_for_ports
+  normalized_source_pattern: bindings = projection["input_bindings"].get(node_id,
+    {})
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - da9cfc41
+  - 02bf8907
+  - d61834af
+  - ca6e655b
+  - eacdaf58
+  - 823da0a9
+  - ef1d059d
+  - 1b9bc1f2
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _input_bound_events_for_record
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 07c3684d
+  - eaab0c38
+  - e7be23be
+  - af356837
+  - a8b2e698
+  - 80b9e0f0
+  - 1021335d
+  - fb2eb8d3
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _existing_bound_record_ids
+  normalized_source_pattern: binding = projection["input_bindings"].get(to_node_id,
+    {}).get(to_port)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 6b66d07e
+  - 1d05d965
+  - a52c1714
+  - a3aed071
+  - '83407039'
+  - 79d233a8
+  - 864fec02
+  - 908ad1e2
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _target_port_contract_for_edge
+  normalized_source_pattern: target_kind = projection["node_kinds"].get(to_node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - c30394c1
+  - 5b1d29a0
+  - e7d228d6
+  - 087fee79
+  - b9dea4f1
+  - c0065a73
+  - d79a0aca
+  - 5775472b
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _target_port_contract_for_edge
+  normalized_source_pattern: target_role = projection["node_roles"].get(to_node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 91ea5e03
+  - e385d9d9
+  - 83582c7e
+  - 66547e4b
+  - 8fffd09d
+  - 2fb1753f
+  - 4fc27b3b
+  - 6c8b59d8
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_patch_command
+  normalized_source_pattern: result = validate_patch(patch, current_position, events_since_base,
+    projection, actor_role)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 3fe7c622
+  - 1481e07a
+  - f5bdd81f
+  - 64cf59f8
+  - 7f6a5abb
+  - e9ee762d
+  - 1211d67b
+  - f9f1cb99
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_patch_command
+  normalized_source_pattern: parent_session_id = projection["planner_sessions"].get(patch.proposed_by_node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - bb319433
+  - 7ceca634
+  - 4851af19
+  - 8927ad58
+  - 5081f90d
+  - 3773adc3
+  - 7c25acf0
+  - 46607d9f
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _planner_budget_rejection
+  normalized_source_pattern: parent_generation = projection["planner_generations"].get(patch.proposed_by_node_id,
+    0)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - e2003fde
+  - b9c5829e
+  - '48753533'
+  - c4da3433
+  - a29dbf64
+  - 3aee955c
+  - c71772c5
+  - 0474b221
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_schedule_tick
+  normalized_source_pattern: for lease in projection["leases"].values()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 762bc341
+  - 743e532a
+  - e3724a7d
+  - c0536837
+  - e1be34a8
+  - 753bde65
+  - edf8ee94
+  - 78628b53
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_schedule_tick
+  normalized_source_pattern: for lease in projection["leases"].values()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 7172845c
+  - c5092af9
+  - 2f20816d
+  - c29a518f
+  - cbeef38e
+  - 52cee220
+  - 483fea1a
+  - 9d9781f8
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_schedule_tick
+  normalized_source_pattern: 'for node_id, node_state in projection["node_states"].items():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - ada39471
+  - d1e76d7f
+  - c18f6361
+  - bc2353f5
+  - 044de3ab
+  - '24611086'
+  - d8646544
+  - ceabdadc
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_schedule_tick
+  normalized_source_pattern: 'if projection.get("last_deferred_reasons", {}).get(node_id)
+    != reason:'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - ac41f3bb
+  - b26f2531
+  - 084268bf
+  - 23eec718
+  - 06a7e883
+  - a7e18814
+  - '21504185'
+  - 5d7c60e1
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_schedule_tick
+  normalized_source_pattern: claims = projection["node_resource_claims"].get(node_id,
+    [])
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 4c79c488
+  - b824baf7
+  - 76dd0955
+  - fcc3f1af
+  - c96ee7b1
+  - 95a8e938
+  - 1bdd7068
+  - e02f48b9
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _append_node_deferred_if_changed
+  normalized_source_pattern: 'if projection.get("last_deferred_reasons", {}).get(node_id)
+    == reason:'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - a27cddd1
+  - 2275e73f
+  - 3e4810e0
+  - 343d3f43
+  - 44bc1527
+  - 5932f565
+  - 9ce4b116
+  - ab3a2b85
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _active_lease_node_ids
+  normalized_source_pattern: for lease in projection["leases"].values()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 2347ad20
+  - 5f4f1529
+  - e2bcd9cf
+  - 0d6c17f0
+  - 08b787d9
+  - dd3fda36
+  - 8d4c2480
+  - f1242b1d
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _project_with_events
+  normalized_source_pattern: output = reduce_event(output, event)
+  diagnostic_code: unsupported_binding
+  domain: verification_recovery
+- site_key:
+  - b6b1afd7
+  - ad4286c9
+  - 5f75bb02
+  - b832ce2a
+  - 9d7bfb79
+  - 6ba049b5
+  - de754d0f
+  - c1398479
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _project_with_events
+  normalized_source_pattern: output = reduce_event(output, event)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - c009e4e0
+  - ae6564ca
+  - 660fc0eb
+  - 06875d69
+  - b67da42f
+  - 771273e4
+  - cf014f82
+  - 0ea89586
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_check_recovery_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - d9009aed
+  - '79114330'
+  - bc028f3f
+  - f39aaf26
+  - 94a7e112
+  - 4e51b315
+  - d83b307c
+  - aff1cfb0
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_check_recovery_events
+  normalized_source_pattern: state in {"planned", "blocked", "ready"} for state in
+    projection["node_states"].values()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 5348bbb0
+  - 8d607187
+  - cdf732cd
+  - f75ddc94
+  - b7def97b
+  - b89d8fe3
+  - b4b59c49
+  - 9eda5508
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_check_recovery_events
+  normalized_source_pattern: 'if not any(state != "accepted" for state in projection["task_states"].values()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 57c9eee3
+  - 95d79a36
+  - 6282d340
+  - 86988e4b
+  - 321d4921
+  - 87a00534
+  - 50f01f27
+  - 9bc6072f
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_check_recovery_events
+  normalized_source_pattern: 'if recovery_node_id in projection["node_states"]:'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 2e3b34ba
+  - cbf9f952
+  - 0fd453c6
+  - af2ce281
+  - d1a637ea
+  - 2549d1ef
+  - 66ffdb3e
+  - aa2e42f8
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_verification_recovery_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - f86fac0b
+  - 853137ca
+  - 9757be4c
+  - de16bc99
+  - 038d94ee
+  - 421ef81c
+  - b5334a42
+  - dd8c93eb
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_verification_recovery_events
+  normalized_source_pattern: 'if not any(state != "accepted" for state in projection["task_states"].values()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - a9fcc39a
+  - dc631737
+  - e8491ba6
+  - 2ea86e99
+  - d5c91bdb
+  - 22d3db5f
+  - 65cda72b
+  - 4355fb4b
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _failed_verification_recovery_events
+  normalized_source_pattern: 'if recovery_node_id in projection["node_states"]:'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 722b7183
+  - 67a7122e
+  - ef481846
+  - 705dc136
+  - 999171e9
+  - 3468fb0b
+  - d0e3bb8f
+  - 7c85d6dd
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_failed_verification_results
+  normalized_source_pattern: 'for verification in projection["failed_verification_results_by_record_id"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 6203391d
+  - 95c58d23
+  - 9b40d403
+  - e21e1cbc
+  - 4441f61b
+  - 17e092e9
+  - 37c93b8d
+  - 6b417803
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _superseded_by_later_regional_pass
+  normalized_source_pattern: 'for passed in projection["passed_verification_results_by_record_id"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 06091505
+  - 2030be97
+  - 801eb0bc
+  - 048b7fef
+  - 0a2421ab
+  - 925308de
+  - 839387b1
+  - b80d6c89
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _superseded_by_later_regional_pass
+  normalized_source_pattern: verdict = projection["verifier_verdicts"].get(candidate_id
+    or "")
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 5de46a6b
+  - 9910f85d
+  - 874d501b
+  - 923f31cd
+  - '64882995'
+  - 42b7bc13
+  - 8fbb43e3
+  - e268fcdb
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _verification_task_region
+  normalized_source_pattern: return projection["node_task_regions"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 8542076d
+  - 2b5fc242
+  - c253d621
+  - a3170e56
+  - 82de473a
+  - 3a9e3e12
+  - fd752e95
+  - 4d689d40
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _candidate_verdict_position
+  normalized_source_pattern: verdict = projection["verifier_verdicts"].get(candidate_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - adacb0f0
+  - 9f72ef7f
+  - 4bb7b743
+  - 522bdaaf
+  - e0356926
+  - 31ef344c
+  - 1dfa3d5b
+  - be52acb8
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _passed_verification_terminalization_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 431f0757
+  - 46a0be09
+  - c44ba729
+  - '75706951'
+  - 951326d1
+  - f25bf022
+  - 7fe17fb3
+  - cf592bad
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _passed_check_terminalization_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 8dd1bdad
+  - 1b23ae5c
+  - 9a3be807
+  - 2d5ba3c3
+  - 2a2d69ae
+  - b8ad1762
+  - 01a6c203
+  - 970755b8
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _passed_check_terminalization_events
+  normalized_source_pattern: 'for check_node_id, result in sorted(projection["check_results"].items()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - a5458bf0
+  - afa2a8fc
+  - abd19a7b
+  - 43033e8f
+  - d7925c9b
+  - d526c5f5
+  - c80d6f49
+  - 22f6efbd
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _no_successor_recovery_terminal_failure_events
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 49a3243f
+  - fb518626
+  - d5def199
+  - 0ee25fcd
+  - d390cc2a
+  - 22bba69d
+  - fdb8ccc7
+  - a14b7b1e
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _no_successor_recovery_terminal_failure_events
+  normalized_source_pattern: for state in projection["node_states"].values()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 94965b78
+  - 76a73dc3
+  - a9a6111b
+  - c80f21e2
+  - f49eb77e
+  - d3e64eb0
+  - 7963b8a6
+  - 00c8aed7
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _no_successor_recovery_terminal_failure_events
+  normalized_source_pattern: 'if not any(state != "accepted" for state in projection["task_states"].values()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 329d85bc
+  - 7b922fb7
+  - 7eca51ef
+  - eb42c74f
+  - 901b0d34
+  - '64847084'
+  - 20d43207
+  - 1d5b3651
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _completed_no_successor_recovery
+  normalized_source_pattern: 'if projection["node_states"].get(node_id) != "completed":'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 7c95bd6e
+  - 0978cff2
+  - 9be10727
+  - b2477586
+  - f5613511
+  - 1b58525a
+  - 423a0531
+  - 865680ff
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_nodes_by_record_id
+  normalized_source_pattern: for record_id, recoveries in projection["recovery_nodes_by_record_id"].items()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - a01e0e08
+  - 29b9bf94
+  - 808a56dc
+  - 1fbedb15
+  - 301e52b1
+  - d5f9ce86
+  - 77f186f9
+  - 39fee8e5
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _accepted_no_successor_patch_id
+  normalized_source_pattern: patch_ids = projection["accepted_no_successor_patches_by_node"].get(node_id,
+    [])
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 6d243aa2
+  - 11dca2f7
+  - cb06c9f2
+  - '73773308'
+  - 1dcf1d98
+  - 5eed2805
+  - 2bef0020
+  - 09a8a35a
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_created_executable_successors
+  normalized_source_pattern: recovery_position = projection["node_creation_positions"].get(recovery_node_id,
+    0)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 3e7ef3cc
+  - 7f266cb3
+  - 8a83c9d2
+  - 2b776097
+  - 03f495f0
+  - efdc49ba
+  - 0aaafe5e
+  - 1bef9c45
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_created_executable_successors
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 08f8d3de
+  - f2f4a2b9
+  - 2adea428
+  - 71d110c7
+  - 4cc6c061
+  - e2792dba
+  - b6d23241
+  - 546b4cb0
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_created_executable_successors
+  normalized_source_pattern: 'if to_node_id not in projection["node_kinds"]:'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - eae014e8
+  - 0e023ee7
+  - '65005484'
+  - c339bc7e
+  - 83a57a4c
+  - 1645b0b3
+  - 115f050a
+  - 570ab110
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_created_executable_successors
+  normalized_source_pattern: 'if projection["node_kinds"].get(to_node_id) == "planner":'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 337ddeac
+  - 41a70774
+  - 15734bb8
+  - 6552de63
+  - e97de096
+  - '17611923'
+  - 954818c9
+  - 724f1a4a
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_created_executable_successors
+  normalized_source_pattern: 'if projection["node_creation_positions"].get(to_node_id,
+    0) < recovery_position:'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - e2d7ff63
+  - fc599ae5
+  - 3d9601e5
+  - cedbb23b
+  - 57f8f235
+  - 8ecbc05b
+  - ef8a7e10
+  - fedbcee8
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_lineage_superseded
+  normalized_source_pattern: 'for verification in projection["passed_verification_results_by_record_id"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 01398528
+  - '61100747'
+  - c90ce0f3
+  - 85b12e0e
+  - 773a0031
+  - 24150abf
+  - 0df1cd65
+  - 6a4d8a17
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_lineage_superseded
+  normalized_source_pattern: verdict = projection["verifier_verdicts"].get(candidate_id
+    or "")
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - e8eef4d8
+  - 7155ceb9
+  - 682f8b63
+  - 4d5ae4d1
+  - 04c579a1
+  - 8ac3ba1c
+  - 4b01bf9d
+  - 61e5fdd1
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _recovery_lineage_superseded
+  normalized_source_pattern: 'for check_node_id, result in projection["check_results"].items():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 8761cb68
+  - 0fccf7b9
+  - 51a31142
+  - c43886e3
+  - 7b50e944
+  - 399552bd
+  - d0c7777f
+  - 4627d0e0
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _downstream_node_ids
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 0c666e12
+  - f41c6e17
+  - 04b9d30a
+  - f829968d
+  - 054a2163
+  - c7124ec5
+  - d8aa9d8f
+  - d8286e4b
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _would_create_directed_cycle
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 96a3c458
+  - c5fee8f9
+  - c54ac98f
+  - d8da116c
+  - b9894363
+  - 3cb5fa7c
+  - 249a8b5c
+  - 0667f7b4
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_final_invariant_check
+  normalized_source_pattern: for node_id, kind in projection["node_kinds"].items()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - af73a3c9
+  - 69f174a4
+  - dd7b2e0a
+  - 39ebffaa
+  - 300a56a1
+  - 04c74ad1
+  - feaa9089
+  - 3498b22c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_passed_verification_results
+  normalized_source_pattern: 'for verification in projection["passed_verification_results_by_record_id"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 75b63938
+  - 222d0a34
+  - a3abe9c1
+  - 21eea52d
+  - bd52ee22
+  - ca51c858
+  - 49c99b11
+  - ae9d7804
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _final_checks_waiting_for_verification_evidence
+  normalized_source_pattern: 'for node_id, kind in sorted(projection["node_kinds"].items()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - fadaf215
+  - bf68263a
+  - 07e959e9
+  - d4fd258d
+  - 0a950223
+  - 11a081c7
+  - b5995af6
+  - c826d8fc
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _final_checks_waiting_for_verification_evidence
+  normalized_source_pattern: 'if projection["node_roles"].get(node_id) != "invariant_gate":'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 9d9bc4fd
+  - 02191129
+  - 6063760e
+  - 8da7ece9
+  - 815e5c84
+  - c8a4ee9d
+  - 92fdb91d
+  - 8aa70b96
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _final_checks_waiting_for_verification_evidence
+  normalized_source_pattern: 'if projection["node_states"].get(node_id) not in {"planned",
+    "blocked", "ready"}:'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 424d4736
+  - ca962a0d
+  - 8e8339c9
+  - '55553434'
+  - 038ce84e
+  - 9af38af4
+  - 4b358874
+  - d66f71e3
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _final_checks_waiting_for_verification_evidence
+  normalized_source_pattern: 'if "verification_evidence" in projection["input_bindings"].get(node_id,
+    {}):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 91a7206b
+  - 9b274b37
+  - 3e434e93
+  - a72a845e
+  - 6b386146
+  - d6d32766
+  - 47bdbfdc
+  - fd72c5ab
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_verification_evidence_edge
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 8b0bbc52
+  - e27a68c1
+  - 0392ee39
+  - de3ded35
+  - 0737f128
+  - 3513b1a6
+  - 28822c60
+  - 9aa7073c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _unreachable_failure_branch_node_ids
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - bfb7c1a6
+  - 50875d9a
+  - 471a3b76
+  - 53493e67
+  - 2f68cacc
+  - 4ba9030d
+  - 9ac3fdca
+  - 44dc29a5
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _unreachable_check_failure_branch_node_ids
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - b632e224
+  - 0c8175c8
+  - 096abd71
+  - f2e893e8
+  - adbab8f4
+  - 0455ad5a
+  - ad0ed75f
+  - 363cc5ca
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _downstream_retirable_node_ids
+  normalized_source_pattern: state = projection["node_states"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 74aa0417
+  - fbb703e0
+  - 7cbf90da
+  - 06c09f17
+  - 1eedd9fa
+  - 92e078f7
+  - 34556e75
+  - 95856d4c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _downstream_retirable_node_ids
+  normalized_source_pattern: for edge in projection["edges"].values()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 29b691ef
+  - a14e5162
+  - a624c6d3
+  - ed87c545
+  - fda195b9
+  - 892223d5
+  - 36b4e349
+  - 4e40184f
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _is_final_invariant_check
+  normalized_source_pattern: projection["node_kinds"].get(node_id) == "check"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 80fc61d8
+  - 7c10206f
+  - ef98990b
+  - 13a9ca15
+  - 70cf984a
+  - 8a288dbb
+  - e7d27a6b
+  - e19ea405
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _is_final_invariant_check
+  normalized_source_pattern: and projection["node_roles"].get(node_id) == "invariant_gate"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 71ef72c0
+  - '33841587'
+  - 9a0fd126
+  - 4319f428
+  - f954a119
+  - cc284b86
+  - 2f07c0d7
+  - 80c55c2b
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _is_gap_planner
+  normalized_source_pattern: projection["node_kinds"].get(node_id) == "gap_planner"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 277731d6
+  - 3eb1c826
+  - 92dd2eb4
+  - 8bad2f6b
+  - 3846c721
+  - be136c03
+  - 86baa417
+  - 17adfa74
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _is_gap_planner
+  normalized_source_pattern: or projection["node_roles"].get(node_id) == "gap_planner"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 3303833b
+  - 83347aa1
+  - e54cd037
+  - 47d0e81c
+  - 9594584f
+  - 806ab59f
+  - 88b55501
+  - d512d46e
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _retire_node_events
+  normalized_source_pattern: 'if projection["node_states"].get(node_id) in {"completed",
+    "failed", "cancelled", "retired"}:'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 704e0ac9
+  - a198f579
+  - 4d0a69c9
+  - 2d348f02
+  - 5e97db22
+  - a8d33834
+  - 851a604f
+  - a11dca10
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_existing_failed_verification_recovery
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - b2362cc2
+  - ed0e6ec3
+  - ed637ac6
+  - 5d2968a5
+  - c2a51c77
+  - d1dfd3f5
+  - 93dcca4a
+  - 66cf4b2a
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_existing_failed_verification_recovery
+  normalized_source_pattern: 'if projection["node_states"].get(to_node_id) in {"cancelled",
+    "failed", "retired"}:'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 1738de86
+  - bd064736
+  - 8094240a
+  - 04e77ebf
+  - f529d573
+  - ad99d8ca
+  - 5ec5d793
+  - 9efcf692
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_existing_failed_verification_recovery
+  normalized_source_pattern: if projection["node_kinds"].get(to_node_id) == "planner"
+    and (
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - f1a2abf6
+  - beb14edf
+  - 62ab5989
+  - a2803d9d
+  - c497d2a2
+  - cdf3121e
+  - 8b2163bf
+  - 9b03216a
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_existing_failed_verification_recovery
+  normalized_source_pattern: projection["node_roles"].get(to_node_id) == "gap_planner"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 6da0f80c
+  - 01fa310e
+  - 37cfdb5e
+  - 7ec95922
+  - 8ad1f8a0
+  - 1d331e3e
+  - 79c06831
+  - 2ff16223
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_failed_check_results
+  normalized_source_pattern: 'for node_id, result in sorted(projection["check_results"].items()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 9b872b92
+  - 8d2a01f4
+  - de2803a6
+  - d0c89527
+  - 738dfc85
+  - 82f88dd3
+  - 38d6c239
+  - f76eba94
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_failed_check_results
+  normalized_source_pattern: 'for node_id, ports in sorted(projection["accepted_output_records_by_node_port"].items()):'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - f5414abb
+  - 7d2e1682
+  - c9e9b317
+  - 3e9e737a
+  - bdfe00a0
+  - '26051266'
+  - 26734c45
+  - 390c8718
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_failed_check_results
+  normalized_source_pattern: 'if projection["node_kinds"].get(node_id) != "check":'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - d29e8c67
+  - 1cae3075
+  - 2883956c
+  - ccdc33a3
+  - 12a6b8c4
+  - 93df3bce
+  - 01f346a7
+  - 74feef13
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_failed_check_results
+  normalized_source_pattern: 'if projection["node_states"].get(node_id) in {"cancelled",
+    "retired"}:'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 7d746093
+  - c613fb1e
+  - d7b30318
+  - 466aa870
+  - fd3d9e30
+  - db624ee1
+  - ae1dea9c
+  - 8bffa9f6
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_failed_check_results
+  normalized_source_pattern: 'if node_id in projection["check_results"]:'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 6480a3d8
+  - af5a110c
+  - af102599
+  - 6f1c50f2
+  - 699143a7
+  - ae7e1622
+  - ff98889e
+  - fdbf4bca
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _current_failed_check_results
+  normalized_source_pattern: task_region_id = projection["node_task_regions"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 22191a44
+  - 4540a8a4
+  - bde045e3
+  - 111a9bd7
+  - e7258ecf
+  - 9d958a12
+  - 9c3d592a
+  - '26266523'
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_existing_failed_check_recovery
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - e0f75994
+  - 0bdc83a7
+  - 1f13880a
+  - a4442963
+  - 282034c0
+  - d713a5aa
+  - 9094b424
+  - e9e011f5
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_existing_failed_check_recovery
+  normalized_source_pattern: 'if projection["node_states"].get(to_node_id) in {"cancelled",
+    "failed", "retired"}:'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 886cb63d
+  - f4a02c8a
+  - de612643
+  - '32706863'
+  - acb8195c
+  - 70b0b851
+  - 36e78071
+  - 9dd08742
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_existing_failed_check_recovery
+  normalized_source_pattern: if projection["node_kinds"].get(to_node_id) == "planner"
+    and (
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 216134f3
+  - 3c5850cf
+  - f9d29d6a
+  - 33d78dd0
+  - f4cb1d1a
+  - 9db7f37b
+  - 321ee02e
+  - a40537da
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _has_existing_failed_check_recovery
+  normalized_source_pattern: projection["node_roles"].get(to_node_id) == "gap_planner"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - dd3b0b6f
+  - b5d09235
+  - f4be303f
+  - 4594724a
+  - 8e2b5ec0
+  - ce5df09c
+  - cc14dc66
+  - 6c2dde23
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _latest_routine_snapshot_record
+  normalized_source_pattern: 'for summary in projection["accepted_record_summaries_by_id"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 21bdf52d
+  - 169c13fd
+  - 8316e137
+  - 3b6d858a
+  - 7539d7b7
+  - 5030f958
+  - 43e89057
+  - 10ac61c5
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _base_snapshot_id_for_node
+  normalized_source_pattern: bindings = projection["input_bindings"].get(node_id,
+    {})
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 428a63c5
+  - bf939bd7
+  - 5f201458
+  - '56567092'
+  - c6187013
+  - f1975c95
+  - bccdabbf
+  - c270990d
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _retry_backoff_deferred_reason
+  normalized_source_pattern: retry_not_before = projection["retry_not_before_by_node"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 618985bf
+  - 3340e937
+  - 089d1dbf
+  - c81d0c3f
+  - a900a666
+  - 7597a9cd
+  - 87bcb386
+  - 956a37d4
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _planner_session_id
+  normalized_source_pattern: session_id = projection["planner_sessions"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 8f4833b4
+  - 2ba2a13c
+  - 97ccb224
+  - 8fe46567
+  - a876f468
+  - 1c632425
+  - b700266c
+  - d17fa50c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _next_lease_generation
+  normalized_source_pattern: session_id = projection["planner_sessions"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - fcefde40
+  - dbad998c
+  - 8f4c616e
+  - 3890488a
+  - fc25fcf5
+  - d57860da
+  - e24c7bce
+  - 0e3d62ed
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _next_lease_generation
+  normalized_source_pattern: for lease in projection["leases"].values()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 9d1eb9e3
+  - 255840f0
+  - 9251c735
+  - bc1b9ff6
+  - 63aa18e8
+  - 5d33c29e
+  - 4a1668a8
+  - 82910e82
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _session_carryover_record_id
+  normalized_source_pattern: binding = projection["input_bindings"].get(node_id, {}).get("session_carryover")
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - ee61c3ea
+  - d4987cb0
+  - 9cc4a18b
+  - 5e3e8a4d
+  - 1c2354b5
+  - 4b70bb6a
+  - 14ad7318
+  - 86e371b2
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _planner_session_state_event
+  normalized_source_pattern: session_id = projection["planner_sessions"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 004662f6
+  - d0e2c0d3
+  - fc63f320
+  - 537f8f3b
+  - 0273405e
+  - e64cd361
+  - 4e43255c
+  - e152667b
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _is_chain_planner
+  normalized_source_pattern: projection["node_kinds"].get(node_id) == "planner"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - d57f0620
+  - a97d2ff7
+  - 2fc4ef22
+  - 95fa134c
+  - cec3c795
+  - 0c367ae6
+  - 34ac08f2
+  - 93e8ae8d
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _is_chain_planner
+  normalized_source_pattern: and projection["node_roles"].get(node_id) == "planner"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 8b0c6a50
+  - 6232d54c
+  - 47409dec
+  - 6d16c88d
+  - b852893d
+  - 8343f6df
+  - 030666e5
+  - 33f98d4d
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_acknowledge_start
+  normalized_source_pattern: lease = projection["leases"].get(lease_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - c5dd9f05
+  - 9366454f
+  - 36b8dc51
+  - 20a3734c
+  - 2cbb1d5d
+  - c078c19c
+  - f39bd697
+  - d30e4cdc
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_agent_died
+  normalized_source_pattern: lease = projection["leases"].get(lease_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - f08535d5
+  - 1b0d6bf2
+  - 5503d6c3
+  - 8068e749
+  - 7b62ea38
+  - 3bb633dd
+  - 96f8277a
+  - 3618321e
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_agent_died
+  normalized_source_pattern: attempt_number = projection["node_attempts"].get(node_id,
+    0)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - ba9e9d0c
+  - 887e738a
+  - 3061179e
+  - f479bf8a
+  - 9bfcb5a9
+  - 9d0e867d
+  - c83fdd9f
+  - 0aa9cb3d
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _non_gap_planner_has_accepted_patch
+  normalized_source_pattern: projection["node_kinds"].get(node_id) == "planner"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 09f20269
+  - 6ab7dbb4
+  - ff0659fe
+  - 04489d13
+  - c474d167
+  - b6b74455
+  - e8b06240
+  - ec4760de
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _non_gap_planner_has_accepted_patch
+  normalized_source_pattern: and projection["node_roles"].get(node_id) != "gap_planner"
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - f3eeb759
+  - '71514157'
+  - e52e8578
+  - 3e386a95
+  - 919c6139
+  - 9f0acd04
+  - 1bd5e5f2
+  - 13ea1295
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _non_gap_planner_has_accepted_patch
+  normalized_source_pattern: and bool(projection.get("accepted_graph_patches_by_node",
+    {}).get(node_id))
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 5b319f75
+  - 49c52158
+  - dafebeb3
+  - 28ccdf92
+  - c8494662
+  - 6b36e300
+  - 072c9d8a
+  - 60d1ec64
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_decision
+  normalized_source_pattern: node_kind = projection["node_kinds"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 17fefd66
+  - e25e2953
+  - a8d67966
+  - 0d61334d
+  - 4e9d5587
+  - 2fd4cc17
+  - 8da775a1
+  - 40443cec
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_decision
+  normalized_source_pattern: node_state = projection["node_states"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 380ed198
+  - ed7a8b96
+  - 6e91a723
+  - 4680e83d
+  - 2a8989fb
+  - ee497584
+  - 808faaf9
+  - 3af2c25c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_decision
+  normalized_source_pattern: task_region_id = projection["node_task_regions"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 709ba182
+  - 9b0fa714
+  - fcf69093
+  - '67003370'
+  - a5123375
+  - '74557268'
+  - 61a72c84
+  - 76d26f2c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _decision_output_record
+  normalized_source_pattern: node_kind = projection["node_kinds"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - bc44a082
+  - 04eb51c6
+  - 915c9564
+  - 4876c370
+  - aa78e084
+  - e86c3fdf
+  - 2f6b6f72
+  - ebf1bfbb
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_gatekeeper_verdicts
+  normalized_source_pattern: record = projection["file_state_records"].get(record_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - e52ca4c9
+  - 8e111474
+  - 38105b00
+  - d46b455d
+  - 215da748
+  - d07bb555
+  - 2b858c03
+  - 60f23586
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_cleanup_applied
+  normalized_source_pattern: 'if not isinstance(record_id, str) or record_id not in
+    projection["file_state_records"]:'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 245ed343
+  - 2b17bfec
+  - be2d2113
+  - 26ef901a
+  - 6bcd9264
+  - 8d6d7800
+  - 2cbbcd90
+  - ae687527
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _apply_record_support_evidence
+  normalized_source_pattern: requirement_version_id = projection["active_requirement_versions"].get(requirement_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - e915341f
+  - 850f0504
+  - 27c8a145
+  - 818a4e6d
+  - 4f88189a
+  - 40e0362f
+  - 3721f00b
+  - a9dac747
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _cleanup_requested_event
+  normalized_source_pattern: return projection["cleanup_requested_events"].get(cleanup_id)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - c0efdf2c
+  - d3a43da8
+  - 62ceaab9
+  - d4dbb2a5
+  - 1bc3ed12
+  - acb3fbac
+  - 2acfadd5
+  - 45a33234
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _cleanup_applied_exists
+  normalized_source_pattern: return projection["cleanup_applied_ids"].get(cleanup_id)
+    is True
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 12cf5b4e
+  - 8299f841
+  - 3133f05d
+  - 1736c1e4
+  - 7c154a06
+  - 4c430cce
+  - 73ed15d5
+  - 27527d96
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _expired_lease_events
+  normalized_source_pattern: 'for lease in projection["leases"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - bcd46607
+  - 2010fda6
+  - 4600614b
+  - e0536727
+  - 5b3eb24e
+  - 9c497a85
+  - cf826d9d
+  - b39de526
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _expired_active_lease_ids
+  normalized_source_pattern: lease.lease_id for lease in projection["leases"].values()
+    if _lease_is_expired(lease, now)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 3a6133e8
+  - fc27f1ad
+  - 0baf007c
+  - 23b64214
+  - 8a3b7596
+  - bd4167ad
+  - 4cc224d8
+  - b08bb354
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _node_schedule_info
+  normalized_source_pattern: return NodeScheduleInfo(
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 8fd5ed59
+  - 5e67d27c
+  - 74c216fb
+  - cdc61ddf
+  - aab59d4d
+  - 5efefae3
+  - '46884555'
+  - 1d3828e9
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _node_schedule_info
+  normalized_source_pattern: _claim_from_dict(claim) for claim in projection["node_resource_claims"].get(node_id,
+    [])
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 712b288f
+  - 2a42e618
+  - a46eb8a1
+  - f472f356
+  - d17a23cf
+  - fa5a7057
+  - 57330a31
+  - fbbebcfe
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _node_schedule_info
+  normalized_source_pattern: satisfied_input_ports=set(projection["input_bindings"].get(node_id,
+    {})),
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - bac4fc10
+  - a4ec6623
+  - f0745298
+  - 79d7072c
+  - 070d29b4
+  - e52358b6
+  - 338612ea
+  - 87169af6
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _node_schedule_info
+  normalized_source_pattern: for gate_node_id, decision in projection["node_gate_decisions"].items()
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 97a06de2
+  - cfeb6427
+  - 5a47f1eb
+  - a4ae48e0
+  - 2767bc12
+  - b9fb99d0
+  - 1698bff0
+  - 2270ad64
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _node_schedule_info
+  normalized_source_pattern: command_definition_present=node_id in projection["node_command_definitions"],
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - ee65269a
+  - b1cc70a3
+  - 1d391a44
+  - a2a1a027
+  - 3557f480
+  - 48b3f6cc
+  - 32d4cd2a
+  - d66b1d38
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _node_creation_position
+  normalized_source_pattern: return projection["node_creation_positions"].get(node_id,
+    0)
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 2ed9f2c3
+  - 600f13f9
+  - 2042df1f
+  - b0d044c5
+  - f168ef93
+  - e5d8fb5f
+  - 22e6a73f
+  - 87e22d93
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _required_edges_for_node
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 15bbeb9d
+  - fcb483a0
+  - cfa80620
+  - ab89efa3
+  - cf1ad0c9
+  - cd073f58
+  - 38eb48eb
+  - '43502808'
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _node_exists
+  normalized_source_pattern: return node_id in projection["node_states"] or node_id
+    in projection["node_kinds"]
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 24a7bb12
+  - 94ff90ee
+  - 5ebd8917
+  - b2a226df
+  - 6d034a27
+  - fe49595a
+  - add7df46
+  - 7ea1524c
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _node_exists
+  normalized_source_pattern: return node_id in projection["node_states"] or node_id
+    in projection["node_kinds"]
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - 3062b95b
+  - 375e0935
+  - 937f057a
+  - bec2d004
+  - 9b5c55fa
+  - a997ebe5
+  - e5743628
+  - 09cef287
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _input_bound_events_for_edge
+  normalized_source_pattern: records_by_port = projection["output_records_by_node_port"].get(producer_node_id,
+    {})
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 9e5af998
+  - 1f5eea60
+  - f3d4050f
+  - 16463ffb
+  - 50db7ded
+  - d51b14f7
+  - 8e84bd35
+  - 54a5d396
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _projection_edge_accepts_producer
+  normalized_source_pattern: projection["node_kinds"].get(producer_node_id) != edge.from_node_kind
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 5a233269
+  - a93ceda5
+  - 01c14a3d
+  - d6000122
+  - 74e53e97
+  - 2e8ef588
+  - 0871ceb4
+  - e6da1385
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _projection_edge_accepts_producer
+  normalized_source_pattern: projection["node_roles"].get(producer_node_id) != edge.from_node_role
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - c3f34f7e
+  - d7dda752
+  - a36a193d
+  - 577eb44a
+  - 158cafc5
+  - 627f0619
+  - b93e76b7
+  - ec79e622
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _edge_payload_accepts_producer
+  normalized_source_pattern: and projection["node_kinds"].get(producer_node_id) !=
+    expected_kind
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 53c39d38
+  - 7f4b967f
+  - 211d2523
+  - ae1c411b
+  - f5059fd3
+  - e8f1943b
+  - d919f457
+  - a818ef57
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _edge_payload_accepts_producer
+  normalized_source_pattern: and projection["node_roles"].get(producer_node_id) !=
+    expected_role
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - 51ab8007
+  - 8d7d38e2
+  - 9ae50c53
+  - 1823eb66
+  - f22432c7
+  - 4a2946b0
+  - 167c12d3
+  - b1953da7
+  relative_path: src/orchestrator/graph/_commands.py
+  qualified_function: _edge_backfill_producer_node_ids
+  normalized_source_pattern: for node_id in sorted(projection["node_kinds"])
+  diagnostic_code: unsupported_call
+  domain: verification_recovery
+- site_key:
+  - ba610965
+  - 625de842
+  - 7b469a00
+  - 00d4d6c1
+  - ca9ca0ba
+  - d3d835da
+  - 1cdc9b7c
+  - 71f83195
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: validate_callback
+  normalized_source_pattern: lease = projection["leases"].get(request.lease_id)
+  diagnostic_code: unsupported_call
+  domain: cleanup_callback
+- site_key:
+  - 1332426b
+  - a852b80e
+  - f6d5ee4b
+  - d26a275a
+  - c8b86573
+  - 68ad6262
+  - e76d0759
+  - 2ebc0e2a
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: validate_callback
+  normalized_source_pattern: node_state = projection["node_states"].get(request.node_id)
+  diagnostic_code: unsupported_call
+  domain: cleanup_callback
+- site_key:
+  - 5a7a882f
+  - b69fc3ff
+  - 09036ee3
+  - da35ff65
+  - a0085064
+  - bd2ad2b1
+  - '51946532'
+  - 9ff70dec
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: _validate_expired_lease_callback
+  normalized_source_pattern: node_state = projection["node_states"].get(request.node_id)
+  diagnostic_code: unsupported_call
+  domain: cleanup_callback
+- site_key:
+  - 1596ba1b
+  - 90761f2c
+  - ced72b94
+  - 6b7955d2
+  - 6b2178ba
+  - dd5ce12e
+  - 4df68c0e
+  - a1a7e872
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: _has_replacement_active_lease
+  normalized_source_pattern: 'for lease_id, lease in projection["leases"].items():'
+  diagnostic_code: unsupported_call
+  domain: cleanup_callback
+- site_key:
+  - '73663115'
+  - da20b5e3
+  - '48118177'
+  - 464c6905
+  - 5c528519
+  - 6d57f7e3
+  - a2bc28f3
+  - 94fd39cc
+  relative_path: src/orchestrator/graph/callbacks.py
+  qualified_function: _validate_idempotency
+  normalized_source_pattern: projected = projection.get("callback_idempotency_events",
+    {}).get(
+  diagnostic_code: unsupported_call
+  domain: cleanup_callback
+- site_key:
+  - 6ce0287a
+  - 96c371ca
+  - 2115168a
+  - fcded5b6
+  - 019b0af5
+  - 579b3daf
+  - e22985b4
+  - 4fe03f7b
+  relative_path: src/orchestrator/graph/commands/__init__.py
+  qualified_function: apply_command
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - 5bf6fdd2
+  - 8a1bcb15
+  - 3775c1e9
+  - 81993c25
+  - 7ad0f547
+  - 42cc5d97
+  - c6df6766
+  - ec4140ee
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_submit_callback
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - 12b9c7fc
+  - 88c8a8fd
+  - 97c20061
+  - 924ef391
+  - 17f8bf07
+  - 15489f93
+  - 030e4aa9
+  - 9dbac3aa
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_acknowledge_start
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - db50b94a
+  - c4698c87
+  - 1e4fc20f
+  - 16518af0
+  - 828e34a0
+  - d0d290ae
+  - 1f64f544
+  - e89dc50a
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_raise_appeal
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - 1c9335ca
+  - 4edf3038
+  - 27bac4a4
+  - 765c4797
+  - bc64480c
+  - bceda3c0
+  - 409a3910
+  - 83d35101
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_decision
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - 4cc1b353
+  - 92167aa2
+  - 4b5d2c08
+  - df67a8bb
+  - feffa30b
+  - 7fdbc9ab
+  - 2f36965d
+  - 8566d9bf
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_gatekeeper_verdicts
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - '80227730'
+  - 6d9de604
+  - 7e1a9ffb
+  - 7dd68466
+  - 5d9c5f71
+  - be7ba829
+  - 35820cca
+  - 344ae2da
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_node_usage
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - 662c0280
+  - a1baa706
+  - 39a7e41a
+  - e7d9cba0
+  - 66aecbf7
+  - bc0c451d
+  - deadf94c
+  - c8c65202
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_requirement_revision
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - 18b1e0d8
+  - 9a6ae006
+  - 73fcfdcf
+  - 94a7997b
+  - 9340c843
+  - b18c4c95
+  - c1da23a4
+  - 7d073f4b
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_support_evidence
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - fadece83
+  - da6623d3
+  - f0eaf5ee
+  - 70f69f6c
+  - 95522ab8
+  - 0e5a4e22
+  - 3250ccb5
+  - 317d1fa1
+  relative_path: src/orchestrator/graph/commands/callbacks.py
+  qualified_function: handle_record_cleanup_applied
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: cleanup_callback
+- site_key:
+  - 85e74d65
+  - 2f6520c5
+  - '46742663'
+  - d5e09bed
+  - 5f07c2f8
+  - 09c35668
+  - '70367366'
+  - b3ec2f91
+  relative_path: src/orchestrator/graph/commands/patches.py
+  qualified_function: handle_submit_patch
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - 9f19dbea
+  - d3625cd9
+  - 8d19dfd5
+  - fe9b81ca
+  - '10737852'
+  - 7f37cdd8
+  - f331cce0
+  - b84229b4
+  relative_path: src/orchestrator/graph/commands/records.py
+  qualified_function: handle_evaluate_join
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - 083e86d1
+  - 370557a3
+  - 96044a90
+  - d21fa11f
+  - d80709d5
+  - 720f7f2a
+  - 0c102d08
+  - d40c45e8
+  relative_path: src/orchestrator/graph/commands/records.py
+  qualified_function: handle_evaluate_final_gate
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - 7a94d5c7
+  - 5035d6c5
+  - 066f6e7d
+  - 43dc0208
+  - 2168da31
+  - c5251f12
+  - 76f4f387
+  - bbc918d2
+  relative_path: src/orchestrator/graph/commands/records.py
+  qualified_function: handle_agent_died
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - 656109d7
+  - d4549d4c
+  - c262a6f7
+  - f9148344
+  - 2988a4ad
+  - a5fc93f2
+  - b99b9f83
+  - fd1c69ff
+  relative_path: src/orchestrator/graph/commands/schedule.py
+  qualified_function: handle_seed_compiled_events
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - 5c6bce89
+  - 5f2420ec
+  - 5c7d448c
+  - e5c49948
+  - 36cd94ad
+  - a0ddab13
+  - 09e0fb6b
+  - dc7e34e2
+  relative_path: src/orchestrator/graph/commands/schedule.py
+  qualified_function: handle_schedule_tick
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - 1f1f2b07
+  - 9ad47535
+  - aebb67ed
+  - 8a416fdf
+  - 95ef0869
+  - 5feacd4a
+  - b6419631
+  - ae6a33aa
+  relative_path: src/orchestrator/graph/commands/schedule.py
+  qualified_function: handle_reconcile
+  normalized_source_pattern: 'projection: GraphProjection,'
+  diagnostic_code: unsupported_binding
+  domain: node_task_edge_binding
+- site_key:
+  - 6cf80001
+  - d7dae086
+  - 4313718f
+  - bfaba6dc
+  - 43cb505e
+  - 1fe6e220
+  - 54fd731a
+  - c94cface
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: validate_patch
+  normalized_source_pattern: and projection["node_kinds"].get(node_id) in {"worker",
+    "verifier", "check"}
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - 5299be7d
+  - 3de2d7bd
+  - 40831bc2
+  - cbb0b5cb
+  - a7f926a5
+  - fd61a837
+  - 62b533ab
+  - d19cf07c
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: validate_patch
+  normalized_source_pattern: and projection["node_states"].get(node_id) in RUNNING_STATES
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - 08c65890
+  - fc119591
+  - 1f26dd9c
+  - 05740adb
+  - 55f25fff
+  - fd63b53e
+  - 8cc7ca3d
+  - 015ebaac
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _validate_typed_topology
+  normalized_source_pattern: 'if edge_id in seen_edge_ids or edge_id in projection["edges"]:'
+  diagnostic_code: unsupported_comparison
+  domain: governance_requirements
+- site_key:
+  - 6a9d2fe0
+  - ae8b4993
+  - b610d727
+  - 4f1d29b7
+  - 7fc79ba6
+  - 7fec27d1
+  - 93c05f48
+  - d6a41739
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _register_created_node
+  normalized_source_pattern: 'if node_id in seen_node_ids or node_id in projection["node_kinds"]:'
+  diagnostic_code: unsupported_comparison
+  domain: governance_requirements
+- site_key:
+  - 918b6692
+  - 08c34ae0
+  - 03c07543
+  - f6f7ba26
+  - 139b9ee3
+  - e6f863f6
+  - 187fcfd4
+  - d9b7f8cc
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _node_contract_identity
+  normalized_source_pattern: kind = projection["node_kinds"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - 8e149705
+  - bf322da6
+  - d507f99b
+  - 2998c516
+  - fd904132
+  - 6c6aec15
+  - 890a94c4
+  - 1b63eaaa
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _node_contract_identity
+  normalized_source_pattern: role = projection.get("node_roles", {}).get(node_id)
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - d8c954db
+  - 927c947b
+  - 221168cd
+  - 3261a732
+  - 984d51dd
+  - 32d0a8fc
+  - 2613df42
+  - 8ff3df0e
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _validate_no_forbidden_cycles
+  normalized_source_pattern: 'for edge in projection["edges"].values():'
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - a0d9a52e
+  - 949d5f90
+  - c9e25f6e
+  - 4a943b12
+  - d2ce3542
+  - 1b043dfe
+  - 1d376b38
+  - d42b99c6
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _validate_no_poisoned_final_invariant_edges
+  normalized_source_pattern: existing_edges = projection["edges"].values()
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - ee5f99bf
+  - 38e4bb1e
+  - 14dc8490
+  - bb30961e
+  - a8b7d1d5
+  - 813b4efe
+  - ca6c3352
+  - 92156e11
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _node_kind_role
+  normalized_source_pattern: return projection["node_kinds"].get(node_id), projection["node_roles"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - 1f133001
+  - e7e21e93
+  - 6890d0c9
+  - ebc70bd7
+  - 904ecbe2
+  - 13474bc9
+  - 8f1a95b4
+  - 20b9430d
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _node_kind_role
+  normalized_source_pattern: return projection["node_kinds"].get(node_id), projection["node_roles"].get(node_id)
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - 89a4ede6
+  - '12673993'
+  - 8ecc4cb3
+  - 72b45e78
+  - ac27be41
+  - cd1c001f
+  - f39e40c8
+  - d934e7ce
+  relative_path: src/orchestrator/graph/patch_validator.py
+  qualified_function: _existing_resource_claim_rank
+  normalized_source_pattern: for claim in _resource_claim_dicts(resource_claims_for_node(projection,
+    node_id))
+  diagnostic_code: unsupported_call
+  domain: governance_requirements
+- site_key:
+  - 529ac06d
+  - 2f73b3a5
+  - c032b25e
+  - 1fd141c3
+  - e93bbc7f
+  - b481b163
+  - aadd2cde
+  - 4a4cfe59
+  relative_path: src/orchestrator/graph/projection_queries.py
+  qualified_function: resource_claims_for_node
+  normalized_source_pattern: return tuple(projection["node_resource_claims"].get(node_id,
+    ()))
+  diagnostic_code: unsupported_call
+  domain: approved_core
+- site_key:
+  - 7a61e7f2
+  - b04afa12
+  - 41448f57
+  - ed3104ac
+  - 043d08e8
+  - e8bb4744
+  - 0d435047
+  - da1aa64e
+  relative_path: src/orchestrator/graph_runtime/dispatch.py
+  qualified_function: _recovered_lease_still_active
+  normalized_source_pattern: lease = projection["leases"].get(lease_id)
+  diagnostic_code: unsupported_call
+  domain: lease
+- site_key:
+  - 4db1bca9
+  - e7e27845
+  - e6c44619
+  - 420c062a
+  - feaf4afd
+  - 8f3518e0
+  - 3448ccf1
+  - 8d7c1ede
+  relative_path: src/orchestrator/graph_runtime/dispatch.py
+  qualified_function: _guard_no_pending_compromised_file_state_bindings
+  normalized_source_pattern: 'for binding in projection["input_bindings"].get(node_id,
+    {}).values():'
+  diagnostic_code: unsupported_call
+  domain: lease
+- site_key:
+  - d7dfdd5d
+  - 8c25aa6a
+  - b21c3cef
+  - ecc1cbee
+  - 9613c096
+  - de233c2e
+  - c0dd55c4
+  - 54bf5914
+  relative_path: src/orchestrator/graph_runtime/dispatch.py
+  qualified_function: _guard_no_pending_compromised_file_state_bindings
+  normalized_source_pattern: record = projection["file_state_records"].get(raw_record_id)
+  diagnostic_code: unsupported_call
+  domain: lease
+- site_key:
+  - 974f7d49
+  - 1fe9338b
+  - 991a7f30
+  - 6841db7e
+  - 1e6def16
+  - a8a9dbe2
+  - 9035ae08
+  - c812a991
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_frontier
+  normalized_source_pattern: ready_nodes = sorted(projection["ready_nodes"])
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 974f79ea
+  - c1e5b809
+  - 6cd20d18
+  - f7e54fbf
+  - b8c84393
+  - c2c12cf1
+  - 859391d4
+  - 51d2966e
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_frontier
+  normalized_source_pattern: 'for node_id in sorted(projection["node_states"]):'
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 20f6aad4
+  - daeba6fe
+  - 2d6afad6
+  - 0f951e36
+  - b11c67ba
+  - fbcb61a5
+  - abbd4936
+  - 20b14fa6
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_frontier
+  normalized_source_pattern: node_state = projection["node_states"].get(node_id, "")
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 7422428f
+  - 4ad2b95d
+  - 228e7492
+  - e3a4578c
+  - a2042f0d
+  - bfcde70e
+  - b70d4ec3
+  - 577d459e
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'for edge_id, edge in sorted(projection["edges"].items()):'
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 1925d543
+  - 382c2b73
+  - 03db9ea1
+  - 2f81d13f
+  - 1217616e
+  - 80eac0a0
+  - 4372253a
+  - 0fbe123d
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'if projection["node_states"].get(to_node_id) in terminal_states:'
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 8f4f526a
+  - a8f901e7
+  - 823763cf
+  - ebfd95c8
+  - fd09f0da
+  - 4f00ca91
+  - 7f775b66
+  - 4ee8778f
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'if to_port in projection["input_bindings"].get(to_node_id,
+    {}):'
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - cf58a0d6
+  - b78163a0
+  - c7282980
+  - 03d2e562
+  - 2cf6002d
+  - 79bba3af
+  - 169115c2
+  - aed990b7
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'if projection["node_states"].get(node_id) in terminal_states:'
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 2f65fc92
+  - 1b0ed5a9
+  - ebcc23f7
+  - 4250c9bd
+  - 9e9de6bd
+  - 1cd96958
+  - e7efc1c7
+  - edd20573
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _gap_analysis_obligations
+  normalized_source_pattern: 'if projection["node_kinds"].get(node_id) != "check":'
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - '37516683'
+  - 046eadbe
+  - 47c586cb
+  - 7031bfc3
+  - 247c6707
+  - a9505c36
+  - 85f0b822
+  - 3ab8eae4
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_evidence
+  normalized_source_pattern: bindings = projection["input_bindings"].get(context.node_id,
+    {})
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 360cb0ee
+  - 0e5b327f
+  - 3289aed5
+  - 5225c946
+  - bc797a9d
+  - 461326cb
+  - 0a0eb16d
+  - b17def8b
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_evidence
+  normalized_source_pattern: 'if raw_record_id in projection["file_state_records"]:'
+  diagnostic_code: unsupported_comparison
+  domain: planning_session
+- site_key:
+  - 97d58adb
+  - 5bb86fa5
+  - 152099d1
+  - 563dbc9e
+  - ab962048
+  - 5017beec
+  - 7a16d25a
+  - 75e4771e
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_evidence
+  normalized_source_pattern: record_payload=_compact_file_state_record(
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 8c04dd81
+  - 68c7d651
+  - f24ae276
+  - e814ab43
+  - 1cf8c670
+  - bce91913
+  - 708b025a
+  - 2ef8f6b9
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _hydration_policy_for_binding
+  normalized_source_pattern: edge = projection["edges"].get(edge_id)
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 38d51456
+  - 6b1a0097
+  - 3e7e17b8
+  - 4f19228e
+  - ca6ee0e7
+  - 87b852c9
+  - 418a201e
+  - a9ef9224
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_outstanding_failures
+  normalized_source_pattern: task_region_id = projection["node_task_regions"].get(context.node_id)
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 4b33b265
+  - eccb5b9f
+  - be9abb74
+  - cf61e937
+  - 590f67ca
+  - e39c774d
+  - '13729833'
+  - b8834bd0
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_outstanding_failures
+  normalized_source_pattern: 'for region_id, failure in projection["environment_failures"].items():'
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 0e955196
+  - 5d18fc39
+  - cfd7aaf5
+  - 81c4ca3d
+  - 5cbfbff9
+  - e649301c
+  - 43ea93ec
+  - e2a0d48d
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_session_carryover_record
+  normalized_source_pattern: session_id = projection["planner_sessions"].get(context.node_id)
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 091bb3a4
+  - 089e5607
+  - 6e068497
+  - 1b105987
+  - c2d1dc75
+  - cdc6404a
+  - 82d4520b
+  - 9d4ad7a6
+  relative_path: src/orchestrator/graph_runtime/prompts.py
+  qualified_function: _planner_session_carryover_record
+  normalized_source_pattern: carryover = projection["planner_session_carryovers"].get(session_id)
+  diagnostic_code: unsupported_call
+  domain: planning_session
+- site_key:
+  - 270166f5
+  - 31bd13b8
+  - 2ac56c60
+  - b600a9c6
+  - c3ff5b26
+  - b943f604
+  - bf68fe2c
+  - a66fbdb8
+  relative_path: src/orchestrator/graph_runtime/recovery.py
+  qualified_function: reconcile_graph
+  normalized_source_pattern: 'if projection["run_state"] != "active":'
+  diagnostic_code: unsupported_comparison
+  domain: verification_recovery
+- site_key:
+  - c5aafa32
+  - '96379520'
+  - 09d166c9
+  - b5f97a37
+  - 0635adea
+  - 0b29f616
+  - '68680657'
+  - 1ef2a78e
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: GraphEventStore.load_projection_with_tail
+  normalized_source_pattern: projection = _projection_from_events(events)
+  diagnostic_code: unsupported_binding
+  domain: record_file_state
+- site_key:
+  - ffc9e0b2
+  - 0f245dc3
+  - b3bc3813
+  - e5793e9f
+  - 5121f0ab
+  - 68f9a55a
+  - b68d10ef
+  - afd6db3a
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: GraphEventStore.load_projection_with_tail
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: record_file_state
+- site_key:
+  - a2ea50a5
+  - e1f75248
+  - 39327b92
+  - 423102ea
+  - 061031c0
+  - f1d350f5
+  - 39be8d3a
+  - '66603807'
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: GraphEventStore.advance_projection_snapshot
+  normalized_source_pattern: projection = initial_projection()
+  diagnostic_code: unsupported_binding
+  domain: record_file_state
+- site_key:
+  - 000b48d2
+  - 95d78ba7
+  - ff8b200b
+  - 88f29d68
+  - 4cf65d19
+  - 59df4a45
+  - 1a074505
+  - 57aeaa3b
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.node_states = dict(projection["node_states"])
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - f0ffaf5c
+  - 90006fa6
+  - 60a16a3d
+  - 1fb2b592
+  - e674cb16
+  - c6d88938
+  - '47218407'
+  - 7f726712
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.task_states = dict(projection["task_states"])
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - 8d2052fe
+  - b367a28f
+  - 471ff0fc
+  - fe0de20c
+  - '13121809'
+  - df2a7527
+  - 5515eb20
+  - e46d0516
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.leases = project_leases([], projection=projection)
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - bc2733a8
+  - 48ee6e59
+  - a8be2a4b
+  - e5297f63
+  - 4b8af8b6
+  - 4ddd92cf
+  - 6147ee43
+  - 2836538c
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.ready_nodes = list(projection["ready_nodes"])
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - 290ff557
+  - 2f8362a4
+  - bec464c7
+  - 73759b90
+  - b1fabd68
+  - 0bc9690e
+  - 625f5a21
+  - bcff5a3b
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.scheduler = dict(project_scheduler_view([], projection=projection))
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - 05c7d221
+  - d3f61265
+  - 896e1410
+  - 40d2c49d
+  - c19f0a63
+  - 2f81d10e
+  - d5757544
+  - fc2be1d2
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: row.lease_view = dict(project_lease_view([], projection=projection))
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - 761a8973
+  - '24283143'
+  - 2b80215e
+  - 327a2803
+  - 7729c31a
+  - ab5c17e4
+  - ed302998
+  - ebd183da
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _assign_projection_snapshot
+  normalized_source_pattern: decisions = dict(project_decision_view_from_projection(projection))
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - ec009ff5
+  - 23b7323f
+  - df10011d
+  - 6265b2a0
+  - 3041487b
+  - a908ee4d
+  - 0e21db46
+  - b18cf386
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _decisions_with_projection_checkpoint
+  normalized_source_pattern: '_CHECKPOINT_PROJECTION_KEY: projection_to_checkpoint(projection),'
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - b0f55fd5
+  - fb5443a1
+  - a0f1f735
+  - d63769b5
+  - 4959021d
+  - af898283
+  - 1a6475cb
+  - 095346ac
+  relative_path: src/orchestrator/graph_runtime/store.py
+  qualified_function: _decisions_with_projection_checkpoint
+  normalized_source_pattern: '_CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),'
+  diagnostic_code: unsupported_call
+  domain: record_file_state
+- site_key:
+  - 978f4b30
+  - e51a9801
+  - 2051344d
+  - d0c9f466
+  - c6e6dd2f
+  - d656456e
+  - 962dc05c
+  - e1ef0dcb
+  relative_path: tests/integration/test_graph_event_store.py
+  qualified_function: _rebuild_projection
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 32a15bc7
+  - b132c280
+  - 79a2dcf6
+  - c199df1a
+  - a45d0e52
+  - 32309c0c
+  - 3c293240
+  - c1862556
+  relative_path: tests/integration/test_graph_event_store.py
+  qualified_function: _rebuild_projection
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 4f0d4528
+  - ff621502
+  - b7e6da5d
+  - '33894584'
+  - 4cc4342a
+  - 3521374f
+  - fc4833ad
+  - 367cc18b
+  relative_path: tests/integration/test_graph_gatekeeper_flow.py
+  qualified_function: test_gatekeeper_secret_verdict_scrubs_compromised_snapshot
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 4153b4eb
+  - b8e9e52b
+  - e62dfa3d
+  - bf1fbfcc
+  - 6cd8544b
+  - b7dc19b1
+  - 276c70ee
+  - f8495733
+  relative_path: tests/integration/test_graph_gatekeeper_flow.py
+  qualified_function: test_gatekeeper_secret_verdict_scrubs_compromised_snapshot
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ac735065
+  - bf92a341
+  - 2a51e3d6
+  - 2be4c426
+  - e75ccf7f
+  - 07b338ab
+  - bdb180e7
+  - 03ec60d8
+  relative_path: tests/integration/test_graph_node_detail_read_models.py
+  qualified_function: test_incremental_rich_lease_summaries_match_rebuild_and_canonical_projection
+  normalized_source_pattern: assert incremental[0]["leases"] == list(project_leases([],
+    projection=projection).values())
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 2f96b292
+  - 68d28ab4
+  - db5955c8
+  - 19c87de7
+  - 6a6f3445
+  - fc6b18fc
+  - 5127fe16
+  - d34e3d46
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: test_routine_corpus_loads_and_compiles_cleanly
+  normalized_source_pattern: assert len(projection["node_kinds"]) >= 3
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - f2f8e4e7
+  - eb25a52b
+  - e68daeeb
+  - 8e4e1fd2
+  - 08674a40
+  - 376758bf
+  - f5b99c36
+  - 269b2491
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: test_dynamic_graph_feature_compiles_to_single_initial_planner_head
+  normalized_source_pattern: assert projection["node_kinds"]["root"] == "root"
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - f5b97811
+  - 4989f7ac
+  - feb5b036
+  - f113face
+  - da261373
+  - 9da92c2d
+  - d8a8d8bc
+  - b9c524af
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: test_dynamic_graph_feature_compiles_to_single_initial_planner_head
+  normalized_source_pattern: assert projection["node_kinds"]["routine-snapshot"] ==
+    "artifact"
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 398233dd
+  - '23993913'
+  - 110dbc0a
+  - 47d74bbb
+  - 9c2b718f
+  - 7da763af
+  - 77098edd
+  - '36900119'
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: test_dynamic_graph_feature_compiles_to_single_initial_planner_head
+  normalized_source_pattern: node_id for node_id, node_kind in projection["node_kinds"].items()
+    if node_kind == "planner"
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1710f8cf
+  - 98cc35f3
+  - 40b321c6
+  - 32d756f9
+  - 8abf1a6a
+  - 09c9985a
+  - 7662c41e
+  - 2b96c6d0
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - bfb504dc
+  - e0272839
+  - ddb8a02f
+  - 1ced80d1
+  - f80ff827
+  - bc5225f0
+  - bc3e79ad
+  - 67d7b19f
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - f5b7c7ba
+  - 9e85312c
+  - 4094a6e3
+  - 23d7d06b
+  - e7c36969
+  - c28bea8e
+  - 509f46f8
+  - a80568bf
+  relative_path: tests/integration/test_graph_routine_compile.py
+  qualified_function: _count_nodes
+  normalized_source_pattern: return sum(1 for node_kind in projection["node_kinds"].values()
+    if node_kind == kind)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - f9669a64
+  - 114ea6a6
+  - 212f7982
+  - 8a48c48f
+  - c9359bfd
+  - 80294cc0
+  - a896da24
+  - c59eb4ef
+  relative_path: tests/unit/test_artifact_prompt_hydration.py
+  qualified_function: test_default_planner_evidence_keeps_check_output_tails_without_references
+  normalized_source_pattern: context = GraphDispatchContext(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d3ab1181
+  - '62616805'
+  - c59df52f
+  - 8e6727c4
+  - b50db887
+  - f9a774e4
+  - 72be6d89
+  - 2ba35c51
+  relative_path: tests/unit/test_artifact_prompt_hydration.py
+  qualified_function: test_default_planner_evidence_keeps_check_output_tails_without_references
+  normalized_source_pattern: evidence = planner_evidence(context, projection, [event])
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e1d19d00
+  - '97505883'
+  - 29e244fe
+  - 5029481c
+  - 0c409a14
+  - 2333f431
+  - 4c1820c7
+  - 246ccf3e
+  relative_path: tests/unit/test_callbacks.py
+  qualified_function: test_projected_prior_rejection_does_not_return_duplicate
+  normalized_source_pattern: result = validate_callback(_request(), projection, [])
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - fd1bb8dc
+  - c8c87e29
+  - d7b53fff
+  - 507b6d7b
+  - eb01086c
+  - 321c8856
+  - c80bed70
+  - 6bf0ac29
+  relative_path: tests/unit/test_final_review_contracts.py
+  qualified_function: test_canonical_lifecycle_serialization_preserves_reducer_semantics
+  normalized_source_pattern: assert projection["run_state"] == "active"
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 7b14eb6d
+  - f7dc1397
+  - dd698521
+  - 638ac1c9
+  - c0f376ef
+  - 421f5bfa
+  - 0b19e6d9
+  - 91032c23
+  relative_path: tests/unit/test_graph_commands.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - f1828bfb
+  - 152ad479
+  - 9ad662f9
+  - 5991a919
+  - ad96c7ae
+  - c2687b9c
+  - 9002196f
+  - 16b87774
+  relative_path: tests/unit/test_graph_commands.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 5df06a65
+  - 28c888fa
+  - 9d9157b2
+  - 3e40f610
+  - 76543f1b
+  - e0f3be62
+  - 872953e3
+  - 1c2f28d6
+  relative_path: tests/unit/test_graph_compiler.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 6dd393d2
+  - d2df080d
+  - a5bb0acf
+  - 5273a618
+  - 9c8edc71
+  - 2927ece3
+  - f53dfc2a
+  - 47352a03
+  relative_path: tests/unit/test_graph_compiler.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - f1b5518d
+  - d2992dda
+  - 79a4080a
+  - 2933f579
+  - e6daf446
+  - a768f183
+  - f93544fb
+  - b829d710
+  relative_path: tests/unit/test_graph_dispatch_on_output.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - d1073541
+  - '82634144'
+  - f4728c0b
+  - 1dc577f5
+  - ad8ba710
+  - 9333c6f3
+  - 9b5dd45e
+  - 3be08339
+  relative_path: tests/unit/test_graph_dispatch_on_output.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 71ec8fca
+  - e62b1f39
+  - afb1bcac
+  - 36a168a9
+  - a998270b
+  - 508dfbfa
+  - 5bed7e62
+  - c2a5a0d3
+  relative_path: tests/unit/test_graph_gatekeeper.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - d5106463
+  - d85b04a4
+  - 24ad25c7
+  - db5053b8
+  - 9b6a8259
+  - 2a918b6b
+  - 3881c0c2
+  - 9f358e6b
+  relative_path: tests/unit/test_graph_gatekeeper.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 6a3fe930
+  - 05c57f3f
+  - b6149047
+  - 475ec10c
+  - e584e149
+  - a9d598ea
+  - b290b3be
+  - f0c630e2
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_gap_planner_corrective_region_macro_expands_to_valid_patch
+  normalized_source_pattern: result = validate_patch(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 8cfcf814
+  - a8e8ae74
+  - 96fefbca
+  - ac5fe2ce
+  - 4ca71880
+  - 589ea04f
+  - a7a5dd11
+  - '33579200'
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_create_join_macro_uses_distinct_source_record_ports
+  normalized_source_pattern: result = validate_patch(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 71b81673
+  - 91827d8f
+  - 258a5dab
+  - 24fbf747
+  - 4ac9b186
+  - 54e3ca11
+  - 3715947f
+  - 3e9bcc64
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_submit_patch_command_accepts_macro_invocations
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - '54750757'
+  - 731eec24
+  - cf8e9f4a
+  - f09a5475
+  - 09424b9d
+  - '53023009'
+  - 346d949c
+  - 043b4782
+  relative_path: tests/unit/test_graph_macros.py
+  qualified_function: test_submit_patch_command_accepts_macro_invocations
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 6b257912
+  - 8d8ecc33
+  - a7ceaaa3
+  - dbd63486
+  - afa40335
+  - 07c30563
+  - 1373da70
+  - 76154a0d
+  relative_path: tests/unit/test_graph_parent_child_translation.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - ddf454ca
+  - c5ed9448
+  - 18cd13cd
+  - 36a31c9d
+  - fe1b0975
+  - 3bd76144
+  - 435a9003
+  - d6ecc223
+  relative_path: tests/unit/test_graph_parent_child_translation.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ae475c58
+  - 79cbd91d
+  - 3f5b84d7
+  - d08b036f
+  - b917628c
+  - cdf1690d
+  - 50b2a7fb
+  - 79b1f975
+  relative_path: tests/unit/test_graph_planner.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 36e1f23c
+  - 33e2eb08
+  - 359a1297
+  - 3c2328e2
+  - d9585755
+  - d75f1f04
+  - 7b375f95
+  - fb605b41
+  relative_path: tests/unit/test_graph_planner.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - bb7ab2d2
+  - '46421238'
+  - 37b859b1
+  - 2da556d1
+  - 0e01629c
+  - 6067e1c9
+  - f2b4b5f8
+  - d8947c8d
+  relative_path: tests/unit/test_graph_planner_packet.py
+  qualified_function: _projection
+  normalized_source_pattern: projection = reduce_event(projection, evt)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 34c7a4ca
+  - 6fae307a
+  - 8fb4a7cc
+  - 6226def3
+  - 858b190e
+  - 83f68ab6
+  - f0866eb1
+  - a8655f86
+  relative_path: tests/unit/test_graph_planner_packet.py
+  qualified_function: _projection
+  normalized_source_pattern: projection = reduce_event(projection, evt)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - fcc93c1c
+  - 1eb59a9e
+  - b344daa8
+  - 19de310b
+  - 7e5e9c7f
+  - 2d55521a
+  - 9d1aa008
+  - 07bb5f64
+  relative_path: tests/unit/test_graph_planner_packet.py
+  qualified_function: _planner_context
+  normalized_source_pattern: return GraphDispatchContext(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 755346cb
+  - dea8e05d
+  - eef289e7
+  - d5e14708
+  - a4fd7dc5
+  - f8d9c538
+  - c3857cca
+  - 5ea8d169
+  relative_path: tests/unit/test_graph_planner_packet.py
+  qualified_function: _gap_planner_context
+  normalized_source_pattern: return GraphDispatchContext(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 603e5ae1
+  - ef3907f9
+  - 08def277
+  - 5877d29d
+  - 60a95002
+  - 07c8095d
+  - '89553521'
+  - 3f8f116e
+  relative_path: tests/unit/test_graph_planner_session.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 77e29a0e
+  - 660b21e2
+  - '56605557'
+  - 2a973d88
+  - 8a1408c8
+  - 29a43293
+  - 04fed34b
+  - 055aaab9
+  relative_path: tests/unit/test_graph_planner_session.py
+  qualified_function: _project
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 075c5b68
+  - cda95f22
+  - f52ddbd2
+  - d94f1be0
+  - a5fcb509
+  - b16b1b75
+  - c9b283ba
+  - f5039c60
+  relative_path: tests/unit/test_graph_projection_inventory.py
+  qualified_function: test_resource_claim_query_returns_an_immutable_sequence
+  normalized_source_pattern: assert resource_claims_for_node(projection, "worker-1")
+    == (claim,)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 35a7e73e
+  - 7b7e98b0
+  - 873e4e54
+  - dce3905a
+  - e3b5e303
+  - 5874941f
+  - 70a749a5
+  - b0568b5f
+  relative_path: tests/unit/test_graph_projection_inventory.py
+  qualified_function: test_resource_claim_query_returns_an_immutable_sequence
+  normalized_source_pattern: assert resource_claims_for_node(projection, "missing")
+    == ()
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 2cc29dbe
+  - a7a8c12f
+  - 1c2e003a
+  - a06bcd29
+  - ec27d973
+  - 4e627c1e
+  - d043e67c
+  - 49e03e3c
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
+  normalized_source_pattern: assert run_state(projection) is None
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 00650ca3
+  - c5a09783
+  - '21600493'
+  - 2bead136
+  - 610daf5b
+  - de24c87e
+  - ff888250
+  - f06e1ac2
+  relative_path: tests/unit/test_graph_projection_queries.py
+  qualified_function: test_lifecycle_queries_preserve_missing_and_default_values
+  normalized_source_pattern: assert completion_decision_passed(projection) is False
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 7f57d980
+  - c64bc92b
+  - 8936d1af
+  - d3462cfa
+  - 04b14a3f
+  - 163a69f4
+  - 6240fa8e
+  - 4c2b1ee3
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_callback_idempotency_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 9a39e1f4
+  - ab8e48f4
+  - 755a6b95
+  - 35f4636b
+  - dd3d45be
+  - d2f56986
+  - a09a4760
+  - 8ef7de63
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_decision_projection_checkpoint_round_trips_typed_payloads
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 0229d5ea
+  - eef0f36b
+  - afa11786
+  - de4e8b2d
+  - 08902812
+  - e689aa13
+  - fa912510
+  - 302fe555
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_decision_view_behavior_is_preserved_with_typed_decision_projection
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - ffd35187
+  - 90996f9e
+  - 4076d15b
+  - 1de01bf0
+  - ae3b6ef7
+  - 7c199585
+  - fbf184c4
+  - 0c807f0e
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_decision_view_behavior_is_preserved_with_typed_decision_projection
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 0c38036e
+  - c02fa540
+  - e4342cf3
+  - d3444385
+  - 4f2951f1
+  - 70ae1889
+  - 324843f8
+  - 36c7d9ed
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_decision_request_details_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 3ce00889
+  - 14e4452f
+  - 3060fec8
+  - 63e0d608
+  - 4c3b38f5
+  - fdaf0357
+  - 2cab909d
+  - 8a3e4b1a
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_decision_request_details_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c3bb71af
+  - bb12b5e0
+  - 24acc482
+  - 519c857f
+  - 761d916c
+  - ad93d5d6
+  - e83adfde
+  - c7b416db
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_environment_failure_projection_checkpoint_round_trips_check_result_record
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 8b8eb495
+  - e984e9ed
+  - f53f6627
+  - 53b60a02
+  - 111764c1
+  - ac9edf80
+  - 1964e989
+  - c966e57e
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_file_state_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: projection = reduce_event(projection, _file_state_event("task-1",
+    "cand-1", 21))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 5f81edf5
+  - 0fb5169b
+  - b3ed7da6
+  - 4561d88c
+  - da0d60e4
+  - 3250230a
+  - 9ee86665
+  - aa995573
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_file_state_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: projection = reduce_event(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a7f5c355
+  - b4c49b51
+  - 0918eaea
+  - 6817fa98
+  - 6beae629
+  - 14b9f765
+  - b96b993b
+  - 36686e67
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_file_state_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a648041b
+  - 4d2ac3dd
+  - 4afd3c26
+  - a31fac85
+  - 01908ad8
+  - '56316744'
+  - 15ddd53c
+  - 20a762fc
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_task_candidate_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 552a0e42
+  - 3db383b3
+  - 2926605f
+  - 70bb9b37
+  - 4427359d
+  - fdcb4013
+  - f5108af6
+  - 31a4d9c7
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_verifier_verdict_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 26cbaf74
+  - ff2ed173
+  - 4a7f0aea
+  - d2c44d82
+  - 2051d380
+  - 6354e5db
+  - 765ced43
+  - c489d413
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_requirement_revision_projection_uses_typed_payload
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - fc9016e3
+  - 6a18c705
+  - 95df9e63
+  - 0c2059e0
+  - 215ad0dd
+  - 14e331be
+  - ecb1c386
+  - 94ca8e91
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_support_evidence_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - aae51580
+  - 54f71196
+  - 5ec5e5a9
+  - 959b388d
+  - 5041e50d
+  - 4ff37236
+  - 854a340f
+  - 69056a84
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_support_evidence_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - '94319594'
+  - 947105bb
+  - '91577469'
+  - b9c8cf4d
+  - 4e7ab0aa
+  - 508e84b9
+  - a27bbc72
+  - b9cab7c9
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_oversight_decision_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ff912f4d
+  - afb5dc1c
+  - c366effb
+  - 6b7ec855
+  - 1cf65301
+  - 3cd96a88
+  - f042a854
+  - fc71b6d9
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_malformed_file_state_payload_is_tolerated_without_raw_projection_entry
+  normalized_source_pattern: assert projection["file_state_records"] == {}
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - d5fa5f30
+  - 84c40c53
+  - 94214fa3
+  - 261f4abd
+  - 50d491bb
+  - 2b582704
+  - 6f983275
+  - '51688967'
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_node_creation_projection_retains_first_typed_retry_limit
+  normalized_source_pattern: assert "worker-2" not in projection["node_creation_payloads"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - e14919ef
+  - ca3ed283
+  - 5dd4551c
+  - 82f63e36
+  - b825cac8
+  - 4fceb75b
+  - fd42e89f
+  - d49d5e9e
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_clone_projection_covers_initial_keys_without_nested_aliasing
+  normalized_source_pattern: cloned = projections._clone_projection(state)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c661bd47
+  - de6c6964
+  - 93a9b0b8
+  - eefb0d13
+  - c6629e44
+  - a2579508
+  - ee932bbf
+  - baa8b505
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_clone_projection_covers_initial_keys_without_nested_aliasing
+  normalized_source_pattern: assert state["node_output_ports"]["worker-1"]["candidate"]
+    == ["record-1"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 20dc16f7
+  - 9def2f2a
+  - 466c92a8
+  - '89251604'
+  - d04cce17
+  - 77a86939
+  - 8bbb31c9
+  - 643f488b
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_node_creation_projection_checkpoint_round_trips_typed_payload
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 185cf4e3
+  - 16023e60
+  - 9fbbb89c
+  - 1f134db3
+  - d3205b9e
+  - f0bdb9f3
+  - 45f731e2
+  - a4c3bfb7
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_malformed_node_created_payload_is_tolerated_without_raw_projection_entry
+  normalized_source_pattern: assert projection["node_creation_payloads"] == {}
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 49dcab22
+  - 90ee75a6
+  - 5a579153
+  - f52c2d11
+  - 8c62f2d7
+  - cfeb49b2
+  - b337ac0b
+  - 6c2b27b6
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_malformed_node_created_payload_is_tolerated_without_raw_projection_entry
+  normalized_source_pattern: assert projection["node_states"] == {}
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 423e71d0
+  - ccfcb783
+  - f52cf528
+  - 54839c0b
+  - 4442ba73
+  - 19bf5f02
+  - 402424c8
+  - f85ba212
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_input_binding_replay_accumulates_many_cardinality_records
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - c292071e
+  - ce350add
+  - d5619faa
+  - 3701e1b2
+  - 4345bddc
+  - f3fb48b2
+  - bfb2d430
+  - 7f838e87
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_input_binding_replay_accumulates_many_cardinality_records
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - b32affad
+  - f4f59512
+  - 6a13365a
+  - '93990380'
+  - 6f633053
+  - 9339e458
+  - 63704e7f
+  - a94498f3
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_edge_projection_uses_typed_payload_and_preserves_topology_shape
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 621dad1d
+  - 1204453a
+  - 30a9421f
+  - 7c4097fe
+  - d63dfb42
+  - 2dd41b03
+  - 2d8f3ddb
+  - 283cb7d9
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_edge_projection_uses_typed_payload_and_preserves_topology_shape
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 98d14f31
+  - eaa212b8
+  - ef00b523
+  - a4083465
+  - 59651daa
+  - 0bed59b1
+  - 36863e6b
+  - bebdb740
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_input_binding_projection_uses_typed_payload_and_drops_raw_event_extras
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 96fc61d9
+  - 8e96cdb7
+  - 8703bab8
+  - 905eaf88
+  - 9cf56a70
+  - 23108f6f
+  - 8aa061c6
+  - 2fe302ba
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_input_binding_projection_uses_typed_payload_and_drops_raw_event_extras
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 3dc7336e
+  - 90560afa
+  - 6b325d90
+  - 6a33b28f
+  - f6b85b94
+  - 6891b1d7
+  - 3ae8f65d
+  - 3e23e436
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_edge_and_input_binding_projection_checkpoint_round_trips_typed_payloads
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 2761352d
+  - a20fc5dd
+  - caf3011d
+  - 1fcdc38d
+  - f9de0bf3
+  - d4cce05c
+  - 27b6cd1f
+  - a8e7e918
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_edge_and_input_binding_projection_checkpoint_round_trips_typed_payloads
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 0600976f
+  - 8dcce2b4
+  - '17263260'
+  - 3bfd3763
+  - 14f3428b
+  - f7df1621
+  - 97cf9b7d
+  - 3ed79bcc
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_invalid_persisted_edge_selector_raises_projection_error
+  normalized_source_pattern: reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 71b9e88c
+  - 670fceef
+  - 3da8407b
+  - 7a010cc9
+  - fe14587a
+  - 40171e2a
+  - d3327ccb
+  - dd0b60d1
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_replay_determinism
+  normalized_source_pattern: first = reduce_event(first, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 4dd5a21a
+  - 7b69fd7a
+  - 0744a685
+  - e6741886
+  - 6bdb82a2
+  - 49a9495b
+  - 96d8a6c2
+  - 67bede03
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_replay_determinism
+  normalized_source_pattern: first = reduce_event(first, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 679652d2
+  - f31e06a9
+  - 6d287df1
+  - 7edf8251
+  - b44808b1
+  - dc916b7b
+  - 776ab5f2
+  - 7769938d
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_replay_determinism
+  normalized_source_pattern: second = reduce_event(second, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 185c1fb6
+  - 5908ded6
+  - 5d687f48
+  - 1737bbcc
+  - 10e8007b
+  - f421ca1a
+  - d1f345d2
+  - '32320050'
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_replay_determinism
+  normalized_source_pattern: second = reduce_event(second, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 00eaa151
+  - 17de2816
+  - 2281c643
+  - 15087d81
+  - 54d53a2e
+  - '82133632'
+  - b78498ab
+  - 60ee2235
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_lease_projection_uses_typed_payload_and_preserves_public_shape
+  normalized_source_pattern: assert project_leases([], projection=projection) == {
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e23b0b4d
+  - 6ab8f424
+  - 356577a8
+  - e1545d76
+  - f2e3b403
+  - 7639f252
+  - 3b5b6dc9
+  - ef97757c
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_lease_projection_uses_typed_payload_and_preserves_public_shape
+  normalized_source_pattern: assert project_lease_view([], projection=projection)
+    == {
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - dbb91b15
+  - 655edc41
+  - 934123a0
+  - e9c88776
+  - f6678b60
+  - 8f13b944
+  - a5fef668
+  - 42c983f9
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_lease_projection_checkpoint_round_trips_typed_payload_and_drops_malformed_entries
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - db0db3ef
+  - 6fbca8ac
+  - b03d7118
+  - d6b83266
+  - 8a333c8c
+  - 7d169aaa
+  - ccff5cfd
+  - e371aa90
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_output_record_checkpoint_round_trip_preserves_typed_payloads
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - e9adfee6
+  - 3995a6f1
+  - dae9cfc0
+  - a68c3cd1
+  - b6751f1c
+  - dd6b8c8f
+  - 344b090f
+  - 8971b7dd
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_output_record_checkpoint_round_trip_preserves_typed_payloads
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 73f7d124
+  - 78656c5b
+  - e85b9d45
+  - 15df2e15
+  - ee48064e
+  - 4fd49659
+  - 7d2fe4bc
+  - 4c00ed52
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_verification_result_projections_are_typed_at_fold
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - b179979b
+  - 931000ff
+  - a79c3543
+  - f5b17592
+  - c8a598fc
+  - 92d0a0c6
+  - 05f7867a
+  - 2ea3bd57
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_verification_result_projections_are_typed_at_fold
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e0ed69bb
+  - aacfaf2e
+  - cdc8b67f
+  - '32297925'
+  - 72d58d78
+  - 230caf60
+  - f43f98c6
+  - e010025a
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_canonical_verification_result_payload_projects_required_identifiers
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - a280ac07
+  - 6cd23bbb
+  - 707c38c3
+  - 15f382df
+  - a9aee22f
+  - 1625f44a
+  - 83198f06
+  - 6455135b
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_canonical_verification_result_payload_projects_required_identifiers
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 05c8034b
+  - d5de2e6e
+  - 244b9cb0
+  - cc57dbf3
+  - 610f91e5
+  - a0b24998
+  - 7bb2a8ce
+  - 39dee700
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_verification_result_checkpoint_round_trip_preserves_typed_payloads
+  normalized_source_pattern: projection = reduce_event(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 257b0641
+  - 3ca58f4c
+  - 65cae810
+  - 1daf4fa6
+  - c3f0c5e9
+  - b273e7fd
+  - b667cd13
+  - c60335a3
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_verification_result_checkpoint_round_trip_preserves_typed_payloads
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d56af027
+  - 05383377
+  - 153a2849
+  - b1dd82d0
+  - 6ffde3b9
+  - 2a6f8a77
+  - c9869f50
+  - 0abb1e7d
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_sparse_check_result_fixture_is_completed_to_a_canonical_failed_summary
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c35f1aab
+  - 1c010c07
+  - f02e8c63
+  - b2b790c7
+  - 03720850
+  - eeb73b6e
+  - 42a2db25
+  - 48ddd2e4
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_check_result_checkpoint_round_trip_preserves_typed_summary
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 51721caf
+  - 588f8473
+  - f9f69bc9
+  - 22b6936a
+  - e0c007db
+  - daf57949
+  - a8791efc
+  - 1dc79d39
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_graph_projection_derived_indexes_match_legacy_event_scan.append_command
+  normalized_source_pattern: command_projection = reduce_event(command_projection,
+    graph_event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 1338c49a
+  - 8cdd26f2
+  - 6d2ff3a3
+  - 1c682f3a
+  - c6b304bb
+  - c3133278
+  - 61b885f4
+  - 1418dec7
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_graph_projection_derived_indexes_match_legacy_event_scan.append_command
+  normalized_source_pattern: command_projection = reduce_event(command_projection,
+    graph_event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 0262fe12
+  - 8058549c
+  - 9067d81a
+  - afc5c866
+  - b4511449
+  - 48ed905d
+  - 788ea95c
+  - b8ce0400
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_graph_projection_derived_indexes_match_legacy_event_scan
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - a29aee42
+  - e5016800
+  - '27659238'
+  - 8500c51f
+  - 4e8004c4
+  - fb60023e
+  - 92abdb57
+  - b0793399
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_graph_projection_derived_indexes_match_legacy_event_scan
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 67e9e012
+  - fd3b0afe
+  - b0eb81c5
+  - 9fc6866e
+  - c3b1ecbf
+  - 8a3d3e47
+  - ad91c54c
+  - 53d8c126
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_residual_command_projection_fields_fold_incrementally
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - cddf480b
+  - 04fba564
+  - 4ed54c08
+  - 6a1a10c7
+  - f82051a5
+  - 3b4edd44
+  - 6dbfb138
+  - 96cd188b
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_residual_command_projection_fields_fold_incrementally
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ca5589d6
+  - 98bf2c5c
+  - 06d49fd0
+  - e221c34d
+  - fb329992
+  - 8e142a23
+  - e50ca036
+  - f6ed3f1c
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 9f01d0fc
+  - c847e08a
+  - 917c0fb2
+  - e4ae493e
+  - ab455069
+  - 63a36f90
+  - 2ea0f75c
+  - 050d5876
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e781d2d3
+  - 242a3907
+  - bf2cea60
+  - be6ebcb7
+  - d181b348
+  - f6b6e8d3
+  - e6f8a31d
+  - a6f2da13
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_support_evidence_freshness_can_be_queried_from_projection
+  normalized_source_pattern: state = reduce_event(state, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 7f60f17c
+  - 50c269bb
+  - 9cd8ffa4
+  - 1cb389d0
+  - fb15ce63
+  - 91c264ab
+  - 0349ddcf
+  - 7c47dede
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_support_evidence_freshness_can_be_queried_from_projection
+  normalized_source_pattern: state = reduce_event(state, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - b1f63a8a
+  - 3f8ab097
+  - 5d3a66ae
+  - 200dbaf7
+  - 9f7fc5dd
+  - c84881ba
+  - 3ceaadef
+  - e8ea2ff1
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_projection_immutability
+  normalized_source_pattern: next_state = reduce_event(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 25a21154
+  - 43a0ca6f
+  - 05fc6096
+  - 7ad41d18
+  - 4e60b120
+  - 585df1ac
+  - babc0901
+  - 2de1dac8
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_projection_immutability
+  normalized_source_pattern: assert next_state is not state
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - d148a3c1
+  - e832aa01
+  - 4bfe7d73
+  - f25b580b
+  - 9fdcf1d8
+  - 43e76aa1
+  - 0d6d0ba6
+  - 331868fb
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_projection_immutability
+  normalized_source_pattern: assert next_state["node_states"] is not state["node_states"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 7116fa1a
+  - 12ad0c0a
+  - 25a1e6ea
+  - 7ccd11e1
+  - 5de57b9d
+  - 3d352b98
+  - '33175303'
+  - 270b6f61
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_projection_immutability
+  normalized_source_pattern: assert next_state["task_states"] is not state["task_states"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 1aec77a6
+  - 6e02f3d8
+  - e8f9d64b
+  - b61f72a9
+  - 8e8119c5
+  - ff146d01
+  - 94fd2419
+  - c525ff02
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_projection_immutability
+  normalized_source_pattern: assert next_state["leases"] is not state["leases"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 871393d3
+  - 0c2fe4f2
+  - 6982291f
+  - 5839d5ac
+  - e2c080c1
+  - 3642e7dc
+  - f17f3465
+  - c1e02080
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_projection_immutability
+  normalized_source_pattern: assert next_state["leases"]["lease-1"] is not state["leases"]["lease-1"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - bec987c9
+  - e7cd79c9
+  - 6a04bc2d
+  - 801c5c1b
+  - 067529ba
+  - 766915c4
+  - d0e9d973
+  - e007b070
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_projection_immutability
+  normalized_source_pattern: assert state == {
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - bf147a4b
+  - f3aaade7
+  - e579d5bf
+  - 9025b2fa
+  - 145f7c81
+  - ee4d9199
+  - cde0eda7
+  - 1ed2ab52
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_projection_immutability
+  normalized_source_pattern: 'assert next_state["node_states"] == {"worker-1": "running"}'
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 4b1f8093
+  - 567c3a9c
+  - 1d94b371
+  - ab856656
+  - e36b7454
+  - b1244d69
+  - 1369e8a8
+  - 281e0208
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_failed_check_result_blocks_projected_completion_after_task_acceptance
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - bca2a854
+  - c20941d0
+  - 992eac62
+  - a92d7746
+  - e1098a36
+  - d4898380
+  - be9ffdb2
+  - 637e5e7c
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_failed_check_result_blocks_projected_completion_after_task_acceptance
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 03fbdaf0
+  - 4a1caff0
+  - de823049
+  - 9bfd8dfc
+  - d097a387
+  - ca7d6fdb
+  - 6b87bdbb
+  - f56a4177
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_task_state_projection_matches_full_projection_for_recovery_supersession
+  normalized_source_pattern: full_projection = reduce_event(full_projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - e00a555f
+  - c8f29b31
+  - c6976abf
+  - 7d845ba3
+  - 866cc52f
+  - ed5685d6
+  - 10cbb067
+  - 1df9492b
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_task_state_projection_matches_full_projection_for_recovery_supersession
+  normalized_source_pattern: full_projection = reduce_event(full_projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e7a2420a
+  - 83c0eba8
+  - 57921dd8
+  - 4fede62c
+  - fd12b479
+  - 3644c2e3
+  - 65b1f902
+  - f3e9a8c4
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_check_result_candidate_id_does_not_replace_latest_task_candidate
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 6a01d61b
+  - 5a330293
+  - f25941fd
+  - b2f8b72d
+  - 34fbec51
+  - 3ae7e591
+  - 5ab30b23
+  - f3954838
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_check_result_candidate_id_does_not_replace_latest_task_candidate
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ecf58c33
+  - 65873d21
+  - 73f388c6
+  - f963889d
+  - 00e9eb62
+  - 47c5abc2
+  - 491dc95b
+  - 2f5b4eea
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_run_unknown_event_ignored
+  normalized_source_pattern: 'next_state = reduce_event(initial, _event("unknown_event",
+    {"to_state": "failed"}))'
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - a6685fe8
+  - '31117086'
+  - 3bbb3767
+  - f19f0a69
+  - 9165c131
+  - 6889df8c
+  - 577992bc
+  - f96fb7e2
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_run_unknown_event_ignored
+  normalized_source_pattern: assert next_state == initial
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 58ac1f0c
+  - a90decb0
+  - 98dac0cb
+  - 155ca004
+  - 70e4daca
+  - 056279dd
+  - 251ca465
+  - 805ca5ba
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_run_unknown_event_ignored
+  normalized_source_pattern: assert next_state is not initial
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - c5464aa1
+  - 893d5b53
+  - 5d79720d
+  - a85649f6
+  - 4bcacf8d
+  - 1019012c
+  - a0080e4c
+  - 360fc3f3
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_invalid_test_block_projection_uses_typed_payload_and_preserves_task_state_behavior
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - 1b51b667
+  - 0bd9a7a0
+  - fdccf952
+  - d1ea2d9b
+  - e1daa2d4
+  - b5cc3df9
+  - 373854b9
+  - 3f316fab
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_invalid_test_block_projection_uses_typed_payload_and_preserves_task_state_behavior
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d0ae8afc
+  - e464abb3
+  - 3e9477e4
+  - b13e220a
+  - 6a2ecba6
+  - 81fdc2ec
+  - 47ecbc5d
+  - 14a109a2
+  relative_path: tests/unit/test_graph_projections.py
+  qualified_function: test_invalid_test_block_checkpoint_round_trips_typed_payload_and_drops_malformed_entries
+  normalized_source_pattern: restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - b1e8b132
+  - bddd7a77
+  - e09e066a
+  - e0c37113
+  - 93842c95
+  - 949de599
+  - 7566221f
+  - d613d5c3
+  relative_path: tests/unit/test_node_created_event_payloads.py
+  qualified_function: test_node_created_reducer_reads_direct_membership_fields
+  normalized_source_pattern: assert projection["node_task_regions"]["worker-1"] ==
+    "task-1"
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - e9f7d36f
+  - 6b284370
+  - e7ad7bc6
+  - 1cc5f098
+  - 410c7ab9
+  - 28b0c43b
+  - 33fb9cbb
+  - 96ce67f4
+  relative_path: tests/unit/test_node_created_event_payloads.py
+  qualified_function: test_node_created_reducer_reads_direct_membership_fields
+  normalized_source_pattern: assert projection["node_attempts"]["worker-1"] == 2
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - '30999863'
+  - e249129d
+  - 01e72649
+  - fedcaf9f
+  - 7ecaf2e9
+  - 9afe9c91
+  - 9385b858
+  - 2bbfbb8d
+  relative_path: tests/unit/test_node_created_event_payloads.py
+  qualified_function: test_explicit_empty_authority_change_controls_override_nested_authority
+  normalized_source_pattern: assert projection["node_resource_claims"]["worker-1"]
+    == []
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - de4c292a
+  - e41c5bfa
+  - 4d805fc6
+  - 68b5b099
+  - 65291e6e
+  - 03acb8e2
+  - fb974979
+  - 35b0f6af
+  relative_path: tests/unit/test_node_created_event_payloads.py
+  qualified_function: test_explicit_empty_authority_change_controls_override_nested_authority
+  normalized_source_pattern: assert projection["node_allowed_actions"]["worker-1"]
+    == []
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - '73642099'
+  - '52433874'
+  - a69545a2
+  - 721f94c5
+  - 43d7b0b7
+  - adb9fee0
+  - 74b47de5
+  - 6c8ce24f
+  relative_path: tests/unit/test_node_created_event_payloads.py
+  qualified_function: test_explicit_empty_authority_change_controls_override_nested_authority
+  normalized_source_pattern: assert projection["node_preconditions"]["worker-1"] ==
+    []
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - ef21e81c
+  - b846bf09
+  - c131d1ac
+  - c8398c3e
+  - bb6350a8
+  - 448aed6c
+  - c8b25221
+  - 20b4ae31
+  relative_path: tests/unit/test_node_lifecycle_event_payloads.py
+  qualified_function: test_authority_reducer_reads_direct_fields
+  normalized_source_pattern: assert projection["node_allowed_actions"]["worker-1"]
+    == ["submit_output"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 1eab24da
+  - '99842743'
+  - e3104cda
+  - 6a3458c8
+  - 1a2f97c0
+  - bae1471b
+  - 334ddb93
+  - 242981c4
+  relative_path: tests/unit/test_node_lifecycle_event_payloads.py
+  qualified_function: test_authority_reducer_reads_direct_fields
+  normalized_source_pattern: assert projection["node_preconditions"]["worker-1"] ==
+    ["inputs_bound"]
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 5009bdbb
+  - c290045f
+  - a3a8f8b2
+  - 02f4d040
+  - 1f75bcf3
+  - 514d6fae
+  - f35cb867
+  - 49caac33
+  relative_path: tests/unit/test_node_usage_events.py
+  qualified_function: test_record_node_usage_emits_one_idempotent_fact_per_execution_model
+  normalized_source_pattern: events = apply_command(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 8db8e3db
+  - c14c7342
+  - 20ba7c55
+  - 1d579f40
+  - 0dc583a7
+  - b34b301a
+  - 4d807011
+  - 4b59a21c
+  relative_path: tests/unit/test_node_usage_events.py
+  qualified_function: test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_binding
+  domain: test_fixture
+- site_key:
+  - ba7e46b4
+  - 9b844e37
+  - a7bc7e75
+  - eb53c91d
+  - 80fa3bad
+  - 24d34a06
+  - 5f09ab66
+  - 2be61d16
+  relative_path: tests/unit/test_node_usage_events.py
+  qualified_function: test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once
+  normalized_source_pattern: projection = reduce_event(projection, event)
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 593856f9
+  - 3bdf858a
+  - 28ee8c74
+  - 10ea206e
+  - 46a5f6de
+  - a1a1230f
+  - 1dd38e90
+  - f54037cd
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_required_pass_gated_final_check_from_recoverable_verifier_rejected
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 73216a0b
+  - 2e5b0354
+  - 4c9c09c0
+  - a03679ac
+  - 6f35cd0c
+  - 45ce95f2
+  - 90a776ad
+  - 8821a9ca
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_patch_stale_neutral_events_only_accepted
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 997b0870
+  - cc8aefd2
+  - d8296a94
+  - 68b36fcf
+  - fc4506e1
+  - b96bc9e5
+  - 8d72f2d6
+  - a894c6f6
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_patch_stale_invalidating_event_in_read_set_rejected
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 01eabf0c
+  - 9a409275
+  - 27deb1f0
+  - 5f47c9f7
+  - daf1e191
+  - 0806f061
+  - e4ea9d6d
+  - 1738388b
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_patch_stale_invalidating_event_not_in_read_set_accepted
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 9cc8227d
+  - bfe0e1d4
+  - c920031a
+  - eb4b5469
+  - 2a1ffc7c
+  - ef05d510
+  - c4116e76
+  - e4183a3b
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_planner_cannot_create_check_with_hidden_oracle_command
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - e1c848f0
+  - 1c1ef24e
+  - be536196
+  - b4856037
+  - 7c1f482d
+  - '98771342'
+  - 3d843ca9
+  - 1009e411
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_planner_can_create_check_with_command_definition
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 631c69f4
+  - 4dd5077c
+  - a6c60acd
+  - 04b5962d
+  - ed90d19a
+  - 3edc4326
+  - 349f1919
+  - 8a36991d
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_planner_can_create_check_with_dynamic_feature_oracle_binding
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - f9efa3ea
+  - 05963fc8
+  - 12c415ab
+  - 6e9c880b
+  - ce9adc87
+  - 8b93a022
+  - d3b7613c
+  - af11012e
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_create_edge_accepts_revision_attempt_embedded_worker_in_same_patch
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - c2bcf9e3
+  - ed55c0e5
+  - c02a1e82
+  - e1a13d12
+  - 113cef38
+  - fbf1f63c
+  - eb65140c
+  - 92ebfa61
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_create_edge_accepts_revision_attempt_embedded_worker_with_default_kind
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 7b06720c
+  - 83791abf
+  - 5562f797
+  - b8498312
+  - 52b85024
+  - 3889d6e2
+  - e38f8811
+  - 6889f831
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_create_edge_accepts_producer_class_source
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - aef2a4b5
+  - 149d52ab
+  - 3afbcd2e
+  - 811b8fc6
+  - e18ffe67
+  - ea4ce866
+  - b7bbc33b
+  - 9cad288c
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_create_edge_rejects_new_cycle
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 27f5e83c
+  - 0f78710a
+  - 6b35b2d9
+  - 2b25535e
+  - f0cd9f33
+  - 52b4bc72
+  - ccf6ae11
+  - d6cfd93b
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_set_resource_claims_escalation_rejected
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 6ced1a0d
+  - 22bc7f57
+  - 9e5ec513
+  - 6acee8f7
+  - 8f853d51
+  - 6e739dbd
+  - '10706175'
+  - 1bcbc0bd
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_set_resource_claims_narrowing_accepted
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d9956960
+  - 73979a51
+  - 7f707eb7
+  - '41800463'
+  - a341ee8e
+  - c6b41373
+  - aafe198d
+  - 015c43d6
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_retire_running_node_rejected
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 07bb8768
+  - eb3abc03
+  - e7f49b42
+  - a304864b
+  - 26c29fc6
+  - 2422d97b
+  - 20307aac
+  - 9c129349
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_retire_planned_node_accepted
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - ff3b3da0
+  - c16a0ed5
+  - 5a6413c5
+  - eef6d5c5
+  - 255dbcc2
+  - 998644b6
+  - fb77c789
+  - 9898fb02
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_gap_planner_cannot_retire_executable_node
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - d84547da
+  - 6ed3e104
+  - 032eb574
+  - 474a6e6a
+  - 2200f781
+  - bcde8b8f
+  - 0fa772e9
+  - 5c82edbd
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_edge_unknown_port_rejected
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 96f28635
+  - 6c303b87
+  - 782f77e8
+  - d196b274
+  - a1a87e36
+  - 3cc23b4e
+  - 7015b8db
+  - 072e93ce
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_edge_selector_incompatible_with_source_port_rejected
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1cb78898
+  - f82cdacd
+  - '53449609'
+  - 562599ef
+  - 1a82f48f
+  - b958cceb
+  - 178484ab
+  - c2ed9a6e
+  relative_path: tests/unit/test_patch_validator.py
+  qualified_function: test_multi_op_patch_one_fails_rejected
+  normalized_source_pattern: result = _validate(
+  diagnostic_code: unsupported_call
+  domain: test_fixture
+- site_key:
+  - 1e05f296
+  - 346f861d
+  - b70e3c38
+  - 1f8bf60a
+  - e54dcfda
+  - af0191e2
+  - 55761fb3
+  - aaaf005f
+  relative_path: tests/unit/test_planner_session_event_payloads.py
+  qualified_function: test_planner_session_reducer_preserves_explicit_null_carryover
+  normalized_source_pattern: assert projection["planner_session_carryovers"]["session-1"]
+    is None
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - '56521400'
+  - 64a38482
+  - fded09fe
+  - 062578ef
+  - 6fec595f
+  - e1b0a6fe
+  - ffa67580
+  - fc5396d7
+  relative_path: tests/unit/test_record_routing_event_payloads.py
+  qualified_function: test_verification_replay_ignores_contradictory_outcome
+  normalized_source_pattern: assert projection["verifier_verdicts"] == {}
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - fee75811
+  - e477ccd3
+  - 3a257a9f
+  - 2f9e1a42
+  - cf7b4993
+  - 4c054c41
+  - 235a2566
+  - 70437fff
+  relative_path: tests/unit/test_record_routing_event_payloads.py
+  qualified_function: test_verification_replay_ignores_contradictory_outcome
+  normalized_source_pattern: assert projection["passed_verification_candidate_ids"]
+    == []
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - '85705522'
+  - 8c02b93e
+  - dea9a68e
+  - 1909f45d
+  - 636a9bf4
+  - 349dcd1b
+  - e922727c
+  - dd0b374e
+  relative_path: tests/unit/test_record_routing_event_payloads.py
+  qualified_function: test_verification_replay_ignores_contradictory_outcome
+  normalized_source_pattern: assert projection["failed_verification_candidate_ids"]
+    == {}
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 0daf0354
+  - dbcd4ee5
+  - 3e42b1bb
+  - 1eaa654b
+  - 86cfef09
+  - 0242c702
+  - 6393b380
+  - ed292f73
+  relative_path: tests/unit/test_w5_compatibility_removal.py
+  qualified_function: test_output_replay_requires_exact_record_type_discriminator
+  normalized_source_pattern: assert projection["accepted_output_records_by_node_port"]
+    == {}
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 49e74e83
+  - 1ac795d7
+  - 767f0625
+  - 523f6d9e
+  - ee429053
+  - 66aef979
+  - c1d21809
+  - 65c67c67
+  relative_path: tests/unit/test_w5_compatibility_removal.py
+  qualified_function: test_output_replay_rejects_unknown_nonempty_discriminator
+  normalized_source_pattern: assert projection["accepted_output_records_by_node_port"]
+    == {}
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture
+- site_key:
+  - 7c456304
+  - 865e1b53
+  - 36a10aeb
+  - faa5f1e1
+  - 4ec3def9
+  - 14121ab6
+  - f5fa82ca
+  - 018a10ce
+  relative_path: tests/unit/test_w5_compatibility_removal.py
+  qualified_function: test_verification_record_rejects_unknown_nested_fields
+  normalized_source_pattern: assert projection["accepted_output_records_by_node_port"]
+    == {}
+  diagnostic_code: unsupported_comparison
+  domain: test_fixture

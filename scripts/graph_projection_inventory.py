@@ -162,6 +162,347 @@ class AccessInventory(BaseModel):
     diagnostics: tuple[InventoryDiagnostic, ...]
 
 
+class IncompleteMigrationDispositionError(ValueError):
+    """Raised when a migration manifest does not cover its requested inventory scope."""
+
+    def __init__(self, remaining_counts: dict[str, int]) -> None:
+        self.remaining_counts = remaining_counts
+        super().__init__(f"unclassified graph projection sites: {remaining_counts}")
+
+
+class MigrationDisposition(BaseModel):
+    """One exact, reviewable disposition for a legacy projection inventory site."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    site_key: str | tuple[str, ...]
+    disposition: Literal["query_transform", "approved_core", "projection_neutral", "rejected"]
+    relative_path: str
+    qualified_function: str
+    normalized_source_pattern: str
+    diagnostic_code: DiagnosticCode | None = None
+    reason: str
+
+    @model_validator(mode="after")
+    def requires_exact_policy_details(self) -> "MigrationDisposition":
+        if not self.reason.strip():
+            raise ValueError("migration disposition requires a reason")
+        if self.disposition == "projection_neutral" and self.diagnostic_code is None:
+            raise ValueError("projection_neutral requires an exact diagnostic code")
+        if (
+            self.disposition == "approved_core"
+            and self.relative_path not in _APPROVED_CORE_STORAGE_FILES
+        ):
+            raise ValueError("approved_core is limited to the exact five storage files")
+        return self
+
+
+class UnclassifiedMigrationSite(BaseModel):
+    """A mechanically generated site awaiting an explicit human disposition."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    site_key: str | tuple[str, ...]
+    relative_path: str
+    qualified_function: str
+    normalized_source_pattern: str
+    diagnostic_code: DiagnosticCode | None = None
+    domain: str
+
+
+class QueryMigrationManifest(BaseModel):
+    """Strict disposition ledger for the query-boundary source migration."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    baseline_revision: str
+    dispositions: tuple[MigrationDisposition, ...]
+    unclassified_sites: tuple[UnclassifiedMigrationSite, ...] = ()
+
+    @model_validator(mode="after")
+    def has_unique_site_keys(self) -> "QueryMigrationManifest":
+        keys = tuple(item.site_key for item in (*self.dispositions, *self.unclassified_sites))
+        if len(keys) != len(frozenset(keys)):
+            raise ValueError("duplicate migration disposition site key")
+        return self
+
+
+def load_query_migration_manifest(path: Path) -> QueryMigrationManifest:
+    """Load a strict query migration ledger or its generated partial skeleton."""
+    return QueryMigrationManifest.model_validate(yaml.safe_load(path.read_text()))
+
+
+_APPROVED_CORE_STORAGE_FILES = frozenset(
+    {
+        "src/orchestrator/graph/projection_models.py",
+        "src/orchestrator/graph/projection_collections.py",
+        "src/orchestrator/graph/projection_queries.py",
+        "src/orchestrator/graph/projection_codec.py",
+        "src/orchestrator/graph/projections.py",
+    }
+)
+
+
+def disposition_site_key(
+    *,
+    baseline_revision: str,
+    relative_path: str,
+    qualified_function: str,
+    normalized_source_pattern: str,
+    diagnostic_code: DiagnosticCode | str | None,
+    same_pattern_ordinal: int = 0,
+) -> str:
+    """Return position-independent identity for a diagnostic disposition site."""
+    diagnostic_value = (
+        diagnostic_code.value if isinstance(diagnostic_code, DiagnosticCode) else diagnostic_code
+    )
+    payload = "\0".join(
+        (
+            baseline_revision,
+            relative_path,
+            qualified_function,
+            normalized_source_pattern,
+            diagnostic_value or "occurrence",
+            str(same_pattern_ordinal),
+        )
+    )
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _manifest_site_key(site_key: str) -> str | tuple[str, ...]:
+    """Render a deterministic hash in scanner-safe, human-checkable groups."""
+    if len(site_key) != 64 or any(character not in "0123456789abcdef" for character in site_key):
+        return site_key
+    return tuple(site_key[index : index + 8] for index in range(0, len(site_key), 8))
+
+
+def _raw_site_key(site_key: str | tuple[str, ...]) -> str:
+    """Recover the canonical site key from its manifest presentation form."""
+    if isinstance(site_key, tuple):
+        compact = "".join(site_key)
+    else:
+        compact = site_key.replace("-", "")
+    if len(compact) == 64 and all(character in "0123456789abcdef" for character in compact):
+        return compact
+    return site_key
+
+
+def _diagnostic_source_pattern(root: Path, diagnostic: InventoryDiagnostic) -> str:
+    """Normalize the exact source line that caused a fail-closed diagnostic."""
+    source_line = (root / diagnostic.relative_path).read_text().splitlines()[diagnostic.line - 1]
+    return " ".join(source_line.strip().split())
+
+
+def _diagnostic_site_key(
+    root: Path,
+    baseline_revision: str,
+    diagnostic: InventoryDiagnostic,
+    same_pattern_ordinal: int = 0,
+) -> str:
+    return disposition_site_key(
+        baseline_revision=baseline_revision,
+        relative_path=diagnostic.relative_path,
+        qualified_function=diagnostic.qualified_function,
+        normalized_source_pattern=_diagnostic_source_pattern(root, diagnostic),
+        diagnostic_code=diagnostic.code,
+        same_pattern_ordinal=same_pattern_ordinal,
+    )
+
+
+def _diagnostic_site_keys(root: Path, inventory: AccessInventory) -> dict[int, str]:
+    """Assign stable ordinals to otherwise identical diagnostic source patterns."""
+    ordinals: dict[tuple[str, str, str, DiagnosticCode], int] = {}
+    keys: dict[int, str] = {}
+    for diagnostic in inventory.diagnostics:
+        pattern = _diagnostic_source_pattern(root, diagnostic)
+        identity = (
+            diagnostic.relative_path,
+            diagnostic.qualified_function,
+            pattern,
+            diagnostic.code,
+        )
+        ordinal = ordinals.get(identity, 0)
+        ordinals[identity] = ordinal + 1
+        keys[id(diagnostic)] = _diagnostic_site_key(
+            root,
+            inventory.baseline_revision,
+            diagnostic,
+            ordinal,
+        )
+    return keys
+
+
+def _site_domain(relative_path: str, old_field_name: str | None = None) -> str:
+    """Assign a deterministic bounded domain for partial migration reporting."""
+    if old_field_name in {"run_state", "completion_decision_passed"} or relative_path.endswith(
+        "/commands/lifecycle.py"
+    ):
+        return "lifecycle"
+    if relative_path.startswith("tests/"):
+        return "test_fixture"
+    if relative_path.endswith("/_commands.py"):
+        return "verification_recovery"
+    if relative_path.endswith("/callbacks.py"):
+        return "cleanup_callback"
+    if relative_path.endswith("/patch_validator.py"):
+        return "governance_requirements"
+    if relative_path.endswith("/graph_runtime/prompts.py"):
+        return "planning_session"
+    if relative_path.endswith("/graph_runtime/dispatch.py"):
+        return "lease"
+    if relative_path.endswith("/graph_runtime/recovery.py"):
+        return "verification_recovery"
+    if relative_path.endswith("/graph_runtime/store.py"):
+        return "record_file_state"
+    if relative_path in _APPROVED_CORE_STORAGE_FILES:
+        return "approved_core"
+    return "node_task_edge_binding"
+
+
+def validate_query_migration_manifest(
+    manifest: QueryMigrationManifest,
+    inventory: AccessInventory,
+    root: Path,
+    *,
+    domain: str | None = None,
+) -> dict[str, int]:
+    """Require exact one-to-one dispositions for a fresh inventory or one bounded domain."""
+    if manifest.baseline_revision != inventory.baseline_revision:
+        raise ValueError("migration manifest and inventory baseline revisions differ")
+
+    expected: dict[str, tuple[str, str, str, DiagnosticCode | None, str]] = {}
+    for occurrence in inventory.occurrences:
+        expected[occurrence.occurrence_id] = (
+            occurrence.relative_path,
+            occurrence.qualified_function,
+            occurrence.normalized_expression,
+            None,
+            _site_domain(occurrence.relative_path, occurrence.old_field_name),
+        )
+    diagnostic_keys = _diagnostic_site_keys(root, inventory)
+    for diagnostic in inventory.diagnostics:
+        pattern = _diagnostic_source_pattern(root, diagnostic)
+        expected[diagnostic_keys[id(diagnostic)]] = (
+            diagnostic.relative_path,
+            diagnostic.qualified_function,
+            pattern,
+            diagnostic.code,
+            _site_domain(diagnostic.relative_path),
+        )
+
+    scoped_expected = {
+        site_key: site for site_key, site in expected.items() if domain is None or site[4] == domain
+    }
+    all_supplied = {_raw_site_key(item.site_key): item for item in manifest.dispositions}
+    all_unclassified = {_raw_site_key(item.site_key): item for item in manifest.unclassified_sites}
+    stale = set(all_supplied) - set(expected)
+    stale_unclassified = set(all_unclassified) - set(expected)
+    if stale or stale_unclassified:
+        raise ValueError(
+            f"stale migration disposition site keys: {sorted(stale | stale_unclassified)}"
+        )
+    supplied = {
+        site_key: item for site_key, item in all_supplied.items() if site_key in scoped_expected
+    }
+    unclassified = {
+        site_key: item for site_key, item in all_unclassified.items() if site_key in scoped_expected
+    }
+    for site_key, disposition in supplied.items():
+        path, function, pattern, code, _ = scoped_expected[site_key]
+        if (path, function, pattern, code) != (
+            disposition.relative_path,
+            disposition.qualified_function,
+            disposition.normalized_source_pattern,
+            disposition.diagnostic_code,
+        ):
+            raise ValueError(f"migration disposition details differ for {site_key}")
+
+    remaining = set(scoped_expected) - set(supplied)
+    for site_key, site in unclassified.items():
+        path, function, pattern, code, domain_name = scoped_expected[site_key]
+        if (path, function, pattern, code, domain_name) != (
+            site.relative_path,
+            site.qualified_function,
+            site.normalized_source_pattern,
+            site.diagnostic_code,
+            site.domain,
+        ):
+            raise ValueError(f"generated migration skeleton details differ for {site_key}")
+    if remaining:
+        counts: dict[str, int] = {}
+        for site_key in remaining:
+            domain_name = scoped_expected[site_key][4]
+            counts[domain_name] = counts.get(domain_name, 0) + 1
+        raise IncompleteMigrationDispositionError(dict(sorted(counts.items())))
+    return {
+        domain_name: sum(site[4] == domain_name for site in scoped_expected.values())
+        for domain_name in sorted({site[4] for site in scoped_expected.values()})
+    }
+
+
+def query_migration_skeleton(inventory: AccessInventory, root: Path) -> QueryMigrationManifest:
+    """Mechanically generate a complete, unclassified disposition ledger from inventory."""
+    sites = [
+        UnclassifiedMigrationSite(
+            site_key=_manifest_site_key(occurrence.occurrence_id),
+            relative_path=occurrence.relative_path,
+            qualified_function=occurrence.qualified_function,
+            normalized_source_pattern=occurrence.normalized_expression,
+            domain=_site_domain(occurrence.relative_path, occurrence.old_field_name),
+        )
+        for occurrence in inventory.occurrences
+    ]
+    diagnostic_keys = _diagnostic_site_keys(root, inventory)
+    sites.extend(
+        UnclassifiedMigrationSite(
+            site_key=_manifest_site_key(diagnostic_keys[id(diagnostic)]),
+            relative_path=diagnostic.relative_path,
+            qualified_function=diagnostic.qualified_function,
+            normalized_source_pattern=_diagnostic_source_pattern(root, diagnostic),
+            diagnostic_code=diagnostic.code,
+            domain=_site_domain(diagnostic.relative_path),
+        )
+        for diagnostic in inventory.diagnostics
+    )
+    return QueryMigrationManifest(
+        baseline_revision=inventory.baseline_revision,
+        dispositions=(),
+        unclassified_sites=tuple(sites),
+    )
+
+
+def classify_lifecycle_domain(skeleton: QueryMigrationManifest) -> QueryMigrationManifest:
+    """Apply the reviewed lifecycle-domain dispositions to a generated skeleton."""
+    lifecycle_sites = tuple(
+        site for site in skeleton.unclassified_sites if site.domain == "lifecycle"
+    )
+    dispositions = tuple(
+        MigrationDisposition(
+            site_key=site.site_key,
+            disposition="projection_neutral"
+            if site.diagnostic_code is not None
+            else "query_transform",
+            relative_path=site.relative_path,
+            qualified_function=site.qualified_function,
+            normalized_source_pattern=site.normalized_source_pattern,
+            diagnostic_code=site.diagnostic_code,
+            reason=(
+                "The exact lifecycle command annotation is not a physical projection storage read."
+                if site.diagnostic_code is not None
+                else "Use the permanent lifecycle query API during the consumer codemod."
+            ),
+        )
+        for site in lifecycle_sites
+    )
+    return QueryMigrationManifest(
+        baseline_revision=skeleton.baseline_revision,
+        dispositions=(*skeleton.dispositions, *dispositions),
+        unclassified_sites=tuple(
+            site for site in skeleton.unclassified_sites if site.domain != "lifecycle"
+        ),
+    )
+
+
 def occurrence_id(
     baseline_revision: str,
     relative_path: str,
@@ -2207,15 +2548,21 @@ def diagnostic_artifact(inventory: AccessInventory) -> str:
 
 
 def main() -> int:
-    """Print unresolved-site remediation without writing a baseline."""
+    """Print diagnostics or mechanically write the reviewed migration skeleton."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--diagnose", action="store_true")
+    parser.add_argument("--write-query-migration-skeleton", action="store_true")
     args = parser.parse_args()
-    if not args.diagnose:
-        parser.error("--diagnose is required; this slice never writes a baseline")
+    if args.diagnose == args.write_query_migration_skeleton:
+        parser.error("choose exactly one inventory action")
     root = Path(__file__).parents[1]
     manifest = load_manifest(root / "scripts/codemods/graph_projection_manifest.yaml")
     inventory = inventory_repository(root, manifest)
+    if args.write_query_migration_skeleton:
+        target = root / "scripts/codemods/graph_projection_query_migration.yaml"
+        ledger = classify_lifecycle_domain(query_migration_skeleton(inventory, root))
+        target.write_text(yaml.safe_dump(ledger.model_dump(mode="json"), sort_keys=False))
+        return 0
     print(diagnostic_artifact(inventory), end="")
     return 1 if inventory.diagnostics else 0
 
