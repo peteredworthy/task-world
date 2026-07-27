@@ -831,3 +831,48 @@ def methods(projection: GraphProjection) -> None:
         ("append_extend", "ready_nodes"),
     ]
     assert [item.code for item in inventory.diagnostics] == ["unsupported_call"]
+
+
+def test_collect_source_rejects_direct_and_deep_projection_value_invocation() -> None:
+    inventory = collect_source(
+        """
+def calls(projection: GraphProjection) -> None:
+    projection.get("run_state")()
+    projection["run_state"]()
+    projection["node_states"]["node"]()
+    projection.get("node_states")["node"]()
+""",
+        relative_path="value-calls.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_call",
+        "unsupported_call",
+        "unsupported_call",
+        "unsupported_call",
+    ]
+
+
+def test_collect_source_fails_closed_for_destructured_projection_targets() -> None:
+    inventory = collect_source(
+        """
+def targets(projection: GraphProjection) -> None:
+    projection["run_state"], other = values
+    first, projection["node_states"]["node"] = values
+    projection["ready_nodes"], alias = projection
+    del projection["ready_nodes"], projection["node_states"]["node"]
+""",
+        relative_path="destructured-targets.py",
+        baseline_revision="baseline",
+    )
+
+    assert not inventory.occurrences
+    assert [item.code for item in inventory.diagnostics] == [
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_binding",
+        "unsupported_mutation",
+        "unsupported_mutation",
+    ]

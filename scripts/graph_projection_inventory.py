@@ -257,6 +257,11 @@ class _Collector(cst.CSTVisitor):
             and self._tracked(node.func.value)
         )
 
+    def _projection_derived(self, node: cst.BaseExpression) -> bool:
+        if self._tracked(node) or self._is_tracked_get_call(node):
+            return True
+        return isinstance(node, cst.Subscript) and self._projection_derived(node.value)
+
     def _is_tracked_get_call(self, node: cst.BaseExpression) -> bool:
         return (
             isinstance(node, cst.Call)
@@ -279,6 +284,22 @@ class _Collector(cst.CSTVisitor):
         while isinstance(current, cst.Subscript):
             self.handled.add(id(current))
             current = current.value
+        if self._is_tracked_get_call(current):
+            self.handled.add(id(current))
+
+    def _projection_target_subscripts(
+        self, node: cst.BaseAssignTargetExpression
+    ) -> tuple[cst.Subscript, ...]:
+        if isinstance(node, cst.Subscript):
+            return (node,) if self._tracked_field_subscript(node) is not None else ()
+        if isinstance(node, (cst.Tuple, cst.List)):
+            return tuple(
+                subscript
+                for element in node.elements
+                if element is not None
+                for subscript in self._projection_target_subscripts(element.value)
+            )
+        return ()
 
     def _discard_alias(self, node: cst.Name) -> None:
         scope_id = id(self.get_metadata(ScopeProvider, node))
@@ -408,15 +429,31 @@ class _Collector(cst.CSTVisitor):
             self._discard_live_alias(original_node.target)
 
     def visit_Assign(self, node: cst.Assign) -> None:
-        return
+        for target in node.targets:
+            if not isinstance(target.target, (cst.Tuple, cst.List)):
+                continue
+            for subscript in self._projection_target_subscripts(target.target):
+                self._diagnostic(
+                    DiagnosticCode.UNSUPPORTED_BINDING,
+                    "destructured projection assignment is unsupported",
+                    subscript,
+                )
+                self._handle_subscript_chain(subscript)
 
     def leave_Assign(self, original_node: cst.Assign) -> None:
         node = original_node
+        has_destructured_projection_target = any(
+            isinstance(target.target, (cst.Tuple, cst.List))
+            and self._projection_target_subscripts(target.target)
+            for target in node.targets
+        )
         if len(node.targets) != 1 or not isinstance(node.targets[0].target, cst.Name):
             target_names = tuple(
                 name for target in node.targets for name in self._target_names(target.target)
             )
-            if self._tracked(node.value) or any(self._known_alias(name) for name in target_names):
+            if not has_destructured_projection_target and (
+                self._tracked(node.value) or any(self._known_alias(name) for name in target_names)
+            ):
                 self._diagnostic(
                     DiagnosticCode.UNSUPPORTED_BINDING, "unsupported projection binding", node
                 )
@@ -608,6 +645,17 @@ class _Collector(cst.CSTVisitor):
                 if isinstance(argument.value, cst.Subscript):
                     self._handle_subscript_chain(argument.value)
             return
+        if self._projection_derived(node.func):
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_CALL,
+                "calling a projection-derived value is unsupported",
+                node,
+            )
+            if isinstance(node.func, cst.Subscript):
+                self._handle_subscript_chain(node.func)
+            elif isinstance(node.func, cst.Call):
+                self.handled.add(id(node.func))
+            return
         if self._tracked(node.func):
             self._diagnostic(
                 DiagnosticCode.UNSUPPORTED_CALL, "calling GraphProjection is unsupported", node
@@ -724,6 +772,15 @@ class _Collector(cst.CSTVisitor):
             self._record(AccessKind.DIRECT_ITERATION, None, node.iter)
 
     def visit_Del(self, node: cst.Del) -> None:
+        if isinstance(node.target, (cst.Tuple, cst.List)):
+            for subscript in self._projection_target_subscripts(node.target):
+                self._diagnostic(
+                    DiagnosticCode.UNSUPPORTED_MUTATION,
+                    "multi-target projection deletion is unsupported",
+                    subscript,
+                )
+                self._handle_subscript_chain(subscript)
+            return
         if isinstance(node.target, cst.Subscript):
             field_subscript = self._tracked_field_subscript(node.target)
             if field_subscript is None:

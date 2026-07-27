@@ -329,3 +329,52 @@ deprecations in `tests/unit/test_projectors.py`.
 - `.superpowers/sdd/task-1b-report.md`
 
 No progress ledger was edited. The bounded-scope concerns above remain unchanged.
+
+## Final Localized Task 1b Fix Evidence (2026-07-27)
+
+### RED
+
+The exact direct/deep projection-value invocation and destructured-target fixtures were added
+before the collector fix:
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+2 failed, 37 passed in 4.26s
+```
+
+The failures showed child `get`/subscript reads surviving unsupported direct calls and reads being
+emitted for tuple/list assignment and multi-target deletion targets.
+
+### GREEN and verification
+
+```text
+uv run pytest tests/unit/test_graph_projection_inventory.py -q
+39 passed in 3.69s
+
+uv run ruff check scripts/graph_projection_inventory.py tests/unit/test_graph_projection_inventory.py
+All checks passed!
+
+uv run pyright scripts/graph_projection_inventory.py
+0 errors, 0 warnings, 0 informations
+
+make test
+4891 passed, 3 skipped, 3 warnings in 101.29s
+```
+
+The three full-suite warnings remain the existing Python 3.12 `aiosqlite` datetime-adapter
+deprecations in `tests/unit/test_projectors.py`.
+
+### Final localized fixes
+
+- Direct invocation of tracked projection values, including `get` results and deep subscript
+  chains, now emits `unsupported_call` and suppresses every child supported occurrence.
+- Destructured assignment targets and multi-target deletion targets now emit exactly one
+  deterministic fail-closed diagnostic per tracked projection target and suppress child reads.
+- Destructured assignments with a tracked RHS avoid an additional generic binding diagnostic, so
+  the target-level diagnostic remains one-to-one.
+
+### Files changed in this localized fix
+
+- `scripts/graph_projection_inventory.py`
+- `tests/unit/test_graph_projection_inventory.py`
+- `.superpowers/sdd/task-1b-report.md`
