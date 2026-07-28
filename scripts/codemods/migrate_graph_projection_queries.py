@@ -277,215 +277,193 @@ class DispositionPlan(BaseModel):
         return self
 
 
-class QueryRewriteOperation(BaseModel):
-    """A frozen, source-free query recipe for one or more anchored sites."""
+class QueryCompositionGroup(BaseModel):
+    """One immutable outer-CST action that consumes reviewed transform anchors."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
+    relative_path: str
+    source_span: tuple[int, int, int, int]
+    owner_site_id: str
+    owner_anchor: CstAnchorEvidence
+    original_outer_expression: str
     consumed_site_ids: tuple[str, ...]
-    rule_id: str
-    effective_old_field: str
-    access_shape: str
-    parent_shape: str
-    operation_shape: str
-    query_api: str
-    query_imports: tuple[str, ...]
-    argument_roles: tuple[tuple[str, str], ...]
-    missing_semantics: str
-    default_semantics: str
-    ordering_semantics: str
-    anchor_evidence: CstAnchorEvidence
-    composition_group: str
-    composition_owner_site_id: str
-
-
-class QueryRewritePlan(BaseModel):
-    """Exact-once deterministic compilation of reviewed query operations."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-    operations: tuple[QueryRewriteOperation, ...]
-    unmatched_group_counts: tuple[tuple[str, int], ...]
-    rule_family_counts: tuple[tuple[str, int], ...]
-    query_import_counts: tuple[tuple[str, int], ...]
-
-    @property
-    def consumed_site_ids(self) -> frozenset[str]:
-        return frozenset(site_id for item in self.operations for site_id in item.consumed_site_ids)
+    nested_anchor_site_ids: tuple[str, ...]
 
     @model_validator(mode="after")
-    def _validate(self) -> "QueryRewritePlan":
-        consumed = [site_id for item in self.operations for site_id in item.consumed_site_ids]
-        if len(consumed) != len(frozenset(consumed)):
-            raise ValueError("query rewrite consumed-site sets overlap")
-        if self.unmatched_group_counts:
-            raise ValueError("query rewrite plan contains unmatched structural groups")
-        if self.rule_family_counts != tuple(
-            sorted(Counter(x.rule_id for x in self.operations).items())
+    def _validate_group(self) -> "QueryCompositionGroup":
+        if not self.consumed_site_ids or len(self.consumed_site_ids) != len(
+            frozenset(self.consumed_site_ids)
         ):
-            raise ValueError("query rewrite rule-family counts do not match operations")
-        if self.query_import_counts != tuple(
-            sorted(Counter(name for x in self.operations for name in x.query_imports).items())
-        ):
-            raise ValueError("query rewrite import counts do not match operations")
+            raise ValueError("composition group consumed site IDs must be nonempty and unique")
+        if self.owner_site_id not in self.consumed_site_ids:
+            raise ValueError("composition group owner must be consumed")
+        if set(self.nested_anchor_site_ids) - set(self.consumed_site_ids):
+            raise ValueError("nested anchors must be consumed by their composition group")
         return self
 
 
-_QUERY_API_BY_FIELD = {
-    "run_state": "run_state",
-    "completion_decision_passed": "completion_decision_passed",
-    "node_kinds": "node_kind",
-    "node_roles": "node_role",
-    "node_states": "node_state",
-    "node_attempts": "node_attempt",
-    "node_candidates": "node_candidate_id",
-    "node_failed_candidates": "node_failed_candidate_id",
-    "node_task_regions": "node_task_region",
-    "node_creation_positions": "node_creation_position",
-    "node_command_definitions": "node_command_definition",
-    "node_allowed_actions": "node_allowed_actions",
-    "node_preconditions": "node_preconditions",
-    "last_deferred_reasons": "node_last_deferred_reason",
-    "retry_not_before_by_node": "node_retry_not_before",
-    "task_states": "task_state",
-    "task_candidates": "task_candidates",
-    "edges": "edge_by_id",
-    "input_bindings": "input_binding_for_port",
-    "leases": "lease_by_id",
-    "node_resource_claims": "resource_claims_for_node",
-    "output_record_payloads": "output_record_payload",
-    "file_state_records": "file_state_record",
-    "node_output_ports": "output_record_ids_for_node_port",
-    "accepted_output_records_by_node_port": "accepted_output_records_for_node_port",
-    "accepted_graph_patches_by_node": "accepted_graph_patch_ids",
-    "accepted_no_successor_patches_by_node": "accepted_no_successor_patch_ids",
-    "accepted_no_successor_patch_ids_by_node": "accepted_no_successor_patch_id",
-    "planner_generations": "planner_generation",
-    "planner_sessions": "planner_session",
-    "planner_session_states": "planner_session_state",
-    "planner_session_current_nodes": "planner_session_current_node",
-    "planner_session_carryovers": "planner_session_carryover",
-    "planner_region_labels": "planner_region_label",
-    "planner_successors": "planner_successor",
-    "planner_generation_budget": "planner_generation_budget",
-    "approval_decisions": "approval_decision",
-    "authority_decisions": "authority_decision",
-    "oversight_decisions": "oversight_decision",
-    "decision_request_details": "decision_request",
-    "open_proposal_blockers": "open_proposal_blocker",
-    "authority_revision_blockers": "authority_revision_blocker",
-    "requirement_revisions": "requirement_revision",
-    "active_requirement_versions": "active_requirement_version",
-    "support_evidence": "support_evidence",
-    "cleanup_requested_events": "cleanup_request",
-    "cleanup_applied_ids": "cleanup_applied",
-    "callback_idempotency_events": "callback_idempotency_event",
-    "environment_failures": "environment_failure",
-    "verifier_verdicts": "verifier_verdict",
-    "passed_verification_results_by_record_id": "passed_verification_result",
-    "failed_verification_results_by_record_id": "failed_verification_result",
-    "passed_verification_candidate_ids": "passed_verification_candidate_ids",
-    "failed_verification_candidate_ids": "failed_verification_candidate_ids",
-    "recovery_nodes_by_record_id": "recovery_nodes_for_record",
-    "check_results": "check_result",
-    "invalid_test_blocks": "invalid_test_block",
-    "configured_gates": "configured_gates",
-    "gate_decisions": "gate_decision",
-    "node_gate_decisions": "node_gate_decision",
-    "recorded_node_usage_keys": "node_usage_recorded",
-    "latest_routine_snapshot_record": "latest_routine_snapshot_record",
-    "ready_nodes": "project_ready_nodes",
-    "output_records_by_node_port": "output_record_ids_for_node_port",
-    "accepted_record_summaries_by_id": "accepted_output_records",
-}
+class QueryCompositionPlan(BaseModel):
+    """Frozen, exact-once source ownership partition for reviewed query transforms."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    groups: tuple[QueryCompositionGroup, ...]
+
+    @property
+    def consumed_site_ids(self) -> frozenset[str]:
+        return frozenset(site_id for group in self.groups for site_id in group.consumed_site_ids)
+
+    @model_validator(mode="after")
+    def _validate_plan(self) -> "QueryCompositionPlan":
+        consumed = [site_id for group in self.groups for site_id in group.consumed_site_ids]
+        spans = [(group.relative_path, group.source_span) for group in self.groups]
+        if len(consumed) != len(frozenset(consumed)):
+            raise ValueError("composition groups overlap by consumed site ID")
+        if len(spans) != len(frozenset(spans)):
+            raise ValueError("composition groups overlap by source action span")
+        if self.groups != tuple(
+            sorted(
+                self.groups,
+                key=lambda group: (group.relative_path, group.source_span, group.owner_site_id),
+            )
+        ):
+            raise ValueError("composition groups must be canonically ordered")
+        return self
 
 
-def compile_query_rewrite_plan(
-    sites: Iterable[MigrationSite], plan: DispositionPlan
-) -> QueryRewritePlan:
-    """Compile only reviewed query transformations through finite field/shape rules."""
-    stream = tuple(sites)
-    by_id = {site.original_site_id: site for site in stream}
-    if len(by_id) != len(stream):
-        raise AnchorRefusedError("duplicate query rewrite operation-stream site identity")
+def _reanchor_operation_stream_site(
+    site: MigrationSite,
+    *,
+    candidates: dict[tuple[str, str], list[cst.CSTNode]],
+    parents: dict[cst.CSTNode, cst.CSTNode],
+    positions: dict[cst.CSTNode, object],
+    qualified_names: dict[cst.CSTNode, object],
+) -> cst.CSTNode:
+    """Reanchor one stream identity using the same origin-specific proof as collection."""
+    if site.origin == "occurrence":
+        if site.access_kind is None:
+            raise AnchorRefusedError(f"occurrence lacks access kind: {site.original_site_id}")
+        nodes = [
+            node
+            for node in candidates.get((site.qualified_function, site.normalized_expression), ())
+            if _matches_access_kind(node, site.access_kind, parents)
+        ]
+        if site.ordinal >= len(nodes):
+            raise AnchorRefusedError(f"missing occurrence CST anchor: {site.original_site_id}")
+        node = nodes[site.ordinal]
+    else:
+        node = next(
+            (
+                candidate
+                for candidate, position in positions.items()
+                if position.start.line == site.locator.line
+                and position.start.column == site.locator.column
+                and type(candidate).__name__ == site.anchor.node_type
+                and (_normalized_node(candidate) or cst.Module([]).code_for_node(candidate).strip())
+                == site.anchor.normalized_expression
+            ),
+            None,
+        )
+        if node is None:
+            raise AnchorRefusedError(f"missing diagnostic CST anchor: {site.original_site_id}")
+    if (
+        _anchor_evidence(
+            node,
+            normalized_expression=site.anchor.normalized_expression,
+            ordinal=site.anchor.same_expression_ordinal,
+            stored_context=site.anchor.context,
+            qualified_names=qualified_names,
+            parents=parents,
+            expected_access_kind=site.access_kind,
+        )
+        != site.anchor
+    ):
+        raise AnchorRefusedError(f"query rewrite anchor evidence mismatch: {site.original_site_id}")
+    return node
+
+
+def compile_query_composition_plan(
+    sources: Iterable[SourceSnapshot], stream: OperationStream, plan: DispositionPlan
+) -> QueryCompositionPlan:
+    """Reanchor reviewed transforms and partition their recognized outer CST actions."""
+    snapshots = _source_map(sources)
+    sites = {site.original_site_id: site for site in stream.sites}
+    if len(sites) != len(stream.sites):
+        raise AnchorRefusedError("duplicate query composition operation-stream site identity")
     ids = tuple(
         sorted(
             site_id
-            for item in plan.operations
-            if item.disposition == "query_transform"
-            for site_id in item.consumed_site_ids
+            for operation in plan.operations
+            if operation.disposition == "query_transform"
+            for site_id in operation.consumed_site_ids
         )
     )
-    if len(ids) != len(frozenset(ids)) or any(site_id not in by_id for site_id in ids):
-        raise AnchorRefusedError("query rewrite disposition IDs are missing or overlapping")
-    recipes: list[QueryRewriteOperation] = []
-    unmatched: Counter[str] = Counter()
+    if len(ids) != len(frozenset(ids)) or any(site_id not in sites for site_id in ids):
+        raise AnchorRefusedError("query composition disposition IDs are missing or overlapping")
+    anchored: dict[
+        str,
+        tuple[cst.CSTNode, dict[cst.CSTNode, cst.CSTNode], dict[cst.CSTNode, object], cst.Module],
+    ] = {}
+    by_path: dict[str, list[MigrationSite]] = defaultdict(list)
     for site_id in ids:
-        site = by_id[site_id]
-        context = site.anchor.context
-        field = site.old_field_name or (context.physical_old_field_name if context else None)
-        query_api = _QUERY_API_BY_FIELD.get(field or "")
-        if field is None or query_api is None:
-            unmatched[site.shape_key] += 1
-            continue
-        shape = site.operation_shape
-        rule_id = (
-            "membership"
-            if shape == "membership"
-            else "keyed_lookup_default"
-            if shape == "map_get"
-            else "nested_lookup"
-            if shape == "nested_get"
-            else f"{shape}_traversal"
-            if shape
-            in {"keys", "values", "items", "keys_iteration", "values_iteration", "items_iteration"}
-            else "scalar_read"
-            if shape in {"subscript", "subscript_read"}
-            else "composed_query"
-        )
-        missing, default, ordering = (
-            ("returns_default", "preserve_call_default", "not_applicable")
-            if shape == "map_get"
-            else ("false", "none", "not_applicable")
-            if shape == "membership"
-            else ("not_applicable", "none", "insertion_order")
-            if "iteration" in shape or shape in {"keys", "values", "items"}
-            else ("raises_key_error", "none", "not_applicable")
-            if shape in {"subscript", "subscript_read", "nested_get"}
-            else ("preserve_expression", "none", "not_applicable")
-        )
-        recipes.append(
-            QueryRewriteOperation(
-                consumed_site_ids=(site_id,),
-                rule_id=rule_id,
-                effective_old_field=field,
-                access_shape=site.access_kind.value if site.access_kind else "diagnostic",
-                parent_shape=site.parent_shape,
-                operation_shape=shape,
-                query_api=query_api,
-                query_imports=(query_api,),
-                argument_roles=(),
-                missing_semantics=missing,
-                default_semantics=default,
-                ordering_semantics=ordering,
-                anchor_evidence=site.anchor,
-                composition_group=site_id,
-                composition_owner_site_id=site_id,
+        by_path[sites[site_id].relative_path].append(sites[site_id])
+    for path, path_sites in by_path.items():
+        snapshot = snapshots.get(path)
+        if snapshot is None:
+            raise AnchorRefusedError(f"missing query composition source snapshot: {path}")
+        module = cst.parse_module(snapshot.source)
+        candidates, parents, positions, _, qualified_names = _node_candidates(module)
+        for site in path_sites:
+            node = _reanchor_operation_stream_site(
+                site,
+                candidates=candidates,
+                parents=parents,
+                positions=positions,
+                qualified_names=qualified_names,
+            )
+            anchored[site.original_site_id] = (node, parents, positions, module)
+    grouped: dict[tuple[str, int, int, int, int], list[str]] = defaultdict(list)
+    outer_nodes: dict[str, cst.CSTNode] = {}
+    for site_id in ids:
+        node, parents, positions, _ = anchored[site_id]
+        outer = node
+        parent = parents.get(outer)
+        while isinstance(parent, (cst.Arg, cst.BaseExpression)):
+            if isinstance(parent, cst.BaseExpression):
+                outer = parent
+            parent = parents.get(parent)
+        position = positions[outer]
+        grouped[
+            (
+                sites[site_id].relative_path,
+                position.start.line,
+                position.start.column,
+                position.end.line,
+                position.end.column,
+            )
+        ].append(site_id)
+        outer_nodes[site_id] = outer
+    groups: list[QueryCompositionGroup] = []
+    for key, consumed in sorted(grouped.items()):
+        consumed.sort()
+        owner = consumed[0]
+        _, _, _, module = anchored[owner]
+        groups.append(
+            QueryCompositionGroup(
+                relative_path=key[0],
+                source_span=key[1:],
+                owner_site_id=owner,
+                owner_anchor=sites[owner].anchor,
+                original_outer_expression=module.code_for_node(outer_nodes[owner]).strip(),
+                consumed_site_ids=tuple(consumed),
+                nested_anchor_site_ids=tuple(site_id for site_id in consumed if site_id != owner),
             )
         )
-    if unmatched:
-        raise AnchorRefusedError(
-            f"unmatched query rewrite structural groups: {sorted(unmatched.items())!r}"
-        )
-    recipes.sort(key=lambda item: item.consumed_site_ids)
-    return QueryRewritePlan(
-        operations=tuple(recipes),
-        unmatched_group_counts=(),
-        rule_family_counts=tuple(sorted(Counter(x.rule_id for x in recipes).items())),
-        query_import_counts=tuple(
-            sorted(Counter(name for x in recipes for name in x.query_imports).items())
-        ),
-    )
+    result = QueryCompositionPlan(groups=tuple(groups))
+    if result.consumed_site_ids != frozenset(ids):
+        raise AnchorRefusedError("query composition groups do not close reviewed IDs")
+    return result
 
 
 _GRAPH_ORIGIN = "orchestrator.graph"

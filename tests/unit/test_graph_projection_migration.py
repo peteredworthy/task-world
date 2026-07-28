@@ -10,7 +10,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     OperationStream,
     SourceSnapshot,
     compile_operation_stream,
-    compile_query_rewrite_plan,
+    compile_query_composition_plan,
     plan_reviewed_dispositions,
     plan_structural_dispositions,
     require_complete_receiver_physical_context,
@@ -437,12 +437,14 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
     )
 
 
-def test_live_query_rewrite_plan_closes_reviewed_query_transform_sites(
+def test_live_query_composition_plan_closes_reviewed_query_transform_sites(
     live_migration_context: LiveMigrationContext,
 ) -> None:
-    plan = compile_query_rewrite_plan(
-        live_migration_context.stream.sites, live_migration_context.structural_plan
+    plan = compile_query_composition_plan(
+        live_migration_context.sources,
+        live_migration_context.stream,
+        live_migration_context.structural_plan,
     )
 
-    assert len(plan.operations) == len(plan.consumed_site_ids) == 201
-    assert plan.unmatched_group_counts == ()
+    assert len(plan.groups) == 190
+    assert len(plan.consumed_site_ids) == 201

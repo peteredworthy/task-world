@@ -4,15 +4,22 @@ import pytest
 
 from scripts.codemods.migrate_graph_projection_queries import (
     AnchorRefusedError,
+    CstAnchorEvidence,
     DispositionPlan,
+    MigrationSite,
+    OperationStream,
     PlannedOperation,
+    QueryCompositionPlan,
     SourceSnapshot,
+    SourceLocator,
     compile_operation_stream,
+    compile_query_composition_plan,
     plan_reviewed_dispositions,
     require_complete_receiver_physical_context,
     shape_summary,
 )
 from scripts.graph_projection_inventory import (
+    AccessKind,
     MigrationDisposition,
     SourceDigest,
     ProjectionCallContext,
@@ -920,3 +927,69 @@ def test_projection_call_context_refuses_contradictory_ambiguous_star_facts() ->
                 argument_star=argument_star,
                 preceding_star=preceding_star,
             )
+
+
+def test_query_composition_group_reanchors_outer_expression() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    return bool(projection['run_state'])\n"
+        ),
+    )
+    context = ProjectionCallContext(
+        projection_role="receiver",
+        projection_expression="projection",
+        physical_old_field_name="run_state",
+        physical_access_kind=AccessKind.LITERAL_SUBSCRIPT_READ,
+        physical_operation_shape="literal_subscript_read",
+    )
+    site = MigrationSite(
+        origin="occurrence",
+        original_site_id="site",
+        relative_path=source.relative_path,
+        qualified_function="read",
+        access_kind=AccessKind.LITERAL_SUBSCRIPT_READ,
+        old_field_name="run_state",
+        diagnostic_code=None,
+        normalized_expression="projection['run_state']",
+        ordinal=0,
+        source_digest=source_digest(source.source),
+        locator=SourceLocator(line=4, column=16),
+        anchor=CstAnchorEvidence(
+            node_type="Subscript",
+            normalized_expression="projection['run_state']",
+            same_expression_ordinal=0,
+            context=context,
+        ),
+        parent_shape="return",
+        operation_shape="subscript_read",
+    )
+    disposition = DispositionPlan(
+        operations=(
+            PlannedOperation(
+                disposition="query_transform",
+                reason="test",
+                consumed_site_ids=("site",),
+                shape_key="literal_subscript_read|run_state|-|return|subscript_read",
+            ),
+        ),
+        reviewed_deferred_site_ids=(),
+        generated_fixture_operations=(),
+        pending_site_ids=(),
+        disposition_counts=(("query_transform", 1),),
+        shape_group_counts=(("literal_subscript_read|run_state|-|return|subscript_read", 1),),
+        rule_family_counts=(),
+        symbol_origin_counts=(),
+        generated_fixture_family_counts=(),
+    )
+
+    plan = compile_query_composition_plan((source,), OperationStream(sites=(site,)), disposition)
+
+    assert isinstance(plan, QueryCompositionPlan)
+    group = plan.groups[0]
+    assert group.source_span == (4, 11, 4, 40)
+    assert group.original_outer_expression == "bool(projection['run_state'])"
+    assert group.consumed_site_ids == ("site",)
+    assert group.nested_anchor_site_ids == ()
