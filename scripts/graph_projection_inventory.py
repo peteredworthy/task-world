@@ -120,6 +120,8 @@ class ProjectionCallContext(BaseModel):
     receiver_type_origin: str | None = None
     projection_role: Literal["receiver", "positional", "keyword", "ambiguous", "derived_value"]
     projection_expression: str
+    argument_star: Literal["*", "**"] | None = None
+    preceding_star: Literal["*", "**"] | None = None
     positional_index: int | None = None
     keyword_name: str | None = None
     physical_old_field_name: str | None = None
@@ -143,6 +145,10 @@ class ProjectionCallContext(BaseModel):
             )
         if self.physical_old_field_name is not None and self.physical_access_kind is None:
             raise ValueError("physical projection field requires access-kind evidence")
+        if self.projection_role == "ambiguous" and not (self.argument_star or self.preceding_star):
+            raise ValueError("ambiguous projection context requires star evidence")
+        if self.projection_role != "ambiguous" and (self.argument_star or self.preceding_star):
+            raise ValueError("only ambiguous projection context can retain star evidence")
         return self
 
 
@@ -1796,10 +1802,19 @@ class _Collector(cst.CSTVisitor):
             )
         roles: list[ProjectionCallContext] = []
         positional_index = 0
-        starred_uncertainty = False
+        preceding_star: Literal["*", "**"] | None = None
         for argument in node.args:
-            if argument.star == "*":
-                starred_uncertainty = True
+            if argument.star:
+                if self._known_projection_value(argument.value):
+                    roles.append(
+                        ProjectionCallContext(
+                            callee_origin=callee_origin,
+                            projection_role="ambiguous",
+                            projection_expression=self._expression(argument.value),
+                            argument_star=argument.star,
+                        )
+                    )
+                preceding_star = argument.star
                 continue
             if not self._known_projection_value(argument.value):
                 if argument.keyword is None:
@@ -1814,12 +1829,13 @@ class _Collector(cst.CSTVisitor):
                         projection_expression=self._expression(argument.value),
                     )
                 )
-            elif starred_uncertainty or argument.star == "**":
+            elif preceding_star:
                 roles.append(
                     ProjectionCallContext(
                         callee_origin=callee_origin,
                         projection_role="ambiguous",
                         projection_expression=self._expression(argument.value),
+                        preceding_star=preceding_star,
                     )
                 )
             else:

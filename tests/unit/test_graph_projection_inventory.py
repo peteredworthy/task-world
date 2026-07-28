@@ -2354,6 +2354,7 @@ def roles(projection: GraphProjection, values: tuple[object, ...]) -> None:
             "callee_origin": "orchestrator.graph.run_state",
             "projection_role": "ambiguous",
             "projection_expression": "projection",
+            "preceding_star": "*",
         },
     ]
     assert [item.context.model_dump(exclude_none=True) for item in inventory.occurrences] == [
@@ -2404,6 +2405,7 @@ def roles(projection: GraphProjection) -> None:
             "callee_origin": "orchestrator.graph.run_state",
             "projection_role": "ambiguous",
             "projection_expression": "projection",
+            "argument_star": "**",
         },
     ]
 
@@ -2434,6 +2436,35 @@ def build(projection: GraphProjection) -> object:
         "projection_expression": "projection['node_states']",
     } in contexts
     assert not any(context.get("callee_origin") == "builtins.object" for context in contexts)
+
+
+def test_collect_source_distinguishes_direct_and_post_star_projection_roles() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphProjection, run_state
+
+def roles(projection: GraphProjection, values: tuple[object, ...]) -> None:
+    run_state(*projection)
+    run_state(*values, projection)
+""",
+        relative_path="star_roles.py",
+        baseline_revision="baseline",
+    )
+
+    assert [item.context.model_dump(exclude_none=True) for item in inventory.diagnostics] == [
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "ambiguous",
+            "projection_expression": "projection",
+            "argument_star": "*",
+        },
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "ambiguous",
+            "projection_expression": "projection",
+            "preceding_star": "*",
+        },
+    ]
 
 
 def test_collect_source_context_covers_binding_comparison_update_and_pass_through_families() -> (

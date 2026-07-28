@@ -313,14 +313,37 @@ def _literal_subscript_fields(node: cst.CSTNode) -> frozenset[str]:
     return frozenset(fields)
 
 
+def _literal_physical_fields(node: cst.CSTNode) -> frozenset[str]:
+    fields = set(_literal_subscript_fields(node))
+
+    class Visitor(cst.CSTVisitor):
+        def visit_Call(self, call: cst.Call) -> None:
+            if (
+                isinstance(call.func, cst.Attribute)
+                and call.func.attr.value in {"get", "pop", "setdefault"}
+                and call.args
+                and isinstance(call.args[0].value, cst.SimpleString)
+            ):
+                fields.add(call.args[0].value.evaluated_value)
+
+    node.visit(Visitor())
+    return frozenset(fields)
+
+
 def _reanchor_context(
     node: cst.CSTNode,
     stored: ProjectionCallContext | None,
     qualified_names: dict[cst.CSTNode, object],
+    expected_access_kind: AccessKind | None = None,
 ) -> ProjectionCallContext | None:
     """Revalidate stored collector context without discovering projection values."""
     if stored is None:
         return None
+    if stored.physical_access_kind is not None:
+        if expected_access_kind is not None and stored.physical_access_kind != expected_access_kind:
+            raise AnchorRefusedError("inventory physical access kind does not match CST anchor")
+        if stored.physical_old_field_name not in _literal_physical_fields(node):
+            raise AnchorRefusedError("inventory physical context does not match CST anchor")
     if isinstance(node, cst.Param):
         annotation = node.annotation.annotation if node.annotation is not None else None
         name = _one_qualified_name(annotation, qualified_names) if annotation is not None else None
@@ -352,9 +375,6 @@ def _reanchor_context(
         receiver = node.value if isinstance(node, cst.Subscript) else node
         if stored.projection_expression != _normalized_node(receiver):
             raise AnchorRefusedError("inventory projection expression does not match CST anchor")
-        if stored.physical_old_field_name is not None:
-            if stored.physical_old_field_name not in _literal_subscript_fields(node):
-                raise AnchorRefusedError("inventory physical context does not match CST anchor")
         return stored
     matching_calls = []
     for call in calls:
@@ -403,12 +423,22 @@ def _reanchor_context(
         ):
             raise AnchorRefusedError("inventory keyword context does not match CST anchor")
     elif stored.projection_role == "ambiguous":
-        matching_arguments = [
-            argument
-            for argument in call.args
-            if argument.star in {"*", "**"}
-            and stored.projection_expression == _normalized_node(argument.value)
-        ]
+        matching_arguments = (
+            [
+                argument
+                for argument in call.args
+                if argument.star == stored.argument_star
+                and stored.projection_expression == _normalized_node(argument.value)
+            ]
+            if stored.argument_star
+            else [
+                argument
+                for index, argument in enumerate(call.args)
+                if not argument.star
+                and stored.projection_expression == _normalized_node(argument.value)
+                and any(item.star == stored.preceding_star for item in call.args[:index])
+            ]
+        )
         if len(matching_arguments) != 1:
             raise AnchorRefusedError("inventory ambiguous context does not match CST anchor")
     elif stored.projection_role == "derived_value":
@@ -879,12 +909,13 @@ def _anchor_evidence(
     ordinal: int,
     stored_context: ProjectionCallContext | None,
     qualified_names: dict[cst.CSTNode, object],
+    expected_access_kind: AccessKind | None = None,
 ) -> CstAnchorEvidence:
     return CstAnchorEvidence(
         node_type=type(node).__name__,
         normalized_expression=normalized_expression,
         same_expression_ordinal=ordinal,
-        context=_reanchor_context(node, stored_context, qualified_names),
+        context=_reanchor_context(node, stored_context, qualified_names, expected_access_kind),
     )
 
 
@@ -988,6 +1019,7 @@ def compile_operation_stream(
                         ),
                         stored_context=occurrence.context,
                         qualified_names=qualified_names,
+                        expected_access_kind=occurrence.kind,
                     ),
                     parent_shape=_parent_shape(node, parents),
                     operation_shape=_operation_shape(node, occurrence.kind),
