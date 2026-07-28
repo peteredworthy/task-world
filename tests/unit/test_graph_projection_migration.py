@@ -12,6 +12,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     compile_operation_stream,
     plan_reviewed_dispositions,
     plan_structural_dispositions,
+    require_complete_receiver_physical_context,
 )
 from scripts.graph_projection_inventory import (
     AccessInventory,
@@ -327,19 +328,9 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
         for operation in plan.operations
         if operation.disposition == "query_transform"
     }
-    assert all(
-        site.old_field_name is not None
-        or (
-            site.anchor.context is not None
-            and site.anchor.context.physical_old_field_name is not None
-            and site.anchor.context.physical_access_kind is not None
-            and site.anchor.context.physical_operation_shape is not None
-            and site.anchor.context.projection_role == "receiver"
-            and bool(site.anchor.context.projection_expression)
-        )
-        for site in stream.sites
-        if site.original_site_id in query_transform_sites
-    )
+    for site in stream.sites:
+        if site.original_site_id in query_transform_sites:
+            require_complete_receiver_physical_context(site)
     reasons = {item.site_key: (item.disposition, item.reason) for item in ledger.dispositions}
     assert {
         (item.consumed_site_ids[0], item.disposition, item.reason) for item in plan.operations

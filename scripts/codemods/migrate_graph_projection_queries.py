@@ -102,6 +102,23 @@ class OperationStream(BaseModel):
     sites: tuple[MigrationSite, ...]
 
 
+def require_complete_receiver_physical_context(site: MigrationSite) -> None:
+    """Refuse a query transform without collector-proven physical receiver facts."""
+    context = site.anchor.context
+    if (
+        context is None
+        or not context.projection_expression.strip()
+        or context.projection_role != "receiver"
+        or context.physical_old_field_name is None
+        or context.physical_access_kind is None
+        or context.physical_operation_shape is None
+    ):
+        raise AnchorRefusedError(
+            "reviewed query transform lacks complete receiver physical context: "
+            f"{site.original_site_id}"
+        )
+
+
 class PlannedOperation(BaseModel):
     """One reviewed ledger disposition joined to anchored operation IDs."""
 
@@ -707,6 +724,8 @@ def plan_reviewed_dispositions(
             raise AnchorRefusedError(
                 f"reviewed disposition is not compilable: {disposition.disposition}"
             )
+        if disposition.disposition == "query_transform":
+            require_complete_receiver_physical_context(site)
         operations.append(
             PlannedOperation(
                 disposition=disposition.disposition,

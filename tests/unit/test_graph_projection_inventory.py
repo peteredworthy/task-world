@@ -395,7 +395,13 @@ def ambiguous(projection: GraphProjection, node_id: str) -> None:
         baseline_revision="baseline",
     )
 
-    outer = next(item for item in inventory.diagnostics if item.source_node_type == "Call")
+    outer = next(
+        item
+        for item in inventory.diagnostics
+        if item.normalized_cst_expression
+        == "consume(projection.get('node_roles', {}).get(node_id), "
+        "projection.get('last_deferred_reasons', {}).get(node_id))"
+    )
 
     assert outer.context is None
 

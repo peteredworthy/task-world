@@ -9,6 +9,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     SourceSnapshot,
     compile_operation_stream,
     plan_reviewed_dispositions,
+    require_complete_receiver_physical_context,
     shape_summary,
 )
 from scripts.graph_projection_inventory import (
@@ -80,6 +81,29 @@ def test_compile_operation_stream_adapts_occurrences_and_diagnostics_once() -> N
     }
     assert {site.parent_shape for site in stream.sites} == {"return"}
     assert {site.operation_shape for site in stream.sites} == {"subscript_read"}
+
+
+def test_complete_receiver_physical_context_refuses_a_stripped_transform_occurrence() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> str:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+    occurrence = stream.sites[0]
+
+    require_complete_receiver_physical_context(occurrence)
+
+    stripped = occurrence.model_copy(
+        update={"anchor": occurrence.anchor.model_copy(update={"context": None})}
+    )
+    with pytest.raises(AnchorRefusedError, match="complete receiver physical context"):
+        require_complete_receiver_physical_context(stripped)
 
 
 def test_compile_operation_stream_reanchors_after_blank_line_movement() -> None:
