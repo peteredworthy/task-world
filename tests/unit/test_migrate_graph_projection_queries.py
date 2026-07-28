@@ -265,6 +265,112 @@ def test_direct_deletion_has_deletion_parent_and_operation_shapes() -> None:
     ]
 
 
+def test_compile_operation_stream_reanchors_direct_call_deletion_and_fieldless_physical_sites() -> (
+    None
+):
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/physical.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def access(projection: GraphProjection) -> None:\n"
+            "    projection['run_state']\n"
+            "    projection.get('node_states')\n"
+            "    projection.keys()\n"
+            "    projection.values()\n"
+            "    projection.items()\n"
+            "    del projection['run_state']\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+
+    stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+
+    assert [site.operation_shape for site in stream.sites] == [
+        "subscript_read",
+        "map_get",
+        "keys_iteration",
+        "values_iteration",
+        "items_iteration",
+        "deletion",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("context_update", "message"),
+    [
+        ({"projection_expression": "other"}, "projection expression"),
+        ({"physical_old_field_name": "node_states"}, "physical context"),
+        (
+            {
+                "physical_access_kind": "get",
+                "physical_operation_shape": "get",
+            },
+            "access kind",
+        ),
+        ({"physical_operation_shape": "get"}, "operation shape"),
+    ],
+)
+def test_compile_operation_stream_refuses_exact_physical_evidence_mismatches(
+    context_update: dict[str, object], message: str
+) -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/physical.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def access(projection: GraphProjection) -> object:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    occurrence = inventory.occurrences[0]
+    invalid = inventory.model_copy(
+        update={
+            "occurrences": (
+                occurrence.model_copy(
+                    update={"context": occurrence.context.model_copy(update=context_update)}
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(AnchorRefusedError, match=message):
+        compile_operation_stream((source,), invalid, query_migration_skeleton(invalid))
+
+
+def test_compile_operation_stream_refuses_nested_unrelated_diagnostic_field_evidence() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/nested.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def access(projection: GraphProjection) -> None:\n"
+            "    projection['run_state']['unrelated'].update({})\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    diagnostic = next(item for item in inventory.diagnostics if item.context is not None)
+    assert diagnostic.context.physical_old_field_name == "run_state"
+    assert compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+    invalid = inventory.model_copy(
+        update={
+            "diagnostics": (
+                diagnostic.model_copy(
+                    update={
+                        "context": diagnostic.context.model_copy(
+                            update={"physical_old_field_name": "unrelated"}
+                        )
+                    }
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(AnchorRefusedError, match="physical context"):
+        compile_operation_stream((source,), invalid, query_migration_skeleton(invalid))
+
+
 def test_disposition_plan_refuses_overlapping_or_missing_reviewed_sites() -> None:
     with pytest.raises(ValueError, match="nonempty"):
         PlannedOperation(disposition="query_transform", reason="reviewed", consumed_site_ids=())
@@ -677,3 +783,56 @@ def test_projection_call_context_refuses_negative_positional_index() -> None:
             positional_index=-1,
             projection_expression="projection",
         )
+
+
+def test_compile_operation_stream_round_trips_exact_ambiguous_star_forms() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/stars.py",
+        source=(
+            "from orchestrator.graph import GraphProjection, run_state\n\n"
+            "def calls(projection: GraphProjection, values: tuple[object, ...]) -> None:\n"
+            "    run_state(*projection)\n"
+            "    run_state(**projection)\n"
+            "    run_state(*values, projection)\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+    contexts = [
+        site.anchor.context.model_dump(exclude_none=True)
+        for site in stream.sites
+        if site.anchor.context is not None
+    ]
+    assert contexts == [
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "ambiguous",
+            "projection_expression": "projection",
+            "argument_star": "*",
+        },
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "ambiguous",
+            "projection_expression": "projection",
+            "argument_star": "**",
+        },
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "ambiguous",
+            "projection_expression": "projection",
+            "preceding_star": "*",
+        },
+    ]
+
+
+def test_projection_call_context_refuses_contradictory_ambiguous_star_facts() -> None:
+    for argument_star, preceding_star in ((None, None), ("*", "**")):
+        with pytest.raises(ValueError, match="exactly one star"):
+            ProjectionCallContext(
+                callee_origin="orchestrator.graph.run_state",
+                projection_role="ambiguous",
+                projection_expression="projection",
+                argument_star=argument_star,
+                preceding_star=preceding_star,
+            )

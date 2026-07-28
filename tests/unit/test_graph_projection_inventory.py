@@ -2376,6 +2376,48 @@ def roles(projection: GraphProjection, values: tuple[object, ...]) -> None:
     ]
 
 
+def test_collect_source_extracts_physical_receivers_through_action_wrappers() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphProjection
+
+def access(projection: GraphProjection) -> None:
+    projection["run_state"] = "active"
+    projection.get("node_states")
+    del projection["run_state"]
+""",
+        relative_path="physical_wrappers.py",
+        baseline_revision="baseline",
+    )
+
+    assert [item.context.model_dump(exclude_none=True) for item in inventory.occurrences] == [
+        {
+            "receiver_type_origin": "orchestrator.graph.GraphProjection",
+            "projection_role": "receiver",
+            "projection_expression": "projection",
+            "physical_old_field_name": "run_state",
+            "physical_access_kind": AccessKind.DIRECT_ASSIGNMENT,
+            "physical_operation_shape": "direct_assignment",
+        },
+        {
+            "receiver_type_origin": "orchestrator.graph.GraphProjection",
+            "projection_role": "receiver",
+            "projection_expression": "projection",
+            "physical_old_field_name": "node_states",
+            "physical_access_kind": AccessKind.GET,
+            "physical_operation_shape": "get",
+        },
+        {
+            "receiver_type_origin": "orchestrator.graph.GraphProjection",
+            "projection_role": "receiver",
+            "projection_expression": "projection",
+            "physical_old_field_name": "run_state",
+            "physical_access_kind": AccessKind.DELETE_POP,
+            "physical_operation_shape": "delete_pop",
+        },
+    ]
+
+
 def test_collect_source_context_requires_an_approved_exact_origin_and_exact_argument() -> None:
     inventory = collect_source(
         """

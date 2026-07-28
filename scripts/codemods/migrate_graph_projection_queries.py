@@ -296,59 +296,149 @@ def _one_qualified_name(
     return next(iter(names)) if len(names) == 1 else None
 
 
-def _literal_subscript_fields(node: cst.CSTNode) -> frozenset[str]:
-    """Return literal fields physically present under one anchored expression."""
-    fields: set[str] = set()
-
-    class Visitor(cst.CSTVisitor):
-        def visit_Subscript(self, subscript: cst.Subscript) -> None:
-            if (
-                len(subscript.slice) == 1
-                and isinstance((element := subscript.slice[0]).slice, cst.Index)
-                and isinstance(element.slice.value, cst.SimpleString)
-            ):
-                fields.add(element.slice.value.evaluated_value)
-
-    node.visit(Visitor())
-    return frozenset(fields)
+def _literal_subscript_field(node: cst.Subscript) -> str | None:
+    if (
+        len(node.slice) != 1
+        or not isinstance((element := node.slice[0]).slice, cst.Index)
+        or not isinstance(element.slice.value, cst.SimpleString)
+    ):
+        return None
+    return element.slice.value.evaluated_value
 
 
-def _literal_physical_fields(node: cst.CSTNode) -> frozenset[str]:
-    fields = set(_literal_subscript_fields(node))
+def _literal_argument_field(arguments: tuple[cst.Arg, ...]) -> str | None:
+    if not arguments or not isinstance(arguments[0].value, cst.SimpleString):
+        return None
+    return arguments[0].value.evaluated_value
 
-    class Visitor(cst.CSTVisitor):
-        def visit_Call(self, call: cst.Call) -> None:
-            if (
-                isinstance(call.func, cst.Attribute)
-                and call.func.attr.value in {"get", "pop", "setdefault"}
-                and call.args
-                and isinstance(call.args[0].value, cst.SimpleString)
-            ):
-                fields.add(call.args[0].value.evaluated_value)
 
-    node.visit(Visitor())
-    return frozenset(fields)
+def _root_subscript(node: cst.Subscript) -> cst.Subscript:
+    current = node
+    while isinstance(current.value, cst.Subscript):
+        current = current.value
+    return current
+
+
+def _physical_signature(
+    node: cst.CSTNode, parents: dict[cst.CSTNode, cst.CSTNode]
+) -> tuple[str, str | None, AccessKind, str] | None:
+    """Derive one physical operation from its exact CST action and receiver."""
+    if isinstance(node, cst.Del) and isinstance(node.target, cst.Subscript):
+        physical_target = _root_subscript(node.target)
+        field = _literal_subscript_field(physical_target)
+        receiver = _normalized_node(node.target.value)
+        if field is not None and receiver is not None:
+            return receiver, field, AccessKind.DELETE_POP, AccessKind.DELETE_POP.value
+        return None
+    if isinstance(node, cst.Comparison) and len(node.comparisons) == 1:
+        comparison = node.comparisons[0]
+        if isinstance(comparison.operator, (cst.In, cst.NotIn)):
+            receiver = _normalized_node(comparison.comparator)
+            if isinstance(node.left, cst.SimpleString) and receiver is not None:
+                return (
+                    receiver,
+                    node.left.evaluated_value,
+                    AccessKind.MEMBERSHIP,
+                    AccessKind.MEMBERSHIP.value,
+                )
+    if isinstance(node, cst.Subscript):
+        if isinstance(parents[node], cst.Del):
+            return None
+        field = _literal_subscript_field(_root_subscript(node))
+        receiver = _normalized_node(node.value)
+        if field is None or receiver is None:
+            return None
+        parent = parents[node]
+        if isinstance(parent, cst.AssignTarget) or (
+            isinstance(parent, cst.AnnAssign) and parent.target is node
+        ):
+            kind = (
+                AccessKind.NESTED_ASSIGNMENT
+                if isinstance(node.value, cst.Subscript)
+                else AccessKind.DIRECT_ASSIGNMENT
+            )
+        else:
+            kind = AccessKind.LITERAL_SUBSCRIPT_READ
+        return receiver, field, kind, kind.value
+    if not isinstance(node, cst.Call) or not isinstance(node.func, cst.Attribute):
+        return None
+    method = node.func.attr.value
+    receiver = node.func.value
+    receiver_expression = _normalized_node(receiver)
+    if receiver_expression is None:
+        return None
+    if isinstance(receiver, cst.Subscript) and method not in {"append", "extend"}:
+        field = _literal_subscript_field(_root_subscript(receiver))
+        if field is not None:
+            return (
+                receiver_expression,
+                field,
+                AccessKind.LITERAL_SUBSCRIPT_READ,
+                AccessKind.LITERAL_SUBSCRIPT_READ.value,
+            )
+    direct_methods = {
+        "get": AccessKind.GET,
+        "pop": AccessKind.DELETE_POP,
+        "setdefault": AccessKind.SETDEFAULT,
+        "keys": AccessKind.KEYS,
+        "values": AccessKind.VALUES,
+        "items": AccessKind.ITEMS,
+    }
+    if method in direct_methods:
+        field = (
+            None if method in {"keys", "values", "items"} else _literal_argument_field(node.args)
+        )
+        if method in {"keys", "values", "items"} or field is not None:
+            kind = direct_methods[method]
+            return receiver_expression, field, kind, kind.value
+        return None
+    if method not in {"append", "extend"}:
+        return None
+    if isinstance(receiver, cst.Subscript):
+        field = _literal_subscript_field(receiver)
+    elif (
+        isinstance(receiver, cst.Call)
+        and isinstance(receiver.func, cst.Attribute)
+        and receiver.func.attr.value == "get"
+    ):
+        field = _literal_argument_field(receiver.args)
+    else:
+        field = None
+    if field is None:
+        return None
+    return receiver_expression, field, AccessKind.APPEND_EXTEND, AccessKind.APPEND_EXTEND.value
 
 
 def _reanchor_context(
     node: cst.CSTNode,
     stored: ProjectionCallContext | None,
     qualified_names: dict[cst.CSTNode, object],
+    parents: dict[cst.CSTNode, cst.CSTNode],
     expected_access_kind: AccessKind | None = None,
 ) -> ProjectionCallContext | None:
     """Revalidate stored collector context without discovering projection values."""
     if stored is None:
         return None
     if stored.physical_access_kind is not None:
-        if expected_access_kind is not None and stored.physical_access_kind != expected_access_kind:
-            raise AnchorRefusedError("inventory physical access kind does not match CST anchor")
-        if (
-            stored.physical_old_field_name is not None
-            and stored.physical_old_field_name not in _literal_physical_fields(node)
-        ):
+        if stored.projection_role != "receiver":
             raise AnchorRefusedError("inventory physical context does not match CST anchor")
-        if stored.physical_operation_shape != stored.physical_access_kind.value:
+        signature = _physical_signature(node, parents)
+        if signature is None:
+            raise AnchorRefusedError("inventory physical context does not match CST anchor")
+        receiver, field, access_kind, operation_shape = signature
+        if (
+            expected_access_kind is not None
+            and expected_access_kind is not access_kind
+            or stored.physical_access_kind is not access_kind
+        ):
+            raise AnchorRefusedError("inventory physical access kind does not match CST anchor")
+        if stored.physical_old_field_name != field:
+            raise AnchorRefusedError("inventory physical context does not match CST anchor")
+        if stored.physical_operation_shape != operation_shape:
             raise AnchorRefusedError("inventory physical operation shape does not match CST anchor")
+        if stored.projection_expression != receiver:
+            raise AnchorRefusedError("inventory projection expression does not match CST anchor")
+        return stored
     if isinstance(node, cst.Param):
         annotation = node.annotation.annotation if node.annotation is not None else None
         name = _one_qualified_name(annotation, qualified_names) if annotation is not None else None
@@ -843,28 +933,17 @@ def _matches_access_kind(
     kind: AccessKind,
     parents: dict[cst.CSTNode, cst.CSTNode],
 ) -> bool:
+    signature = _physical_signature(node, parents)
+    if signature is not None:
+        return signature[2] is kind
     parent = parents[node]
-    if kind is AccessKind.DELETE_POP:
-        return isinstance(node, (cst.Del, cst.Call))
-    if kind in {AccessKind.DIRECT_ASSIGNMENT, AccessKind.NESTED_ASSIGNMENT}:
-        return isinstance(parent, cst.AssignTarget) or (
-            isinstance(parent, cst.AnnAssign) and parent.target is node
-        )
-    if kind is AccessKind.MEMBERSHIP:
-        return isinstance(node, cst.Comparison)
     if kind is AccessKind.DIRECT_ITERATION:
         return isinstance(parent, (cst.For, cst.CompFor))
-    if kind in {
-        AccessKind.GET,
-        AccessKind.ITEMS,
-        AccessKind.VALUES,
-        AccessKind.KEYS,
-        AccessKind.SETDEFAULT,
-    }:
+    if kind in {AccessKind.FIXTURE_CONSTRUCTION, AccessKind.UNPACK_CAST}:
         return isinstance(node, cst.Call)
-    if kind in {AccessKind.APPEND_EXTEND, AccessKind.FIXTURE_CONSTRUCTION, AccessKind.UNPACK_CAST}:
-        return isinstance(node, cst.Call)
-    return isinstance(node, cst.BaseExpression)
+    if kind is AccessKind.UNTYPED_ESCAPE:
+        return isinstance(node, cst.BaseExpression)
+    return False
 
 
 def _scope_lines(
@@ -914,13 +993,16 @@ def _anchor_evidence(
     ordinal: int,
     stored_context: ProjectionCallContext | None,
     qualified_names: dict[cst.CSTNode, object],
+    parents: dict[cst.CSTNode, cst.CSTNode],
     expected_access_kind: AccessKind | None = None,
 ) -> CstAnchorEvidence:
     return CstAnchorEvidence(
         node_type=type(node).__name__,
         normalized_expression=normalized_expression,
         same_expression_ordinal=ordinal,
-        context=_reanchor_context(node, stored_context, qualified_names, expected_access_kind),
+        context=_reanchor_context(
+            node, stored_context, qualified_names, parents, expected_access_kind
+        ),
     )
 
 
@@ -1024,6 +1106,7 @@ def compile_operation_stream(
                         ),
                         stored_context=occurrence.context,
                         qualified_names=qualified_names,
+                        parents=parents,
                         expected_access_kind=occurrence.kind,
                     ),
                     parent_shape=_parent_shape(node, parents),
@@ -1123,6 +1206,7 @@ def compile_operation_stream(
                         ordinal=ordinal,
                         stored_context=diagnostic.context,
                         qualified_names=qualified_names,
+                        parents=parents,
                     ),
                     parent_shape=_parent_shape(node, parents),
                     operation_shape=_diagnostic_operation_shape(node, diagnostic.code),

@@ -1964,6 +1964,8 @@ class _Collector(cst.CSTVisitor):
         receiver = (
             node.func.value
             if isinstance(node, cst.Call) and isinstance(node.func, cst.Attribute)
+            else node.target.value
+            if isinstance(node, cst.Del) and isinstance(node.target, cst.Subscript)
             else node.value
             if isinstance(node, cst.Subscript)
             else node
