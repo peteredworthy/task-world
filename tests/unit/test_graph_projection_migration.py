@@ -322,6 +322,24 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
     )
     assert plan.deferred_site_ids == tuple(sorted(plan.deferred_site_ids))
     assert plan.pending_site_ids == tuple(sorted(plan.pending_site_ids))
+    query_transform_sites = {
+        operation.consumed_site_ids[0]
+        for operation in plan.operations
+        if operation.disposition == "query_transform"
+    }
+    assert all(
+        site.old_field_name is not None
+        or (
+            site.anchor.context is not None
+            and site.anchor.context.physical_old_field_name is not None
+            and site.anchor.context.physical_access_kind is not None
+            and site.anchor.context.physical_operation_shape is not None
+            and site.anchor.context.projection_role == "receiver"
+            and bool(site.anchor.context.projection_expression)
+        )
+        for site in stream.sites
+        if site.original_site_id in query_transform_sites
+    )
     reasons = {item.site_key: (item.disposition, item.reason) for item in ledger.dispositions}
     assert {
         (item.consumed_site_ids[0], item.disposition, item.reason) for item in plan.operations

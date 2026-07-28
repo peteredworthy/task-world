@@ -346,6 +346,60 @@ def rejected(projection: GraphProjection) -> None:
     )
 
 
+def test_collect_source_propagates_unique_physical_context_through_outer_calls() -> None:
+    inventory = collect_source(
+        """
+def families(projection: GraphProjection, node_id: str, reason: str) -> None:
+    projection.get("last_deferred_reasons", {}).get(node_id)
+    projection.get("accepted_graph_patches_by_node", {}).get(node_id)
+    projection.get("callback_idempotency_events", {}).get(node_id)
+    projection.get("node_roles", {}).get(node_id)
+    consume(projection["file_state_records"][node_id])
+""",
+        relative_path="families.py",
+        baseline_revision="baseline",
+    )
+
+    contexts = [item.context for item in inventory.diagnostics]
+
+    assert [item.code for item in inventory.diagnostics] == ["unsupported_call"] * 5
+    assert [context.physical_old_field_name for context in contexts if context is not None] == [
+        "last_deferred_reasons",
+        "accepted_graph_patches_by_node",
+        "callback_idempotency_events",
+        "node_roles",
+        "file_state_records",
+    ]
+    assert [context.physical_access_kind for context in contexts if context is not None] == [
+        AccessKind.GET,
+        AccessKind.GET,
+        AccessKind.GET,
+        AccessKind.GET,
+        AccessKind.LITERAL_SUBSCRIPT_READ,
+    ]
+    assert [context.projection_expression for context in contexts if context is not None] == [
+        "projection",
+    ] * 5
+
+
+def test_collect_source_refuses_outer_call_context_with_multiple_physical_descendants() -> None:
+    inventory = collect_source(
+        """
+def ambiguous(projection: GraphProjection, node_id: str) -> None:
+    consume(
+        projection.get("node_roles", {}).get(node_id),
+        projection.get("last_deferred_reasons", {}).get(node_id),
+    )
+""",
+        relative_path="ambiguous.py",
+        baseline_revision="baseline",
+    )
+
+    outer = next(item for item in inventory.diagnostics if item.source_node_type == "Call")
+
+    assert outer.context is None
+
+
 def test_collect_source_requires_a_qualified_recognized_cast_symbol() -> None:
     inventory = collect_source(
         """

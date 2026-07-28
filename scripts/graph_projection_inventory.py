@@ -1959,32 +1959,77 @@ class _Collector(cst.CSTVisitor):
 
         class PhysicalVisitor(cst.CSTVisitor):
             def visit_Subscript(_, subscript: cst.Subscript) -> None:
-                field_subscript = self._tracked_field_subscript(subscript)
-                if (
-                    field_subscript is None
-                    or len(field_subscript.slice) != 1
-                    or not isinstance(field_subscript.slice[0].slice, cst.Index)
-                ):
-                    return
-                field = _literal_key(field_subscript.slice[0].slice.value)
-                if field not in self.fields:
-                    return
-                nested_physical.append(
-                    ProjectionCallContext(
-                        receiver_type_origin="orchestrator.graph.GraphProjection",
-                        projection_role="receiver",
-                        projection_expression=self._expression(subscript.value),
-                        physical_old_field_name=field,
-                        physical_access_kind=AccessKind.LITERAL_SUBSCRIPT_READ,
-                        physical_operation_shape=AccessKind.LITERAL_SUBSCRIPT_READ.value,
-                    )
-                )
+                if context := self._recognized_physical_context(subscript):
+                    nested_physical.append(context)
+
+            def visit_Call(_, call: cst.Call) -> None:
+                if context := self._recognized_physical_context(call):
+                    nested_physical.append(context)
 
         node.visit(PhysicalVisitor())
         unique_physical = {item.model_dump_json(): item for item in nested_physical}
         if len(unique_physical) == 1:
             return next(iter(unique_physical.values()))
         return None
+
+    def _recognized_physical_context(self, node: cst.CSTNode) -> ProjectionCallContext | None:
+        """Return one exact physical signature that can survive an outer call.
+
+        This deliberately recognizes only physical operations already accepted by
+        the collector.  An outer diagnostic may inherit the signature only when
+        its CST descendants contain one unique such operation.
+        """
+        if isinstance(node, cst.Subscript):
+            field_subscript = self._tracked_field_subscript(node)
+            if (
+                field_subscript is None
+                or len(field_subscript.slice) != 1
+                or not isinstance(field_subscript.slice[0].slice, cst.Index)
+            ):
+                return None
+            field = _literal_key(field_subscript.slice[0].slice.value)
+            if field not in self.fields:
+                return None
+            return ProjectionCallContext(
+                receiver_type_origin="orchestrator.graph.GraphProjection",
+                projection_role="receiver",
+                projection_expression=self._expression(field_subscript.value),
+                physical_old_field_name=field,
+                physical_access_kind=AccessKind.LITERAL_SUBSCRIPT_READ,
+                physical_operation_shape=AccessKind.LITERAL_SUBSCRIPT_READ.value,
+            )
+        if not (
+            isinstance(node, cst.Call)
+            and isinstance(node.func, cst.Attribute)
+            and self._tracked(node.func.value)
+        ):
+            return None
+        method = node.func.attr.value
+        kinds = {
+            "get": AccessKind.GET,
+            "pop": AccessKind.DELETE_POP,
+            "setdefault": AccessKind.SETDEFAULT,
+            "keys": AccessKind.KEYS,
+            "values": AccessKind.VALUES,
+            "items": AccessKind.ITEMS,
+        }
+        kind = kinds.get(method)
+        if kind is None or not self._valid_method_shape(method, node.args):
+            return None
+        field = None if method in {"keys", "values", "items"} else _literal_key(node.args[0].value)
+        if field is not None and field not in self.fields:
+            return None
+        if method not in {"keys", "values", "items"} and field is None:
+            return None
+        return ProjectionCallContext(
+            callee_origin=self._qualified_import_origin(node.func),
+            receiver_type_origin="orchestrator.graph.GraphProjection",
+            projection_role="receiver",
+            projection_expression=self._expression(node.func.value),
+            physical_old_field_name=field,
+            physical_access_kind=kind,
+            physical_operation_shape=kind.value,
+        )
 
     def _physical_context(
         self, kind: AccessKind, field: str | None, node: cst.CSTNode
