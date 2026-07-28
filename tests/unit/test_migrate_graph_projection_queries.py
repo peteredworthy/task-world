@@ -289,6 +289,33 @@ def test_disposition_plan_refuses_overlapping_or_missing_reviewed_sites() -> Non
         )
 
 
+def test_disposition_plan_direct_validation_refuses_partition_and_count_forgeries() -> None:
+    operation = PlannedOperation(
+        disposition="query_transform",
+        reason="reviewed",
+        consumed_site_ids=("a",),
+        shape_key="shape",
+    )
+    valid = {
+        "operations": (operation,),
+        "deferred_site_ids": ("b",),
+        "pending_site_ids": ("c",),
+        "disposition_counts": (("query_transform", 1),),
+        "shape_group_counts": (("shape", 1),),
+    }
+    for update, message in (
+        ({"deferred_site_ids": ("b", "b")}, "unique"),
+        ({"pending_site_ids": ("c", "c")}, "unique"),
+        ({"deferred_site_ids": ("a",)}, "overlap"),
+        ({"pending_site_ids": ("a",)}, "overlap"),
+        ({"pending_site_ids": ("b",)}, "overlap"),
+        ({"disposition_counts": (("approved_core", 1),)}, "disposition counts"),
+        ({"shape_group_counts": (("other", 1),)}, "shape counts"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            DispositionPlan(**(valid | update))
+
+
 @pytest.mark.timeout(300)
 def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> None:
     manifest = load_manifest(MANIFEST_PATH)
@@ -303,22 +330,17 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> N
         ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
     )
 
-    plan = plan_reviewed_dispositions(
-        compile_operation_stream(
-            tracked_sources, inventory, query_migration_skeleton(inventory, ROOT)
-        ),
-        ledger,
+    stream = compile_operation_stream(
+        tracked_sources, inventory, query_migration_skeleton(inventory, ROOT)
     )
+    plan = plan_reviewed_dispositions(stream, ledger)
 
     assert len(plan.operations) == len(ledger.dispositions)
     assert len(plan.consumed_site_ids) == len(ledger.dispositions)
     assert len(plan.deferred_site_ids) == 349
     assert len(plan.pending_site_ids) == 100
     assert plan.consumed_site_ids | set(plan.deferred_site_ids) | set(plan.pending_site_ids) == {
-        site.original_site_id
-        for site in compile_operation_stream(
-            tracked_sources, inventory, query_migration_skeleton(inventory, ROOT)
-        ).sites
+        site.original_site_id for site in stream.sites
     }
     assert plan.disposition_counts == (
         ("approved_core", 80),
@@ -327,6 +349,22 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> N
     )
     assert plan.shape_group_counts == tuple(sorted(plan.shape_group_counts))
     assert all(operation.reason for operation in plan.operations)
+    assert tuple(operation.consumed_site_ids[0] for operation in plan.operations) == tuple(
+        sorted(operation.consumed_site_ids[0] for operation in plan.operations)
+    )
+    assert plan.deferred_site_ids == tuple(sorted(plan.deferred_site_ids))
+    assert plan.pending_site_ids == tuple(sorted(plan.pending_site_ids))
+    reasons = {item.site_key: (item.disposition, item.reason) for item in ledger.dispositions}
+    assert {
+        (item.consumed_site_ids[0], item.disposition, item.reason) for item in plan.operations
+    } == {(site_id, disposition, reason) for site_id, (disposition, reason) in reasons.items()}
+    assert (
+        plan_reviewed_dispositions(
+            stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
+            ledger.model_copy(update={"dispositions": tuple(reversed(ledger.dispositions))}),
+        )
+        == plan
+    )
 
 
 def test_plan_refuses_duplicate_or_stale_anchored_reviewed_identity() -> None:

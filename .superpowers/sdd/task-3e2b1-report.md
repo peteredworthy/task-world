@@ -107,3 +107,29 @@ $ uv run pytest
 Self-review: the planner compares the full stream set with the union of all
 three partitions and rejects duplicate stream identities, reviewed/deferred
 overlap, invalid deferred domains/counts, and unexpected pending counts.
+
+## Regression coverage completion
+
+The authoritative partition is **354 reviewed + 349 deferred fixtures + 100
+pending = 803 stream IDs**. Direct frozen-model tests cover duplicate deferred
+and pending IDs, each pairwise partition overlap, and forged disposition/shape
+count metadata. The single live setup verifies canonical operation/deferred/
+pending ordering, exact ledger `(disposition, reason)` preservation, and an
+identical plan after independently reversing stream and ledger input order.
+
+```text
+$ uv run pytest tests/unit/test_migrate_graph_projection_queries.py -q
+14 passed in 97.00s
+
+$ uv run ruff check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py
+All checks passed!
+
+$ uv run ruff format --check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py
+2 files already formatted
+
+$ uv run pyright
+0 errors, 0 warnings, 0 informations
+
+$ uv run pytest
+4998 passed, 3 skipped, 3 warnings in 279.16s (0:04:39)
+```
