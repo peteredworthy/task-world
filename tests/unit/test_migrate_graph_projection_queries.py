@@ -9,6 +9,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     MigrationSite,
     OperationStream,
     PlannedOperation,
+    QueryCompositionGroup,
     QueryCompositionPlan,
     SourceSnapshot,
     SourceLocator,
@@ -992,4 +993,37 @@ def test_query_composition_group_reanchors_outer_expression() -> None:
     assert group.source_span == (4, 11, 4, 40)
     assert group.original_outer_expression == "bool(projection['run_state'])"
     assert group.consumed_site_ids == ("site",)
-    assert group.nested_anchor_site_ids == ()
+    assert group.owner_site_id is None
+    assert group.anchor_relations == ()
+
+
+def test_query_composition_models_refuse_invalid_direct_construction() -> None:
+    """Composition records are a closed immutable proof boundary, not loose DTOs."""
+    anchor = CstAnchorEvidence(
+        node_type="Call",
+        normalized_expression="read(projection['run_state'])",
+        same_expression_ordinal=0,
+    )
+    with pytest.raises(ValueError, match="nonblank"):
+        QueryCompositionGroup(
+            relative_path=" ",
+            source_span=(1, 0, 1, 1),
+            outer_action_id="outer:src/example.py:1:0:1:1",
+            owner_site_id=None,
+            owner_anchor=anchor,
+            original_outer_expression="read(projection['run_state'])",
+            consumed_site_ids=("site",),
+            anchor_relations=(),
+        )
+    group = QueryCompositionGroup(
+        relative_path="src/example.py",
+        source_span=(1, 0, 1, 36),
+        outer_action_id="outer:src/example.py:1:0:1:36",
+        owner_site_id=None,
+        owner_anchor=anchor,
+        original_outer_expression="read(projection['run_state'])",
+        consumed_site_ids=("left", "right"),
+        anchor_relations=(),
+    )
+    with pytest.raises(ValueError, match="overlap"):
+        QueryCompositionPlan(groups=(group, group))

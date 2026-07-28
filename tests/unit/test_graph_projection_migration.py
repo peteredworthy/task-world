@@ -446,5 +446,5 @@ def test_live_query_composition_plan_closes_reviewed_query_transform_sites(
         live_migration_context.structural_plan,
     )
 
-    assert len(plan.groups) == 190
+    assert len(plan.groups) == 187
     assert len(plan.consumed_site_ids) == 201

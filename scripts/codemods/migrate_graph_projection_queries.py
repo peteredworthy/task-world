@@ -284,22 +284,57 @@ class QueryCompositionGroup(BaseModel):
 
     relative_path: str
     source_span: tuple[int, int, int, int]
-    owner_site_id: str
+    outer_action_id: str
+    owner_site_id: str | None
     owner_anchor: CstAnchorEvidence
     original_outer_expression: str
     consumed_site_ids: tuple[str, ...]
-    nested_anchor_site_ids: tuple[str, ...]
+    anchor_relations: tuple[tuple[str, str], ...]
 
     @model_validator(mode="after")
     def _validate_group(self) -> "QueryCompositionGroup":
-        if not self.consumed_site_ids or len(self.consumed_site_ids) != len(
-            frozenset(self.consumed_site_ids)
+        if not self.relative_path.strip() or not self.original_outer_expression.strip():
+            raise ValueError("composition paths and expressions must be nonblank")
+        start = self.source_span[:2]
+        end = self.source_span[2:]
+        if start[0] < 1 or end[0] < 1 or start[1] < 0 or end[1] < 0 or start >= end:
+            raise ValueError("composition source span must be positive and ordered")
+        if not self.outer_action_id.strip():
+            raise ValueError("composition outer action owner must be nonblank")
+        if (
+            not self.consumed_site_ids
+            or tuple(sorted(self.consumed_site_ids)) != self.consumed_site_ids
+            or len(self.consumed_site_ids) != len(frozenset(self.consumed_site_ids))
+            or any(not site_id.strip() for site_id in self.consumed_site_ids)
         ):
-            raise ValueError("composition group consumed site IDs must be nonempty and unique")
-        if self.owner_site_id not in self.consumed_site_ids:
-            raise ValueError("composition group owner must be consumed")
-        if set(self.nested_anchor_site_ids) - set(self.consumed_site_ids):
-            raise ValueError("nested anchors must be consumed by their composition group")
+            raise ValueError(
+                "composition group consumed site IDs must be canonical, nonempty and unique"
+            )
+        if self.owner_site_id is not None and self.owner_site_id not in self.consumed_site_ids:
+            raise ValueError("composition site owner must be consumed")
+        if (
+            tuple(sorted(self.anchor_relations)) != self.anchor_relations
+            or len(self.anchor_relations) != len(frozenset(self.anchor_relations))
+            or any(
+                ancestor == descendant
+                or ancestor not in self.consumed_site_ids
+                or descendant not in self.consumed_site_ids
+                for ancestor, descendant in self.anchor_relations
+            )
+        ):
+            raise ValueError(
+                "composition anchor relations must be canonical, unique consumed ancestry pairs"
+            )
+        if self.owner_site_id is not None:
+            # Additional actual nested relations are valid, but the outer site
+            # itself must prove ownership of every other consumed anchor.
+            missing = {
+                (self.owner_site_id, site_id)
+                for site_id in self.consumed_site_ids
+                if site_id != self.owner_site_id
+            } - set(self.anchor_relations)
+            if missing:
+                raise ValueError("a site owner must relate to every descendant anchor")
         return self
 
 
@@ -317,56 +352,88 @@ class QueryCompositionPlan(BaseModel):
     @model_validator(mode="after")
     def _validate_plan(self) -> "QueryCompositionPlan":
         consumed = [site_id for group in self.groups for site_id in group.consumed_site_ids]
-        spans = [(group.relative_path, group.source_span) for group in self.groups]
         if len(consumed) != len(frozenset(consumed)):
             raise ValueError("composition groups overlap by consumed site ID")
-        if len(spans) != len(frozenset(spans)):
-            raise ValueError("composition groups overlap by source action span")
+        for index, group in enumerate(self.groups):
+            for other in self.groups[index + 1 :]:
+                if group.relative_path == other.relative_path and _spans_overlap(
+                    group.source_span, other.source_span
+                ):
+                    raise ValueError("composition groups overlap by source action span")
         if self.groups != tuple(
             sorted(
                 self.groups,
-                key=lambda group: (group.relative_path, group.source_span, group.owner_site_id),
+                key=lambda group: (group.relative_path, group.source_span, group.outer_action_id),
             )
         ):
             raise ValueError("composition groups must be canonically ordered")
         return self
 
 
+def _spans_overlap(left: tuple[int, int, int, int], right: tuple[int, int, int, int]) -> bool:
+    return left[:2] < right[2:] and right[:2] < left[2:]
+
+
+def _outer_action(node: cst.CSTNode, parents: dict[cst.CSTNode, cst.CSTNode]) -> cst.CSTNode:
+    """Walk all CST bridge nodes to the enclosing statement action boundary."""
+    outer = node if isinstance(node, cst.BaseExpression) else None
+    current = node
+    while (parent := parents.get(current)) is not None:
+        if isinstance(parent, cst.BaseStatement):
+            if outer is None:
+                break
+            return outer
+        # LibCST bridge nodes (Arg, Element, DictElement, SubscriptElement,
+        # Index, ComparisonTarget and comprehension clauses) deliberately do
+        # not terminate the walk; their enclosing expression is the action.
+        if isinstance(parent, cst.BaseExpression):
+            outer = parent
+        current = parent
+    raise AnchorRefusedError(f"unsupported outer action boundary: {type(current).__name__}")
+
+
+def _is_ancestor(
+    ancestor: cst.CSTNode,
+    descendant: cst.CSTNode,
+    parents: dict[cst.CSTNode, cst.CSTNode],
+) -> bool:
+    current = parents.get(descendant)
+    while current is not None:
+        if current is ancestor:
+            return True
+        current = parents.get(current)
+    return False
+
+
 def _reanchor_operation_stream_site(
     site: MigrationSite,
     *,
     candidates: dict[tuple[str, str], list[cst.CSTNode]],
+    occurrence_nodes: tuple[cst.CSTNode, ...] | None,
     parents: dict[cst.CSTNode, cst.CSTNode],
     positions: dict[cst.CSTNode, object],
     qualified_names: dict[cst.CSTNode, object],
 ) -> cst.CSTNode:
     """Reanchor one stream identity using the same origin-specific proof as collection."""
     if site.origin == "occurrence":
-        if site.access_kind is None:
+        if site.access_kind is None or occurrence_nodes is None:
             raise AnchorRefusedError(f"occurrence lacks access kind: {site.original_site_id}")
-        nodes = [
-            node
-            for node in candidates.get((site.qualified_function, site.normalized_expression), ())
-            if _matches_access_kind(node, site.access_kind, parents)
-        ]
-        if site.ordinal >= len(nodes):
+        if site.ordinal >= len(occurrence_nodes):
             raise AnchorRefusedError(f"missing occurrence CST anchor: {site.original_site_id}")
-        node = nodes[site.ordinal]
+        node = occurrence_nodes[site.ordinal]
     else:
-        node = next(
-            (
-                candidate
-                for candidate, position in positions.items()
-                if position.start.line == site.locator.line
-                and position.start.column == site.locator.column
-                and type(candidate).__name__ == site.anchor.node_type
-                and (_normalized_node(candidate) or cst.Module([]).code_for_node(candidate).strip())
-                == site.anchor.normalized_expression
-            ),
-            None,
-        )
-        if node is None:
-            raise AnchorRefusedError(f"missing diagnostic CST anchor: {site.original_site_id}")
+        matches = [
+            candidate
+            for candidate, position in positions.items()
+            if position.start.line == site.locator.line
+            and position.start.column == site.locator.column
+            and type(candidate).__name__ == site.anchor.node_type
+            and (_normalized_node(candidate) or cst.Module([]).code_for_node(candidate).strip())
+            == site.anchor.normalized_expression
+        ]
+        if len(matches) != 1:
+            raise AnchorRefusedError(f"ambiguous diagnostic CST anchor: {site.original_site_id}")
+        node = matches[0]
     if (
         _anchor_evidence(
             node,
@@ -383,11 +450,77 @@ def _reanchor_operation_stream_site(
     return node
 
 
+def _reanchor_operation_stream_sites(
+    sources: Iterable[SourceSnapshot], sites: Iterable[MigrationSite]
+) -> dict[
+    str, tuple[cst.CSTNode, dict[cst.CSTNode, cst.CSTNode], dict[cst.CSTNode, object], cst.Module]
+]:
+    """Prove stream identities against snapshots for every consumer of stream anchors."""
+    sites = tuple(sites)
+    snapshots = _source_map(sources)
+    grouped: dict[str, list[MigrationSite]] = defaultdict(list)
+    for site in sites:
+        grouped[site.relative_path].append(site)
+    anchored: dict[
+        str,
+        tuple[cst.CSTNode, dict[cst.CSTNode, cst.CSTNode], dict[cst.CSTNode, object], cst.Module],
+    ] = {}
+    for path, path_sites in grouped.items():
+        snapshot = snapshots.get(path)
+        if snapshot is None or source_digest(snapshot.source) != path_sites[0].source_digest:
+            raise AnchorRefusedError(f"digest mismatch: {path}")
+        if any(site.source_digest != path_sites[0].source_digest for site in path_sites):
+            raise AnchorRefusedError(f"inconsistent stream source digest: {path}")
+        module = cst.parse_module(snapshot.source)
+        candidates, parents, positions, qualified, qualified_names = _node_candidates(module)
+        for site in path_sites:
+            occurrence_nodes: tuple[cst.CSTNode, ...] | None = None
+            if site.origin == "occurrence":
+                peers = [
+                    item
+                    for item in path_sites
+                    if item.origin == "occurrence"
+                    and item.qualified_function == site.qualified_function
+                    and item.normalized_expression == site.normalized_expression
+                ]
+                nodes = tuple(
+                    node
+                    for node in candidates.get(
+                        (site.qualified_function, site.normalized_expression), ()
+                    )
+                    if any(
+                        item.access_kind is not None
+                        and _matches_access_kind(node, item.access_kind, parents)
+                        for item in peers
+                    )
+                )
+                if len(nodes) != len(peers) or sorted(item.ordinal for item in peers) != list(
+                    range(len(nodes))
+                ):
+                    raise AnchorRefusedError(
+                        f"ambiguous occurrence anchor: {site.original_site_id}"
+                    )
+                occurrence_nodes = nodes
+            node = _reanchor_operation_stream_site(
+                site,
+                candidates=candidates,
+                occurrence_nodes=occurrence_nodes,
+                parents=parents,
+                positions=positions,
+                qualified_names=qualified_names,
+            )
+            if site.origin == "diagnostic" and qualified[id(node)] != site.qualified_function:
+                raise AnchorRefusedError(f"diagnostic scope mismatch: {site.original_site_id}")
+            anchored[site.original_site_id] = (node, parents, positions, module)
+    if len(anchored) != len(sites):
+        raise AnchorRefusedError("duplicate stream site identity during reanchoring")
+    return anchored
+
+
 def compile_query_composition_plan(
     sources: Iterable[SourceSnapshot], stream: OperationStream, plan: DispositionPlan
 ) -> QueryCompositionPlan:
     """Reanchor reviewed transforms and partition their recognized outer CST actions."""
-    snapshots = _source_map(sources)
     sites = {site.original_site_id: site for site in stream.sites}
     if len(sites) != len(stream.sites):
         raise AnchorRefusedError("duplicate query composition operation-stream site identity")
@@ -401,67 +534,86 @@ def compile_query_composition_plan(
     )
     if len(ids) != len(frozenset(ids)) or any(site_id not in sites for site_id in ids):
         raise AnchorRefusedError("query composition disposition IDs are missing or overlapping")
-    anchored: dict[
-        str,
-        tuple[cst.CSTNode, dict[cst.CSTNode, cst.CSTNode], dict[cst.CSTNode, object], cst.Module],
-    ] = {}
-    by_path: dict[str, list[MigrationSite]] = defaultdict(list)
-    for site_id in ids:
-        by_path[sites[site_id].relative_path].append(sites[site_id])
-    for path, path_sites in by_path.items():
-        snapshot = snapshots.get(path)
-        if snapshot is None:
-            raise AnchorRefusedError(f"missing query composition source snapshot: {path}")
-        module = cst.parse_module(snapshot.source)
-        candidates, parents, positions, _, qualified_names = _node_candidates(module)
-        for site in path_sites:
-            node = _reanchor_operation_stream_site(
-                site,
-                candidates=candidates,
-                parents=parents,
-                positions=positions,
-                qualified_names=qualified_names,
-            )
-            anchored[site.original_site_id] = (node, parents, positions, module)
-    grouped: dict[tuple[str, int, int, int, int], list[str]] = defaultdict(list)
-    outer_nodes: dict[str, cst.CSTNode] = {}
+    # Reanchor the complete stream: occurrence cardinality is an identity proof
+    # over all like candidates, not merely the disposition-selected subset.
+    anchored = _reanchor_operation_stream_sites(sources, stream.sites)
+    actions: list[tuple[str, tuple[int, int, int, int], cst.CSTNode, str]] = []
     for site_id in ids:
         node, parents, positions, _ = anchored[site_id]
-        outer = node
-        parent = parents.get(outer)
-        while isinstance(parent, (cst.Arg, cst.BaseExpression)):
-            if isinstance(parent, cst.BaseExpression):
-                outer = parent
-            parent = parents.get(parent)
+        outer = _outer_action(node, parents)
         position = positions[outer]
-        grouped[
+        actions.append(
             (
                 sites[site_id].relative_path,
-                position.start.line,
-                position.start.column,
-                position.end.line,
-                position.end.column,
+                (
+                    position.start.line,
+                    position.start.column,
+                    position.end.line,
+                    position.end.column,
+                ),
+                outer,
+                site_id,
             )
-        ].append(site_id)
-        outer_nodes[site_id] = outer
+        )
+    components: list[list[tuple[str, tuple[int, int, int, int], cst.CSTNode, str]]] = []
+    for action in sorted(actions, key=lambda item: (item[0], item[1], item[3])):
+        matching = [
+            component
+            for component in components
+            if any(
+                member[0] == action[0] and _spans_overlap(member[1], action[1])
+                for member in component
+            )
+        ]
+        if not matching:
+            components.append([action])
+        else:
+            merged = [action, *(member for component in matching for member in component)]
+            components = [component for component in components if component not in matching]
+            components.append(merged)
     groups: list[QueryCompositionGroup] = []
-    for key, consumed in sorted(grouped.items()):
-        consumed.sort()
-        owner = consumed[0]
-        _, _, _, module = anchored[owner]
+    for component in components:
+        path = component[0][0]
+        spans = {item[1] for item in component}
+        if len(spans) != 1:
+            raise AnchorRefusedError("incomparable overlapping outer actions")
+        span = next(iter(spans))
+        outer = component[0][2]
+        if any(item[2] is not outer for item in component):
+            raise AnchorRefusedError("ambiguous outer action identity")
+        consumed = tuple(sorted(item[3] for item in component))
+        node_by_id = {site_id: anchored[site_id][0] for site_id in consumed}
+        owner = next((site_id for site_id in consumed if node_by_id[site_id] is outer), None)
+        relations = tuple(
+            sorted(
+                (ancestor, descendant)
+                for ancestor, ancestor_node in node_by_id.items()
+                for descendant, descendant_node in node_by_id.items()
+                if ancestor != descendant
+                and _is_ancestor(ancestor_node, descendant_node, anchored[ancestor][1])
+            )
+        )
+        _, _, _, module = anchored[consumed[0]]
         groups.append(
             QueryCompositionGroup(
-                relative_path=key[0],
-                source_span=key[1:],
+                relative_path=path,
+                source_span=span,
+                outer_action_id=f"outer:{path}:{':'.join(str(value) for value in span)}",
                 owner_site_id=owner,
-                owner_anchor=sites[owner].anchor,
-                original_outer_expression=module.code_for_node(outer_nodes[owner]).strip(),
-                consumed_site_ids=tuple(consumed),
-                nested_anchor_site_ids=tuple(site_id for site_id in consumed if site_id != owner),
+                owner_anchor=CstAnchorEvidence(
+                    node_type=type(outer).__name__,
+                    normalized_expression=(
+                        _normalized_node(outer) or module.code_for_node(outer).strip()
+                    ),
+                    same_expression_ordinal=0,
+                ),
+                original_outer_expression=module.code_for_node(outer).strip(),
+                consumed_site_ids=consumed,
+                anchor_relations=relations,
             )
         )
     result = QueryCompositionPlan(groups=tuple(groups))
-    if result.consumed_site_ids != frozenset(ids):
+    if (ids and not result.groups) or result.consumed_site_ids != frozenset(ids):
         raise AnchorRefusedError("query composition groups do not close reviewed IDs")
     return result
 
@@ -1650,7 +1802,7 @@ def compile_operation_stream(
         raise AnchorRefusedError(
             "operation stream does not adapt every inventory site exactly once"
         )
-    return OperationStream(
+    result = OperationStream(
         sites=tuple(
             sorted(
                 sites,
@@ -1663,6 +1815,7 @@ def compile_operation_stream(
             )
         )
     )
+    return result
 
 
 def shape_summary(stream: OperationStream) -> dict[str, int]:

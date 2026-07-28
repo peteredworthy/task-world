@@ -7,14 +7,20 @@ reanchoring and immutable CST composition ownership only.
 
 ## Implementation
 
-- `compile_query_composition_plan(sources, stream, disposition_plan)` reuses
-  the approved occurrence/diagnostic reanchoring evidence, parsing each
-  participating source snapshot once.
-- Frozen composition groups retain source path/span, deterministic owner and
-  anchor, original outer expression, consumed IDs, and nested-anchor IDs.
-- The plan rejects duplicate IDs and duplicate action spans, has canonical
-  ordering, and proves exact reviewed-ID closure.
-- A bounded live stream probe produced the current machine evidence: 190
+- `_reanchor_operation_stream_sites` is the sole occurrence/diagnostic proof
+  boundary used by both stream compilation and composition. It independently
+  verifies snapshot digest, occurrence cardinality/ordinal, diagnostic
+  signature/scope, and complete stored anchor evidence.
+- Frozen composition groups retain a stable synthetic outer-action ID, optional
+  site owner (only when the anchor is itself the outer action), outer anchor,
+  original expression, canonical consumed IDs, and actual ancestry pairs.
+  Siblings therefore have a synthetic owner and no invented nested relation.
+- Composition follows full LibCST parent chains through bridge nodes to an
+  explicit statement/action boundary, then builds interval-overlap connected
+  components. Incomparable/residual overlap and unsupported boundaries refuse
+  closed. Models reject malformed spans, paths, expressions, ownership,
+  relation, exactness, and interval-overlap violations.
+- A live repository contract produced the corrected machine evidence: 187
   groups consuming all 201 reviewed query-transform IDs.
 
 ## Deferred
@@ -27,12 +33,11 @@ combined scope.
 
 ## Checks
 
-- Focused composition/reanchoring test and collector suite.
-- Ruff and Pyright.
-- The controller must run `make test-graph-projection-migration` once before
-  any commit.
+- `uv run pytest tests/unit/test_migrate_graph_projection_queries.py -q` — 50 passed.
+- `uv run ruff check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py` — passed.
+- `uv run pyright scripts/codemods/migrate_graph_projection_queries.py` — 0 errors.
+- `uv run pytest --run-slow -m graph_projection_migration -n 0 --timeout=300 tests/unit/test_graph_projection_migration.py::test_live_query_composition_plan_closes_reviewed_query_transform_sites -q` — 1 passed in 145.18s.
 
 ## Controller Migration Gate
 
-`make test-graph-projection-migration` — 10 passed, 3738 deselected in
-124.17s.
+Passed with 187 groups consuming all 201 reviewed transform IDs.
