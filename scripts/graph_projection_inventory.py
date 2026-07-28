@@ -159,6 +159,24 @@ class SourceInventory(BaseModel):
     diagnostics: tuple[InventoryDiagnostic, ...]
 
 
+class InventorySource(BaseModel):
+    """An in-memory, source-independent input to the inventory collector."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    relative_path: str
+    source: str
+
+
+class SourceDigest(BaseModel):
+    """The blank-line-insensitive source identity used by the operation compiler."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    relative_path: str
+    digest: str
+
+
 class AccessInventory(BaseModel):
     """Deterministic aggregate of every bounded source inventory."""
 
@@ -167,6 +185,7 @@ class AccessInventory(BaseModel):
     baseline_revision: str
     occurrences: tuple[AccessOccurrence, ...]
     diagnostics: tuple[InventoryDiagnostic, ...]
+    source_digests: tuple[SourceDigest, ...] = ()
 
 
 class IncompleteMigrationDispositionError(ValueError):
@@ -2513,26 +2532,27 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
     return collector.result()
 
 
-def inventory_paths(
-    paths: Iterable[Path],
+def source_digest(source: str) -> str:
+    """Return a semantic source digest that deliberately ignores blank-line movement."""
+    payload = "\n".join(line for line in source.splitlines() if line.strip())
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def inventory_sources(
+    sources: Iterable[InventorySource],
     manifest: ProjectionMigrationManifest,
     *,
-    root: Path | None = None,
     allow_implicit_graph_projection: bool = False,
     require_declaration_facts: bool = False,
 ) -> AccessInventory:
-    """Collect a sorted aggregate from explicitly selected Python paths."""
+    """Collect a sorted inventory from supplied source snapshots without filesystem access."""
     inventories: list[SourceInventory] = []
-    python_paths = tuple(sorted({path for path in paths if path.suffix == ".py"}, key=str))
-    if root is None:
-        root = (
-            Path(os.path.commonpath(tuple(str(path.parent) for path in python_paths)))
-            if python_paths
-            else Path.cwd()
-        )
-    for path in python_paths:
-        source = path.read_text()
-        relative_path = path.relative_to(root).as_posix()
+    snapshots = tuple(sorted(sources, key=lambda item: item.relative_path))
+    if len({item.relative_path for item in snapshots}) != len(snapshots):
+        raise ValueError("inventory sources must have unique relative paths")
+    for snapshot in snapshots:
+        source = snapshot.source
+        relative_path = snapshot.relative_path
         if not any(
             token in source
             for token in (
@@ -2599,6 +2619,39 @@ def inventory_paths(
                 key=lambda item: (item.relative_path, item.line, item.column, item.code),
             )
         ),
+        source_digests=tuple(
+            SourceDigest(relative_path=item.relative_path, digest=source_digest(item.source))
+            for item in snapshots
+        ),
+    )
+
+
+def inventory_paths(
+    paths: Iterable[Path],
+    manifest: ProjectionMigrationManifest,
+    *,
+    root: Path | None = None,
+    allow_implicit_graph_projection: bool = False,
+    require_declaration_facts: bool = False,
+) -> AccessInventory:
+    """Collect a sorted aggregate from explicitly selected Python paths."""
+    python_paths = tuple(sorted({path for path in paths if path.suffix == ".py"}, key=str))
+    if root is None:
+        root = (
+            Path(os.path.commonpath(tuple(str(path.parent) for path in python_paths)))
+            if python_paths
+            else Path.cwd()
+        )
+    return inventory_sources(
+        (
+            InventorySource(
+                relative_path=path.relative_to(root).as_posix(), source=path.read_text()
+            )
+            for path in python_paths
+        ),
+        manifest,
+        allow_implicit_graph_projection=allow_implicit_graph_projection,
+        require_declaration_facts=require_declaration_facts,
     )
 
 
