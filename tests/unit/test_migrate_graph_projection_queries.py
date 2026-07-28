@@ -273,14 +273,19 @@ def test_disposition_plan_refuses_overlapping_or_missing_reviewed_sites() -> Non
                     disposition="query_transform",
                     reason="reviewed",
                     consumed_site_ids=("a",),
+                    shape_key="shape",
                 ),
                 PlannedOperation(
                     disposition="query_transform",
                     reason="reviewed",
                     consumed_site_ids=("a",),
+                    shape_key="shape",
                 ),
             ),
             deferred_site_ids=(),
+            pending_site_ids=(),
+            disposition_counts=(("query_transform", 2),),
+            shape_group_counts=(("shape", 2),),
         )
 
 
@@ -308,6 +313,13 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> N
     assert len(plan.operations) == len(ledger.dispositions)
     assert len(plan.consumed_site_ids) == len(ledger.dispositions)
     assert len(plan.deferred_site_ids) == 349
+    assert len(plan.pending_site_ids) == 100
+    assert plan.consumed_site_ids | set(plan.deferred_site_ids) | set(plan.pending_site_ids) == {
+        site.original_site_id
+        for site in compile_operation_stream(
+            tracked_sources, inventory, query_migration_skeleton(inventory, ROOT)
+        ).sites
+    }
     assert plan.disposition_counts == (
         ("approved_core", 80),
         ("projection_neutral", 73),

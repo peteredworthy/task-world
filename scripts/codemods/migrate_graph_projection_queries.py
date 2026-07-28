@@ -12,7 +12,7 @@ from typing import Literal
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from scripts.graph_projection_inventory import (
     AccessInventory,
@@ -102,6 +102,7 @@ class PlannedOperation(BaseModel):
     disposition: Literal["query_transform", "approved_core", "projection_neutral"]
     reason: str
     consumed_site_ids: tuple[str, ...]
+    shape_key: str
 
     @property
     def consumed_site_id_set(self) -> frozenset[str]:
@@ -132,8 +133,9 @@ class DispositionPlan(BaseModel):
 
     operations: tuple[PlannedOperation, ...]
     deferred_site_ids: tuple[str, ...]
-    disposition_counts: tuple[tuple[str, int], ...] = ()
-    shape_group_counts: tuple[tuple[str, int], ...] = ()
+    pending_site_ids: tuple[str, ...]
+    disposition_counts: tuple[tuple[str, int], ...]
+    shape_group_counts: tuple[tuple[str, int], ...]
 
     @property
     def consumed_site_ids(self) -> frozenset[str]:
@@ -141,16 +143,32 @@ class DispositionPlan(BaseModel):
             site_id for operation in self.operations for site_id in operation.consumed_site_ids
         )
 
-    @classmethod
-    def _validate_non_overlapping(
-        cls, value: tuple[PlannedOperation, ...]
-    ) -> tuple[PlannedOperation, ...]:
-        consumed = [site_id for operation in value for site_id in operation.consumed_site_ids]
+    @model_validator(mode="after")
+    def _validate_total_partition(self) -> "DispositionPlan":
+        consumed = [
+            site_id for operation in self.operations for site_id in operation.consumed_site_ids
+        ]
         if len(consumed) != len(frozenset(consumed)):
             raise ValueError("planned operation consumed-site sets overlap")
-        return value
-
-    _operations_are_disjoint = field_validator("operations")(_validate_non_overlapping)
+        deferred = set(self.deferred_site_ids)
+        pending = set(self.pending_site_ids)
+        if len(deferred) != len(self.deferred_site_ids) or len(pending) != len(
+            self.pending_site_ids
+        ):
+            raise ValueError("deferred and pending site IDs must be unique")
+        if deferred & pending or deferred & set(consumed) or pending & set(consumed):
+            raise ValueError("plan partitions overlap")
+        if not self.disposition_counts or not self.shape_group_counts:
+            raise ValueError("derived plan counts must be nonempty")
+        if self.disposition_counts != tuple(
+            sorted(Counter(item.disposition for item in self.operations).items())
+        ):
+            raise ValueError("disposition counts do not match operations")
+        if self.shape_group_counts != tuple(
+            sorted(Counter(item.shape_key for item in self.operations).items())
+        ):
+            raise ValueError("shape counts do not match operations")
+        return self
 
 
 def plan_reviewed_dispositions(
@@ -180,22 +198,32 @@ def plan_reviewed_dispositions(
                 disposition=disposition.disposition,
                 reason=disposition.reason,
                 consumed_site_ids=(site.original_site_id,),
+                shape_key=site.shape_key,
             )
         )
     deferred = tuple(sorted(site.site_key for site in manifest.unclassified_sites))
+    pending = tuple(sorted(set(stream_by_id) - reviewed_ids - set(deferred)))
     if (
         len(deferred) != 349
         or any(site.domain != "test_fixture" for site in manifest.unclassified_sites)
         or any(site_id not in stream_by_id for site_id in deferred)
         or reviewed_ids & set(deferred)
+        or len(pending) != 100
+        or set(stream_by_id) != reviewed_ids | set(deferred) | set(pending)
     ):
         raise AnchorRefusedError("deferred fixture ledger does not match anchored stream")
     disposition_counts = tuple(sorted(Counter(item.disposition for item in operations).items()))
-    planned_sites = [stream_by_id[item.consumed_site_ids[0]] for item in operations]
-    shape_group_counts = tuple(sorted(Counter(item.shape_key for item in planned_sites).items()))
+    shape_group_counts = tuple(sorted(Counter(item.shape_key for item in operations).items()))
+    if disposition_counts != (
+        ("approved_core", 80),
+        ("projection_neutral", 73),
+        ("query_transform", 201),
+    ):
+        raise AnchorRefusedError("reviewed disposition checkpoint counts do not match")
     return DispositionPlan(
         operations=tuple(operations),
         deferred_site_ids=deferred,
+        pending_site_ids=pending,
         disposition_counts=disposition_counts,
         shape_group_counts=shape_group_counts,
     )

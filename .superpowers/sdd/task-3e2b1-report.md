@@ -77,3 +77,33 @@ the unclassified fixture set is deferred untouched for later work.
   the reconciled operation stream rather than source/path/function policy.
 - No query-template, LibCST rewrite, import, consumer, inventory, or ledger
   identity behavior is present in this subtask.
+
+## Three-way partition review fix
+
+The source operation stream is now closed by three deterministic, pairwise
+disjoint partitions: 354 reviewed consumed IDs, 349 deferred fixture IDs, and
+the mechanically derived 100-ID pending difference. Pending IDs are not
+classified and are selected only by `stream - reviewed - deferred` identity
+reconciliation. Direct plan construction validates nonoverlap, uniqueness, and
+derived disposition/shape count consistency.
+
+```text
+$ uv run pytest tests/unit/test_migrate_graph_projection_queries.py -q
+13 passed in 135.47s
+
+$ uv run ruff check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py
+All checks passed!
+
+$ uv run ruff format --check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py
+2 files already formatted
+
+$ uv run pyright
+0 errors, 0 warnings, 0 informations
+
+$ uv run pytest
+4997 passed, 3 skipped, 3 warnings in 321.81s (0:05:21)
+```
+
+Self-review: the planner compares the full stream set with the union of all
+three partitions and rejects duplicate stream identities, reviewed/deferred
+overlap, invalid deferred domains/counts, and unexpected pending counts.
