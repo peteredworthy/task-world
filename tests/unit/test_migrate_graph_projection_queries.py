@@ -361,10 +361,54 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> N
     assert (
         plan_reviewed_dispositions(
             stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
-            ledger.model_copy(update={"dispositions": tuple(reversed(ledger.dispositions))}),
+            ledger.model_copy(
+                update={
+                    "dispositions": tuple(reversed(ledger.dispositions)),
+                    "unclassified_sites": tuple(reversed(ledger.unclassified_sites)),
+                }
+            ),
         )
         == plan
     )
+    deferred = ledger.unclassified_sites[0]
+    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
+        plan_reviewed_dispositions(
+            stream,
+            ledger.model_copy(
+                update={
+                    "unclassified_sites": (
+                        deferred.model_copy(update={"domain": "post_ledger"}),
+                        *ledger.unclassified_sites[1:],
+                    )
+                }
+            ),
+        )
+    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
+        plan_reviewed_dispositions(
+            stream,
+            ledger.model_copy(update={"unclassified_sites": ledger.unclassified_sites[1:]}),
+        )
+    pending_site = next(
+        site for site in stream.sites if site.original_site_id in plan.pending_site_ids
+    )
+    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
+        plan_reviewed_dispositions(
+            stream.model_copy(
+                update={
+                    "sites": tuple(
+                        site
+                        for site in stream.sites
+                        if site.original_site_id != pending_site.original_site_id
+                    )
+                }
+            ),
+            ledger,
+        )
+    extra_pending = pending_site.model_copy(update={"original_site_id": "f" * 64})
+    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
+        plan_reviewed_dispositions(
+            stream.model_copy(update={"sites": (*stream.sites, extra_pending)}), ledger
+        )
 
 
 def test_plan_refuses_duplicate_or_stale_anchored_reviewed_identity() -> None:
