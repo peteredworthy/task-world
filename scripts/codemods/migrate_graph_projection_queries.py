@@ -12,7 +12,7 @@ from typing import Literal
 
 import libcst as cst
 from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from scripts.graph_projection_inventory import (
     AccessInventory,
@@ -92,6 +92,113 @@ class OperationStream(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
     sites: tuple[MigrationSite, ...]
+
+
+class PlannedOperation(BaseModel):
+    """One reviewed ledger disposition joined to anchored operation IDs."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    disposition: Literal["query_transform", "approved_core", "projection_neutral"]
+    reason: str
+    consumed_site_ids: tuple[str, ...]
+
+    @property
+    def consumed_site_id_set(self) -> frozenset[str]:
+        return frozenset(self.consumed_site_ids)
+
+    @classmethod
+    def _validate_consumed(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("consumed_site_ids must be nonempty")
+        if len(value) != len(frozenset(value)):
+            raise ValueError("consumed_site_ids must not repeat a site")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_is_nonempty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("reason must be nonempty")
+        return value
+
+    _consumed_is_nonempty = field_validator("consumed_site_ids")(_validate_consumed)
+
+
+class DispositionPlan(BaseModel):
+    """Frozen exact-once compilation result for reviewed migration dispositions."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    operations: tuple[PlannedOperation, ...]
+    deferred_site_ids: tuple[str, ...]
+    disposition_counts: tuple[tuple[str, int], ...] = ()
+    shape_group_counts: tuple[tuple[str, int], ...] = ()
+
+    @property
+    def consumed_site_ids(self) -> frozenset[str]:
+        return frozenset(
+            site_id for operation in self.operations for site_id in operation.consumed_site_ids
+        )
+
+    @classmethod
+    def _validate_non_overlapping(
+        cls, value: tuple[PlannedOperation, ...]
+    ) -> tuple[PlannedOperation, ...]:
+        consumed = [site_id for operation in value for site_id in operation.consumed_site_ids]
+        if len(consumed) != len(frozenset(consumed)):
+            raise ValueError("planned operation consumed-site sets overlap")
+        return value
+
+    _operations_are_disjoint = field_validator("operations")(_validate_non_overlapping)
+
+
+def plan_reviewed_dispositions(
+    stream: OperationStream, manifest: QueryMigrationManifest
+) -> DispositionPlan:
+    """Compile reviewed ledger records to exact-once in-memory operations.
+
+    This boundary deliberately uses ledger identities only to reconcile them to
+    the already-anchored stream; it selects no transformation policy.
+    """
+    stream_by_id = {site.original_site_id: site for site in stream.sites}
+    if len(stream_by_id) != len(stream.sites):
+        raise AnchorRefusedError("duplicate anchored operation-stream site identity")
+    reviewed_ids = {item.site_key for item in manifest.dispositions}
+    missing = reviewed_ids - stream_by_id.keys()
+    if missing:
+        raise AnchorRefusedError(f"reviewed disposition has no anchored site: {sorted(missing)!r}")
+    operations: list[PlannedOperation] = []
+    for disposition in sorted(manifest.dispositions, key=lambda item: item.site_key):
+        site = stream_by_id[disposition.site_key]
+        if disposition.disposition == "rejected":
+            raise AnchorRefusedError(
+                f"reviewed disposition is not compilable: {disposition.disposition}"
+            )
+        operations.append(
+            PlannedOperation(
+                disposition=disposition.disposition,
+                reason=disposition.reason,
+                consumed_site_ids=(site.original_site_id,),
+            )
+        )
+    deferred = tuple(sorted(site.site_key for site in manifest.unclassified_sites))
+    if (
+        len(deferred) != 349
+        or any(site.domain != "test_fixture" for site in manifest.unclassified_sites)
+        or any(site_id not in stream_by_id for site_id in deferred)
+        or reviewed_ids & set(deferred)
+    ):
+        raise AnchorRefusedError("deferred fixture ledger does not match anchored stream")
+    disposition_counts = tuple(sorted(Counter(item.disposition for item in operations).items()))
+    planned_sites = [stream_by_id[item.consumed_site_ids[0]] for item in operations]
+    shape_group_counts = tuple(sorted(Counter(item.shape_key for item in planned_sites).items()))
+    return DispositionPlan(
+        operations=tuple(operations),
+        deferred_site_ids=deferred,
+        disposition_counts=disposition_counts,
+        shape_group_counts=shape_group_counts,
+    )
 
 
 def _refuse_unknown_shape(node: cst.CSTNode) -> AnchorRefusedError:

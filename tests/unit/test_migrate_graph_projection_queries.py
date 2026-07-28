@@ -4,12 +4,16 @@ import pytest
 
 from scripts.codemods.migrate_graph_projection_queries import (
     AnchorRefusedError,
+    DispositionPlan,
+    PlannedOperation,
     SourceSnapshot,
     compile_operation_stream,
+    plan_reviewed_dispositions,
     shape_summary,
 )
 from scripts.graph_projection_inventory import (
     DiagnosticCode,
+    MigrationDisposition,
     SourceDigest,
     inventory_paths,
     inventory_repository,
@@ -257,6 +261,95 @@ def test_direct_deletion_has_deletion_parent_and_operation_shapes() -> None:
     assert [(site.parent_shape, site.operation_shape) for site in stream.sites] == [
         ("deletion", "deletion")
     ]
+
+
+def test_disposition_plan_refuses_overlapping_or_missing_reviewed_sites() -> None:
+    with pytest.raises(ValueError, match="nonempty"):
+        PlannedOperation(disposition="query_transform", reason="reviewed", consumed_site_ids=())
+    with pytest.raises(ValueError, match="overlap"):
+        DispositionPlan(
+            operations=(
+                PlannedOperation(
+                    disposition="query_transform",
+                    reason="reviewed",
+                    consumed_site_ids=("a",),
+                ),
+                PlannedOperation(
+                    disposition="query_transform",
+                    reason="reviewed",
+                    consumed_site_ids=("a",),
+                ),
+            ),
+            deferred_site_ids=(),
+        )
+
+
+@pytest.mark.timeout(300)
+def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    inventory = inventory_repository(ROOT, manifest)
+    tracked_sources = tuple(
+        SourceSnapshot(relative_path=path.relative_to(ROOT).as_posix(), source=path.read_text())
+        for directory in (ROOT / "src", ROOT / "tests", ROOT / "scripts")
+        for path in sorted(directory.rglob("*.py"))
+        if "__pycache__" not in path.parts
+    )
+    ledger = load_query_migration_manifest(
+        ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
+    )
+
+    plan = plan_reviewed_dispositions(
+        compile_operation_stream(
+            tracked_sources, inventory, query_migration_skeleton(inventory, ROOT)
+        ),
+        ledger,
+    )
+
+    assert len(plan.operations) == len(ledger.dispositions)
+    assert len(plan.consumed_site_ids) == len(ledger.dispositions)
+    assert len(plan.deferred_site_ids) == 349
+    assert plan.disposition_counts == (
+        ("approved_core", 80),
+        ("projection_neutral", 73),
+        ("query_transform", 201),
+    )
+    assert plan.shape_group_counts == tuple(sorted(plan.shape_group_counts))
+    assert all(operation.reason for operation in plan.operations)
+
+
+def test_plan_refuses_duplicate_or_stale_anchored_reviewed_identity() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> str:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    manifest = load_manifest(MANIFEST_PATH)
+    inventory = inventory_sources((source,), manifest)
+    skeleton = query_migration_skeleton(inventory, ROOT)
+    stream = compile_operation_stream((source,), inventory, skeleton)
+    site = stream.sites[0]
+    disposition = MigrationDisposition(
+        site_key=site.original_site_id,
+        disposition="query_transform",
+        relative_path=site.relative_path,
+        qualified_function=site.qualified_function,
+        normalized_source_pattern=site.normalized_expression,
+        reason="reviewed test disposition",
+    )
+    ledger = load_query_migration_manifest(
+        ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
+    ).model_copy(update={"dispositions": (disposition,)})
+
+    with pytest.raises(AnchorRefusedError, match="duplicate"):
+        plan_reviewed_dispositions(
+            stream.model_copy(update={"sites": (stream.sites[0], stream.sites[0])}), ledger
+        )
+    stale = disposition.model_copy(update={"site_key": "0" * 64})
+    with pytest.raises(AnchorRefusedError, match="no anchored"):
+        plan_reviewed_dispositions(stream, ledger.model_copy(update={"dispositions": (stale,)}))
 
 
 @pytest.mark.timeout(120)
