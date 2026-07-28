@@ -8,10 +8,18 @@ from __future__ import annotations
 import ast
 from collections import Counter, defaultdict
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Literal
 
 import libcst as cst
-from libcst.metadata import MetadataWrapper, ParentNodeProvider, PositionProvider
+from libcst.metadata import (
+    MetadataWrapper,
+    ParentNodeProvider,
+    PositionProvider,
+    QualifiedName,
+    QualifiedNameProvider,
+    ScopeProvider,
+)
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 from scripts.graph_projection_inventory import (
@@ -43,6 +51,22 @@ class SourceLocator(BaseModel):
     column: int
 
 
+class ProjectionArgumentEvidence(BaseModel):
+    """One exact argument slot carrying proven GraphProjection provenance."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    position: int | None = None
+    keyword: str | None = None
+    provenance: str
+
+    @model_validator(mode="after")
+    def _has_one_exact_slot(self) -> "ProjectionArgumentEvidence":
+        if (self.position is None) == (self.keyword is None):
+            raise ValueError("projection argument must have exactly one positional or keyword slot")
+        return self
+
+
 class CstAnchorEvidence(BaseModel):
     """Recomputed proof used to select one source occurrence without source policy."""
 
@@ -52,8 +76,7 @@ class CstAnchorEvidence(BaseModel):
     normalized_expression: str
     same_expression_ordinal: int
     callable_origin: str | None = None
-    projection_argument_positions: tuple[int, ...] = ()
-    projection_argument_names: tuple[str, ...] = ()
+    projection_arguments: tuple[ProjectionArgumentEvidence, ...] = ()
     projection_provenance: str | None = None
     type_origin: str | None = None
 
@@ -188,6 +211,16 @@ _PROJECTION_FACTORIES = frozenset(
         "orchestrator.graph_runtime.controller.rebuild_projection",
     }
 )
+_APPROVED_FACTORY_ORIGINS = {
+    "orchestrator.graph.projections.reduce_event": "orchestrator.graph.reduce_event",
+}
+_PROJECTION_TYPE_ORIGINS = frozenset(
+    {
+        "orchestrator.graph.GraphProjection",
+        "orchestrator.graph._commands.GraphProjection",
+        "orchestrator.graph.projections.GraphProjection",
+    }
+)
 _PUBLIC_PROJECTION_ARGUMENT_POSITIONS = {
     "orchestrator.graph.callbacks.validate_callback": frozenset({1}),
     "orchestrator.graph.patch_validator.validate_patch": frozenset({3}),
@@ -199,73 +232,6 @@ def _is_projection_factory(origin: str | None) -> bool:
     return origin in _PROJECTION_FACTORIES or (
         origin is not None and origin.startswith("local_graph_projection.")
     )
-
-
-def _import_origins(module: cst.Module) -> dict[str, str]:
-    """Resolve only explicit module-level aliases; unknown bindings stay unknown."""
-    origins: dict[str, str] = {}
-
-    class Visitor(cst.CSTVisitor):
-        def visit_Import(self, node: cst.Import) -> None:
-            for alias in node.names:
-                name = cst.Module([]).code_for_node(alias.name)
-                local = alias.asname.name.value if alias.asname else name.split(".")[0]
-                if name == _GRAPH_ORIGIN:
-                    origins[local] = name
-
-        def visit_ImportFrom(self, node: cst.ImportFrom) -> None:
-            if node.module is None or isinstance(node.names, cst.ImportStar):
-                return
-            module_name = cst.Module([]).code_for_node(node.module)
-            if not (
-                module_name.startswith(_GRAPH_ORIGIN)
-                or module_name == "orchestrator.graph_runtime.controller"
-            ):
-                return
-            for alias in node.names:
-                local = alias.asname.name.value if alias.asname else alias.name.value
-                origins[local] = (
-                    f"{_GRAPH_ORIGIN}.GraphProjection"
-                    if alias.name.value == "GraphProjection"
-                    else (
-                        f"{_GRAPH_ORIGIN}.{alias.name.value}"
-                        if alias.name.value
-                        in {
-                            "initial_projection",
-                            "build_projection",
-                            "reduce_event",
-                            "projection_from_checkpoint",
-                        }
-                        else f"{module_name}.{alias.name.value}"
-                    )
-                )
-
-    module.visit(Visitor())
-    return origins
-
-
-def _call_origin(
-    node: cst.Call,
-    origins: dict[str, str],
-    shadows: frozenset[str],
-    local_projection_producers: frozenset[str] = frozenset(),
-) -> str | None:
-    if isinstance(node.func, cst.Name):
-        if node.func.value in shadows:
-            return None
-        return origins.get(node.func.value) or (
-            f"local_graph_projection.{node.func.value}"
-            if node.func.value in local_projection_producers
-            else None
-        )
-    if (
-        isinstance(node.func, cst.Attribute)
-        and isinstance(node.func.value, cst.Name)
-        and node.func.value.value not in shadows
-        and origins.get(node.func.value.value) == _GRAPH_ORIGIN
-    ):
-        return f"{_GRAPH_ORIGIN}.{node.func.attr.value}"
-    return None
 
 
 def _assignment_names(node: cst.BaseAssignTargetExpression) -> tuple[str, ...]:
@@ -281,145 +247,176 @@ def _assignment_names(node: cst.BaseAssignTargetExpression) -> tuple[str, ...]:
     return ()
 
 
-def _annotation_origin(node: cst.Annotation | None, origins: dict[str, str]) -> str | None:
-    if node is None:
-        return None
-    expression = node.annotation
-    if isinstance(expression, cst.Name):
-        return origins.get(expression.value)
-    if (
-        isinstance(expression, cst.Attribute)
-        and isinstance(expression.value, cst.Name)
-        and origins.get(expression.value.value) == _GRAPH_ORIGIN
-    ):
-        return f"{_GRAPH_ORIGIN}.{expression.attr.value}"
-    return None
+def _assignment_name_nodes(node: cst.BaseAssignTargetExpression) -> tuple[cst.Name, ...]:
+    if isinstance(node, cst.Name):
+        return (node,)
+    if isinstance(node, (cst.Tuple, cst.List)):
+        return tuple(
+            name
+            for element in node.elements
+            if element is not None
+            for name in _assignment_name_nodes(element.value)
+        )
+    return ()
 
 
-def _projection_root_origin(node: cst.CSTNode, provenances: dict[str, str]) -> str | None:
-    while isinstance(node, (cst.Subscript, cst.Attribute)):
-        node = node.value
-    return provenances.get(node.value) if isinstance(node, cst.Name) else None
+@dataclass(frozen=True)
+class _EvidenceFact:
+    callable_origin: str | None = None
+    projection_arguments: tuple[ProjectionArgumentEvidence, ...] = ()
+    projection_provenance: str | None = None
+    type_origin: str | None = None
+
+
+def _resolved_qualified_names(
+    node: cst.CSTNode, qualified_names: dict[cst.CSTNode, object]
+) -> frozenset[QualifiedName]:
+    value = qualified_names.get(node, frozenset())
+    resolved = value() if callable(value) else value
+    if not isinstance(resolved, set):
+        return frozenset()
+    return frozenset(item for item in resolved if isinstance(item, QualifiedName))
+
+
+def _one_qualified_name(
+    node: cst.CSTNode, qualified_names: dict[cst.CSTNode, object]
+) -> QualifiedName | None:
+    names = _resolved_qualified_names(node, qualified_names)
+    return next(iter(names)) if len(names) == 1 else None
 
 
 def _structural_evidence(
-    module: cst.Module,
-) -> dict[int, tuple[str | None, tuple[int, ...], tuple[str, ...], str | None, str | None]]:
-    """Collect CST-only origin, argument, and typed-provenance facts for anchors."""
-    origins = _import_origins(module)
-    local_projection_producers: set[str] = set()
+    wrapper: MetadataWrapper,
+    qualified_names: dict[cst.CSTNode, object],
+    scopes: dict[cst.CSTNode, object],
+) -> dict[int, _EvidenceFact]:
+    """Collect scope-resolved callable and projection facts without name heuristics."""
+    evidence: dict[int, _EvidenceFact] = {}
+    provenances: dict[tuple[int, str], str | None] = {}
+    local_producers: dict[tuple[int, str], str] = {}
+
+    def binding(node: cst.CSTNode) -> tuple[int, str] | None:
+        name = _one_qualified_name(node, qualified_names)
+        scope = scopes.get(node)
+        if name is None or scope is None:
+            return None
+        # Qualified local names encode their defining lexical scope; the scope
+        # metadata check prevents treating an unbound/import-definition token as
+        # a value binding.  A reference can live in a child ScopeProvider scope,
+        # so its scope object's identity is not the binding identity.
+        return 0, name.name
+
+    def origin(node: cst.CSTNode) -> str | None:
+        name = _one_qualified_name(node, qualified_names)
+        if name is None:
+            return None
+        if name.source.name == "IMPORT":
+            return _APPROVED_FACTORY_ORIGINS.get(name.name, name.name)
+        if name.source.name == "LOCAL":
+            return local_producers.get(binding(node))
+        return None
+
+    def annotation_origin(annotation: cst.Annotation | None) -> str | None:
+        if annotation is None:
+            return None
+        name = _one_qualified_name(annotation.annotation, qualified_names)
+        if name is None or name.source.name != "IMPORT":
+            return None
+        return (
+            "orchestrator.graph.GraphProjection"
+            if name.name in _PROJECTION_TYPE_ORIGINS
+            else name.name
+        )
 
     class ProducerVisitor(cst.CSTVisitor):
         def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
-            if _annotation_origin(node.returns, origins) == "orchestrator.graph.GraphProjection":
-                local_projection_producers.add(node.name.value)
+            if annotation_origin(node.returns) == "orchestrator.graph.GraphProjection":
+                key = binding(node.name)
+                if key is not None:
+                    local_producers[key] = f"local_graph_projection.{key[1]}"
 
-    module.visit(ProducerVisitor())
-    evidence: dict[
-        int, tuple[str | None, tuple[int, ...], tuple[str, ...], str | None, str | None]
-    ] = {}
+    wrapper.visit(ProducerVisitor())
+
+    def root_provenance(node: cst.CSTNode) -> str | None:
+        while isinstance(node, (cst.Subscript, cst.Attribute)):
+            node = node.value
+        key = binding(node)
+        return provenances.get(key) if key is not None else None
+
+    def assign(target: cst.BaseAssignTargetExpression, value: str | None) -> None:
+        for target_node in _assignment_name_nodes(target):
+            # The target Name's lexical binding is supplied by ScopeProvider/QNP,
+            # never reconstructed from its spelling.
+            key = binding(target_node)
+            if key is not None:
+                provenances[key] = value
 
     class Visitor(cst.CSTVisitor):
-        def __init__(self) -> None:
-            self.shadows: list[frozenset[str]] = [frozenset()]
-            self.provenances: list[dict[str, str]] = [{}]
-
-        def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
-            parameters = (
-                *node.params.posonly_params,
-                *node.params.params,
-                *node.params.kwonly_params,
-            )
-            if node.params.star_arg is not None and isinstance(node.params.star_arg, cst.Param):
-                parameters = (*parameters, node.params.star_arg)
-            if node.params.star_kwarg is not None:
-                parameters = (*parameters, node.params.star_kwarg)
-            shadows = frozenset(parameter.name.value for parameter in parameters)
-            provenance = {
-                parameter.name.value: "orchestrator.graph.GraphProjection"
-                for parameter in parameters
-                if _annotation_origin(parameter.annotation, origins)
-                == "orchestrator.graph.GraphProjection"
-            }
-            self.shadows.append(shadows)
-            self.provenances.append(provenance)
-
-        def leave_FunctionDef(self, original_node: cst.FunctionDef) -> None:
-            if len(self.shadows) > 1:
-                self.shadows.pop()
-                self.provenances.pop()
-
         def visit_Param(self, node: cst.Param) -> None:
-            origin = _annotation_origin(node.annotation, origins)
-            evidence[id(node)] = (None, (), (), None, origin)
+            type_origin = annotation_origin(node.annotation)
+            evidence[id(node)] = _EvidenceFact(type_origin=type_origin)
+            key = binding(node.name)
+            if key is not None:
+                provenances[key] = (
+                    "orchestrator.graph.GraphProjection"
+                    if type_origin == "orchestrator.graph.GraphProjection"
+                    else None
+                )
 
         def visit_Call(self, node: cst.Call) -> None:
-            origin = _call_origin(
-                node, origins, self.shadows[-1], frozenset(local_projection_producers)
+            arguments: list[ProjectionArgumentEvidence] = []
+            for position, argument in enumerate(node.args):
+                provenance = root_provenance(argument.value)
+                if provenance is None or argument.star:
+                    continue
+                if argument.keyword is None:
+                    arguments.append(
+                        ProjectionArgumentEvidence(position=position, provenance=provenance)
+                    )
+                else:
+                    arguments.append(
+                        ProjectionArgumentEvidence(
+                            keyword=argument.keyword.value, provenance=provenance
+                        )
+                    )
+            evidence[id(node)] = _EvidenceFact(
+                callable_origin=origin(node.func),
+                projection_arguments=tuple(arguments),
+                projection_provenance=root_provenance(node.func),
             )
-            positions = tuple(
-                index
-                for index, argument in enumerate(node.args)
-                if _projection_root_origin(argument.value, self.provenances[-1]) is not None
-            )
-            names = tuple(
-                argument.keyword.value for argument in node.args if argument.keyword is not None
-            )
-            evidence[id(node)] = (origin, positions, names, None, None)
-            receiver_provenance = _projection_root_origin(node.func, self.provenances[-1])
-            evidence[id(node)] = (origin, positions, names, receiver_provenance, None)
 
         def leave_Assign(self, original_node: cst.Assign) -> None:
-            passed_through = _projection_root_origin(original_node.value, self.provenances[-1])
-            if passed_through is not None:
-                for target in original_node.targets:
-                    for name in _assignment_names(target.target):
-                        self.provenances[-1][name] = passed_through
+            value = root_provenance(original_node.value)
+            if value is None and isinstance(original_node.value, cst.Call):
+                candidate = origin(original_node.value.func)
+                value = candidate if _is_projection_factory(candidate) else None
+            for target in original_node.targets:
+                assign(target.target, value)
             if isinstance(original_node.value, cst.Call):
-                origin = _call_origin(
-                    original_node.value,
-                    origins,
-                    self.shadows[-1],
-                    frozenset(local_projection_producers),
+                evidence[id(original_node)] = _EvidenceFact(
+                    callable_origin=origin(original_node.value.func), projection_provenance=value
                 )
-                if _is_projection_factory(origin):
-                    for target in original_node.targets:
-                        for name in _assignment_names(target.target):
-                            self.provenances[-1][name] = origin
-                evidence[id(original_node)] = (origin, (), (), origin, None)
 
         def leave_AnnAssign(self, original_node: cst.AnnAssign) -> None:
+            if original_node.value is None:
+                return
+            value = root_provenance(original_node.value)
+            if value is None and isinstance(original_node.value, cst.Call):
+                candidate = origin(original_node.value.func)
+                value = candidate if _is_projection_factory(candidate) else None
+            assign(original_node.target, value)
             if isinstance(original_node.value, cst.Call):
-                origin = _call_origin(
-                    original_node.value,
-                    origins,
-                    self.shadows[-1],
-                    frozenset(local_projection_producers),
+                evidence[id(original_node)] = _EvidenceFact(
+                    callable_origin=origin(original_node.value.func), projection_provenance=value
                 )
-                if _is_projection_factory(origin):
-                    for name in _assignment_names(original_node.target):
-                        self.provenances[-1][name] = origin
-                evidence[id(original_node)] = (origin, (), (), origin, None)
 
         def visit_Subscript(self, node: cst.Subscript) -> None:
-            evidence[id(node)] = (
-                None,
-                (),
-                (),
-                _projection_root_origin(node, self.provenances[-1]),
-                None,
-            )
+            evidence[id(node)] = _EvidenceFact(projection_provenance=root_provenance(node))
 
         def visit_Attribute(self, node: cst.Attribute) -> None:
-            evidence[id(node)] = (
-                None,
-                (),
-                (),
-                _projection_root_origin(node, self.provenances[-1]),
-                None,
-            )
+            evidence[id(node)] = _EvidenceFact(projection_provenance=root_provenance(node))
 
-    module.visit(Visitor())
+    wrapper.visit(Visitor())
     return evidence
 
 
@@ -497,11 +494,17 @@ def _neutral_rule(site: MigrationSite) -> tuple[str, str] | None:
         anchor.callable_origin is not None
         and anchor.callable_origin.startswith(f"{_GRAPH_ORIGIN}.")
         and (
-            0 in anchor.projection_argument_positions
-            or "projection" in anchor.projection_argument_names
+            any(
+                argument.position == 0 or argument.keyword == "projection"
+                for argument in anchor.projection_arguments
+            )
             or anchor.projection_provenance is not None
             or bool(
-                set(anchor.projection_argument_positions)
+                {
+                    argument.position
+                    for argument in anchor.projection_arguments
+                    if argument.position is not None
+                }
                 & _PUBLIC_PROJECTION_ARGUMENT_POSITIONS.get(anchor.callable_origin, frozenset())
             )
         )
@@ -739,13 +742,24 @@ def _node_candidates(
     dict[cst.CSTNode, cst.CSTNode],
     dict[cst.CSTNode, object],
     dict[int, str],
-    dict[int, tuple[str | None, tuple[int, ...], tuple[str, ...], str | None, str | None]],
+    dict[int, _EvidenceFact],
 ]:
     wrapper = MetadataWrapper(module)
-    parents = wrapper.resolve(ParentNodeProvider)
-    positions = wrapper.resolve(PositionProvider)
+    metadata = wrapper.resolve_many((ParentNodeProvider, PositionProvider))
+    parents = metadata[ParentNodeProvider]
+    positions = metadata[PositionProvider]
     qualified = _qualified_functions(wrapper.module)
-    evidence = _structural_evidence(wrapper.module)
+    # Qualified-name analysis is intentionally restricted to modules that can
+    # carry an approved GraphProjection import.  Modules without that import
+    # cannot contribute accepted callable or projection provenance, so empty
+    # evidence is the same fail-closed result without paying the provider cost.
+    if _GRAPH_ORIGIN in wrapper.module.code:
+        scope_metadata = wrapper.resolve_many((QualifiedNameProvider, ScopeProvider))
+        evidence = _structural_evidence(
+            wrapper, scope_metadata[QualifiedNameProvider], scope_metadata[ScopeProvider]
+        )
+    else:
+        evidence = {}
     candidates: dict[tuple[str, str], list[cst.CSTNode]] = defaultdict(list)
 
     class Visitor(cst.CSTVisitor):
@@ -853,33 +867,37 @@ def _anchor_evidence(
     *,
     normalized_expression: str,
     ordinal: int,
-    evidence: dict[
-        int, tuple[str | None, tuple[int, ...], tuple[str, ...], str | None, str | None]
-    ],
+    evidence: dict[int, _EvidenceFact],
 ) -> CstAnchorEvidence:
-    callable_origin, positions, names, provenance, type_origin = evidence.get(
-        id(node), (None, (), (), None, None)
-    )
+    fact = evidence.get(id(node), _EvidenceFact())
+    callable_origin = fact.callable_origin
+    arguments = fact.projection_arguments
+    provenance = fact.projection_provenance
+    type_origin = fact.type_origin
     if callable_origin is None and isinstance(node, cst.Comparison):
-        nested: list[tuple[str, tuple[int, ...], tuple[str, ...], str | None]] = []
+        nested: list[tuple[str, tuple[ProjectionArgumentEvidence, ...], str | None]] = []
 
         class Visitor(cst.CSTVisitor):
             def visit_Call(self, child: cst.Call) -> None:
-                origin, child_positions, child_names, child_provenance, _ = evidence.get(
-                    id(child), (None, (), (), None, None)
-                )
-                if origin is not None:
-                    nested.append((origin, child_positions, child_names, child_provenance))
+                child_fact = evidence.get(id(child), _EvidenceFact())
+                if child_fact.callable_origin is not None:
+                    nested.append(
+                        (
+                            child_fact.callable_origin,
+                            child_fact.projection_arguments,
+                            child_fact.projection_provenance,
+                        )
+                    )
 
         node.visit(Visitor())
         if len(nested) == 1:
-            callable_origin, positions, names, provenance = nested[0]
+            callable_origin, arguments, provenance = nested[0]
     if provenance is None:
         nested_provenances: set[str] = set()
 
         class ProjectionVisitor(cst.CSTVisitor):
             def visit_Subscript(self, child: cst.Subscript) -> None:
-                _, _, _, child_provenance, _ = evidence.get(id(child), (None, (), (), None, None))
+                child_provenance = evidence.get(id(child), _EvidenceFact()).projection_provenance
                 if child_provenance is not None:
                     nested_provenances.add(child_provenance)
 
@@ -891,8 +909,7 @@ def _anchor_evidence(
         normalized_expression=normalized_expression,
         same_expression_ordinal=ordinal,
         callable_origin=callable_origin,
-        projection_argument_positions=positions,
-        projection_argument_names=names,
+        projection_arguments=arguments,
         projection_provenance=provenance,
         type_origin=type_origin,
     )

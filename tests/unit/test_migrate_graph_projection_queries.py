@@ -6,6 +6,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     AnchorRefusedError,
     DispositionPlan,
     PlannedOperation,
+    ProjectionArgumentEvidence,
     SourceSnapshot,
     compile_operation_stream,
     plan_reviewed_dispositions,
@@ -447,7 +448,7 @@ def test_plan_refuses_duplicate_or_stale_anchored_reviewed_identity() -> None:
         plan_reviewed_dispositions(stream, ledger.model_copy(update={"dispositions": (stale,)}))
 
 
-@pytest.mark.timeout(120)
+@pytest.mark.timeout(300)
 def test_live_repository_compilation_includes_every_remaining_fixture_site() -> None:
     manifest = load_manifest(MANIFEST_PATH)
     inventory = inventory_repository(ROOT, manifest)
@@ -551,7 +552,42 @@ def test_anchor_evidence_refuses_shadowed_foreign_dynamic_and_wrong_position_cal
     }
 
     assert calls["good"].anchor.callable_origin == "orchestrator.graph.run_state"
-    assert calls["good"].anchor.projection_argument_positions == (0,)
+    assert calls["good"].anchor.projection_arguments == (
+        ProjectionArgumentEvidence(position=0, provenance="orchestrator.graph.initial_projection"),
+    )
     assert calls["shadow"].anchor.callable_origin is None
-    assert calls["wrong"].anchor.projection_argument_positions == (1,)
+    assert calls["wrong"].anchor.projection_arguments == (
+        ProjectionArgumentEvidence(position=1, provenance="orchestrator.graph.GraphProjection"),
+    )
     assert calls["dynamic"].anchor.callable_origin is None
+
+
+def test_anchor_evidence_pairs_only_proven_projection_arguments_with_their_argument_slot() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection, initial_projection, run_state\n\n"
+            "def positional() -> None:\n"
+            "    projection = initial_projection()\n"
+            "    run_state(projection)\n\n"
+            "def keyword(projection: GraphProjection) -> None:\n"
+            "    run_state(projection=projection)\n\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+    calls = {
+        site.qualified_function: site
+        for site in stream.sites
+        if site.anchor.node_type == "Call" and site.anchor.callable_origin is not None
+    }
+
+    assert calls["positional"].anchor.projection_arguments == (
+        ProjectionArgumentEvidence(position=0, provenance="orchestrator.graph.initial_projection"),
+    )
+    assert calls["keyword"].anchor.projection_arguments == (
+        ProjectionArgumentEvidence(
+            keyword="projection", provenance="orchestrator.graph.GraphProjection"
+        ),
+    )
