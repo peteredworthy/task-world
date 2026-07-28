@@ -2342,27 +2342,98 @@ def roles(projection: GraphProjection, values: tuple[object, ...]) -> None:
             "callee_origin": "orchestrator.graph.run_state",
             "projection_role": "positional",
             "positional_index": 0,
+            "projection_expression": "projection",
         },
         {
             "callee_origin": "orchestrator.graph.run_state",
             "projection_role": "keyword",
             "keyword_name": "projection",
+            "projection_expression": "projection",
         },
-        {"callee_origin": "orchestrator.graph.run_state", "projection_role": "ambiguous"},
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "ambiguous",
+            "projection_expression": "projection",
+        },
     ]
     assert [item.context.model_dump(exclude_none=True) for item in inventory.occurrences] == [
         {
             "receiver_type_origin": "orchestrator.graph.GraphProjection",
             "projection_role": "receiver",
+            "projection_expression": "projection",
             "physical_access_kind": AccessKind.KEYS,
         },
         {
             "receiver_type_origin": "orchestrator.graph.GraphProjection",
             "projection_role": "receiver",
+            "projection_expression": "projection",
             "physical_old_field_name": "run_state",
             "physical_access_kind": AccessKind.LITERAL_SUBSCRIPT_READ,
         },
     ]
+
+
+def test_collect_source_context_requires_an_approved_exact_origin_and_exact_argument() -> None:
+    inventory = collect_source(
+        """
+from foreign import run_state as foreign_state
+from orchestrator.graph import GraphProjection, run_state
+
+def roles(projection: GraphProjection) -> None:
+    foreign_state(projection)
+    run_state(projection="not a projection", value=projection)
+    run_state(**projection)
+""",
+        relative_path="adversarial_contexts.py",
+        baseline_revision="baseline",
+    )
+
+    assert [item.context.model_dump(exclude_none=True) for item in inventory.diagnostics] == [
+        {
+            "projection_role": "positional",
+            "positional_index": 0,
+            "projection_expression": "projection",
+        },
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "keyword",
+            "keyword_name": "value",
+            "projection_expression": "projection",
+        },
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "ambiguous",
+            "projection_expression": "projection",
+        },
+    ]
+
+
+def test_collect_source_context_marks_only_approved_derived_value_sinks() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphProjection
+from orchestrator.graph.scheduler import NodeScheduleInfo
+
+def build(projection: GraphProjection) -> object:
+    safe = NodeScheduleInfo(priority=projection["node_states"])
+    unsafe = object(value=projection["node_states"])
+    return safe, unsafe
+""",
+        relative_path="derived_sink_contexts.py",
+        baseline_revision="baseline",
+    )
+
+    contexts = [
+        item.context.model_dump(exclude_none=True)
+        for item in inventory.diagnostics
+        if item.context is not None
+    ]
+    assert {
+        "callee_origin": "orchestrator.graph.scheduler.NodeScheduleInfo",
+        "projection_role": "derived_value",
+        "projection_expression": "projection['node_states']",
+    } in contexts
+    assert not any(context.get("callee_origin") == "builtins.object" for context in contexts)
 
 
 def test_collect_source_context_covers_binding_comparison_update_and_pass_through_families() -> (
@@ -2400,24 +2471,29 @@ def pass_through(projection: GraphProjection) -> object:
         "typed_binding": {
             "receiver_type_origin": "orchestrator.graph.GraphProjection",
             "projection_role": "receiver",
+            "projection_expression": "projection",
         },
         "nested_comparison": {
             "callee_origin": "orchestrator.graph.run_state",
             "projection_role": "positional",
             "positional_index": 0,
+            "projection_expression": "projection",
         },
         "field_update": {
             "receiver_type_origin": "orchestrator.graph.GraphProjection",
             "projection_role": "receiver",
+            "projection_expression": "projection['run_state']",
             "physical_old_field_name": "run_state",
             "physical_access_kind": AccessKind.LITERAL_SUBSCRIPT_READ,
         },
         "producer": {
             "callee_origin": "orchestrator.graph.initial_projection",
             "projection_role": "receiver",
+            "projection_expression": "initial_projection()",
         },
         "pass_through": {
             "receiver_type_origin": "orchestrator.graph.GraphProjection",
             "projection_role": "receiver",
+            "projection_expression": "projection",
         },
     }

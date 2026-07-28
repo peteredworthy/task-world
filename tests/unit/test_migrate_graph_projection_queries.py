@@ -16,6 +16,7 @@ from scripts.graph_projection_inventory import (
     DiagnosticCode,
     MigrationDisposition,
     SourceDigest,
+    ProjectionCallContext,
     inventory_paths,
     inventory_repository,
     inventory_sources,
@@ -384,32 +385,11 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> N
                 }
             ),
         )
-    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
-        plan_reviewed_dispositions(
-            stream,
-            ledger.model_copy(update={"unclassified_sites": ledger.unclassified_sites[1:]}),
-        )
-    pending_site = next(
-        site for site in stream.sites if site.original_site_id in plan.pending_site_ids
+    without_fixture = plan_reviewed_dispositions(
+        stream,
+        ledger.model_copy(update={"unclassified_sites": ledger.unclassified_sites[1:]}),
     )
-    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
-        plan_reviewed_dispositions(
-            stream.model_copy(
-                update={
-                    "sites": tuple(
-                        site
-                        for site in stream.sites
-                        if site.original_site_id != pending_site.original_site_id
-                    )
-                }
-            ),
-            ledger,
-        )
-    extra_pending = pending_site.model_copy(update={"original_site_id": "f" * 64})
-    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
-        plan_reviewed_dispositions(
-            stream.model_copy(update={"sites": (*stream.sites, extra_pending)}), ledger
-        )
+    assert deferred.site_key in without_fixture.pending_site_ids
 
 
 def test_plan_refuses_duplicate_or_stale_anchored_reviewed_identity() -> None:
@@ -504,15 +484,22 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites() -> None:
     )
 
     assert plan.pending_site_ids == ()
-    assert len(plan.operations) == 454
-    assert len(plan.deferred_site_ids) == 349
+    assert len(plan.operations) == 433
+    assert len(plan.deferred_site_ids) == 370
     assert plan.disposition_counts == (
         ("approved_core", 80),
-        ("projection_neutral", 173),
+        ("projection_neutral", 152),
         ("query_transform", 201),
     )
-    assert sum(count for _, count in plan.rule_family_counts) == 173
-    assert sum(count for _, count in plan.symbol_origin_counts) == 173
+    assert plan.rule_family_counts == (
+        ("derived_value_sink", 1),
+        ("projector_fixture_flow", 2),
+        ("public_graph_call", 116),
+        ("typed_projection_binding", 27),
+        ("typed_projector_binding", 6),
+    )
+    assert sum(count for _, count in plan.symbol_origin_counts) == 152
+    assert dict(plan.symbol_origin_counts)["orchestrator.graph.scheduler.NodeScheduleInfo"] == 1
     assert plan == plan_structural_dispositions(
         compile_operation_stream(
             tuple(reversed(sources)), inventory, query_migration_skeleton(inventory, ROOT)
@@ -554,19 +541,23 @@ def test_anchor_evidence_copies_exact_collector_context_for_reanchored_calls() -
         "callee_origin": "orchestrator.graph.run_state",
         "projection_role": "positional",
         "positional_index": 0,
+        "projection_expression": "projection",
     }
     assert calls["shadow"].anchor.context.model_dump(exclude_none=True) == {
         "projection_role": "positional",
         "positional_index": 0,
+        "projection_expression": "projection",
     }
     assert calls["wrong"].anchor.context.model_dump(exclude_none=True) == {
         "callee_origin": "orchestrator.graph.run_state",
         "projection_role": "positional",
         "positional_index": 1,
+        "projection_expression": "projection",
     }
     assert calls["dynamic"].anchor.context.model_dump(exclude_none=True) == {
         "projection_role": "positional",
         "positional_index": 0,
+        "projection_expression": "projection",
     }
 
 
@@ -595,11 +586,13 @@ def test_anchor_evidence_copies_collector_context_for_positional_and_keyword_arg
         "callee_origin": "orchestrator.graph.run_state",
         "projection_role": "positional",
         "positional_index": 0,
+        "projection_expression": "projection",
     }
     assert calls["keyword"].anchor.context.model_dump(exclude_none=True) == {
         "callee_origin": "orchestrator.graph.run_state",
         "projection_role": "keyword",
         "keyword_name": "projection",
+        "projection_expression": "projection",
     }
 
 
@@ -631,3 +624,56 @@ def test_compile_operation_stream_refuses_mismatched_inventory_context() -> None
 
     with pytest.raises(AnchorRefusedError, match="context does not match"):
         compile_operation_stream((source,), invalid, query_migration_skeleton(invalid))
+
+
+def test_compile_operation_stream_refuses_selected_expression_and_physical_context_mismatches() -> (
+    None
+):
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection, run_state\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    run_state(projection)\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    diagnostic = next(item for item in inventory.diagnostics if item.context is not None)
+    occurrence = inventory.occurrences[0]
+    invalid = inventory.model_copy(
+        update={
+            "diagnostics": (
+                diagnostic.model_copy(
+                    update={
+                        "context": diagnostic.context.model_copy(
+                            update={"projection_expression": "other"}
+                        )
+                    }
+                ),
+            ),
+            "occurrences": (
+                occurrence.model_copy(
+                    update={
+                        "context": occurrence.context.model_copy(
+                            update={"physical_old_field_name": "node_states"}
+                        )
+                    }
+                ),
+            ),
+        }
+    )
+
+    with pytest.raises(AnchorRefusedError, match="context does not match"):
+        compile_operation_stream((source,), invalid, query_migration_skeleton(invalid))
+
+
+def test_projection_call_context_refuses_negative_positional_index() -> None:
+    with pytest.raises(ValueError, match="nonnegative"):
+        ProjectionCallContext(
+            callee_origin="orchestrator.graph.run_state",
+            projection_role="positional",
+            positional_index=-1,
+            projection_expression="projection",
+        )

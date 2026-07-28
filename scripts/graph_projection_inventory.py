@@ -118,7 +118,8 @@ class ProjectionCallContext(BaseModel):
 
     callee_origin: str | None = None
     receiver_type_origin: str | None = None
-    projection_role: Literal["receiver", "positional", "keyword", "ambiguous"]
+    projection_role: Literal["receiver", "positional", "keyword", "ambiguous", "derived_value"]
+    projection_expression: str
     positional_index: int | None = None
     keyword_name: str | None = None
     physical_old_field_name: str | None = None
@@ -126,15 +127,19 @@ class ProjectionCallContext(BaseModel):
 
     @model_validator(mode="after")
     def has_exact_projection_role(self) -> "ProjectionCallContext":
+        if not self.projection_expression.strip():
+            raise ValueError("projection expression must be nonempty")
         if self.projection_role == "positional":
             if self.positional_index is None or self.keyword_name is not None:
                 raise ValueError("positional projection context requires only its exact index")
+            if self.positional_index < 0:
+                raise ValueError("positional projection index must be nonnegative")
         elif self.projection_role == "keyword":
             if self.keyword_name is None or self.positional_index is not None:
                 raise ValueError("keyword projection context requires only its exact name")
         elif self.positional_index is not None or self.keyword_name is not None:
             raise ValueError(
-                "receiver or ambiguous projection context cannot name an argument slot"
+                "receiver, ambiguous, or derived-value projection context cannot name an argument slot"
             )
         if self.physical_old_field_name is not None and self.physical_access_kind is None:
             raise ValueError("physical projection field requires access-kind evidence")
@@ -775,6 +780,7 @@ _APPROVED_PRODUCER_ORIGINS = frozenset(
 _CONTEXT_PRODUCER_ORIGINS = _APPROVED_PRODUCER_ORIGINS | frozenset(
     {"orchestrator.graph.projections.reduce_event"}
 )
+_DERIVED_VALUE_SINK_ORIGINS = frozenset({"orchestrator.graph.scheduler.NodeScheduleInfo"})
 
 _APPROVED_SYMBOLS = frozenset(
     {
@@ -1755,16 +1761,26 @@ class _Collector(cst.CSTVisitor):
         """Return one exact imported qualified name, never a spelling-derived guess."""
         resolved = self.get_metadata(QualifiedNameProvider, node, frozenset())
         names = resolved() if callable(resolved) else resolved
-        imported = (
-            tuple(
-                item
-                for item in names
-                if isinstance(item, QualifiedName) and item.source.name == "IMPORT"
-            )
-            if isinstance(names, set)
-            else ()
+        if not isinstance(names, set) or len(names) != 1:
+            return None
+        name = next(iter(names))
+        if not isinstance(name, QualifiedName) or name.source.name != "IMPORT":
+            return None
+        approved_modules = frozenset(
+            {
+                "orchestrator.graph",
+                "orchestrator.graph.callbacks",
+                "orchestrator.graph._commands",
+                "orchestrator.graph.patch_validator",
+                "orchestrator.graph.projections",
+                "orchestrator.graph.projection_queries",
+                "orchestrator.graph.scheduler",
+                "orchestrator.graph_runtime",
+                "orchestrator.graph_runtime.controller",
+                "orchestrator.graph_runtime.dispatch",
+            }
         )
-        return imported[0].name if len(imported) == 1 else None
+        return name.name if name.name.rpartition(".")[0] in approved_modules else None
 
     def _call_context(self, node: cst.CSTNode) -> ProjectionCallContext | None:
         """Capture one collector-proven call role without performing new dataflow."""
@@ -1776,6 +1792,7 @@ class _Collector(cst.CSTVisitor):
                 callee_origin=callee_origin,
                 receiver_type_origin="orchestrator.graph.GraphProjection",
                 projection_role="receiver",
+                projection_expression=self._expression(node.func.value),
             )
         roles: list[ProjectionCallContext] = []
         positional_index = 0
@@ -1794,13 +1811,15 @@ class _Collector(cst.CSTVisitor):
                         callee_origin=callee_origin,
                         projection_role="keyword",
                         keyword_name=argument.keyword.value,
+                        projection_expression=self._expression(argument.value),
                     )
                 )
-            elif starred_uncertainty:
+            elif starred_uncertainty or argument.star == "**":
                 roles.append(
                     ProjectionCallContext(
                         callee_origin=callee_origin,
                         projection_role="ambiguous",
+                        projection_expression=self._expression(argument.value),
                     )
                 )
             else:
@@ -1809,6 +1828,7 @@ class _Collector(cst.CSTVisitor):
                         callee_origin=callee_origin,
                         projection_role="positional",
                         positional_index=positional_index,
+                        projection_expression=self._expression(argument.value),
                     )
                 )
             if argument.keyword is None:
@@ -1826,6 +1846,7 @@ class _Collector(cst.CSTVisitor):
                 return ProjectionCallContext(
                     receiver_type_origin=annotation,
                     projection_role="receiver",
+                    projection_expression=self._expression(node.name),
                 )
         if isinstance(node, cst.Comparison):
             nested: list[ProjectionCallContext] = []
@@ -1851,23 +1872,48 @@ class _Collector(cst.CSTVisitor):
                     callee_origin=self._qualified_import_origin(node.func),
                     receiver_type_origin="orchestrator.graph.GraphProjection",
                     projection_role="receiver",
+                    projection_expression=self._expression(node.func.value),
                     physical_old_field_name=field if field in self.fields else None,
                     physical_access_kind=AccessKind.LITERAL_SUBSCRIPT_READ,
                 )
-        if isinstance(node, cst.Call) and any(
-            self._projection_derived(argument.value) for argument in node.args
+        if (
+            isinstance(node, cst.Call)
+            and (origin := self._qualified_import_origin(node.func)) in _DERIVED_VALUE_SINK_ORIGINS
         ):
-            return ProjectionCallContext(
-                callee_origin=self._qualified_import_origin(node.func),
-                receiver_type_origin="orchestrator.graph.GraphProjection",
-                projection_role="receiver",
-            )
+            derived_arguments = [
+                argument.value for argument in node.args if self._projection_derived(argument.value)
+            ]
+            if derived_arguments:
+                return ProjectionCallContext(
+                    callee_origin=origin,
+                    projection_role="derived_value",
+                    projection_expression=self._expression(derived_arguments[0]),
+                )
         value = node.value if isinstance(node, (cst.Assign, cst.AnnAssign, cst.Return)) else None
+        if (
+            isinstance(value, cst.Call)
+            and (origin := self._qualified_import_origin(value.func)) in _DERIVED_VALUE_SINK_ORIGINS
+        ):
+            derived_arguments = [
+                argument.value
+                for argument in value.args
+                if self._projection_derived(argument.value)
+            ]
+            if derived_arguments:
+                return ProjectionCallContext(
+                    callee_origin=origin,
+                    projection_role="derived_value",
+                    projection_expression=self._expression(derived_arguments[0]),
+                )
         if (
             isinstance(value, cst.Call)
             and (origin := self._qualified_import_origin(value.func)) in _CONTEXT_PRODUCER_ORIGINS
         ):
-            return ProjectionCallContext(callee_origin=origin, projection_role="receiver")
+            return ProjectionCallContext(
+                callee_origin=origin,
+                projection_role="receiver",
+                projection_expression=self._expression(value),
+            )
         if value is not None and self._known_projection_value(value):
             if isinstance(value, cst.Call):
                 return ProjectionCallContext(
@@ -1878,10 +1924,12 @@ class _Collector(cst.CSTVisitor):
                         else None
                     ),
                     projection_role="receiver",
+                    projection_expression=self._expression(value),
                 )
             return ProjectionCallContext(
                 receiver_type_origin="orchestrator.graph.GraphProjection",
                 projection_role="receiver",
+                projection_expression=self._expression(value),
             )
         return None
 
@@ -1889,10 +1937,18 @@ class _Collector(cst.CSTVisitor):
         self, kind: AccessKind, field: str | None, node: cst.CSTNode
     ) -> ProjectionCallContext:
         call_context = self._call_context(node)
+        receiver = (
+            node.func.value
+            if isinstance(node, cst.Call) and isinstance(node.func, cst.Attribute)
+            else node.value
+            if isinstance(node, cst.Subscript)
+            else node
+        )
         return ProjectionCallContext(
             callee_origin=call_context.callee_origin if call_context is not None else None,
             receiver_type_origin="orchestrator.graph.GraphProjection",
             projection_role="receiver",
+            projection_expression=self._expression(receiver),
             physical_old_field_name=field,
             physical_access_kind=kind,
         )

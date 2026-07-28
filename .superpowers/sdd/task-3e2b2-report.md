@@ -1,5 +1,43 @@
 # Task 3e2b2 Report: Structural Neutral And Approved-Core Planning
 
+> Superseded by the corrective structural snapshot below.
+
+## Corrective structural closure
+
+The post-ledger grouping was derived solely from stored collector context
+(`diagnostic/access kind`, parent/operation shape, exact origin, role, physical
+access, and selected expression), not IDs, paths, function names, or source
+patterns. Its only generated-fixture families were physical mutation flows:
+
+| Stored-context group | Generated fixtures |
+| --- | ---: |
+| `nested_assignment` physical access | 17 |
+| literal-field update/mutation | 3 |
+| `append_extend` physical access | 1 |
+
+The finite safe composition family is
+`derived_value_sink:orchestrator.graph.scheduler.NodeScheduleInfo` (1). It
+accepts projection-derived values only; it is not a receiver/whole-projection
+rule. Unknown, foreign, dynamic, and unregistered derived sinks remain fixtures
+or fail closed during revalidation.
+
+| Partition | Machine-derived count |
+| --- | ---: |
+| `query_transform` | 201 |
+| `approved_core` | 80 |
+| `projection_neutral` | 152 |
+| reviewed fixture IDs | 349 |
+| generated fixture IDs | 21 |
+| pending/unmatched | 0 |
+| total | 803 |
+
+## Corrective verification
+
+- Focused inventory/codemod suite: `124 passed in 229.04s`.
+- Ruff check and format check passed (`746 files already formatted`).
+- Pyright passed with `0 errors, 0 warnings, 0 informations`.
+- Full pytest passed: `5008 passed, 3 skipped, 3 warnings in 403.82s`.
+
 ## Result
 
 Implemented structural operation-anchor evidence and a fail-closed unchanged-disposition plan.

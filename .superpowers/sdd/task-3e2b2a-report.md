@@ -1,5 +1,48 @@
 # Task 3e2b2a Report
 
+> Superseded corrective-wave evidence follows. The collector remains the sole
+> projection-provenance authority; the compiler only reanchors its frozen facts.
+
+## Corrective Wave
+
+- `ProjectionCallContext` now includes the normalized selected receiver or
+  argument expression and rejects negative positional slots. Both `*` and `**`
+  expansion are recorded as ambiguous and never accepted as positional.
+- An origin is retained only when metadata reports exactly one imported qualified
+  name from an exact approved module segment. Foreign, conflicting, local, and
+  dynamic callees consequently retain no origin.
+- Reanchoring now compares exact callee/type origin, role, slot, selected
+  expression, and literal physical-field evidence. It refuses stale argument,
+  receiver, and physical-field facts.
+- Projection-derived scalar/model values are never recorded as receiver or whole
+  projection evidence. The sole finite derived-value sink is imported
+  `orchestrator.graph.scheduler.NodeScheduleInfo`.
+
+## Machine-derived structural snapshot
+
+| Rule family | Count |
+| --- | ---: |
+| `derived_value_sink` | 1 |
+| `projector_fixture_flow` | 2 |
+| `public_graph_call` | 116 |
+| `typed_projection_binding` | 27 |
+| `typed_projector_binding` | 6 |
+
+The derived sink origin snapshot is exactly
+`orchestrator.graph.scheduler.NodeScheduleInfo: 1`; the remaining origin total
+is 151, for 152 neutral operations. The generated-fixture snapshot is exactly
+21: `nested_assignment: 17`, `literal_subscript_read` update/mutation: 3, and
+`append_extend: 1`. Those IDs union with the reviewed 349 fixture IDs. No
+unmatched/pending site remains; total closure is 803.
+
+## Verification
+
+- `uv run pytest tests/unit/test_graph_projection_inventory.py tests/unit/test_migrate_graph_projection_queries.py -q` — `124 passed in 229.04s`.
+- `uv run ruff check .` — passed.
+- `uv run ruff format --check .` — `746 files already formatted`.
+- `uv run pyright` — `0 errors, 0 warnings, 0 informations`.
+- `uv run pytest` — `5008 passed, 3 skipped, 3 warnings in 403.82s`; warnings are existing Python 3.12 `aiosqlite` datetime-adapter deprecations.
+
 ## Delivered
 
 - Made `ProjectionCallContext` the authoritative frozen evidence carried by
