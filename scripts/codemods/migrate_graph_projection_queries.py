@@ -134,6 +134,8 @@ def _transparent_parent(node: cst.CSTNode, parents: dict[cst.CSTNode, cst.CSTNod
 
 
 def _parent_shape(node: cst.CSTNode, parents: dict[cst.CSTNode, cst.CSTNode]) -> str:
+    if isinstance(node, cst.Del):
+        return "deletion"
     parent = parents[node]
     if isinstance(parent, (cst.Expr, cst.SimpleStatementLine)):
         return "bare_expression"
@@ -537,7 +539,9 @@ def compile_operation_stream(
                     locator=SourceLocator(line=line, column=diagnostic.column),
                     anchor=CstAnchorEvidence(
                         node_type=type(node).__name__,
-                        normalized_expression=pattern,
+                        normalized_expression=(
+                            _normalized_node(node) or cst.Module([]).code_for_node(node).strip()
+                        ),
                         same_expression_ordinal=ordinal,
                     ),
                     parent_shape=_parent_shape(node, parents),

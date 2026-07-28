@@ -121,9 +121,8 @@ the summary remains a pure machine-readable compiler result.
 
 **RED:** the new source-independent diagnostic snapshot tests initially failed
 with `TypeError: query_migration_skeleton() missing 1 required positional
-argument: 'root'`; the live exact-fixture assertion also exposed that the raw,
-complete current skeleton contains 449 `test_fixture` IDs, not the historical
-349 stated in the review.
+argument: 'root'`; the live reconciliation assertion then established the
+separate raw-skeleton (449) and checked-in deferred-ledger (349) fixture sets.
 
 **GREEN:**
 
@@ -163,10 +162,9 @@ $ uv run pytest
 - `source_digest()` now hashes Python token type/content pairs while ignoring
   only layout-only `NL` tokens. Multiline string token contents remain intact;
   compile-time digest verification is mandatory and no public bypass remains.
-- The live test derives fixture IDs from the generated skeleton and requires
-  every derived ID exactly once in the compiled stream. The current complete
-  generated set is 449 IDs; the requested historical count of 349 does not
-  match this branch's authoritative collector output.
+- The live test derives raw fixture IDs from the generated skeleton and deferred
+  fixture IDs from the checked-in migration ledger; it requires every ID from
+  both sets exactly once in the compiled raw stream.
 - Parent and operation classification is finite and raises
   `AnchorRefusedError` for unrecognized structures rather than silently using
   generic shapes. Current encountered contexts include condition, iterable,
@@ -184,14 +182,11 @@ $ uv run pytest
 - `tests/unit/test_migrate_graph_projection_queries.py`
 - `.superpowers/sdd/task-3e1-report.md`
 
-### Fix-wave self-review / concern
+### Fix-wave self-review
 
-No consumer or test-fixture source was edited. The `349` review count is not
-reproducible from the authoritative live skeleton on this branch: its derived
-`test_fixture` identity set contains 449 IDs (240 in
-`test_graph_projection_queries.py`, 101 in `test_graph_projections.py`, and
-108 elsewhere). The exact-once assertion deliberately uses the mechanically
-derived set rather than silently dropping 100 sites.
+No consumer or test-fixture source was edited. The raw stream intentionally
+contains all 449 fresh-skeleton fixture-domain sites; the checked-in ledger's
+349 still-unclassified fixture IDs are a mechanically reconciled subset.
 
 ## Final authoritative reconciliation (second review fix wave)
 
@@ -245,3 +240,34 @@ Second-wave self-review: the raw and deferred sets are separately derived and
 asserted; no source consumer or fixture was edited; unknown diagnostic
 operations and parent structures continue to fail closed; frozen diagnostic
 evidence provides both source identity and CST proof fields.
+
+## Final localized-anchor fix wave
+
+`MigrationSite.normalized_expression` retains the diagnostic source-line
+identity pattern, while `CstAnchorEvidence.normalized_expression` now records
+the selected node's independently recomputed CST expression. Focused tests
+prove their intentionally different values for a `return` comparison and prove
+that direct `del projection[...]` records both parent and operation as
+`deletion`. Nested `get` remains distinct from direct map `get`.
+
+```text
+$ uv run pytest tests/unit/test_migrate_graph_projection_queries.py \
+    tests/unit/test_graph_projection_inventory.py -q
+110 passed in 119.57s
+
+$ uv run ruff check ... && uv run ruff format --check ...
+All checks passed!
+3 files already formatted
+
+$ uv run pyright
+0 errors, 0 warnings, 0 informations
+
+$ uv run pytest
+4994 passed, 3 skipped, 3 warnings in 213.92s
+```
+
+Final self-review: line identity and CST proof are separately frozen and
+revalidatable; direct deletion bypasses the statement-line bare-expression
+shortcut; operation/parent classification retains fail-closed unknown handling;
+the raw 449 and deferred-ledger 349 counts above are the sole authoritative
+fixture-count wording in this report.

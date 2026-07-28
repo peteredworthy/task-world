@@ -163,6 +163,8 @@ def test_compile_operation_stream_anchors_diagnostics_from_snapshots_without_rep
         site.site_key for site in skeleton.unclassified_sites if site.diagnostic_code is not None
     }
     assert diagnostic.locator.line == inventory.diagnostics[0].line + 1
+    assert diagnostic.normalized_expression == 'return projection["run_state"] == "active"'
+    assert diagnostic.anchor.normalized_expression == "projection['run_state'] == 'active'"
 
 
 def test_compile_operation_stream_refuses_ambiguous_diagnostic_snapshot_anchor() -> None:
@@ -237,6 +239,24 @@ def test_operation_shapes_distinguish_direct_map_and_nested_gets() -> None:
     stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
 
     assert {site.operation_shape for site in stream.sites} >= {"map_get", "nested_get"}
+
+
+def test_direct_deletion_has_deletion_parent_and_operation_shapes() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def remove(projection: GraphProjection) -> None:\n"
+            '    del projection["run_state"]\n'
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+
+    assert [(site.parent_shape, site.operation_shape) for site in stream.sites] == [
+        ("deletion", "deletion")
+    ]
 
 
 @pytest.mark.timeout(120)
