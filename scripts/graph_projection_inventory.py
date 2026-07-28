@@ -1955,6 +1955,35 @@ class _Collector(cst.CSTVisitor):
                 projection_role="receiver",
                 projection_expression=self._expression(value),
             )
+        nested_physical: list[ProjectionCallContext] = []
+
+        class PhysicalVisitor(cst.CSTVisitor):
+            def visit_Subscript(_, subscript: cst.Subscript) -> None:
+                field_subscript = self._tracked_field_subscript(subscript)
+                if (
+                    field_subscript is None
+                    or len(field_subscript.slice) != 1
+                    or not isinstance(field_subscript.slice[0].slice, cst.Index)
+                ):
+                    return
+                field = _literal_key(field_subscript.slice[0].slice.value)
+                if field not in self.fields:
+                    return
+                nested_physical.append(
+                    ProjectionCallContext(
+                        receiver_type_origin="orchestrator.graph.GraphProjection",
+                        projection_role="receiver",
+                        projection_expression=self._expression(subscript.value),
+                        physical_old_field_name=field,
+                        physical_access_kind=AccessKind.LITERAL_SUBSCRIPT_READ,
+                        physical_operation_shape=AccessKind.LITERAL_SUBSCRIPT_READ.value,
+                    )
+                )
+
+        node.visit(PhysicalVisitor())
+        unique_physical = {item.model_dump_json(): item for item in nested_physical}
+        if len(unique_physical) == 1:
+            return next(iter(unique_physical.values()))
         return None
 
     def _physical_context(

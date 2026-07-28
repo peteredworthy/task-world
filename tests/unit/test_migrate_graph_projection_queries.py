@@ -567,10 +567,14 @@ def test_disposition_plan_refuses_overlapping_or_missing_reviewed_sites() -> Non
                     shape_key="shape",
                 ),
             ),
-            deferred_site_ids=(),
+            reviewed_deferred_site_ids=(),
+            generated_fixture_operations=(),
             pending_site_ids=(),
             disposition_counts=(("query_transform", 2),),
             shape_group_counts=(("shape", 2),),
+            rule_family_counts=(),
+            symbol_origin_counts=(),
+            generated_fixture_family_counts=(),
         )
 
 
@@ -583,15 +587,19 @@ def test_disposition_plan_direct_validation_refuses_partition_and_count_forgerie
     )
     valid = {
         "operations": (operation,),
-        "deferred_site_ids": ("b",),
+        "reviewed_deferred_site_ids": ("b",),
+        "generated_fixture_operations": (),
         "pending_site_ids": ("c",),
         "disposition_counts": (("query_transform", 1),),
         "shape_group_counts": (("shape", 1),),
+        "rule_family_counts": (),
+        "symbol_origin_counts": (),
+        "generated_fixture_family_counts": (),
     }
     for update, message in (
-        ({"deferred_site_ids": ("b", "b")}, "unique"),
+        ({"reviewed_deferred_site_ids": ("b", "b")}, "unique"),
         ({"pending_site_ids": ("c", "c")}, "unique"),
-        ({"deferred_site_ids": ("a",)}, "overlap"),
+        ({"reviewed_deferred_site_ids": ("a",)}, "overlap"),
         ({"pending_site_ids": ("a",)}, "overlap"),
         ({"pending_site_ids": ("b",)}, "overlap"),
         ({"disposition_counts": (("approved_core", 1),)}, "disposition counts"),
@@ -599,6 +607,44 @@ def test_disposition_plan_direct_validation_refuses_partition_and_count_forgerie
     ):
         with pytest.raises(ValueError, match=message):
             DispositionPlan(**(valid | update))
+
+
+def test_disposition_plan_derives_generated_fixture_counts_from_frozen_operations() -> None:
+    operation = PlannedOperation(
+        disposition="query_transform",
+        reason="reviewed",
+        consumed_site_ids=("query",),
+        shape_key="shape",
+    )
+    plan = DispositionPlan(
+        operations=(operation,),
+        reviewed_deferred_site_ids=("reviewed-fixture",),
+        generated_fixture_operations=(
+            {
+                "site_id": "generated-fixture",
+                "rule_id": "physical_nested_assignment",
+                "shape_key": "nested",
+                "evidence": (("access_kind", "nested_assignment"),),
+            },
+        ),
+        pending_site_ids=(),
+        disposition_counts=(("query_transform", 1),),
+        shape_group_counts=(("shape", 1),),
+        rule_family_counts=(),
+        symbol_origin_counts=(),
+        generated_fixture_family_counts=(("physical_nested_assignment", 1),),
+    )
+
+    assert plan.deferred_site_ids == ("generated-fixture", "reviewed-fixture")
+    assert plan.fixture_site_ids == frozenset({"generated-fixture", "reviewed-fixture"})
+    assert plan.generated_fixture_family_counts == (("physical_nested_assignment", 1),)
+    with pytest.raises(ValueError, match="generated fixture family counts"):
+        DispositionPlan(
+            **(
+                plan.model_dump()
+                | {"generated_fixture_family_counts": (("physical_nested_assignment", 2),)}
+            )
+        )
 
 
 @pytest.mark.timeout(300)
@@ -781,6 +827,13 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites() -> None:
         ("typed_projection_binding", 27),
         ("typed_projector_binding", 6),
     )
+    assert plan.generated_fixture_family_counts == (
+        ("literal_field_update_mutation", 3),
+        ("physical_append_extend", 1),
+        ("physical_nested_assignment", 17),
+    )
+    assert len(plan.reviewed_deferred_site_ids) == 349
+    assert len(plan.generated_fixture_operations) == 21
     assert sum(count for _, count in plan.symbol_origin_counts) == 152
     assert dict(plan.symbol_origin_counts)["orchestrator.graph.scheduler.NodeScheduleInfo"] == 1
     assert plan == plan_structural_dispositions(
