@@ -126,6 +126,7 @@ class ProjectionCallContext(BaseModel):
     keyword_name: str | None = None
     physical_old_field_name: str | None = None
     physical_access_kind: AccessKind | None = None
+    physical_operation_shape: str | None = None
 
     @model_validator(mode="after")
     def has_exact_projection_role(self) -> "ProjectionCallContext":
@@ -145,8 +146,14 @@ class ProjectionCallContext(BaseModel):
             )
         if self.physical_old_field_name is not None and self.physical_access_kind is None:
             raise ValueError("physical projection field requires access-kind evidence")
-        if self.projection_role == "ambiguous" and not (self.argument_star or self.preceding_star):
-            raise ValueError("ambiguous projection context requires star evidence")
+        if self.physical_access_kind is None and self.physical_operation_shape is not None:
+            raise ValueError("physical operation shape requires access-kind evidence")
+        if self.physical_access_kind is not None and self.physical_operation_shape is None:
+            raise ValueError("physical access-kind requires operation shape evidence")
+        if self.projection_role == "ambiguous" and (self.argument_star is None) == (
+            self.preceding_star is None
+        ):
+            raise ValueError("ambiguous projection context requires exactly one star fact")
         if self.projection_role != "ambiguous" and (self.argument_star or self.preceding_star):
             raise ValueError("only ambiguous projection context can retain star evidence")
         return self
@@ -1891,6 +1898,7 @@ class _Collector(cst.CSTVisitor):
                     projection_expression=self._expression(node.func.value),
                     physical_old_field_name=field if field in self.fields else None,
                     physical_access_kind=AccessKind.LITERAL_SUBSCRIPT_READ,
+                    physical_operation_shape=AccessKind.LITERAL_SUBSCRIPT_READ.value,
                 )
         if (
             isinstance(node, cst.Call)
@@ -1967,6 +1975,7 @@ class _Collector(cst.CSTVisitor):
             projection_expression=self._expression(receiver),
             physical_old_field_name=field,
             physical_access_kind=kind,
+            physical_operation_shape=kind.value,
         )
 
     def _record(self, kind: AccessKind, field: str | None, node: cst.CSTNode) -> None:

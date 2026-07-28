@@ -342,8 +342,13 @@ def _reanchor_context(
     if stored.physical_access_kind is not None:
         if expected_access_kind is not None and stored.physical_access_kind != expected_access_kind:
             raise AnchorRefusedError("inventory physical access kind does not match CST anchor")
-        if stored.physical_old_field_name not in _literal_physical_fields(node):
+        if (
+            stored.physical_old_field_name is not None
+            and stored.physical_old_field_name not in _literal_physical_fields(node)
+        ):
             raise AnchorRefusedError("inventory physical context does not match CST anchor")
+        if stored.physical_operation_shape != stored.physical_access_kind.value:
+            raise AnchorRefusedError("inventory physical operation shape does not match CST anchor")
     if isinstance(node, cst.Param):
         annotation = node.annotation.annotation if node.annotation is not None else None
         name = _one_qualified_name(annotation, qualified_names) if annotation is not None else None

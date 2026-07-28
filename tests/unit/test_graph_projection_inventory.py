@@ -2363,6 +2363,7 @@ def roles(projection: GraphProjection, values: tuple[object, ...]) -> None:
             "projection_role": "receiver",
             "projection_expression": "projection",
             "physical_access_kind": AccessKind.KEYS,
+            "physical_operation_shape": "keys",
         },
         {
             "receiver_type_origin": "orchestrator.graph.GraphProjection",
@@ -2370,6 +2371,7 @@ def roles(projection: GraphProjection, values: tuple[object, ...]) -> None:
             "projection_expression": "projection",
             "physical_old_field_name": "run_state",
             "physical_access_kind": AccessKind.LITERAL_SUBSCRIPT_READ,
+            "physical_operation_shape": "literal_subscript_read",
         },
     ]
 
@@ -2516,6 +2518,7 @@ def pass_through(projection: GraphProjection) -> object:
             "projection_expression": "projection['run_state']",
             "physical_old_field_name": "run_state",
             "physical_access_kind": AccessKind.LITERAL_SUBSCRIPT_READ,
+            "physical_operation_shape": "literal_subscript_read",
         },
         "producer": {
             "callee_origin": "orchestrator.graph.initial_projection",
