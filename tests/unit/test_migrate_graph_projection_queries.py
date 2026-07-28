@@ -6,7 +6,6 @@ from scripts.codemods.migrate_graph_projection_queries import (
     AnchorRefusedError,
     DispositionPlan,
     PlannedOperation,
-    ProjectionArgumentEvidence,
     SourceSnapshot,
     compile_operation_stream,
     plan_reviewed_dispositions,
@@ -527,7 +526,7 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites() -> None:
     )
 
 
-def test_anchor_evidence_refuses_shadowed_foreign_dynamic_and_wrong_position_calls() -> None:
+def test_anchor_evidence_copies_exact_collector_context_for_reanchored_calls() -> None:
     manifest = load_manifest(MANIFEST_PATH)
     source = SourceSnapshot(
         relative_path="src/example.py",
@@ -551,18 +550,27 @@ def test_anchor_evidence_refuses_shadowed_foreign_dynamic_and_wrong_position_cal
         site.qualified_function: site for site in stream.sites if site.anchor.node_type == "Call"
     }
 
-    assert calls["good"].anchor.callable_origin == "orchestrator.graph.run_state"
-    assert calls["good"].anchor.projection_arguments == (
-        ProjectionArgumentEvidence(position=0, provenance="orchestrator.graph.initial_projection"),
-    )
-    assert calls["shadow"].anchor.callable_origin is None
-    assert calls["wrong"].anchor.projection_arguments == (
-        ProjectionArgumentEvidence(position=1, provenance="orchestrator.graph.GraphProjection"),
-    )
-    assert calls["dynamic"].anchor.callable_origin is None
+    assert calls["good"].anchor.context.model_dump(exclude_none=True) == {
+        "callee_origin": "orchestrator.graph.run_state",
+        "projection_role": "positional",
+        "positional_index": 0,
+    }
+    assert calls["shadow"].anchor.context.model_dump(exclude_none=True) == {
+        "projection_role": "positional",
+        "positional_index": 0,
+    }
+    assert calls["wrong"].anchor.context.model_dump(exclude_none=True) == {
+        "callee_origin": "orchestrator.graph.run_state",
+        "projection_role": "positional",
+        "positional_index": 1,
+    }
+    assert calls["dynamic"].anchor.context.model_dump(exclude_none=True) == {
+        "projection_role": "positional",
+        "positional_index": 0,
+    }
 
 
-def test_anchor_evidence_pairs_only_proven_projection_arguments_with_their_argument_slot() -> None:
+def test_anchor_evidence_copies_collector_context_for_positional_and_keyword_arguments() -> None:
     manifest = load_manifest(MANIFEST_PATH)
     source = SourceSnapshot(
         relative_path="src/example.py",
@@ -580,14 +588,46 @@ def test_anchor_evidence_pairs_only_proven_projection_arguments_with_their_argum
     calls = {
         site.qualified_function: site
         for site in stream.sites
-        if site.anchor.node_type == "Call" and site.anchor.callable_origin is not None
+        if site.anchor.node_type == "Call" and site.anchor.context is not None
     }
 
-    assert calls["positional"].anchor.projection_arguments == (
-        ProjectionArgumentEvidence(position=0, provenance="orchestrator.graph.initial_projection"),
-    )
-    assert calls["keyword"].anchor.projection_arguments == (
-        ProjectionArgumentEvidence(
-            keyword="projection", provenance="orchestrator.graph.GraphProjection"
+    assert calls["positional"].anchor.context.model_dump(exclude_none=True) == {
+        "callee_origin": "orchestrator.graph.run_state",
+        "projection_role": "positional",
+        "positional_index": 0,
+    }
+    assert calls["keyword"].anchor.context.model_dump(exclude_none=True) == {
+        "callee_origin": "orchestrator.graph.run_state",
+        "projection_role": "keyword",
+        "keyword_name": "projection",
+    }
+
+
+def test_compile_operation_stream_refuses_mismatched_inventory_context() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> str:\n"
+            "    return projection['run_state']\n"
         ),
     )
+    inventory = inventory_sources((source,), manifest)
+    occurrence = inventory.occurrences[0]
+    invalid = inventory.model_copy(
+        update={
+            "occurrences": (
+                occurrence.model_copy(
+                    update={
+                        "context": occurrence.context.model_copy(
+                            update={"projection_role": "positional", "positional_index": 0}
+                        )
+                    }
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(AnchorRefusedError, match="context does not match"):
+        compile_operation_stream((source,), invalid, query_migration_skeleton(invalid))

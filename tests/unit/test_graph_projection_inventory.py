@@ -232,6 +232,7 @@ def fixture() -> GraphProjection:
         occurrence.qualified_function in {"access", "fixture"}
         for occurrence in inventory.occurrences
     )
+
     assert all(
         occurrence.ordering_sensitivity_disposition
         in {
@@ -2318,3 +2319,105 @@ def access(projection: GraphProjection) -> None:
     assert [(item.qualified_function, item.code) for item in inventory.diagnostics] == [
         ("access", "unsupported_binding"),
     ]
+
+
+def test_collect_source_captures_authoritative_call_and_physical_context() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphProjection, run_state
+
+def roles(projection: GraphProjection, values: tuple[object, ...]) -> None:
+    run_state(projection)
+    run_state(projection=projection)
+    run_state(*values, projection)
+    projection.keys()
+    projection["run_state"]
+""",
+        relative_path="contexts.py",
+        baseline_revision="baseline",
+    )
+
+    assert [item.context.model_dump(exclude_none=True) for item in inventory.diagnostics] == [
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "positional",
+            "positional_index": 0,
+        },
+        {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "keyword",
+            "keyword_name": "projection",
+        },
+        {"callee_origin": "orchestrator.graph.run_state", "projection_role": "ambiguous"},
+    ]
+    assert [item.context.model_dump(exclude_none=True) for item in inventory.occurrences] == [
+        {
+            "receiver_type_origin": "orchestrator.graph.GraphProjection",
+            "projection_role": "receiver",
+            "physical_access_kind": AccessKind.KEYS,
+        },
+        {
+            "receiver_type_origin": "orchestrator.graph.GraphProjection",
+            "projection_role": "receiver",
+            "physical_old_field_name": "run_state",
+            "physical_access_kind": AccessKind.LITERAL_SUBSCRIPT_READ,
+        },
+    ]
+
+
+def test_collect_source_context_covers_binding_comparison_update_and_pass_through_families() -> (
+    None
+):
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphProjection, initial_projection, run_state
+
+def typed_binding(projection: GraphProjection) -> None:
+    value: object = projection
+
+def nested_comparison(projection: GraphProjection) -> bool:
+    return run_state(projection) == "active"
+
+def field_update(projection: GraphProjection) -> None:
+    projection["run_state"].update({})
+
+def producer() -> object:
+    return initial_projection()
+
+def pass_through(projection: GraphProjection) -> object:
+    return projection
+""",
+        relative_path="context_families.py",
+        baseline_revision="baseline",
+    )
+
+    contexts = {
+        item.qualified_function: item.context.model_dump(exclude_none=True)
+        for item in inventory.diagnostics
+    }
+
+    assert contexts == {
+        "typed_binding": {
+            "receiver_type_origin": "orchestrator.graph.GraphProjection",
+            "projection_role": "receiver",
+        },
+        "nested_comparison": {
+            "callee_origin": "orchestrator.graph.run_state",
+            "projection_role": "positional",
+            "positional_index": 0,
+        },
+        "field_update": {
+            "receiver_type_origin": "orchestrator.graph.GraphProjection",
+            "projection_role": "receiver",
+            "physical_old_field_name": "run_state",
+            "physical_access_kind": AccessKind.LITERAL_SUBSCRIPT_READ,
+        },
+        "producer": {
+            "callee_origin": "orchestrator.graph.initial_projection",
+            "projection_role": "receiver",
+        },
+        "pass_through": {
+            "receiver_type_origin": "orchestrator.graph.GraphProjection",
+            "projection_role": "receiver",
+        },
+    }

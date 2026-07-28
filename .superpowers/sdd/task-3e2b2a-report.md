@@ -2,33 +2,49 @@
 
 ## Delivered
 
-- Replaced the module-global import/shadow scanner with LibCST
-  `QualifiedNameProvider` and `ScopeProvider` evidence.
-- Callable origins now require one exact qualified imported or typed-local producer
-  identity; dynamic, foreign, conflicting, and lexical-shadowed calls fail closed.
-- Projection provenance is keyed by qualified lexical binding identity, with typed
-  parameters, approved factory results, pass-through assignments, and reassignment
-  kills represented in the local flow.
-- Replaced independent positional/name tuples with frozen
-  `ProjectionArgumentEvidence` facts.  Each fact carries exactly one positional
-  index or keyword name and its specific provenance.
-- Updated structural consumers to use paired facts while preserving the approved
-  803-site stream and disposition counts.
+- Made `ProjectionCallContext` the authoritative frozen evidence carried by
+  inventory occurrences and diagnostics.  It captures exact imported callee
+  and type origins, receiver/positional/keyword/ambiguous roles, and physical
+  old-field/access facts.
+- Extended the collector's existing proven-flow families for typed bindings,
+  nested comparison calls, projection-field receivers, approved producer
+  returns, pass-throughs, and nested projection-bearing constructor calls.
+  Starred positional calls remain ambiguous; unresolved, shadowed, dynamic,
+  local-callee, and foreign origins do not gain a callee origin.
+- Removed the codemod's duplicate `_structural_evidence` dataflow visitor,
+  binding/provenance maps, local-producer synthesis, source-substring gate,
+  `ProjectionArgumentEvidence`, and duplicate anchor evidence fields.
+  Anchoring now copies stored collector context and only structurally
+  revalidates exact callee/type origin and receiver/argument role with LibCST
+  qualified-name metadata.
+- Structural disposition planning now consumes only stored anchor context.
+  It recognizes typed bindings, imported projector results, physical
+  projection accesses, and public graph calls without site-level exceptions.
 
-## Verification
+## Focused Coverage
 
-- `uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_anchor_evidence_refuses_shadowed_foreign_dynamic_and_wrong_position_calls tests/unit/test_migrate_graph_projection_queries.py::test_anchor_evidence_pairs_only_proven_projection_arguments_with_their_argument_slot -q` — 2 passed (5.43s).
-- `uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_live_repository_compilation_includes_every_remaining_fixture_site -q` — passed (117.38s) with its explicit timeout raised from 120s to 300s.
-- `uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_structural_plan_closes_reviewed_and_public_query_test_sites -q` — passed (177.62s).
-- `uv run ruff check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py`
-- `uv run ruff format --check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py`
-- `uv run pyright scripts/codemods/migrate_graph_projection_queries.py` — 0 errors.
+- Added collector coverage for typed binding, one nested comparison call,
+  field-update receiver/physical evidence, approved producer return, and bare
+  typed pass-through context.
+- Updated anchor coverage to assert copied collector context for imported,
+  shadowed, wrong-position, dynamic, positional, and keyword calls, plus the
+  existing mismatched-inventory-context refusal.
 
-The controller's foreground `uv run pytest` completed after the timeout fix:
-`5001 passed, 3 skipped, 3 warnings in 468.88s`. The three warnings are the
-existing `aiosqlite` datetime-adapter deprecations.
+## Exact Evidence
+
+- Programmatic grouping of all reviewed-neutral plus pending sites reported:
+  `sites 803 neutral/pending 173 missing 0 {}`.
+- `uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_structural_plan_closes_reviewed_and_public_query_test_sites -q` — passed in 179.82s; asserts 803 identities, 201/80/173/349 disposition partition, and zero pending sites.
+- `uv run pytest tests/unit/test_graph_projection_inventory.py tests/unit/test_migrate_graph_projection_queries.py -q` — `120 passed in 224.13s`.
+- Generated diagnostic artifact check:
+  `uv run python scripts/graph_projection_inventory.py --diagnose | diff -q - docs/graph-projection-inventory-diagnostics.md` — unchanged; no regeneration required.
+- `uv run ruff check .` — passed.
+- `uv run ruff format --check .` — `746 files already formatted`.
+- `uv run pyright` — `0 errors, 0 warnings, 0 informations`.
+- `uv run pytest` — `5004 passed, 3 skipped, 3 warnings in 452.67s`.  The warnings are existing `aiosqlite` Python 3.12 datetime-adapter deprecations.
 
 ## Concern
 
-Qualified-name metadata for the complete live inventory is intentionally given
-the same 300-second per-test budget as the other live compiler test.
+The repository-wide LibCST inventory/compiler tests remain intentionally
+bounded by their explicit 300-second per-test timeout; the structural closure
+test completed in 179.82 seconds in this verification run.
