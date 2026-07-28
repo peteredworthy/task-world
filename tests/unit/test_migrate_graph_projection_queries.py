@@ -9,6 +9,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     SourceSnapshot,
     compile_operation_stream,
     plan_reviewed_dispositions,
+    plan_structural_dispositions,
     shape_summary,
 )
 from scripts.graph_projection_inventory import (
@@ -480,3 +481,77 @@ def test_live_repository_compilation_includes_every_remaining_fixture_site() -> 
         site.diagnostic_code is None or site.diagnostic_code in DiagnosticCode
         for site in stream.sites
     )
+
+
+@pytest.mark.timeout(300)
+def test_structural_plan_closes_reviewed_and_public_query_test_sites() -> None:
+    """The complete unchanged partition is derived from anchor evidence, not site IDs."""
+    manifest = load_manifest(MANIFEST_PATH)
+    inventory = inventory_repository(ROOT, manifest)
+    sources = tuple(
+        SourceSnapshot(relative_path=path.relative_to(ROOT).as_posix(), source=path.read_text())
+        for directory in (ROOT / "src", ROOT / "tests", ROOT / "scripts")
+        for path in sorted(directory.rglob("*.py"))
+        if "__pycache__" not in path.parts
+    )
+    ledger = load_query_migration_manifest(
+        ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
+    )
+
+    plan = plan_structural_dispositions(
+        compile_operation_stream(sources, inventory, query_migration_skeleton(inventory, ROOT)),
+        ledger,
+    )
+
+    assert plan.pending_site_ids == ()
+    assert len(plan.operations) == 454
+    assert len(plan.deferred_site_ids) == 349
+    assert plan.disposition_counts == (
+        ("approved_core", 80),
+        ("projection_neutral", 173),
+        ("query_transform", 201),
+    )
+    assert sum(count for _, count in plan.rule_family_counts) == 173
+    assert sum(count for _, count in plan.symbol_origin_counts) == 173
+    assert plan == plan_structural_dispositions(
+        compile_operation_stream(
+            tuple(reversed(sources)), inventory, query_migration_skeleton(inventory, ROOT)
+        ),
+        ledger.model_copy(
+            update={
+                "dispositions": tuple(reversed(ledger.dispositions)),
+                "unclassified_sites": tuple(reversed(ledger.unclassified_sites)),
+            }
+        ),
+    )
+
+
+def test_anchor_evidence_refuses_shadowed_foreign_dynamic_and_wrong_position_calls() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection, initial_projection, run_state as state\n"
+            "from foreign import run_state\n\n"
+            "def good() -> None:\n"
+            "    projection = initial_projection()\n"
+            "    state(projection)\n\n"
+            "def shadow(state: object, projection: GraphProjection) -> None:\n"
+            "    state(projection)\n\n"
+            "def wrong(projection: GraphProjection) -> None:\n"
+            "    state('wrong', projection)\n\n"
+            "def dynamic(projection: GraphProjection) -> None:\n"
+            "    getattr(state, 'call')(projection)\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+    calls = {
+        site.qualified_function: site for site in stream.sites if site.anchor.node_type == "Call"
+    }
+
+    assert calls["good"].anchor.callable_origin == "orchestrator.graph.run_state"
+    assert calls["good"].anchor.projection_argument_positions == (0,)
+    assert calls["shadow"].anchor.callable_origin is None
+    assert calls["wrong"].anchor.projection_argument_positions == (1,)
+    assert calls["dynamic"].anchor.callable_origin is None
