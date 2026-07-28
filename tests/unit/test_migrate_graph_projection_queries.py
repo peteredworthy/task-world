@@ -10,10 +10,13 @@ from scripts.codemods.migrate_graph_projection_queries import (
 )
 from scripts.graph_projection_inventory import (
     DiagnosticCode,
+    SourceDigest,
+    inventory_paths,
     inventory_repository,
     inventory_sources,
     load_manifest,
     query_migration_skeleton,
+    source_digest,
 )
 
 
@@ -21,7 +24,9 @@ ROOT = Path(__file__).parents[2]
 MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
 
 
-def test_inventory_sources_matches_repository_collection_for_source_snapshots() -> None:
+def test_inventory_sources_matches_filesystem_adapter_for_equivalent_snapshot(
+    tmp_path: Path,
+) -> None:
     manifest = load_manifest(MANIFEST_PATH)
     source = SourceSnapshot(
         relative_path="src/example.py",
@@ -32,10 +37,14 @@ def test_inventory_sources_matches_repository_collection_for_source_snapshots() 
         ),
     )
 
-    inventory = inventory_sources((source,), manifest)
+    path = tmp_path / source.relative_path
+    path.parent.mkdir()
+    path.write_text(source.source)
 
-    assert len(inventory.occurrences) == 1
-    assert inventory.occurrences[0].normalized_expression == "projection['run_state']"
+    inventory = inventory_sources((source,), manifest)
+    filesystem_inventory = inventory_paths((path,), manifest, root=tmp_path)
+
+    assert inventory == filesystem_inventory
 
 
 def test_compile_operation_stream_adapts_occurrences_and_diagnostics_once() -> None:
@@ -116,8 +125,79 @@ def test_compile_operation_stream_refuses_stale_digest_and_duplicate_anchor() ->
 
     with pytest.raises(AnchorRefusedError, match="digest"):
         compile_operation_stream((changed,), inventory, skeleton)
+    duplicate_inventory = inventory.model_copy(
+        update={
+            "source_digests": (
+                SourceDigest(
+                    relative_path=duplicate.relative_path,
+                    digest=source_digest(duplicate.source),
+                ),
+            )
+        }
+    )
     with pytest.raises(AnchorRefusedError, match="ambiguous"):
-        compile_operation_stream((duplicate,), inventory, skeleton, verify_digest=False)
+        compile_operation_stream((duplicate,), duplicate_inventory, skeleton)
+
+
+def test_compile_operation_stream_anchors_diagnostics_from_snapshots_without_repository_source() -> (
+    None
+):
+    manifest = load_manifest(MANIFEST_PATH)
+    original = SourceSnapshot(
+        relative_path="src/not-present-on-disk.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def compare(projection: GraphProjection) -> bool:\n"
+            '    return projection["run_state"] == "active"\n'
+        ),
+    )
+    inventory = inventory_sources((original,), manifest)
+    skeleton = query_migration_skeleton(inventory)
+    moved = original.model_copy(update={"source": "\n" + original.source})
+
+    stream = compile_operation_stream((moved,), inventory, skeleton)
+
+    diagnostic = next(site for site in stream.sites if site.origin == "diagnostic")
+    assert diagnostic.original_site_id in {
+        site.site_key for site in skeleton.unclassified_sites if site.diagnostic_code is not None
+    }
+    assert diagnostic.locator.line == inventory.diagnostics[0].line + 1
+
+
+def test_compile_operation_stream_refuses_ambiguous_diagnostic_snapshot_anchor() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    original = SourceSnapshot(
+        relative_path="src/not-present-on-disk.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def compare(projection: GraphProjection) -> bool:\n"
+            '    return projection["run_state"] == "active"\n'
+        ),
+    )
+    inventory = inventory_sources((original,), manifest)
+    skeleton = query_migration_skeleton(inventory)
+    ambiguous = original.model_copy(
+        update={
+            "source": original.source.replace(
+                '    return projection["run_state"] == "active"',
+                '    return projection["run_state"] == "active"\n'
+                '    return projection["run_state"] == "active"',
+            )
+        }
+    )
+    altered_inventory = inventory.model_copy(
+        update={
+            "source_digests": (
+                SourceDigest(
+                    relative_path=ambiguous.relative_path,
+                    digest=source_digest(ambiguous.source),
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(AnchorRefusedError, match="ambiguous"):
+        compile_operation_stream((ambiguous,), altered_inventory, skeleton)
 
 
 def test_shape_summary_groups_only_structural_shape_key_fields() -> None:
@@ -155,7 +235,15 @@ def test_live_repository_compilation_includes_every_remaining_fixture_site() -> 
     stream = compile_operation_stream(tracked_sources, inventory, skeleton)
 
     assert len(stream.sites) == len(inventory.occurrences) + len(inventory.diagnostics)
-    assert sum(site.relative_path.startswith("tests/") for site in stream.sites) >= 349
+    fixture_site_ids = {
+        site.site_key for site in skeleton.unclassified_sites if site.domain == "test_fixture"
+    }
+    compiled_site_ids = [site.original_site_id for site in stream.sites]
+    assert fixture_site_ids
+    assert {
+        site_id for site_id in compiled_site_ids if site_id in fixture_site_ids
+    } == fixture_site_ids
+    assert all(compiled_site_ids.count(site_id) == 1 for site_id in fixture_site_ids)
     assert all(
         site.diagnostic_code is None or site.diagnostic_code in DiagnosticCode
         for site in stream.sites

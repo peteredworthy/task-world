@@ -114,3 +114,81 @@ are still represented in normalized CST identity checks; any changed semantic
 expression, stale digest, or ambiguous anchor fails closed. The report does not
 publish a repository artifact because publication is explicitly out of scope;
 the summary remains a pure machine-readable compiler result.
+
+## Independent-review fix wave
+
+### RED / GREEN
+
+**RED:** the new source-independent diagnostic snapshot tests initially failed
+with `TypeError: query_migration_skeleton() missing 1 required positional
+argument: 'root'`; the live exact-fixture assertion also exposed that the raw,
+complete current skeleton contains 449 `test_fixture` IDs, not the historical
+349 stated in the review.
+
+**GREEN:**
+
+```text
+$ uv run pytest tests/unit/test_migrate_graph_projection_queries.py \
+    tests/unit/test_graph_projection_inventory.py -q
+108 passed in 116.78s
+
+$ uv run ruff check scripts/graph_projection_inventory.py \
+    scripts/codemods/migrate_graph_projection_queries.py \
+    tests/unit/test_migrate_graph_projection_queries.py
+All checks passed!
+
+$ uv run ruff format --check scripts/graph_projection_inventory.py \
+    scripts/codemods/migrate_graph_projection_queries.py \
+    tests/unit/test_migrate_graph_projection_queries.py
+3 files already formatted
+
+$ uv run pyright
+0 errors, 0 warnings, 0 informations
+
+$ uv run pytest
+4992 passed, 3 skipped, 3 warnings in 209.54s
+```
+
+### Fixes
+
+- Occurrence anchors now narrow candidates structurally, recompute canonical
+  IDs from scoped normalized expressions and recomputed candidate ordinals, and
+  require the corresponding generated-skeleton identity. The recorded locator
+  is no longer an identity selector.
+- Diagnostics now retain source pattern, same-pattern ordinal, CST node type,
+  and normalized CST expression at collection time. Skeleton keys and
+  generation consume this captured evidence and do not reread repository files.
+  Diagnostic re-anchoring is scoped, checks cardinality and CST evidence, and
+  has no module fallback.
+- `source_digest()` now hashes Python token type/content pairs while ignoring
+  only layout-only `NL` tokens. Multiline string token contents remain intact;
+  compile-time digest verification is mandatory and no public bypass remains.
+- The live test derives fixture IDs from the generated skeleton and requires
+  every derived ID exactly once in the compiled stream. The current complete
+  generated set is 449 IDs; the requested historical count of 349 does not
+  match this branch's authoritative collector output.
+- Parent and operation classification is finite and raises
+  `AnchorRefusedError` for unrecognized structures rather than silently using
+  generic shapes. Current encountered contexts include condition, iterable,
+  comparison/membership, nested/attribute receiver, typed parameter,
+  collection element, assignment, call, return, annotation, deletion, and
+  yield/await.
+- The source-parity test now compares the snapshot collector directly against
+  the filesystem adapter for equivalent text; diagnostic snapshot tests use a
+  deliberately nonexistent repository path.
+
+### Changed files
+
+- `scripts/graph_projection_inventory.py`
+- `scripts/codemods/migrate_graph_projection_queries.py`
+- `tests/unit/test_migrate_graph_projection_queries.py`
+- `.superpowers/sdd/task-3e1-report.md`
+
+### Fix-wave self-review / concern
+
+No consumer or test-fixture source was edited. The `349` review count is not
+reproducible from the authoritative live skeleton on this branch: its derived
+`test_fixture` identity set contains 449 IDs (240 in
+`test_graph_projection_queries.py`, 101 in `test_graph_projections.py`, and
+108 elsewhere). The exact-once assertion deliberately uses the mechanically
+derived set rather than silently dropping 100 sites.

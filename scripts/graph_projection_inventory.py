@@ -3,8 +3,10 @@
 import ast
 import argparse
 import hashlib
+import io
 import os
 import subprocess
+import tokenize
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -145,6 +147,10 @@ class InventoryDiagnostic(BaseModel):
     column: int
     code: DiagnosticCode
     message: str
+    normalized_source_pattern: str = "<unknown>"
+    same_pattern_ordinal: int = 0
+    source_node_type: str = "<unknown>"
+    normalized_cst_expression: str = "<unknown>"
     remediation: str = "replace this dynamic projection access with a typed GraphProjection flow"
 
 
@@ -359,47 +365,29 @@ def _normalize_loaded_migration_site(raw_site: object) -> dict[str, object]:
     return normalized
 
 
-def _diagnostic_source_pattern(root: Path, diagnostic: InventoryDiagnostic) -> str:
-    """Normalize the exact source line that caused a fail-closed diagnostic."""
-    source_line = (root / diagnostic.relative_path).read_text().splitlines()[diagnostic.line - 1]
-    return " ".join(source_line.strip().split())
+def _diagnostic_source_pattern(diagnostic: InventoryDiagnostic) -> str:
+    """Return collector-captured diagnostic evidence without rereading source."""
+    return diagnostic.normalized_source_pattern
 
 
-def _diagnostic_site_key(
-    root: Path,
-    baseline_revision: str,
-    diagnostic: InventoryDiagnostic,
-    same_pattern_ordinal: int = 0,
-) -> str:
+def _diagnostic_site_key(baseline_revision: str, diagnostic: InventoryDiagnostic) -> str:
     return disposition_site_key(
         baseline_revision=baseline_revision,
         relative_path=diagnostic.relative_path,
         qualified_function=diagnostic.qualified_function,
-        normalized_source_pattern=_diagnostic_source_pattern(root, diagnostic),
+        normalized_source_pattern=_diagnostic_source_pattern(diagnostic),
         diagnostic_code=diagnostic.code,
-        same_pattern_ordinal=same_pattern_ordinal,
+        same_pattern_ordinal=diagnostic.same_pattern_ordinal,
     )
 
 
-def _diagnostic_site_keys(root: Path, inventory: AccessInventory) -> dict[int, str]:
-    """Assign stable ordinals to otherwise identical diagnostic source patterns."""
-    ordinals: dict[tuple[str, str, str, DiagnosticCode], int] = {}
+def _diagnostic_site_keys(inventory: AccessInventory) -> dict[int, str]:
+    """Return diagnostic keys from collector-captured source evidence."""
     keys: dict[int, str] = {}
     for diagnostic in inventory.diagnostics:
-        pattern = _diagnostic_source_pattern(root, diagnostic)
-        identity = (
-            diagnostic.relative_path,
-            diagnostic.qualified_function,
-            pattern,
-            diagnostic.code,
-        )
-        ordinal = ordinals.get(identity, 0)
-        ordinals[identity] = ordinal + 1
         keys[id(diagnostic)] = _diagnostic_site_key(
-            root,
             inventory.baseline_revision,
             diagnostic,
-            ordinal,
         )
     return keys
 
@@ -470,9 +458,9 @@ def validate_query_migration_manifest(
                 occurrence.normalized_expression,
             ),
         )
-    diagnostic_keys = _diagnostic_site_keys(root, inventory)
+    diagnostic_keys = _diagnostic_site_keys(inventory)
     for diagnostic in inventory.diagnostics:
-        pattern = _diagnostic_source_pattern(root, diagnostic)
+        pattern = _diagnostic_source_pattern(diagnostic)
         expected[diagnostic_keys[id(diagnostic)]] = (
             diagnostic.relative_path,
             diagnostic.qualified_function,
@@ -531,8 +519,11 @@ def validate_query_migration_manifest(
     }
 
 
-def query_migration_skeleton(inventory: AccessInventory, root: Path) -> QueryMigrationManifest:
+def query_migration_skeleton(
+    inventory: AccessInventory, root: Path | None = None
+) -> QueryMigrationManifest:
     """Mechanically generate a complete, unclassified disposition ledger from inventory."""
+    del root
     sites = [
         UnclassifiedMigrationSite(
             site_key=occurrence.occurrence_id,
@@ -547,17 +538,17 @@ def query_migration_skeleton(inventory: AccessInventory, root: Path) -> QueryMig
         )
         for occurrence in inventory.occurrences
     ]
-    diagnostic_keys = _diagnostic_site_keys(root, inventory)
+    diagnostic_keys = _diagnostic_site_keys(inventory)
     sites.extend(
         UnclassifiedMigrationSite(
             site_key=diagnostic_keys[id(diagnostic)],
             relative_path=diagnostic.relative_path,
             qualified_function=diagnostic.qualified_function,
-            normalized_source_pattern=_diagnostic_source_pattern(root, diagnostic),
+            normalized_source_pattern=_diagnostic_source_pattern(diagnostic),
             diagnostic_code=diagnostic.code,
             domain=_site_domain(
                 diagnostic.relative_path,
-                normalized_source_pattern=_diagnostic_source_pattern(root, diagnostic),
+                normalized_source_pattern=_diagnostic_source_pattern(diagnostic),
             ),
         )
         for diagnostic in inventory.diagnostics
@@ -1299,11 +1290,13 @@ class _Collector(cst.CSTVisitor):
         baseline_revision: str,
         fields: dict[str, FieldOwnership],
         symbols: _ModuleSymbols | None = None,
+        source: str = "",
     ) -> None:
         self.relative_path = relative_path
         self.baseline_revision = baseline_revision
         self.fields = fields
         self.symbols = symbols or _module_symbols("")
+        self.source_lines = source.splitlines()
         self.tracked_attributes: dict[int, set[str]] = {}
         self.typed_fields = self.symbols.class_fields
         self.call_symbols = self.symbols.call_symbols
@@ -1316,7 +1309,7 @@ class _Collector(cst.CSTVisitor):
         self.shadowed_symbols: dict[int, set[str]] = {}
         self.return_annotations: list[str | None] = []
         self.records: list[tuple[str, str, str | None, AccessKind, int, int]] = []
-        self.diagnostics: list[tuple[str, str, str, int, int]] = []
+        self.diagnostics: list[tuple[str, DiagnosticCode, str, str, str, str, int, int]] = []
         self.diagnostic_keys: set[tuple[int, DiagnosticCode]] = set()
         self.handled: set[int] = set()
 
@@ -1684,6 +1677,12 @@ class _Collector(cst.CSTVisitor):
     def _expression(self, node: cst.CSTNode) -> str:
         return ast.unparse(ast.parse(cst.Module([]).code_for_node(node)))
 
+    def _diagnostic_expression(self, node: cst.CSTNode) -> str:
+        try:
+            return self._expression(node)
+        except SyntaxError:
+            return cst.Module([]).code_for_node(node).strip()
+
     def _record(self, kind: AccessKind, field: str | None, node: cst.CSTNode) -> None:
         qualified = ".".join(self.lexical_names) or "<module>"
         position = self.get_metadata(PositionProvider, node).start
@@ -1709,6 +1708,11 @@ class _Collector(cst.CSTVisitor):
                 qualified or ".".join(self.lexical_names) or "<module>",
                 code,
                 message,
+                " ".join(self.source_lines[position.line - 1].strip().split())
+                if position.line <= len(self.source_lines)
+                else cst.Module([]).code_for_node(node).strip(),
+                type(node).__name__,
+                self._diagnostic_expression(node),
                 position.line,
                 position.column,
             )
@@ -2462,18 +2466,41 @@ class _Collector(cst.CSTVisitor):
                     else "not_applicable",
                 )
             )
-        diagnostics = tuple(
-            InventoryDiagnostic(
-                relative_path=self.relative_path,
-                qualified_function=qualified,
-                line=line,
-                column=column,
-                code=code,
-                message=message,
-                remediation=_remediation(code),
-            )
-            for qualified, code, message, line, column in self.diagnostics
+        diagnostic_records = sorted(
+            self.diagnostics,
+            key=lambda item: (item[6], item[7], item[1]),
         )
+        diagnostic_ordinals: dict[tuple[str, DiagnosticCode, str], int] = {}
+        diagnostics_list: list[InventoryDiagnostic] = []
+        for (
+            qualified,
+            code,
+            message,
+            pattern,
+            node_type,
+            cst_expression,
+            line,
+            column,
+        ) in diagnostic_records:
+            identity = (qualified, code, pattern)
+            ordinal = diagnostic_ordinals.get(identity, 0)
+            diagnostic_ordinals[identity] = ordinal + 1
+            diagnostics_list.append(
+                InventoryDiagnostic(
+                    relative_path=self.relative_path,
+                    qualified_function=qualified,
+                    line=line,
+                    column=column,
+                    code=code,
+                    message=message,
+                    normalized_source_pattern=pattern,
+                    same_pattern_ordinal=ordinal,
+                    source_node_type=node_type,
+                    normalized_cst_expression=cst_expression,
+                    remediation=_remediation(code),
+                )
+            )
+        diagnostics = tuple(diagnostics_list)
         return SourceInventory(
             relative_path=self.relative_path,
             baseline_revision=self.baseline_revision,
@@ -2489,12 +2516,7 @@ class _Collector(cst.CSTVisitor):
                     ),
                 )
             ),
-            diagnostics=tuple(
-                sorted(
-                    diagnostics,
-                    key=lambda item: (item.relative_path, item.line, item.column, item.code),
-                )
-            ),
+            diagnostics=diagnostics,
         )
 
 
@@ -2518,6 +2540,14 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
                     column=error.raw_column,
                     code=DiagnosticCode.PARSE_ERROR,
                     message=str(error),
+                    normalized_source_pattern=(
+                        " ".join(source.splitlines()[error.raw_line - 1].strip().split())
+                        if error.raw_line <= len(source.splitlines())
+                        else str(error)
+                    ),
+                    same_pattern_ordinal=0,
+                    source_node_type="ParseError",
+                    normalized_cst_expression=str(error),
                 ),
             ),
         )
@@ -2527,15 +2557,23 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
         baseline_revision,
         _manifest_fields(),
         symbols=symbols,
+        source=source,
     )
     MetadataWrapper(module).visit(collector)
     return collector.result()
 
 
 def source_digest(source: str) -> str:
-    """Return a semantic source digest that deliberately ignores blank-line movement."""
-    payload = "\n".join(line for line in source.splitlines() if line.strip())
-    return hashlib.sha256(payload.encode()).hexdigest()
+    """Return a token digest that ignores only layout-only blank lines."""
+    try:
+        tokens = tuple(
+            (token.type, token.string)
+            for token in tokenize.generate_tokens(io.StringIO(source).readline)
+            if not (token.type == tokenize.NL and not token.string.strip())
+        )
+    except tokenize.TokenError:
+        tokens = ((tokenize.ERRORTOKEN, source),)
+    return hashlib.sha256(repr(tokens).encode()).hexdigest()
 
 
 def inventory_sources(
@@ -2596,6 +2634,7 @@ def inventory_sources(
             manifest.baseline_revision,
             {field.old_name: field for field in manifest.fields},
             symbols,
+            source,
         )
         MetadataWrapper(module).visit(collector)
         inventories.append(collector.result())
