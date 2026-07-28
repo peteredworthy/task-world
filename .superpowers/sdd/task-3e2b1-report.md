@@ -133,3 +133,41 @@ $ uv run pyright
 $ uv run pytest
 4998 passed, 3 skipped, 3 warnings in 279.16s (0:04:39)
 ```
+
+## Final refusal-coverage fix (`c045213e8`)
+
+The reused live stream/ledger setup now refuses a deferred record whose domain
+is not `test_fixture`, a deferred set with 348 records, and stream mutations
+that mechanically produce 99 or 101 pending IDs. The shuffled-input assertion
+also reverses `unclassified_sites`, in addition to the stream and reviewed
+ledger dispositions.
+
+```text
+$ uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites -q
+1 passed in 95.70s (0:01:35)
+
+$ uv run ruff check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py
+All checks passed!
+
+$ uv run ruff format --check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py
+Would reformat: tests/unit/test_migrate_graph_projection_queries.py
+
+$ uv run ruff format tests/unit/test_migrate_graph_projection_queries.py
+1 file reformatted
+
+Commit hook for c045213e8:
+ruff, ruff format, hardcoded-secrets, pyright, pytest, module-imports,
+signal-routing, and ui checks passed.
+```
+
+### Files changed
+
+- `tests/unit/test_migrate_graph_projection_queries.py` (commit `c045213e8`)
+- `.superpowers/sdd/task-3e2b1-report.md` (this report-only commit)
+
+### Self-review
+
+No production behavior changed in the refusal-coverage fix. Each adversarial
+case reuses the existing live setup rather than compiling inventory repeatedly;
+the mutated values are Pydantic copies, and the assertions verify the planner's
+fail-closed `AnchorRefusedError` boundary.
