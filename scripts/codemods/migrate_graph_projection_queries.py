@@ -301,6 +301,21 @@ class QueryCompositionGroup(BaseModel):
             raise ValueError("composition source span must be positive and ordered")
         if not self.outer_action_id.strip():
             raise ValueError("composition outer action owner must be nonblank")
+        expected_owner = (
+            f"outer:{self.relative_path}:{':'.join(str(value) for value in self.source_span)}"
+        )
+        if self.outer_action_id != expected_owner:
+            raise ValueError("composition outer action owner must match its path and span")
+        try:
+            outer = cst.parse_expression(self.original_outer_expression)
+        except cst.ParserSyntaxError as error:
+            raise ValueError("composition outer expression must parse") from error
+        if (
+            type(outer).__name__ != self.owner_anchor.node_type
+            or _normalized_node(outer) != self.owner_anchor.normalized_expression
+            or self.owner_anchor.same_expression_ordinal != 0
+        ):
+            raise ValueError("composition outer anchor must match its expression")
         if (
             not self.consumed_site_ids
             or tuple(sorted(self.consumed_site_ids)) != self.consumed_site_ids
@@ -335,6 +350,19 @@ class QueryCompositionGroup(BaseModel):
             } - set(self.anchor_relations)
             if missing:
                 raise ValueError("a site owner must relate to every descendant anchor")
+        children: dict[str, set[str]] = defaultdict(set)
+        for ancestor, descendant in self.anchor_relations:
+            children[ancestor].add(descendant)
+        for start in self.consumed_site_ids:
+            pending = list(children[start])
+            seen: set[str] = set()
+            while pending:
+                descendant = pending.pop()
+                if descendant == start:
+                    raise ValueError("composition anchor relations must be acyclic")
+                if descendant not in seen:
+                    seen.add(descendant)
+                    pending.extend(children[descendant])
         return self
 
 
@@ -408,8 +436,8 @@ def _is_ancestor(
 def _reanchor_operation_stream_site(
     site: MigrationSite,
     *,
-    candidates: dict[tuple[str, str], list[cst.CSTNode]],
     occurrence_nodes: tuple[cst.CSTNode, ...] | None,
+    diagnostic_nodes: tuple[cst.CSTNode, ...] | None,
     parents: dict[cst.CSTNode, cst.CSTNode],
     positions: dict[cst.CSTNode, object],
     qualified_names: dict[cst.CSTNode, object],
@@ -422,18 +450,17 @@ def _reanchor_operation_stream_site(
             raise AnchorRefusedError(f"missing occurrence CST anchor: {site.original_site_id}")
         node = occurrence_nodes[site.ordinal]
     else:
-        matches = [
-            candidate
-            for candidate, position in positions.items()
-            if position.start.line == site.locator.line
-            and position.start.column == site.locator.column
-            and type(candidate).__name__ == site.anchor.node_type
-            and (_normalized_node(candidate) or cst.Module([]).code_for_node(candidate).strip())
-            == site.anchor.normalized_expression
-        ]
-        if len(matches) != 1:
-            raise AnchorRefusedError(f"ambiguous diagnostic CST anchor: {site.original_site_id}")
-        node = matches[0]
+        if diagnostic_nodes is None or site.ordinal >= len(diagnostic_nodes):
+            raise AnchorRefusedError(f"missing diagnostic CST anchor: {site.original_site_id}")
+        node = diagnostic_nodes[site.ordinal]
+        position = positions[node].start
+        if (
+            position.line != site.locator.line
+            or type(node).__name__ != site.anchor.node_type
+            or (_normalized_node(node) or cst.Module([]).code_for_node(node).strip())
+            != site.anchor.normalized_expression
+        ):
+            raise AnchorRefusedError(f"diagnostic identity mismatch: {site.original_site_id}")
     if (
         _anchor_evidence(
             node,
@@ -473,8 +500,10 @@ def _reanchor_operation_stream_sites(
             raise AnchorRefusedError(f"inconsistent stream source digest: {path}")
         module = cst.parse_module(snapshot.source)
         candidates, parents, positions, qualified, qualified_names = _node_candidates(module)
+        scope_lines = _scope_lines(module, positions, qualified)
         for site in path_sites:
             occurrence_nodes: tuple[cst.CSTNode, ...] | None = None
+            diagnostic_nodes: tuple[cst.CSTNode, ...] | None = None
             if site.origin == "occurrence":
                 peers = [
                     item
@@ -483,28 +512,51 @@ def _reanchor_operation_stream_sites(
                     and item.qualified_function == site.qualified_function
                     and item.normalized_expression == site.normalized_expression
                 ]
-                nodes = tuple(
-                    node
-                    for node in candidates.get(
-                        (site.qualified_function, site.normalized_expression), ()
-                    )
-                    if any(
-                        item.access_kind is not None
-                        and _matches_access_kind(node, item.access_kind, parents)
-                        for item in peers
-                    )
+                nodes = _matching_occurrence_nodes(
+                    candidates=candidates,
+                    parents=parents,
+                    qualified_function=site.qualified_function,
+                    normalized_expression=site.normalized_expression,
+                    access_kinds=tuple(
+                        item.access_kind for item in peers if item.access_kind is not None
+                    ),
                 )
-                if len(nodes) != len(peers) or sorted(item.ordinal for item in peers) != list(
-                    range(len(nodes))
-                ):
+                if sorted(item.ordinal for item in peers) != list(range(len(nodes))):
                     raise AnchorRefusedError(
                         f"ambiguous occurrence anchor: {site.original_site_id}"
                     )
                 occurrence_nodes = nodes
+            else:
+                if site.diagnostic_code is None:
+                    raise AnchorRefusedError(f"diagnostic lacks code: {site.original_site_id}")
+                peers = [
+                    item
+                    for item in path_sites
+                    if item.origin == "diagnostic"
+                    and item.qualified_function == site.qualified_function
+                    and item.diagnostic_code is site.diagnostic_code
+                    and item.normalized_expression == site.normalized_expression
+                ]
+                diagnostic_nodes = _matching_diagnostic_nodes(
+                    source=snapshot.source,
+                    module=module,
+                    positions=positions,
+                    scope_lines=scope_lines,
+                    qualified_function=site.qualified_function,
+                    code=site.diagnostic_code,
+                    normalized_source_pattern=site.normalized_expression,
+                    signatures=tuple(
+                        (item.anchor.node_type, item.anchor.normalized_expression) for item in peers
+                    ),
+                )
+                if sorted(item.ordinal for item in peers) != list(range(len(diagnostic_nodes))):
+                    raise AnchorRefusedError(
+                        f"ambiguous diagnostic anchor: {site.original_site_id}"
+                    )
             node = _reanchor_operation_stream_site(
                 site,
-                candidates=candidates,
                 occurrence_nodes=occurrence_nodes,
+                diagnostic_nodes=diagnostic_nodes,
                 parents=parents,
                 positions=positions,
                 qualified_names=qualified_names,
@@ -1553,6 +1605,68 @@ def _scope_lines(
     }
 
 
+def _matching_occurrence_nodes(
+    *,
+    candidates: dict[tuple[str, str], list[cst.CSTNode]],
+    parents: dict[cst.CSTNode, cst.CSTNode],
+    qualified_function: str,
+    normalized_expression: str,
+    access_kinds: tuple[AccessKind, ...],
+) -> tuple[cst.CSTNode, ...]:
+    """Return the exact candidate set used by every occurrence anchor consumer."""
+    nodes = tuple(
+        node
+        for node in candidates.get((qualified_function, normalized_expression), ())
+        if any(_matches_access_kind(node, kind, parents) for kind in access_kinds)
+    )
+    if not access_kinds or len(nodes) != len(access_kinds):
+        raise AnchorRefusedError("ambiguous occurrence anchor")
+    return nodes
+
+
+def _matching_diagnostic_nodes(
+    *,
+    source: str,
+    module: cst.Module,
+    positions: dict[cst.CSTNode, object],
+    scope_lines: dict[int, str],
+    qualified_function: str,
+    code: DiagnosticCode,
+    normalized_source_pattern: str,
+    signatures: tuple[tuple[str, str], ...],
+) -> tuple[cst.CSTNode, ...]:
+    """Return the exact candidate set used by every diagnostic anchor consumer."""
+    matching_lines = {
+        index + 1
+        for index, line in enumerate(source.splitlines())
+        if " ".join(line.strip().split()) == normalized_source_pattern
+        and scope_lines.get(index + 1) == qualified_function
+    }
+    signature_counts = Counter(signatures)
+    nodes_by_signature: dict[tuple[str, str], tuple[cst.CSTNode, ...]] = {}
+    for signature, expected_count in signature_counts.items():
+        nodes = tuple(
+            node
+            for node, position in positions.items()
+            if position.start.line in matching_lines
+            and type(node).__name__ == signature[0]
+            and (_normalized_node(node) or module.code_for_node(node).strip()) == signature[1]
+        )
+        if len(nodes) != expected_count:
+            raise AnchorRefusedError(f"ambiguous {code.value} diagnostic anchor")
+        nodes_by_signature[signature] = nodes
+    return tuple(
+        sorted(
+            (candidate for values in nodes_by_signature.values() for candidate in values),
+            key=lambda candidate: (
+                positions[candidate].start.line,
+                positions[candidate].start.column,
+                type(candidate).__name__,
+            ),
+        )
+    )
+
+
 def _diagnostic_node(
     nodes: list[cst.CSTNode], source_node_type: str, normalized_cst_expression: str
 ) -> cst.CSTNode:
@@ -1627,23 +1741,19 @@ def compile_operation_stream(
         candidates, parents, positions, qualified, qualified_names = _node_candidates(module)
         scope_lines = _scope_lines(module, positions, qualified)
         for occurrence in occurrences_by_path[relative_path]:
-            key = (occurrence.qualified_function, occurrence.normalized_expression)
             matching_occurrences = tuple(
                 item
                 for item in occurrences_by_path[relative_path]
                 if item.qualified_function == occurrence.qualified_function
                 and item.normalized_expression == occurrence.normalized_expression
             )
-            nodes = [
-                node
-                for node in candidates.get(key, [])
-                if any(
-                    _matches_access_kind(node, item.kind, parents) for item in matching_occurrences
-                )
-            ]
-            expected_count = len(matching_occurrences)
-            if len(nodes) != expected_count:
-                raise AnchorRefusedError(f"ambiguous occurrence anchor: {occurrence.occurrence_id}")
+            nodes = _matching_occurrence_nodes(
+                candidates=candidates,
+                parents=parents,
+                qualified_function=occurrence.qualified_function,
+                normalized_expression=occurrence.normalized_expression,
+                access_kinds=tuple(item.kind for item in matching_occurrences),
+            )
             identities = {
                 occurrence_id(
                     inventory.baseline_revision,
@@ -1697,12 +1807,6 @@ def compile_operation_stream(
             )
         for diagnostic in diagnostics_by_path[relative_path]:
             pattern = diagnostic.normalized_source_pattern
-            matching_lines = {
-                index + 1
-                for index, line in enumerate(snapshot.source.splitlines())
-                if " ".join(line.strip().split()) == pattern
-                and scope_lines.get(index + 1) == diagnostic.qualified_function
-            }
             group = [
                 item
                 for item in diagnostics_by_path[relative_path]
@@ -1710,33 +1814,17 @@ def compile_operation_stream(
                 and item.code is diagnostic.code
                 and item.normalized_source_pattern == pattern
             ]
-            signatures = {(item.source_node_type, item.normalized_cst_expression) for item in group}
-            nodes_by_signature = {
-                signature: [
-                    node
-                    for node, position in positions.items()
-                    if position.start.line in matching_lines
-                    and type(node).__name__ == signature[0]
-                    and (_normalized_node(node) or cst.Module([]).code_for_node(node).strip())
-                    == signature[1]
-                ]
-                for signature in signatures
-            }
-            for signature, nodes_for_signature in nodes_by_signature.items():
-                expected_count = sum(
-                    item.source_node_type == signature[0]
-                    and item.normalized_cst_expression == signature[1]
-                    for item in group
-                )
-                if len(nodes_for_signature) != expected_count:
-                    raise AnchorRefusedError("ambiguous diagnostic anchor")
             signature = (diagnostic.source_node_type, diagnostic.normalized_cst_expression)
-            all_nodes = sorted(
-                (candidate for values in nodes_by_signature.values() for candidate in values),
-                key=lambda candidate: (
-                    positions[candidate].start.line,
-                    positions[candidate].start.column,
-                    type(candidate).__name__,
+            all_nodes = _matching_diagnostic_nodes(
+                source=snapshot.source,
+                module=module,
+                positions=positions,
+                scope_lines=scope_lines,
+                qualified_function=diagnostic.qualified_function,
+                code=diagnostic.code,
+                normalized_source_pattern=pattern,
+                signatures=tuple(
+                    (item.source_node_type, item.normalized_cst_expression) for item in group
                 ),
             )
             if diagnostic.same_pattern_ordinal >= len(all_nodes):

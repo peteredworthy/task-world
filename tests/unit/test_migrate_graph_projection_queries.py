@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,37 @@ from scripts.graph_projection_inventory import (
 
 ROOT = Path(__file__).parents[2]
 MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
+
+
+def _compile_occurrence_composition(
+    source: SourceSnapshot,
+) -> tuple[QueryCompositionPlan, OperationStream, DispositionPlan]:
+    inventory = inventory_sources((source,), load_manifest(MANIFEST_PATH))
+    stream = compile_operation_stream(
+        (source,), inventory, query_migration_skeleton(inventory, ROOT)
+    )
+    selected = tuple(site for site in stream.sites if site.origin == "occurrence")
+    operations = tuple(
+        PlannedOperation(
+            disposition="query_transform",
+            reason="synthetic composition contract",
+            consumed_site_ids=(site.original_site_id,),
+            shape_key=site.shape_key,
+        )
+        for site in sorted(selected, key=lambda item: item.original_site_id)
+    )
+    disposition = DispositionPlan(
+        operations=operations,
+        reviewed_deferred_site_ids=(),
+        generated_fixture_operations=(),
+        pending_site_ids=(),
+        disposition_counts=(("query_transform", len(operations)),),
+        shape_group_counts=tuple(sorted(Counter(item.shape_key for item in operations).items())),
+        rule_family_counts=(),
+        symbol_origin_counts=(),
+        generated_fixture_family_counts=(),
+    )
+    return compile_query_composition_plan((source,), stream, disposition), stream, disposition
 
 
 def test_inventory_sources_matches_filesystem_adapter_for_equivalent_snapshot(
@@ -997,6 +1029,66 @@ def test_query_composition_group_reanchors_outer_expression() -> None:
     assert group.anchor_relations == ()
 
 
+@pytest.mark.parametrize(
+    ("expression", "expected_outer_type"),
+    [
+        (
+            "(projection['run_state'], projection['task_states'])",
+            "Tuple",
+        ),
+        (
+            "[projection['run_state'], projection['task_states']]",
+            "List",
+        ),
+    ],
+)
+def test_query_composition_groups_sibling_anchors_under_one_synthetic_owner(
+    expression: str, expected_outer_type: str
+) -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection, node: str) -> object:\n"
+            f"    return {expression}\n"
+        ),
+    )
+
+    plan, stream, disposition = _compile_occurrence_composition(source)
+    shuffled = compile_query_composition_plan(
+        (source,),
+        stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
+        disposition.model_copy(update={"operations": tuple(reversed(disposition.operations))}),
+    )
+
+    assert plan == shuffled
+    assert len(plan.groups) == 1
+    group = plan.groups[0]
+    assert len(group.consumed_site_ids) == 2
+    assert group.owner_site_id is None
+    assert group.owner_anchor.node_type == expected_outer_type
+    assert group.anchor_relations == ()
+
+
+def test_query_composition_records_site_owned_outer_action() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+
+    plan, _, _ = _compile_occurrence_composition(source)
+
+    assert len(plan.groups) == 1
+    group = plan.groups[0]
+    assert group.owner_site_id is not None
+    assert group.consumed_site_ids == (group.owner_site_id,)
+    assert group.anchor_relations == ()
+
+
 def test_query_composition_models_refuse_invalid_direct_construction() -> None:
     """Composition records are a closed immutable proof boundary, not loose DTOs."""
     anchor = CstAnchorEvidence(
@@ -1027,3 +1119,19 @@ def test_query_composition_models_refuse_invalid_direct_construction() -> None:
     )
     with pytest.raises(ValueError, match="overlap"):
         QueryCompositionPlan(groups=(group, group))
+    with pytest.raises(ValueError, match="path and span"):
+        QueryCompositionGroup(**(group.model_dump() | {"outer_action_id": "outer:wrong"}))
+    with pytest.raises(ValueError, match="acyclic"):
+        QueryCompositionGroup(
+            **(
+                group.model_dump()
+                | {
+                    "consumed_site_ids": ("left", "middle", "right"),
+                    "anchor_relations": (
+                        ("left", "middle"),
+                        ("middle", "right"),
+                        ("right", "left"),
+                    ),
+                }
+            )
+        )

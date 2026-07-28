@@ -33,10 +33,10 @@ combined scope.
 
 ## Checks
 
-- `uv run pytest tests/unit/test_migrate_graph_projection_queries.py -q` — 50 passed.
+- `uv run pytest tests/unit/test_migrate_graph_projection_queries.py -q` — 53 passed.
 - `uv run ruff check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py` — passed.
 - `uv run pyright scripts/codemods/migrate_graph_projection_queries.py` — 0 errors.
-- `uv run pytest --run-slow -m graph_projection_migration -n 0 --timeout=300 tests/unit/test_graph_projection_migration.py::test_live_query_composition_plan_closes_reviewed_query_transform_sites -q` — 1 passed in 145.18s.
+- `uv run pytest --run-slow -m graph_projection_migration -n 0 --timeout=300 tests/unit/test_graph_projection_migration.py::test_live_query_composition_plan_closes_reviewed_query_transform_sites -q` — 1 passed in 158.63s.
 
 ## Controller Migration Gate
 
