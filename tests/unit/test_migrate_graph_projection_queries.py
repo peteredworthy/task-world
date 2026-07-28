@@ -15,6 +15,7 @@ from scripts.graph_projection_inventory import (
     inventory_repository,
     inventory_sources,
     load_manifest,
+    load_query_migration_manifest,
     query_migration_skeleton,
     source_digest,
 )
@@ -220,6 +221,24 @@ def test_shape_summary_groups_only_structural_shape_key_fields() -> None:
     assert shape_summary(stream) == {"literal_subscript_read|run_state|-|return|subscript_read": 2}
 
 
+def test_operation_shapes_distinguish_direct_map_and_nested_gets() -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            '    first = projection.get("run_state")\n'
+            '    second = projection["node_states"].get("node")\n'
+            "    return first, second\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+
+    assert {site.operation_shape for site in stream.sites} >= {"map_get", "nested_get"}
+
+
 @pytest.mark.timeout(120)
 def test_live_repository_compilation_includes_every_remaining_fixture_site() -> None:
     manifest = load_manifest(MANIFEST_PATH)
@@ -231,19 +250,25 @@ def test_live_repository_compilation_includes_every_remaining_fixture_site() -> 
         if "__pycache__" not in path.parts
     )
     skeleton = query_migration_skeleton(inventory, ROOT)
+    ledger = load_query_migration_manifest(
+        ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
+    )
 
     stream = compile_operation_stream(tracked_sources, inventory, skeleton)
 
     assert len(stream.sites) == len(inventory.occurrences) + len(inventory.diagnostics)
-    fixture_site_ids = {
+    raw_fixture_site_ids = {
         site.site_key for site in skeleton.unclassified_sites if site.domain == "test_fixture"
     }
+    deferred_fixture_site_ids = {
+        site.site_key for site in ledger.unclassified_sites if site.domain == "test_fixture"
+    }
     compiled_site_ids = [site.original_site_id for site in stream.sites]
-    assert fixture_site_ids
-    assert {
-        site_id for site_id in compiled_site_ids if site_id in fixture_site_ids
-    } == fixture_site_ids
-    assert all(compiled_site_ids.count(site_id) == 1 for site_id in fixture_site_ids)
+    assert len(raw_fixture_site_ids) == 449
+    assert len(deferred_fixture_site_ids) == 349
+    assert deferred_fixture_site_ids <= raw_fixture_site_ids
+    assert all(compiled_site_ids.count(site_id) == 1 for site_id in raw_fixture_site_ids)
+    assert all(compiled_site_ids.count(site_id) == 1 for site_id in deferred_fixture_site_ids)
     assert all(
         site.diagnostic_code is None or site.diagnostic_code in DiagnosticCode
         for site in stream.sites

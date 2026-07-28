@@ -203,6 +203,36 @@ def _operation_shape(node: cst.CSTNode, access_kind: AccessKind | None) -> str:
     raise _refuse_unknown_shape(node)
 
 
+def _diagnostic_operation_shape(node: cst.CSTNode, code: DiagnosticCode) -> str:
+    if isinstance(node, cst.Call):
+        if isinstance(node.func, cst.Attribute):
+            if node.func.attr.value == "get" and isinstance(node.func.value, cst.Subscript):
+                return "nested_get"
+            if node.func.attr.value in {
+                "items",
+                "values",
+                "keys",
+                "update",
+                "append",
+                "extend",
+                "pop",
+                "setdefault",
+            }:
+                return node.func.attr.value
+        return "call"
+    if isinstance(node, cst.Comparison):
+        return "comparison"
+    if isinstance(node, cst.Del):
+        return "deletion"
+    if isinstance(node, cst.Subscript):
+        return "subscript"
+    if isinstance(
+        node, (cst.Param, cst.Name, cst.AnnAssign, cst.Assign, cst.FunctionDef, cst.Return)
+    ):
+        return "typed_pass_through"
+    raise AnchorRefusedError(f"unknown diagnostic operation: {code.value}:{type(node).__name__}")
+
+
 def _node_candidates(
     module: cst.Module,
 ) -> tuple[
@@ -511,7 +541,7 @@ def compile_operation_stream(
                         same_expression_ordinal=ordinal,
                     ),
                     parent_shape=_parent_shape(node, parents),
-                    operation_shape=f"diagnostic_{diagnostic.code.value}",
+                    operation_shape=_diagnostic_operation_shape(node, diagnostic.code),
                 )
             )
     expected_ids = {item.occurrence_id for item in inventory.occurrences} | {

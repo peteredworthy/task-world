@@ -192,3 +192,56 @@ reproducible from the authoritative live skeleton on this branch: its derived
 `test_graph_projection_queries.py`, 101 in `test_graph_projections.py`, and
 108 elsewhere). The exact-once assertion deliberately uses the mechanically
 derived set rather than silently dropping 100 sites.
+
+## Final authoritative reconciliation (second review fix wave)
+
+The final counts are intentionally distinct:
+
+```text
+raw fresh skeleton test_fixture IDs:       449
+checked-in ledger still-unclassified IDs: 349
+compiled raw-stream coverage:             449 / 449 exactly once
+compiled deferred-ledger coverage:        349 / 349 exactly once
+```
+
+The 349 set is loaded from the existing
+`scripts/codemods/graph_projection_query_migration.yaml` unclassified ledger,
+then mechanically reconciled as a subset of the fresh raw skeleton before its
+exact-once stream assertion. It is not a historical or unreproducible count.
+
+Diagnostic anchors now retain both `normalized_source_pattern` (the
+site-key identity pattern) and `normalized_cst_expression` plus node type (the
+selected-node proof). Placeholder evidence is rejected during anchoring.
+Operation classification separates `map_get` and `nested_get`, recognizes
+current method shapes including update/append/extend/items/values/keys/pop and
+setdefault, and derives diagnostics from their anchored CST operation rather
+than a diagnostic-code-only fallback.
+
+Verification:
+
+```text
+$ uv run pytest tests/unit/test_migrate_graph_projection_queries.py \
+    tests/unit/test_graph_projection_inventory.py -q
+109 passed in 104.20s
+
+$ uv run ruff format scripts/graph_projection_inventory.py \
+    scripts/codemods/migrate_graph_projection_queries.py \
+    tests/unit/test_migrate_graph_projection_queries.py
+1 file reformatted, 2 files left unchanged
+
+$ uv run ruff check scripts/graph_projection_inventory.py \
+    scripts/codemods/migrate_graph_projection_queries.py \
+    tests/unit/test_migrate_graph_projection_queries.py
+All checks passed!
+
+$ uv run pyright
+0 errors, 0 warnings, 0 informations
+
+$ uv run pytest
+4993 passed, 3 skipped, 3 warnings in 213.91s
+```
+
+Second-wave self-review: the raw and deferred sets are separately derived and
+asserted; no source consumer or fixture was edited; unknown diagnostic
+operations and parent structures continue to fail closed; frozen diagnostic
+evidence provides both source identity and CST proof fields.
