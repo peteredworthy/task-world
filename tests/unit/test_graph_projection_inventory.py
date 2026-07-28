@@ -1429,6 +1429,7 @@ def test_inventory_repository_default_provider_covers_tracked_required_sites_and
     ]
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(120)
 def test_default_tracked_provider_reports_real_prompt_dispatch_recovery_and_store_sites() -> None:
     root = Path(__file__).parents[2]
@@ -1520,6 +1521,7 @@ def shadowed(events: list[object], rebuild_projection: object) -> None:
     ]
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(120)
 def test_repository_inventory_includes_controller_rebuild_dispatch_reads() -> None:
     root = Path(__file__).parents[2]
@@ -1542,6 +1544,7 @@ def test_repository_inventory_includes_controller_rebuild_dispatch_reads() -> No
     )
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(120)
 def test_repository_inventory_keeps_representative_task_3c_physical_reads() -> None:
     root = Path(__file__).parents[2]
@@ -1605,6 +1608,7 @@ def test_repository_inventory_keeps_representative_task_3c_physical_reads() -> N
     } <= sites
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(120)
 def test_repository_inventory_keeps_verification_recovery_provenance() -> None:
     root = Path(__file__).parents[2]
@@ -1661,6 +1665,7 @@ def boundaries(value: GraphProjection) -> None:
     ]
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(120)
 def test_checked_in_diagnostic_artifact_exactly_matches_full_repository_report() -> None:
     root = Path(__file__).parents[2]

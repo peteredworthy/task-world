@@ -887,6 +887,7 @@ def test_closed_domain_classification_accepts_only_reviewed_approved_core_keys()
     assert not classified.unclassified_sites
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(120)
 def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
     inventory = inventory_repository(ROOT, load_manifest(MANIFEST_PATH))

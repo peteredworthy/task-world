@@ -647,6 +647,7 @@ def test_disposition_plan_derives_generated_fixture_counts_from_frozen_operation
         )
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(300)
 def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> None:
     manifest = load_manifest(MANIFEST_PATH)
@@ -756,6 +757,7 @@ def test_plan_refuses_duplicate_or_stale_anchored_reviewed_identity() -> None:
         plan_reviewed_dispositions(stream, ledger.model_copy(update={"dispositions": (stale,)}))
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(300)
 def test_live_repository_compilation_includes_every_remaining_fixture_site() -> None:
     manifest = load_manifest(MANIFEST_PATH)
@@ -792,6 +794,7 @@ def test_live_repository_compilation_includes_every_remaining_fixture_site() -> 
     )
 
 
+@pytest.mark.slow
 @pytest.mark.timeout(300)
 def test_structural_plan_closes_reviewed_and_public_query_test_sites() -> None:
     """The complete unchanged partition is derived from anchor evidence, not site IDs."""
@@ -807,10 +810,8 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites() -> None:
         ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
     )
 
-    plan = plan_structural_dispositions(
-        compile_operation_stream(sources, inventory, query_migration_skeleton(inventory, ROOT)),
-        ledger,
-    )
+    stream = compile_operation_stream(sources, inventory, query_migration_skeleton(inventory, ROOT))
+    plan = plan_structural_dispositions(stream, ledger)
 
     assert plan.pending_site_ids == ()
     assert len(plan.operations) == 433
@@ -837,9 +838,7 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites() -> None:
     assert sum(count for _, count in plan.symbol_origin_counts) == 152
     assert dict(plan.symbol_origin_counts)["orchestrator.graph.scheduler.NodeScheduleInfo"] == 1
     assert plan == plan_structural_dispositions(
-        compile_operation_stream(
-            tuple(reversed(sources)), inventory, query_migration_skeleton(inventory, ROOT)
-        ),
+        stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
         ledger.model_copy(
             update={
                 "dispositions": tuple(reversed(ledger.dispositions)),

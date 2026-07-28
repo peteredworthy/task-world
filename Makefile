@@ -5,6 +5,7 @@
 .PHONY: test \
         test-changed \
         test-changed-reset \
+        test-graph-projection-migration \
         test-codex \
         test-codex-unit \
         test-codex-integration \
@@ -54,6 +55,25 @@ test-changed:
 test-changed-reset:
 	rm -f .testmondata .testmondata-journal
 	uv run pytest --testmon -o addopts="--timeout=180" $(ARGS)
+
+
+# ---------------------------------------------------------------------------
+# Explicit graph projection migration gate
+# ---------------------------------------------------------------------------
+#
+# These tests intentionally scan the complete tracked repository. Keep them
+# out of the default suite, and run them in one stable worker to avoid
+# duplicating the CPU-heavy analysis across xdist workers.
+test-graph-projection-migration:
+	uv run pytest \
+		--run-slow \
+		-m slow \
+		-n 1 \
+		--dist loadfile \
+		--timeout=300 \
+		tests/unit/test_graph_projection_inventory.py \
+		tests/unit/test_graph_projection_queries.py \
+		tests/unit/test_migrate_graph_projection_queries.py
 
 
 # ---------------------------------------------------------------------------

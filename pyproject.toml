@@ -61,7 +61,7 @@ pythonpath = ["src"]
 addopts = "-n auto --dist worksteal --timeout=30 -m 'not slow and not e2e'"
 timeout = 30
 markers = [
-    "slow: tests that invoke real external tools (LLMs, Docker, CLI agents)",
+    "slow: tests that invoke real external tools or deterministic repository-wide static/migration analyses (LLMs, Docker, CLI agents)",
     "e2e: end-to-end tests that run the orchestrator through real process or network boundaries",
 ]
 filterwarnings = [
