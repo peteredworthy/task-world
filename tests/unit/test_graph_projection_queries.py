@@ -2,8 +2,6 @@
 
 from datetime import UTC, datetime
 from pathlib import Path
-from collections import Counter
-
 import pytest
 import yaml
 from pydantic import ValidationError
@@ -119,8 +117,6 @@ from scripts.graph_projection_inventory import (
     classify_node_task_edge_binding_and_lease_domains,
     classify_lifecycle_domain,
     disposition_site_key,
-    inventory_repository,
-    load_manifest,
     load_query_migration_manifest,
     query_migration_skeleton,
     validate_query_migration_manifest,
@@ -131,7 +127,6 @@ from tests.graph_fr17_fixture import less_used_events
 
 ROOT = Path(__file__).parents[2]
 MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
-QUERY_MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
 
 
 def test_lifecycle_queries_preserve_missing_and_default_values() -> None:
@@ -885,96 +880,6 @@ def test_closed_domain_classification_accepts_only_reviewed_approved_core_keys()
 
     assert classified.dispositions == (reviewed,)
     assert not classified.unclassified_sites
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-def test_checked_query_ledger_matches_the_fresh_repository_inventory() -> None:
-    inventory = inventory_repository(ROOT, load_manifest(MANIFEST_PATH))
-    ledger = load_query_migration_manifest(QUERY_MANIFEST_PATH)
-    skeleton = query_migration_skeleton(inventory, ROOT)
-
-    lifecycle_keys = {
-        site.site_key for site in skeleton.unclassified_sites if site.domain == "lifecycle"
-    }
-    classified_keys = {
-        disposition.site_key
-        for disposition in ledger.dispositions
-        if disposition.site_key in lifecycle_keys
-    }
-
-    assert classified_keys == lifecycle_keys
-    assert not {site.site_key for site in ledger.unclassified_sites} & lifecycle_keys
-    assert {
-        disposition.disposition
-        for disposition in ledger.dispositions
-        if disposition.relative_path == "src/orchestrator/graph/projection_queries.py"
-    } == {"approved_core"}
-    core_keys = {
-        site.site_key for site in skeleton.unclassified_sites if site.domain == "approved_core"
-    }
-    assert {
-        disposition.site_key
-        for disposition in ledger.dispositions
-        if disposition.disposition == "approved_core"
-    } == core_keys
-    assert not {site.site_key for site in ledger.unclassified_sites} & core_keys
-    assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="approved_core") == {
-        "approved_core": len(core_keys)
-    }
-    lifecycle_dispositions = [
-        disposition for disposition in ledger.dispositions if disposition.site_key in lifecycle_keys
-    ]
-    assert all(
-        disposition.disposition == "query_transform"
-        for disposition in lifecycle_dispositions
-        if 'projection["' in disposition.normalized_source_pattern
-    )
-    assert all(
-        disposition.disposition == "projection_neutral"
-        for disposition in lifecycle_dispositions
-        if 'projection["' not in disposition.normalized_source_pattern
-        and disposition.diagnostic_code is not None
-    )
-    target_domains = {
-        "cleanup_callback",
-        "governance_requirements",
-        "lease",
-        "node_task_edge_binding",
-        "planning_session",
-        "record_file_state",
-    }
-    for domain in target_domains:
-        domain_keys = {
-            site.site_key for site in skeleton.unclassified_sites if site.domain == domain
-        }
-        assert {
-            disposition.site_key
-            for disposition in ledger.dispositions
-            if disposition.site_key in domain_keys
-        } == domain_keys
-        assert not {site.site_key for site in ledger.unclassified_sites} & domain_keys
-        assert validate_query_migration_manifest(ledger, inventory, ROOT, domain=domain) == {
-            domain: len(domain_keys)
-        }
-    assert Counter(site.domain for site in ledger.unclassified_sites) == {"test_fixture": 349}
-    verification_recovery_keys = {
-        site.site_key
-        for site in skeleton.unclassified_sites
-        if site.domain == "verification_recovery"
-    }
-    assert {
-        disposition.site_key
-        for disposition in ledger.dispositions
-        if disposition.site_key in verification_recovery_keys
-    } == verification_recovery_keys
-    assert not {site.site_key for site in ledger.unclassified_sites} & verification_recovery_keys
-    assert validate_query_migration_manifest(
-        ledger, inventory, ROOT, domain="verification_recovery"
-    ) == {"verification_recovery": 151}
-    assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="lifecycle") == {
-        "lifecycle": len(lifecycle_keys)
-    }
 
 
 def test_manifest_load_canonicalizes_yaml_key_chunks_and_rejects_key_aliases(

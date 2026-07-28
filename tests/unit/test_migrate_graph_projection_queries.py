@@ -9,16 +9,13 @@ from scripts.codemods.migrate_graph_projection_queries import (
     SourceSnapshot,
     compile_operation_stream,
     plan_reviewed_dispositions,
-    plan_structural_dispositions,
     shape_summary,
 )
 from scripts.graph_projection_inventory import (
-    DiagnosticCode,
     MigrationDisposition,
     SourceDigest,
     ProjectionCallContext,
     inventory_paths,
-    inventory_repository,
     inventory_sources,
     load_manifest,
     load_query_migration_manifest,
@@ -647,81 +644,6 @@ def test_disposition_plan_derives_generated_fixture_counts_from_frozen_operation
         )
 
 
-@pytest.mark.slow
-@pytest.mark.timeout(300)
-def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites() -> None:
-    manifest = load_manifest(MANIFEST_PATH)
-    inventory = inventory_repository(ROOT, manifest)
-    tracked_sources = tuple(
-        SourceSnapshot(relative_path=path.relative_to(ROOT).as_posix(), source=path.read_text())
-        for directory in (ROOT / "src", ROOT / "tests", ROOT / "scripts")
-        for path in sorted(directory.rglob("*.py"))
-        if "__pycache__" not in path.parts
-    )
-    ledger = load_query_migration_manifest(
-        ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
-    )
-
-    stream = compile_operation_stream(
-        tracked_sources, inventory, query_migration_skeleton(inventory, ROOT)
-    )
-    plan = plan_reviewed_dispositions(stream, ledger)
-
-    assert len(plan.operations) == len(ledger.dispositions)
-    assert len(plan.consumed_site_ids) == len(ledger.dispositions)
-    assert len(plan.deferred_site_ids) == 349
-    assert len(plan.pending_site_ids) == 100
-    assert plan.consumed_site_ids | set(plan.deferred_site_ids) | set(plan.pending_site_ids) == {
-        site.original_site_id for site in stream.sites
-    }
-    assert plan.disposition_counts == (
-        ("approved_core", 80),
-        ("projection_neutral", 73),
-        ("query_transform", 201),
-    )
-    assert plan.shape_group_counts == tuple(sorted(plan.shape_group_counts))
-    assert all(operation.reason for operation in plan.operations)
-    assert tuple(operation.consumed_site_ids[0] for operation in plan.operations) == tuple(
-        sorted(operation.consumed_site_ids[0] for operation in plan.operations)
-    )
-    assert plan.deferred_site_ids == tuple(sorted(plan.deferred_site_ids))
-    assert plan.pending_site_ids == tuple(sorted(plan.pending_site_ids))
-    reasons = {item.site_key: (item.disposition, item.reason) for item in ledger.dispositions}
-    assert {
-        (item.consumed_site_ids[0], item.disposition, item.reason) for item in plan.operations
-    } == {(site_id, disposition, reason) for site_id, (disposition, reason) in reasons.items()}
-    assert (
-        plan_reviewed_dispositions(
-            stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
-            ledger.model_copy(
-                update={
-                    "dispositions": tuple(reversed(ledger.dispositions)),
-                    "unclassified_sites": tuple(reversed(ledger.unclassified_sites)),
-                }
-            ),
-        )
-        == plan
-    )
-    deferred = ledger.unclassified_sites[0]
-    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
-        plan_reviewed_dispositions(
-            stream,
-            ledger.model_copy(
-                update={
-                    "unclassified_sites": (
-                        deferred.model_copy(update={"domain": "post_ledger"}),
-                        *ledger.unclassified_sites[1:],
-                    )
-                }
-            ),
-        )
-    without_fixture = plan_reviewed_dispositions(
-        stream,
-        ledger.model_copy(update={"unclassified_sites": ledger.unclassified_sites[1:]}),
-    )
-    assert deferred.site_key in without_fixture.pending_site_ids
-
-
 def test_plan_refuses_duplicate_or_stale_anchored_reviewed_identity() -> None:
     source = SourceSnapshot(
         relative_path="src/example.py",
@@ -755,97 +677,6 @@ def test_plan_refuses_duplicate_or_stale_anchored_reviewed_identity() -> None:
     stale = disposition.model_copy(update={"site_key": "0" * 64})
     with pytest.raises(AnchorRefusedError, match="no anchored"):
         plan_reviewed_dispositions(stream, ledger.model_copy(update={"dispositions": (stale,)}))
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(300)
-def test_live_repository_compilation_includes_every_remaining_fixture_site() -> None:
-    manifest = load_manifest(MANIFEST_PATH)
-    inventory = inventory_repository(ROOT, manifest)
-    tracked_sources = tuple(
-        SourceSnapshot(relative_path=path.relative_to(ROOT).as_posix(), source=path.read_text())
-        for directory in (ROOT / "src", ROOT / "tests", ROOT / "scripts")
-        for path in sorted(directory.rglob("*.py"))
-        if "__pycache__" not in path.parts
-    )
-    skeleton = query_migration_skeleton(inventory, ROOT)
-    ledger = load_query_migration_manifest(
-        ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
-    )
-
-    stream = compile_operation_stream(tracked_sources, inventory, skeleton)
-
-    assert len(stream.sites) == len(inventory.occurrences) + len(inventory.diagnostics)
-    raw_fixture_site_ids = {
-        site.site_key for site in skeleton.unclassified_sites if site.domain == "test_fixture"
-    }
-    deferred_fixture_site_ids = {
-        site.site_key for site in ledger.unclassified_sites if site.domain == "test_fixture"
-    }
-    compiled_site_ids = [site.original_site_id for site in stream.sites]
-    assert len(raw_fixture_site_ids) == 449
-    assert len(deferred_fixture_site_ids) == 349
-    assert deferred_fixture_site_ids <= raw_fixture_site_ids
-    assert all(compiled_site_ids.count(site_id) == 1 for site_id in raw_fixture_site_ids)
-    assert all(compiled_site_ids.count(site_id) == 1 for site_id in deferred_fixture_site_ids)
-    assert all(
-        site.diagnostic_code is None or site.diagnostic_code in DiagnosticCode
-        for site in stream.sites
-    )
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(300)
-def test_structural_plan_closes_reviewed_and_public_query_test_sites() -> None:
-    """The complete unchanged partition is derived from anchor evidence, not site IDs."""
-    manifest = load_manifest(MANIFEST_PATH)
-    inventory = inventory_repository(ROOT, manifest)
-    sources = tuple(
-        SourceSnapshot(relative_path=path.relative_to(ROOT).as_posix(), source=path.read_text())
-        for directory in (ROOT / "src", ROOT / "tests", ROOT / "scripts")
-        for path in sorted(directory.rglob("*.py"))
-        if "__pycache__" not in path.parts
-    )
-    ledger = load_query_migration_manifest(
-        ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
-    )
-
-    stream = compile_operation_stream(sources, inventory, query_migration_skeleton(inventory, ROOT))
-    plan = plan_structural_dispositions(stream, ledger)
-
-    assert plan.pending_site_ids == ()
-    assert len(plan.operations) == 433
-    assert len(plan.deferred_site_ids) == 370
-    assert plan.disposition_counts == (
-        ("approved_core", 80),
-        ("projection_neutral", 152),
-        ("query_transform", 201),
-    )
-    assert plan.rule_family_counts == (
-        ("derived_value_sink", 1),
-        ("projector_fixture_flow", 2),
-        ("public_graph_call", 116),
-        ("typed_projection_binding", 27),
-        ("typed_projector_binding", 6),
-    )
-    assert plan.generated_fixture_family_counts == (
-        ("literal_field_update_mutation", 3),
-        ("physical_append_extend", 1),
-        ("physical_nested_assignment", 17),
-    )
-    assert len(plan.reviewed_deferred_site_ids) == 349
-    assert len(plan.generated_fixture_operations) == 21
-    assert sum(count for _, count in plan.symbol_origin_counts) == 152
-    assert dict(plan.symbol_origin_counts)["orchestrator.graph.scheduler.NodeScheduleInfo"] == 1
-    assert plan == plan_structural_dispositions(
-        stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
-        ledger.model_copy(
-            update={
-                "dispositions": tuple(reversed(ledger.dispositions)),
-                "unclassified_sites": tuple(reversed(ledger.unclassified_sites)),
-            }
-        ),
-    )
 
 
 def test_anchor_evidence_copies_exact_collector_context_for_reanchored_calls() -> None:

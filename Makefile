@@ -62,18 +62,15 @@ test-changed-reset:
 # ---------------------------------------------------------------------------
 #
 # These tests intentionally scan the complete tracked repository. Keep them
-# out of the default suite, and run them in one stable worker to avoid
-# duplicating the CPU-heavy analysis across xdist workers.
+# out of the default suite, and run the marker-selected suite in one process
+# so the module-scoped immutable context is built exactly once.
 test-graph-projection-migration:
 	uv run pytest \
 		--run-slow \
-		-m slow \
-		-n 1 \
-		--dist loadfile \
+		-m graph_projection_migration \
+		-n 0 \
 		--timeout=300 \
-		tests/unit/test_graph_projection_inventory.py \
-		tests/unit/test_graph_projection_queries.py \
-		tests/unit/test_migrate_graph_projection_queries.py
+		tests/unit
 
 
 # ---------------------------------------------------------------------------

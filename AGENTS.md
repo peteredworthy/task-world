@@ -289,7 +289,8 @@ It is a dev-loop accelerator, not a merge gate — `make test` stays the gate, a
 Key test fixtures: `tmp_dir` (temp directory), `fixed_time` (deterministic datetime), `in_memory_db` (SQLite `:memory:`), `routine_repo` (git repo with test routines).
 
 The complete graph-projection migration scans are excluded from the default
-suite and run explicitly with `make test-graph-projection-migration`. During
+suite and run explicitly with `make test-graph-projection-migration` (the
+`graph_projection_migration` marker). During
 edit loops, use focused tests or `make test-changed`; commit hooks run the
 default suite once, so a separate pre-commit full run immediately before
 committing is redundant.

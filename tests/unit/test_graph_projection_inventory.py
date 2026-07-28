@@ -17,13 +17,11 @@ from scripts.graph_projection_inventory import (
     DiagnosticCode,
     InventoryDiagnostic,
     collect_source,
-    diagnostic_artifact,
     diagnostic_report,
     inventory_paths,
     inventory_repository,
     load_manifest,
     occurrence_id,
-    query_migration_skeleton,
 )
 
 
@@ -1429,23 +1427,6 @@ def test_inventory_repository_default_provider_covers_tracked_required_sites_and
     ]
 
 
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-def test_default_tracked_provider_reports_real_prompt_dispatch_recovery_and_store_sites() -> None:
-    root = Path(__file__).parents[2]
-
-    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
-
-    diagnosed_paths = {item.relative_path for item in inventory.diagnostics}
-    assert {
-        "src/orchestrator/graph_runtime/prompts.py",
-        "src/orchestrator/graph_runtime/dispatch.py",
-        "src/orchestrator/graph_runtime/recovery.py",
-        "src/orchestrator/graph_runtime/store.py",
-    } <= diagnosed_paths
-    assert all("worktrees/" not in path and "vendor/" not in path for path in diagnosed_paths)
-
-
 def test_inventory_requires_approved_origins_and_exact_projection_parameter_binding(
     tmp_path: Path,
 ) -> None:
@@ -1521,119 +1502,6 @@ def shadowed(events: list[object], rebuild_projection: object) -> None:
     ]
 
 
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-def test_repository_inventory_includes_controller_rebuild_dispatch_reads() -> None:
-    root = Path(__file__).parents[2]
-    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
-    dispatch_diagnostics = {
-        (item.qualified_function, item.line)
-        for item in inventory.diagnostics
-        if item.relative_path == "src/orchestrator/graph_runtime/dispatch.py"
-    }
-
-    assert ("GraphDispatchExecutor._dispatch_snapshot_cleanup", 810) in dispatch_diagnostics
-    assert ("_requirements_for_node", 966) in dispatch_diagnostics
-    source_lines = (root / "src/orchestrator/graph_runtime/dispatch.py").read_text().splitlines()
-    assert (
-        source_lines[809].strip()
-        == 'compromised_record = projection["file_state_records"].get(record_id)'
-    )
-    assert source_lines[965].strip() == (
-        'for port, binding in projection["input_bindings"].get(node_id, {}).items():'
-    )
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-def test_repository_inventory_keeps_representative_task_3c_physical_reads() -> None:
-    root = Path(__file__).parents[2]
-    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
-    sites = {
-        (
-            site.relative_path,
-            site.qualified_function,
-            site.normalized_source_pattern,
-            site.domain,
-        )
-        for site in query_migration_skeleton(inventory, root).unclassified_sites
-    }
-    source_lines = {
-        relative_path: (root / relative_path).read_text().splitlines()
-        for relative_path in (
-            "src/orchestrator/graph_runtime/dispatch.py",
-            "src/orchestrator/graph_runtime/prompts.py",
-            "src/orchestrator/graph/callbacks.py",
-            "src/orchestrator/graph/patch_validator.py",
-        )
-    }
-
-    assert source_lines["src/orchestrator/graph_runtime/dispatch.py"][809].strip() == (
-        'compromised_record = projection["file_state_records"].get(record_id)'
-    )
-    assert source_lines["src/orchestrator/graph_runtime/prompts.py"][551].strip() == (
-        'ready_nodes = sorted(projection["ready_nodes"])'
-    )
-    assert source_lines["src/orchestrator/graph/callbacks.py"][68].strip() == (
-        'lease = projection["leases"].get(request.lease_id)'
-    )
-    assert source_lines["src/orchestrator/graph/patch_validator.py"][145].strip() == (
-        'and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}'
-    )
-    assert {
-        (
-            "src/orchestrator/graph_runtime/dispatch.py",
-            "GraphDispatchExecutor._dispatch_snapshot_cleanup",
-            'compromised_record = projection["file_state_records"].get(record_id)',
-            "record_file_state",
-        ),
-        (
-            "src/orchestrator/graph_runtime/prompts.py",
-            "_planner_outstanding_failures",
-            'for region_id, failure in projection["environment_failures"].items():',
-            "planning_session",
-        ),
-        (
-            "src/orchestrator/graph/callbacks.py",
-            "validate_callback",
-            'lease = projection["leases"].get(request.lease_id)',
-            "cleanup_callback",
-        ),
-        (
-            "src/orchestrator/graph/patch_validator.py",
-            "validate_patch",
-            'and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}',
-            "governance_requirements",
-        ),
-    } <= sites
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-def test_repository_inventory_keeps_verification_recovery_provenance() -> None:
-    root = Path(__file__).parents[2]
-    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
-    sites = {
-        (site.relative_path, site.qualified_function, site.normalized_source_pattern, site.domain)
-        for site in query_migration_skeleton(inventory, root).unclassified_sites
-    }
-
-    assert {
-        (
-            "src/orchestrator/graph/_commands.py",
-            "_current_failed_verification_results",
-            "projection['passed_verification_candidate_ids']",
-            "verification_recovery",
-        ),
-        (
-            "src/orchestrator/graph_runtime/recovery.py",
-            "recover",
-            "projection = rebuild_projection(events)",
-            "verification_recovery",
-        ),
-    } <= sites
-
-
 def test_inventory_reports_one_outer_recursive_collection_escape_at_every_boundary(
     tmp_path: Path,
 ) -> None:
@@ -1663,18 +1531,6 @@ def boundaries(value: GraphProjection) -> None:
         ("boundaries", "unsupported_binding"),
         ("boundaries", "unsupported_call"),
     ]
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-def test_checked_in_diagnostic_artifact_exactly_matches_full_repository_report() -> None:
-    root = Path(__file__).parents[2]
-    inventory = inventory_repository(root, load_manifest(MANIFEST_PATH))
-
-    assert (
-        diagnostic_artifact(inventory)
-        == (root / "docs/graph-projection-inventory-diagnostics.md").read_text()
-    )
 
 
 def test_inventory_paths_resolves_only_unshadowed_exact_local_producers(tmp_path: Path) -> None:
