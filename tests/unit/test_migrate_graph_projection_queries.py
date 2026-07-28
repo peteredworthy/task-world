@@ -371,6 +371,183 @@ def test_compile_operation_stream_refuses_nested_unrelated_diagnostic_field_evid
         compile_operation_stream((source,), invalid, query_migration_skeleton(invalid))
 
 
+@pytest.mark.parametrize(
+    ("source_body", "context_update"),
+    [
+        ("run_state(*projection)", {"argument_star": "**"}),
+        ("run_state(**projection)", {"argument_star": "*"}),
+        (
+            "run_state(*projection)",
+            {"argument_star": None, "preceding_star": "*"},
+        ),
+        (
+            "run_state(*values, projection)",
+            {"argument_star": "*", "preceding_star": None},
+        ),
+        ("run_state(*projection)", {"projection_expression": "other"}),
+    ],
+)
+def test_compile_operation_stream_refuses_mutated_ambiguous_star_evidence(
+    source_body: str, context_update: dict[str, object]
+) -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/stars.py",
+        source=(
+            "from orchestrator.graph import GraphProjection, run_state\n\n"
+            "def call(projection: GraphProjection, values: tuple[object, ...]) -> None:\n"
+            f"    {source_body}\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    diagnostic = inventory.diagnostics[0]
+    invalid = inventory.model_copy(
+        update={
+            "diagnostics": (
+                diagnostic.model_copy(
+                    update={"context": diagnostic.context.model_copy(update=context_update)}
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(AnchorRefusedError, match="ambiguous context"):
+        compile_operation_stream((source,), invalid, query_migration_skeleton(invalid))
+
+
+@pytest.mark.parametrize(
+    ("statement", "anchor_origin", "context_update", "message"),
+    [
+        (
+            "projection.get('run_state')",
+            "occurrence",
+            {"projection_expression": "other"},
+            "projection expression",
+        ),
+        (
+            "projection.get('run_state')",
+            "occurrence",
+            {"physical_old_field_name": "node_states"},
+            "physical context",
+        ),
+        (
+            "projection.get('run_state')",
+            "occurrence",
+            {"physical_access_kind": "delete_pop", "physical_operation_shape": "delete_pop"},
+            "access kind",
+        ),
+        (
+            "projection.get('run_state')",
+            "occurrence",
+            {"physical_operation_shape": "keys"},
+            "operation shape",
+        ),
+        (
+            "projection.keys()",
+            "occurrence",
+            {"projection_expression": "other"},
+            "projection expression",
+        ),
+        (
+            "projection.keys()",
+            "occurrence",
+            {"physical_old_field_name": "run_state"},
+            "physical context",
+        ),
+        (
+            "projection.keys()",
+            "occurrence",
+            {"physical_access_kind": "get", "physical_operation_shape": "get"},
+            "access kind",
+        ),
+        (
+            "projection.keys()",
+            "occurrence",
+            {"physical_operation_shape": "values"},
+            "operation shape",
+        ),
+        (
+            "del projection['run_state']",
+            "occurrence",
+            {"projection_expression": "other"},
+            "projection expression",
+        ),
+        (
+            "del projection['run_state']",
+            "occurrence",
+            {"physical_old_field_name": "node_states"},
+            "physical context",
+        ),
+        (
+            "del projection['run_state']",
+            "occurrence",
+            {"physical_access_kind": "get", "physical_operation_shape": "get"},
+            "access kind",
+        ),
+        (
+            "del projection['run_state']",
+            "occurrence",
+            {"physical_operation_shape": "get"},
+            "operation shape",
+        ),
+        (
+            "projection['run_state'].update({})",
+            "diagnostic",
+            {"projection_expression": "other"},
+            "projection expression",
+        ),
+        (
+            "projection['run_state'].update({})",
+            "diagnostic",
+            {"physical_old_field_name": "node_states"},
+            "physical context",
+        ),
+        (
+            "projection['run_state'].update({})",
+            "diagnostic",
+            {"physical_access_kind": "get", "physical_operation_shape": "get"},
+            "access kind",
+        ),
+        (
+            "projection['run_state'].update({})",
+            "diagnostic",
+            {"physical_operation_shape": "get"},
+            "operation shape",
+        ),
+    ],
+)
+def test_compile_operation_stream_refuses_mutated_physical_anchor_evidence(
+    statement: str,
+    anchor_origin: str,
+    context_update: dict[str, object],
+    message: str,
+) -> None:
+    manifest = load_manifest(MANIFEST_PATH)
+    source = SourceSnapshot(
+        relative_path="src/physical.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def access(projection: GraphProjection) -> None:\n"
+            f"    {statement}\n"
+        ),
+    )
+    inventory = inventory_sources((source,), manifest)
+    records = inventory.occurrences if anchor_origin == "occurrence" else inventory.diagnostics
+    record = records[0]
+    invalid = inventory.model_copy(
+        update={
+            f"{anchor_origin}s": (
+                record.model_copy(
+                    update={"context": record.context.model_copy(update=context_update)}
+                ),
+            )
+        }
+    )
+
+    with pytest.raises(AnchorRefusedError, match=message):
+        compile_operation_stream((source,), invalid, query_migration_skeleton(invalid))
+
+
 def test_disposition_plan_refuses_overlapping_or_missing_reviewed_sites() -> None:
     with pytest.raises(ValueError, match="nonempty"):
         PlannedOperation(disposition="query_transform", reason="reviewed", consumed_site_ids=())

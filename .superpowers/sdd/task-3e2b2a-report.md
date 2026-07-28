@@ -27,6 +27,11 @@ matching field.
   field/kind/operation/expression refusal, and a nested unrelated diagnostic
   field refusal. Collector coverage asserts normalized physical receivers
   through assignment, call, and deletion action wrappers.
+- Compiler mismatch matrices mutate otherwise valid evidence for direct `*` and
+  `**` expansion, post-star arguments, and selected expressions. They also
+  cover receiver, field (including a forged field on `keys()`), kind, and
+  operation-shape refusals for direct calls, fieldless calls, deletion, and
+  diagnostic anchors.
 - `uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites -q`
   — passed (`1 passed in 127.42s`).
 - Focused physical regression selection — `7 passed in 4.13s`, followed by
@@ -39,5 +44,8 @@ matching field.
 - `uv run pytest` — passed (`5018 passed, 3 skipped, 3 warnings in 512.35s`).
   The warnings are existing Python 3.12 `aiosqlite` datetime-adapter
   deprecations.
+- Final matrix verification: `uv run pytest
+  tests/unit/test_migrate_graph_projection_queries.py -q` — `49 passed in
+  188.60s`; `uv run pytest` — `5039 passed, 3 skipped, 3 warnings in 409.21s`.
 
 Full corrective-wave counts are recorded in `task-3e2b2-report.md`.
