@@ -4091,6 +4091,8 @@ def run_query_migration_mode(
     """Execute one whole-tree migration mode against injected repository paths."""
     current_sources = load_current_python_sources(root)
     query_apply, fixture_apply = compile_current_source_apply_plans(current_sources, manifest)
+    if mode == "assert-clean" and (query_apply.updates or fixture_apply.updates):
+        raise AnchorRefusedError("current sources still require migration")
     transformed_current_sources = apply_source_updates_in_memory(
         current_sources, query_apply, fixture_apply
     )

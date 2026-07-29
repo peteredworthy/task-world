@@ -305,6 +305,12 @@ def test_query_migration_modes_check_apply_and_assert_clean_use_atomic_report(
     assert not report_path.exists()
     assert current.read_text() == original_source
 
+    report_path.parent.mkdir()
+    report_path.write_bytes(query_migration_report_json(checked))
+    with pytest.raises(AnchorRefusedError, match="current sources still require migration"):
+        run_query_migration_mode(repo, manifest, "assert-clean", report_path=report_path)
+    assert current.read_text() == original_source
+
     applied = run_query_migration_mode(repo, manifest, "apply", report_path=report_path)
     assert report_path.read_bytes() == query_migration_report_json(applied)
     applied_source = current.read_text()
