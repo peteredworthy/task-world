@@ -53,9 +53,21 @@ from scripts.graph_projection_inventory import (
 
 SourceSnapshot = InventorySource
 SiteOrigin = Literal["occurrence", "diagnostic"]
+_PUBLIC_GRAPH_IMPORTS = {
+    "orchestrator.graph.models": frozenset({"ResourceClaim"}),
+    "orchestrator.graph.projection_queries": frozenset(
+        {"node_kind", "node_states_view", "run_state"}
+    ),
+    "orchestrator.graph.projections": frozenset({"GraphProjection"}),
+    "orchestrator.graph.scheduler": frozenset({"NodeScheduleInfo", "ResourceClaim"}),
+}
 _PUBLIC_GRAPH_SYMBOL_RENAMES = {
     ("orchestrator.graph.scheduler", "ResourceClaim"): "SchedulerResourceClaim",
 }
+
+
+class AnchorRefusedError(ValueError):
+    """Raised when migration evidence cannot be proved safe and exact."""
 
 
 def _cst_dotted_name(node: cst.CSTNode | None) -> str | None:
@@ -75,8 +87,15 @@ class _PublicGraphImportTransformer(cst.CSTTransformer):
         if module is None or not module.startswith("orchestrator.graph."):
             return updated_node
         names = updated_node.names
-        if isinstance(names, cst.ImportStar):
-            return updated_node.with_changes(module=cst.parse_expression("orchestrator.graph"))
+        supported = _PUBLIC_GRAPH_IMPORTS.get(module)
+        if isinstance(names, cst.ImportStar) or supported is None:
+            raise AnchorRefusedError(f"unsupported graph submodule import: {module}")
+        imported = tuple(_cst_dotted_name(alias.name) or "" for alias in names)
+        unsupported = sorted(set(imported) - supported)
+        if unsupported:
+            raise AnchorRefusedError(
+                f"unsupported graph submodule import: {module} {unsupported!r}"
+            )
         return updated_node.with_changes(
             module=cst.parse_expression("orchestrator.graph"),
             names=tuple(
@@ -99,23 +118,20 @@ class _PublicGraphImportTransformer(cst.CSTTransformer):
         )
 
     def leave_Import(self, original_node: cst.Import, updated_node: cst.Import) -> cst.Import:
-        del original_node
-        aliases = tuple(
-            alias.with_changes(name=cst.parse_expression("orchestrator.graph"))
-            if (_cst_dotted_name(alias.name) or "").startswith("orchestrator.graph.")
-            else alias
-            for alias in updated_node.names
-        )
-        return updated_node.with_changes(names=aliases)
+        modules = [
+            module
+            for alias in original_node.names
+            if (module := _cst_dotted_name(alias.name)) is not None
+            and module.startswith("orchestrator.graph.")
+        ]
+        if modules:
+            raise AnchorRefusedError(f"unsupported graph submodule import: {modules!r}")
+        return updated_node
 
 
 def rewrite_graph_submodule_imports(source: str) -> str:
     """Mechanically route external graph-submodule imports through the public API."""
     return cst.parse_module(source).visit(_PublicGraphImportTransformer()).code
-
-
-class AnchorRefusedError(ValueError):
-    """Raised when an inventory identity cannot be proved against a source snapshot."""
 
 
 class SourceLocator(BaseModel):
@@ -4282,7 +4298,7 @@ def run_query_migration_mode(
     current_sources = load_current_python_sources(root)
     if mode == "assert-clean":
         # Current-tree verification deliberately does not compile the historical
-        # baseline. Historical 542-site linkage is owned by inventory --check and
+        # baseline. Historical linkage is owned by inventory --check and
         # the migration gate; this mode proves only that no current edit remains
         # and that the canonical report authenticates this exact current closure.
         closure = compile_current_tree_closure(current_sources, manifest)

@@ -1,4 +1,3 @@
-from collections import Counter
 from pathlib import Path
 import subprocess
 
@@ -15,7 +14,6 @@ from scripts.codemods.migrate_graph_projection_queries import (
     compile_query_composition_plan,
     compile_query_replacement_plan,
     plan_structural_dispositions,
-    _approved_core_rule,
 )
 from scripts.graph_projection_inventory import (
     AccessInventory,
@@ -35,6 +33,65 @@ ROOT = Path(__file__).parents[2]
 MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
 QUERY_MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
 QUERY_REPORT_PATH = ROOT / "tests/fixtures/graph_projection_migration/query_migration_report.json"
+
+_APPROVED_CORE_READ_SHAPES = frozenset(
+    {
+        "subscript_read",
+        "literal_subscript_read",
+        "map_get",
+        "keys_iteration",
+        "values_iteration",
+        "items_iteration",
+        "membership",
+        "nested_get",
+        "items",
+        "values",
+    }
+)
+_APPROVED_CORE_POLICY = {
+    path: _APPROVED_CORE_READ_SHAPES
+    for path in (
+        "src/orchestrator/graph/projection_models.py",
+        "src/orchestrator/graph/projection_collections.py",
+        "src/orchestrator/graph/projection_queries.py",
+        "src/orchestrator/graph/projection_codec.py",
+        "src/orchestrator/graph/projections.py",
+    )
+}
+_GRAPH_PROJECTION_ORIGINS = frozenset(
+    {
+        "orchestrator.graph.GraphProjection",
+        "orchestrator.graph._commands.GraphProjection",
+        "orchestrator.graph.projections.GraphProjection",
+    }
+)
+_PROJECTION_FACTORIES = frozenset(
+    {
+        "orchestrator.graph.initial_projection",
+        "orchestrator.graph.build_projection",
+        "orchestrator.graph.reduce_event",
+        "orchestrator.graph.projection_from_checkpoint",
+        "orchestrator.graph_runtime.controller.rebuild_projection",
+        "orchestrator.graph.projections.reduce_event",
+    }
+)
+_NEUTRAL_RULE_IDS = frozenset(
+    {
+        "projection_cast",
+        "fixture_mutation_helper",
+        "typed_projection_return",
+        "handled_projection_comparison",
+        "typed_projection_binding",
+        "typed_projector_binding",
+        "typed_projection_field_constructor",
+        "fixture_projection_keyword",
+        "fixture_projection_argument",
+        "derived_value_sink",
+        "fixture_public_graph_call",
+        "public_graph_call",
+        "projector_fixture_flow",
+    }
+)
 
 pytestmark = [pytest.mark.slow, pytest.mark.graph_projection_migration]
 
@@ -79,6 +136,123 @@ def live_migration_context() -> LiveMigrationContext:
         structural_plan=structural_plan,
         report=report,
     )
+
+
+def _assert_independent_semantic_policy(stream: OperationStream, plan: DispositionPlan) -> None:
+    sites = {site.original_site_id: site for site in stream.sites}
+    neutral = {item.site_id: item for item in plan.neutral_rule_operations}
+    for operation in plan.operations:
+        site = sites[operation.consumed_site_ids[0]]
+        context = site.anchor.context
+        if operation.disposition == "approved_core":
+            assert site.relative_path in _APPROVED_CORE_POLICY
+            assert context is not None
+            assert context.projection_role == "receiver"
+            assert context.receiver_type_origin in _GRAPH_PROJECTION_ORIGINS
+            access_kind = context.physical_access_kind
+            assert access_kind is not None
+            assert context.physical_operation_shape == access_kind.value
+            assert context.physical_operation_shape in _APPROVED_CORE_POLICY[site.relative_path]
+            assert site.parent_shape not in {"assignment", "deletion", "mutation"}
+            continue
+        if operation.disposition != "projection_neutral":
+            continue
+        evidence = neutral[site.original_site_id]
+        assert evidence.rule_id in _NEUTRAL_RULE_IDS
+        assert context is None or context.physical_access_kind is None
+        if evidence.rule_id == "projection_cast":
+            assert site.diagnostic_code is DiagnosticCode.UNSUPPORTED_CALL
+            assert context is not None
+            assert (context.callee_origin, context.projection_role, context.positional_index) == (
+                "typing.cast",
+                "positional",
+                1,
+            )
+            assert evidence.origin == context.callee_origin
+        elif evidence.rule_id == "fixture_mutation_helper":
+            assert site.domain == "test_fixture"
+            assert site.diagnostic_code is DiagnosticCode.UNSUPPORTED_BINDING
+            assert evidence.origin in {
+                "tests.unit.graph_test_utils.projection_fixture_append",
+                "tests.unit.graph_test_utils.projection_fixture_replace",
+                "tests.unit.graph_test_utils.projection_fixture_set",
+                "tests.unit.graph_test_utils.projection_fixture_update",
+            }
+        elif evidence.rule_id == "typed_projection_return":
+            assert site.diagnostic_code is DiagnosticCode.UNSUPPORTED_BINDING
+            assert (site.parent_shape, site.operation_shape, evidence.origin) == (
+                "return",
+                "typed_pass_through",
+                "collector",
+            )
+        elif evidence.rule_id == "handled_projection_comparison":
+            assert site.diagnostic_code is DiagnosticCode.UNSUPPORTED_COMPARISON
+            assert context is None
+            assert (site.operation_shape, evidence.origin) == ("comparison", "collector")
+        elif evidence.rule_id == "typed_projection_binding":
+            assert site.diagnostic_code is DiagnosticCode.UNSUPPORTED_BINDING
+            assert context is not None
+            assert context.receiver_type_origin in _GRAPH_PROJECTION_ORIGINS
+            assert evidence.origin == context.receiver_type_origin
+        elif evidence.rule_id == "typed_projector_binding":
+            assert context is not None
+            assert context.callee_origin in _PROJECTION_FACTORIES
+            assert evidence.origin == context.callee_origin
+            assert site.diagnostic_code is DiagnosticCode.UNSUPPORTED_BINDING or (
+                context.projection_role == "receiver"
+            )
+        elif evidence.rule_id == "typed_projection_field_constructor":
+            assert context is not None
+            assert context.receiver_type_origin == evidence.origin
+            assert context.projection_role == "keyword"
+            assert context.keyword_name is not None
+        elif evidence.rule_id == "fixture_projection_keyword":
+            assert site.domain == "test_fixture"
+            assert context is not None
+            assert context.projection_role == "keyword"
+            assert context.keyword_name in {"projection", "graph_projection"}
+            assert evidence.origin == (context.callee_origin or "collector")
+        elif evidence.rule_id == "fixture_projection_argument":
+            assert site.domain == "test_fixture"
+            assert context is not None
+            assert context.projection_role == "positional"
+            assert context.positional_index is not None
+            assert evidence.origin == (context.callee_origin or "collector")
+        elif evidence.rule_id == "derived_value_sink":
+            assert context is not None
+            assert context.projection_role == "derived_value"
+            assert context.callee_origin == "orchestrator.graph.scheduler.NodeScheduleInfo"
+            assert evidence.origin == context.callee_origin
+        elif evidence.rule_id == "fixture_public_graph_call":
+            assert site.domain == "test_fixture"
+            assert context is not None
+            assert context.callee_origin == evidence.origin
+            assert context.callee_origin is not None
+            assert context.callee_origin.startswith("orchestrator.graph.")
+            assert (context.projection_role, context.positional_index, context.keyword_name) in {
+                ("positional", 0, None),
+                ("keyword", None, "projection"),
+            }
+        elif evidence.rule_id == "public_graph_call":
+            assert context is not None
+            assert context.callee_origin == evidence.origin
+            if context.projection_role == "keyword":
+                assert context.keyword_name == "projection"
+            else:
+                assert context.projection_role == "positional"
+                special_positions = {
+                    "orchestrator.graph.callbacks.validate_callback": 1,
+                    "orchestrator.graph.commands.apply_command": 0,
+                    "orchestrator.graph.patch_validator.validate_patch": 3,
+                    "orchestrator.graph.projections.final_invariant_blockers_for_events": 1,
+                    "orchestrator.graph_runtime.store.GraphEventStore.persist_projection_snapshot": 1,
+                }
+                assert context.positional_index == special_positions.get(context.callee_origin, 0)
+        else:
+            assert evidence.rule_id == "projector_fixture_flow"
+            assert context is not None
+            assert context.callee_origin in _PROJECTION_FACTORIES
+            assert evidence.origin == context.callee_origin
 
 
 def test_default_tracked_provider_reports_real_prompt_dispatch_recovery_and_store_sites(
@@ -260,12 +434,6 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
     assert consumed <= stream_ids
     assert not (consumed & deferred or consumed & pending or deferred & pending)
     assert consumed | deferred | pending == stream_ids
-    assert plan.disposition_counts == tuple(
-        sorted(Counter(operation.disposition for operation in plan.operations).items())
-    )
-    assert plan.shape_group_counts == tuple(
-        sorted(Counter(operation.shape_key for operation in plan.operations).items())
-    )
     assert all(operation.reason.startswith("structural:") for operation in plan.operations)
     assert tuple(operation.consumed_site_ids[0] for operation in plan.operations) == tuple(
         sorted(operation.consumed_site_ids[0] for operation in plan.operations)
@@ -295,7 +463,7 @@ def test_live_repository_compilation_includes_every_remaining_fixture_site(
     }
     compiled_site_ids = [site.original_site_id for site in stream.sites]
     assert deferred_fixture_site_ids <= raw_fixture_site_ids
-    assert Counter(compiled_site_ids).most_common(1)[0][1] == 1
+    assert len(compiled_site_ids) == len(set(compiled_site_ids))
     assert raw_fixture_site_ids <= set(compiled_site_ids)
     assert all(
         site.diagnostic_code is None or site.diagnostic_code in DiagnosticCode
@@ -316,21 +484,6 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
     assert len(plan.generated_fixture_operations) == 0
     assert not any(operation.disposition == "query_transform" for operation in plan.operations)
     assert all(operation.reason.startswith("structural:") for operation in plan.operations)
-    assert plan.disposition_counts == tuple(
-        sorted(Counter(operation.disposition for operation in plan.operations).items())
-    )
-    assert plan.shape_group_counts == tuple(
-        sorted(Counter(operation.shape_key for operation in plan.operations).items())
-    )
-    assert plan.rule_family_counts == tuple(
-        sorted(Counter(item.rule_id for item in plan.neutral_rule_operations).items())
-    )
-    assert plan.symbol_origin_counts == tuple(
-        sorted(Counter(item.origin for item in plan.neutral_rule_operations).items())
-    )
-    assert plan.generated_query_family_counts == tuple(
-        sorted(Counter(item.rule_id for item in plan.generated_query_operations).items())
-    )
     operations_by_id = {
         site_id: operation
         for operation in plan.operations
@@ -342,11 +495,7 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
     stream_by_id = {site.original_site_id: site for site in stream.sites}
     assert len(consumed_ids) == len(operations_by_id)
     assert set(operations_by_id) == set(stream_by_id)
-    assert all(
-        _approved_core_rule(stream_by_id[site_id])
-        for site_id, operation in operations_by_id.items()
-        if operation.disposition == "approved_core"
-    )
+    _assert_independent_semantic_policy(stream, plan)
     neutral_rules = {item.site_id: item.rule_id for item in plan.neutral_rule_operations}
     assert all(
         neutral_rules[site_id].strip()
@@ -380,6 +529,24 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
             update={"dispositions": (), "unclassified_sites": ()}
         ),
     )
+
+
+def test_independent_semantic_policy_rejects_nonblank_rule_drift(
+    live_migration_context: LiveMigrationContext,
+) -> None:
+    plan = live_migration_context.structural_plan
+    first = plan.neutral_rule_operations[0]
+    altered = plan.model_copy(
+        update={
+            "neutral_rule_operations": (
+                first.model_copy(update={"rule_id": "drifted_nonblank_rule"}),
+                *plan.neutral_rule_operations[1:],
+            )
+        }
+    )
+
+    with pytest.raises(AssertionError):
+        _assert_independent_semantic_policy(live_migration_context.stream, altered)
 
 
 def test_live_query_composition_plan_has_no_remaining_query_transform_sites(

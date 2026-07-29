@@ -66,16 +66,12 @@ MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
 
 
 def test_public_graph_import_rewrite_preserves_alias_comments_and_is_idempotent() -> None:
-    source = (
-        "from orchestrator.graph.projections import GraphProjection as Projection  # public\n"
-        "import orchestrator.graph.models as graph_models\n"
-    )
+    source = "from orchestrator.graph.projections import GraphProjection as Projection  # public\n"
 
     transformed = rewrite_graph_submodule_imports(source)
 
     assert transformed == (
         "from orchestrator.graph import GraphProjection as Projection  # public\n"
-        "import orchestrator.graph as graph_models\n"
     )
     assert rewrite_graph_submodule_imports(transformed) == transformed
 
@@ -98,6 +94,20 @@ def test_public_graph_import_rewrite_preserves_scheduler_local_binding() -> None
     assert rewrite_graph_submodule_imports(source) == (
         "from orchestrator.graph import SchedulerResourceClaim as ResourceClaim\n"
     )
+
+
+@pytest.mark.parametrize(
+    "source",
+    (
+        "from orchestrator.graph.unknown import GraphProjection\n",
+        "from orchestrator.graph.projections import NotPublic\n",
+        "from orchestrator.graph.projections import *\n",
+        "import orchestrator.graph.models as graph_models\n",
+    ),
+)
+def test_public_graph_import_rewrite_fails_closed_for_unsupported_imports(source: str) -> None:
+    with pytest.raises(AnchorRefusedError, match="unsupported graph submodule import"):
+        rewrite_graph_submodule_imports(source)
 
 
 def test_current_operation_stream_matches_full_stream_for_representative_sources() -> None:

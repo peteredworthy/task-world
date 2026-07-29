@@ -286,7 +286,7 @@ Possible provenance remains deliberately bounded to the collector's existing con
 ### Migration-test cleanup
 
 - Removed generated site-total, disposition-distribution, and rule-family-count snapshots from the migration gate. The historical ledger is now checked as a finite, unique reviewed catalog; current closure uses an empty historical ledger and structural compilation, matching the production current-closure path.
-- The live invariants now prove: exact disjoint consumed/deferred/pending partitioning of known current IDs; unique consumed operation IDs; no pending, deferred, generated-fixture, or query-transform work at closure; approved-core rows satisfy the exact finite core predicate; projection-neutral rows have structural reasons and finite rules; all stored summary Counters equal independently recomputed Counters; and independently constructed current closure evidence has the same identity as both the live closure and canonical report.
+- The live invariants now prove: exact disjoint consumed/deferred/pending partitioning of known current IDs; unique consumed operation IDs; no pending, deferred, generated-fixture, or query-transform work at closure; approved-core rows satisfy the exact finite core predicate; projection-neutral rows have structural reasons and finite rules; and independently constructed current closure evidence has the same identity as both the live closure and canonical report.
 - This permits legitimate generated-site drift after artifact regeneration while still failing missing, duplicate, unclassified, or policy/rule drift.
 
 ### Final focused evidence before lint/type/full-suite gate
@@ -317,4 +317,42 @@ uv run ruff format . && uv run ruff check . && uv run pyright
 
 make test
 5146 passed, 3 skipped, 3 aiosqlite datetime-adapter deprecation warnings in 98.98s
+```
+
+## Independent review: finite import and semantic migration policy
+
+### RED / GREEN
+
+```text
+RED
+uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_preserves_alias_comments_and_is_idempotent tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_distinguishes_same_terminal_symbol_origins tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_preserves_scheduler_local_binding tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_fails_closed_for_unsupported_imports -q
+4 failed, 3 passed
+
+GREEN
+same focused command
+7 passed in 4.18s
+```
+
+- The rewrite now accepts only a finite module/symbol policy and named imports. It preserves aliases, comments, formatting, and scheduler `ResourceClaim` local bindings. Unknown modules/symbols, stars, and module-object imports raise `AnchorRefusedError` rather than changing semantics.
+- The migration test no longer calls `_approved_core_rule` or validates production summary Counters by recomputing them. Its independent contract fixes the allowed core path/shape relationships and neutral rule/evidence relationships.
+- A negative policy test replaces one operation's rule evidence with a different nonblank rule while leaving the production classifier output untouched; the independent oracle rejects the drift.
+- The fast-path comment now refers to `Historical linkage` without embedding a generated site count.
+
+### Focused verification
+
+```text
+uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_preserves_alias_comments_and_is_idempotent tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_distinguishes_same_terminal_symbol_origins tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_preserves_scheduler_local_binding tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_fails_closed_for_unsupported_imports tests/unit/test_graph_projection_boundaries.py tests/unit/test_scheduler.py::test_evaluate_readiness_resource_conflict -q
+47 passed in 4.18s
+
+uv run pytest -o addopts='' --timeout=240 --run-slow -m graph_projection_migration tests/unit/test_graph_projection_migration.py::test_structural_plan_closes_reviewed_and_public_query_test_sites tests/unit/test_graph_projection_migration.py::test_independent_semantic_policy_rejects_nonblank_rule_drift -q
+2 passed in 94.10s
+
+uv run ruff check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py tests/unit/test_graph_projection_migration.py
+All checks passed
+
+uv run ruff format --check scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py tests/unit/test_graph_projection_migration.py
+3 files already formatted
+
+uv run pyright scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py tests/unit/test_graph_projection_migration.py
+0 errors, 0 warnings, 0 informations
 ```
