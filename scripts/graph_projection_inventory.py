@@ -233,6 +233,17 @@ class InventorySource(BaseModel):
     source: str
 
 
+class ProjectionProvenanceFact(BaseModel):
+    """One source-ordered GraphProjection expression resolved by the collector."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    line: int
+    column: int
+    expression: str
+    certainty: Literal["definite", "possible"]
+
+
 class SourceDigest(BaseModel):
     """The blank-line-insensitive source identity used by the operation compiler."""
 
@@ -843,6 +854,18 @@ _APPROVED_SYMBOLS = frozenset(
 )
 
 
+def projection_provenance_seed_tokens() -> frozenset[str]:
+    """Return terminal symbols from every finite collector provenance seed origin."""
+    origins = (
+        *_GRAPH_PROJECTION_TYPE_ORIGINS,
+        *_APPROVED_PRODUCER_ORIGINS,
+        *(f"collector.{class_name}" for class_name, _ in _PROJECTION_PRODUCERS),
+        *(f"collector.{class_name}" for class_name, _ in _TYPED_PROJECTION_PRODUCERS),
+        *(f"collector.{class_name}" for class_name in _PROJECTION_FIELDS),
+    )
+    return frozenset(origin.rpartition(".")[2] for origin in origins)
+
+
 @dataclass(frozen=True)
 class _CallableSignature:
     positional: tuple[tuple[str, str | None, bool], ...]
@@ -1450,6 +1473,26 @@ class _Collector(cst.CSTVisitor):
         self.diagnostic_keys: set[tuple[int, DiagnosticCode]] = set()
         self.handled: set[int] = set()
         self.control_producer_aliases: dict[int, list[cst.Name]] = {}
+        self.provenance_facts: dict[tuple[int, int], ProjectionProvenanceFact] = {}
+
+    def _record_provenance(self, node: cst.BaseExpression) -> None:
+        """Retain this exact expression's scope-aware projection provenance."""
+        if self.get_metadata(ScopeProvider, node, None) is None:
+            return
+        certainty: Literal["definite", "possible"] | None = None
+        if self._projection_derived(node) or self._known_projection_value(node):
+            certainty = "definite"
+        elif isinstance(node, cst.Name) and self._possible_alias(node):
+            certainty = "possible"
+        if certainty is None:
+            return
+        position = self.get_metadata(PositionProvider, node).start
+        self.provenance_facts[(position.line, position.column)] = ProjectionProvenanceFact(
+            line=position.line,
+            column=position.column,
+            expression=self._diagnostic_expression(node),
+            certainty=certainty,
+        )
 
     def visit_Module(self, node: cst.Module) -> None:
         """Seed module scope so declarations and flows use the same tables as functions."""
@@ -2587,6 +2630,7 @@ class _Collector(cst.CSTVisitor):
             )
 
     def visit_Call(self, node: cst.Call) -> None:
+        self._record_provenance(node)
         if id(node) in self.handled:
             return
         if any(
@@ -2827,10 +2871,14 @@ class _Collector(cst.CSTVisitor):
                         self._handle_projection_derived(argument.value)
 
     def visit_Attribute(self, node: cst.Attribute) -> None:
+        self._record_provenance(node)
         if self._is_reflective_attribute(node):
             self._diagnostic(
                 DiagnosticCode.REFLECTION, "__dict__ on GraphProjection is unsupported", node
             )
+
+    def visit_Name(self, node: cst.Name) -> None:
+        self._record_provenance(node)
 
     def _nested_projection_value(self, node: cst.BaseExpression) -> bool:
         if self._known_projection_value(node):
@@ -3000,6 +3048,7 @@ class _Collector(cst.CSTVisitor):
                 self._record(AccessKind.DELETE_POP, field, node)
 
     def visit_Subscript(self, node: cst.Subscript) -> None:
+        self._record_provenance(node)
         if id(node) in self.handled:
             parent = self.get_metadata(ParentNodeProvider, node)
             if not self._inside_derived_sink(node) or isinstance(parent, cst.Subscript):
@@ -3109,6 +3158,12 @@ class _Collector(cst.CSTVisitor):
             diagnostics=diagnostics,
         )
 
+    def projection_provenance(self) -> tuple[ProjectionProvenanceFact, ...]:
+        """Return independently-addressable facts without changing inventory identities."""
+        return tuple(
+            sorted(self.provenance_facts.values(), key=lambda item: (item.line, item.column))
+        )
+
 
 def collect_source(source: str, *, relative_path: str, baseline_revision: str) -> SourceInventory:
     """Collect supported GraphProjection accesses from one source string.
@@ -3151,6 +3206,26 @@ def collect_source(source: str, *, relative_path: str, baseline_revision: str) -
     )
     MetadataWrapper(module).visit(collector)
     return collector.result()
+
+
+def projection_provenance(
+    source: str, *, relative_path: str
+) -> tuple[ProjectionProvenanceFact, ...]:
+    """Resolve projection provenance with the inventory collector's exact rules."""
+    module = cst.parse_module(source)
+    collector = _Collector(
+        relative_path,
+        "boundary",
+        _manifest_fields(),
+        symbols=_module_symbols(
+            source,
+            module_name=_module_name(relative_path),
+            require_declaration_facts=True,
+        ),
+        source=source,
+    )
+    MetadataWrapper(module).visit(collector)
+    return collector.projection_provenance()
 
 
 def source_digest(source: str) -> str:
