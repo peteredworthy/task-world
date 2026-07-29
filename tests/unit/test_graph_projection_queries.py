@@ -26,6 +26,11 @@ from orchestrator.graph import (
     active_leases,
     active_requirement_version,
     accepted_graph_patch_ids,
+    accepted_graph_patches_by_node_view,
+    accepted_no_successor_patches_by_node_view,
+    accepted_output_records_by_node_port_view,
+    accepted_record_summaries_by_id_view,
+    active_requirement_versions_view,
     accepted_output_records,
     accepted_output_records_for_node_port,
     accepted_no_successor_patch_id,
@@ -35,10 +40,14 @@ from orchestrator.graph import (
     authority_revision_blocker,
     bound_record_ids,
     callback_idempotency_event,
+    callback_idempotency_events_view,
     check_result,
     check_results,
+    check_results_view,
     cleanup_applied,
+    cleanup_applied_ids_view,
     cleanup_request,
+    cleanup_requested_events_view,
     decision_request,
     configured_gates,
     build_projection,
@@ -50,11 +59,14 @@ from orchestrator.graph import (
     environment_failures,
     file_state_record,
     failed_verification_candidate_ids,
+    failed_verification_candidate_ids_view,
     failed_verification_result,
     failed_verification_results,
+    failed_verification_results_by_record_id_view,
     gate_decision,
     input_binding_for_port,
     input_bindings_for_node,
+    input_bindings_view,
     initial_projection,
     invalid_test_block,
     invalid_test_blocks,
@@ -65,25 +77,38 @@ from orchestrator.graph import (
     latest_routine_snapshot_record,
     node_allowed_actions,
     node_attempt,
+    node_attempts_view,
     node_candidate_id,
     node_command_definition,
+    node_command_definitions_view,
     node_creation_position,
+    node_creation_positions_view,
     node_exists,
     node_failed_candidate_id,
+    node_failed_candidates_view,
     node_gate_decision,
+    node_gate_decisions_view,
+    node_pending_appeals_view,
     node_states,
+    node_states_view,
     node_kind,
     node_last_deferred_reason,
+    last_deferred_reasons_view,
     node_preconditions,
+    node_preconditions_view,
     node_retry_not_before,
     node_role,
+    node_roles_view,
     node_state,
     node_task_region,
+    node_resource_claims_view,
     open_proposal_blocker,
     output_record_ids_for_node_port,
     output_record_payload,
+    output_records_by_node_port_view,
     oversight_decision,
     planner_generation,
+    planner_generations_view,
     planner_generation_budget,
     planner_region_label,
     planner_session,
@@ -92,19 +117,27 @@ from orchestrator.graph import (
     planner_session_state,
     planner_successor,
     passed_verification_candidate_ids,
+    passed_verification_candidate_ids_view,
     passed_verification_result,
     passed_verification_results,
+    passed_verification_results_by_record_id_view,
     recovery_nodes,
+    recovery_nodes_by_record_id_view,
     recovery_nodes_for_record,
+    ready_nodes_view,
     requirement_revision,
+    recorded_node_usage_keys_view,
     resource_claims_for_node,
     run_state,
+    retry_not_before_by_node_view,
     task_candidates,
+    task_candidates_view,
     task_state,
     task_states,
     node_usage_recorded,
     support_evidence,
     verifier_verdict,
+    verifier_verdicts_view,
 )
 from scripts.graph_projection_inventory import (
     AccessInventory,
@@ -680,6 +713,60 @@ def test_query_results_are_mutation_isolated_from_projection_storage() -> None:
     fresh_binding = input_binding_for_port(projection, "worker-query", "input")
     assert fresh_binding is not None
     assert fresh_binding.record_ids == ["record-1"]
+
+
+def test_exact_collection_views_preserve_shape_and_isolate_nested_values() -> None:
+    projection = _query_projection()
+
+    mapping_views = (
+        accepted_no_successor_patches_by_node_view,
+        accepted_output_records_by_node_port_view,
+        accepted_record_summaries_by_id_view,
+        active_requirement_versions_view,
+        callback_idempotency_events_view,
+        check_results_view,
+        cleanup_applied_ids_view,
+        cleanup_requested_events_view,
+        failed_verification_candidate_ids_view,
+        failed_verification_results_by_record_id_view,
+        last_deferred_reasons_view,
+        node_attempts_view,
+        node_command_definitions_view,
+        node_creation_positions_view,
+        node_gate_decisions_view,
+        node_failed_candidates_view,
+        node_pending_appeals_view,
+        node_preconditions_view,
+        node_resource_claims_view,
+        node_roles_view,
+        output_records_by_node_port_view,
+        passed_verification_results_by_record_id_view,
+        planner_generations_view,
+        recorded_node_usage_keys_view,
+        recovery_nodes_by_record_id_view,
+        retry_not_before_by_node_view,
+        task_candidates_view,
+        verifier_verdicts_view,
+    )
+    assert all(isinstance(view(projection), dict) for view in mapping_views)
+    assert isinstance(passed_verification_candidate_ids_view(projection), list)
+
+    states = node_states_view(projection)
+    bindings = input_bindings_view(projection)
+    patches = accepted_graph_patches_by_node_view(projection)
+    ready = ready_nodes_view(projection)
+
+    assert isinstance(states, dict)
+    assert isinstance(bindings["worker-query"], dict)
+    states["worker-query"] = "changed"
+    bindings["worker-query"]["input"].record_ids.append("changed")
+    patches.setdefault("worker-query", []).append("changed")
+    ready.append("changed")
+
+    assert node_states_view(projection)["worker-query"] == "ready"
+    assert input_bindings_view(projection)["worker-query"]["input"].record_ids == ["record-1"]
+    assert accepted_graph_patches_by_node_view(projection).get("worker-query", []) == []
+    assert "changed" not in ready_nodes_view(projection)
 
 
 def test_disposition_site_key_is_stable_without_source_position() -> None:

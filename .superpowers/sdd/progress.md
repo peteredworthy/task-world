@@ -39,3 +39,16 @@ Workspace: `worktrees/immutable-graph-projection`
 Baseline: 4851 passed, 3 skipped, 3 pre-existing aiosqlite warnings.
 Task 1a: complete (commits cff9e1c69..f3e1e3108, review clean).
 Task 1b: complete (collector review fixes, focused suite 24 passed; full suite 4876 passed, 3 skipped).
+Task 1c: complete (provenance analysis and deterministic diagnostic artifact reviewed clean).
+Task 2: complete (commits f167e800b..4048e5f2c, replay/public behavior goldens and independent FR17 parity reviewed clean).
+Task 3a: complete (commits 5bd12d499..f4e28df92, strict migration lifecycle and exact dispositions reviewed clean).
+Task 3b: complete (commits d3c67902d..19d1cc2c5, node/task/topology/binding/lease query domains reviewed clean).
+Task 3c: complete (commits 7be43203e..dffe7eb50, remaining production query domains reviewed clean; deferred inventory exactly 151 verification_recovery and 349 test_fixture at that revision).
+Task 3d: complete (commits cb7969aca..b34f065c7, all 151 verification_recovery sites closed; independent review approved).
+Task 3e1: complete (commits 747aa7af2..9bf79d973, inventory-driven operation stream/CST anchoring/structural grouping; independent review approved).
+Task 3e2b1: complete (commits d0ed226bb..fbe7f3ce5, fail-closed reviewed/deferred/pending planning boundary over all 803 current sites; independent review approved).
+Task 3e2b2a: complete (commits 94d098388..33fea5f8b, collector-owned exact call/physical evidence and compiler mismatch matrices; independent evidence review approved).
+Task 3e2b2: complete (commits 8d4e4ec0f..53ab48a4c, finite neutral/core/generated-fixture structural planning with exact 803-site closure; independent policy review approved).
+Task test-speed: complete (commits da1b43f68..a7c545a70, default suite 94.72s and explicit migration gate 115.18s; independent review approved).
+Task 3e2c1a: complete (commits da077bea1..8016d2714, shared source reanchoring and 187 nonoverlapping composition actions covering all 201 reviewed transform IDs; independent review approved).
+Task 3e2c1b: complete (203 exact recipes removed 226 physical read IDs across 11 consumer files; zero non-core/non-fixture physical reads, zero pending/query transforms; independent review approved and migration gate 11/11 passed).

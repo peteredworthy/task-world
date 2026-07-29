@@ -2,8 +2,8 @@
 
 ## Status
 
-Repaired; the collector now supplies exact physical context for every reviewed
-`query_transform` site, including occurrence-origin sites.
+In progress. Source reanchoring and composition ownership were split into Task
+3e2c1a and independently approved. Exact semantic query recipes remain.
 
 ## Evidence boundary failure
 
@@ -68,18 +68,9 @@ selecting the first call diagnostic.
   once).
 - Stronger pure guard and focused collector/codemod suite — 151 passed.
 
-## Query recipe compilation
+## Composition predecessor
 
-`compile_query_rewrite_plan` now compiles the exact reviewed query-transform
-partition into 201 frozen, source-free recipes. It uses only the effective
-field supplied by the approved physical context and a finite operation-shape
-registry to select exported `orchestrator.graph` query APIs. Unknown fields,
-missing IDs, duplicate IDs, and unmatched structural groups are refused.
-
-The live recipe plan has zero unmatched groups and exactly 201 distinct
-consumed IDs. Rule-family and query-import counts are canonical sorted tuples,
-and recipes are sorted by consumed site identity.
-
-Additional checks: `test_migrate_graph_projection_queries.py` (48 passed),
-`test_graph_projection_queries.py` (23 passed), Ruff, Pyright, and the final
-`make test-graph-projection-migration` gate (10 passed).
+Task 3e2c1a now provides shared occurrence/diagnostic reanchoring and 187
+nonoverlapping outer CST actions consuming all 201 reviewed IDs. The remaining
+scope is a finite field/access recipe registry and exact in-memory replacement
+expressions; no source-writing behavior is implemented yet.

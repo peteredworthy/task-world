@@ -7,6 +7,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph import (
+    run_state,
     AppealOpenedPayload,
     CallbackAcceptedPayload,
     CallbackDuplicateReturnedPayload,
@@ -375,7 +376,7 @@ def test_canonical_lifecycle_serialization_preserves_reducer_semantics() -> None
         "to_state": "active",
         "trigger": "start_command_accepted",
     }
-    assert projection["run_state"] == "active"
+    assert run_state(projection) == "active"
     assert (
         EdgeProjection.model_validate(
             {

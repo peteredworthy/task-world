@@ -8,7 +8,7 @@ from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.db import EventV2Model
-from orchestrator.graph import GraphCommandContext
+from orchestrator.graph import leases_view, node_states_view, run_state, GraphCommandContext
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, GraphEventStore
@@ -43,11 +43,11 @@ async def recover(
         for current_run_id in run_ids:
             events = await store.read_run(current_run_id)
             projection = rebuild_projection(events)
-            for lease in projection["leases"].values():
+            for lease in leases_view(projection).values():
                 if lease.state != "active":
                     continue
                 node_id = lease.node_id
-                node_state = projection["node_states"].get(str(node_id))
+                node_state = node_states_view(projection).get(str(node_id))
                 record: dict[str, object] = {
                     "run_id": current_run_id,
                     "lease_id": lease.lease_id,
@@ -77,7 +77,7 @@ async def reconcile_graph(
 ) -> None:
     """Run the kernel recovery escape hatch for active graph runs."""
     projection = await controller.read_projection(run_id)
-    if projection["run_state"] != "active":
+    if run_state(projection) != "active":
         return
     position = await controller.current_position(run_id)
     await controller.handle_command(
@@ -106,7 +106,7 @@ async def _run_ids(session: AsyncSession) -> list[str]:
             continue
         if checkpoint is None:
             projection, _, _ = await store.load_projection_with_tail(run_id)
-            if projection["run_state"] in _TERMINAL_RUN_STATES:
+            if run_state(projection) in _TERMINAL_RUN_STATES:
                 continue
         run_ids.append(run_id)
     return run_ids

@@ -1373,9 +1373,11 @@ def test_real_repository_inventory_reports_production_projection_flows() -> None
     assert any(
         item.relative_path == "src/orchestrator/graph_runtime/recovery.py"
         and item.qualified_function == "reconcile_graph"
-        and item.code is DiagnosticCode.UNSUPPORTED_COMPARISON
+        and item.code is DiagnosticCode.UNSUPPORTED_CALL
+        and item.normalized_cst_expression == "run_state(projection)"
         for item in inventory.diagnostics
     )
+    assert inventory.occurrences == ()
     assert inventory.diagnostics
     assert all(
         item.relative_path
@@ -2401,6 +2403,145 @@ def build(projection: GraphProjection) -> object:
         "projection_expression": "projection['node_states']",
     } in contexts
     assert not any(context.get("callee_origin") == "builtins.object" for context in contexts)
+    assert [
+        (item.old_field_name, item.kind, item.same_expression_ordinal)
+        for item in inventory.occurrences
+    ] == [
+        ("node_states", AccessKind.LITERAL_SUBSCRIPT_READ, 0),
+        ("node_states", AccessKind.LITERAL_SUBSCRIPT_READ, 1),
+    ]
+
+
+def test_collect_source_retains_physical_reads_inside_derived_comprehensions() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphProjection
+from orchestrator.graph.scheduler import NodeScheduleInfo
+
+def build(projection: GraphProjection, node_ids: list[str]) -> object:
+    return NodeScheduleInfo(
+        upstream_states={
+            node_id: projection["node_states"][node_id]
+            for node_id in node_ids
+            if node_id in projection["node_states"]
+        }
+    )
+""",
+        relative_path="derived_comprehension_contexts.py",
+        baseline_revision="baseline",
+    )
+
+    assert [item.old_field_name for item in inventory.occurrences] == [
+        "node_states",
+        "node_states",
+    ]
+
+
+def test_collect_source_infers_approved_projection_producer_from_constructor_binding() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph_runtime import GraphController
+
+async def read(run_id: str) -> object:
+    controller = GraphController()
+    projection = await controller.read_projection(run_id)
+    return projection["run_state"]
+""",
+        relative_path="constructor_producer.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.old_field_name, item.kind) for item in inventory.occurrences] == [
+        ("run_state", AccessKind.LITERAL_SUBSCRIPT_READ)
+    ]
+
+
+def test_collect_source_tracks_projection_from_exact_checkpoint_producer() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphEventStore
+
+async def read(store: GraphEventStore, run_id: str) -> None:
+    checkpoint = await store.read_projection_checkpoint(run_id)
+    if checkpoint is None:
+        return
+    projection = checkpoint.projection
+    consume(projection)
+""",
+        relative_path="checkpoint_producer.py",
+        baseline_revision="baseline",
+    )
+
+    assert any(
+        item.code is DiagnosticCode.UNSUPPORTED_CALL
+        and item.normalized_source_pattern == "consume(projection)"
+        for item in inventory.diagnostics
+    )
+
+
+def test_collect_source_keeps_existing_projection_alias_after_exact_loop_reduction() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphProjection, initial_projection, reduce_event
+
+def read(events: list[object]) -> None:
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+    consume(projection)
+""",
+        relative_path="loop_reduction.py",
+        baseline_revision="baseline",
+    )
+
+    assert any(
+        item.code is DiagnosticCode.UNSUPPORTED_CALL
+        and item.normalized_source_pattern == "consume(projection)"
+        for item in inventory.diagnostics
+    )
+
+
+def test_collect_source_keeps_exact_producer_alias_within_control_body_only() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph_runtime import GraphController
+
+async def read(run_id: str) -> object:
+    controller = GraphController()
+    for _ in range(2):
+        projection = await controller.read_projection(run_id)
+        state = projection["run_state"]
+    return projection["run_state"]
+""",
+        relative_path="control_producer.py",
+        baseline_revision="baseline",
+    )
+
+    assert [(item.old_field_name, item.kind) for item in inventory.occurrences] == [
+        ("run_state", AccessKind.LITERAL_SUBSCRIPT_READ)
+    ]
+
+
+def test_collect_source_marks_typed_projection_field_constructor_context() -> None:
+    inventory = collect_source(
+        """
+from orchestrator.graph import GraphProjection
+
+class Holder:
+    projection: GraphProjection
+
+def build(projection: GraphProjection) -> Holder:
+    return Holder(projection=projection)
+""",
+        relative_path="typed_projection_holder.py",
+        baseline_revision="baseline",
+    )
+
+    context = inventory.diagnostics[0].context
+    assert context is not None
+    assert context.receiver_type_origin == "Holder"
+    assert context.projection_role == "keyword"
+    assert context.keyword_name == "projection"
 
 
 def test_collect_source_distinguishes_direct_and_post_star_projection_roles() -> None:

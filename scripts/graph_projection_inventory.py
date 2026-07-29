@@ -14,6 +14,7 @@ from typing import Annotated, Iterable, Literal
 
 import libcst as cst
 from libcst.metadata import (
+    ComprehensionScope,
     MetadataWrapper,
     ParentNodeProvider,
     PositionProvider,
@@ -457,6 +458,8 @@ def _site_domain(
     """Assign a deterministic bounded domain for partial migration reporting."""
     if relative_path in _APPROVED_CORE_STORAGE_FILES:
         return "approved_core"
+    if relative_path.startswith("tests/"):
+        return "test_fixture"
     if (
         old_field_name in {"run_state", "completion_decision_passed"}
         or "run_state" in normalized_source_pattern
@@ -472,8 +475,6 @@ def _site_domain(
         old_field_name == "input_bindings" or "input_bindings" in normalized_source_pattern
     ):
         return "node_task_edge_binding"
-    if relative_path.startswith("tests/"):
-        return "test_fixture"
     if relative_path.endswith("/_commands.py"):
         return "verification_recovery"
     if relative_path.endswith("/callbacks.py"):
@@ -766,6 +767,9 @@ _PROJECTION_PRODUCERS = {
     ("GraphController", "read_projection"): "value",
     ("GraphEventStore", "load_projection_with_tail"): "first_tuple_item",
 }
+_TYPED_PROJECTION_PRODUCERS = {
+    ("GraphEventStore", "read_projection_checkpoint"): "GraphProjectionCheckpoint",
+}
 _PROJECTION_FIELDS = {
     "GraphDispatchContext": frozenset({"graph_projection"}),
     "GraphProjectionCheckpoint": frozenset({"projection"}),
@@ -787,13 +791,17 @@ _APPROVED_PRODUCER_ORIGINS = frozenset(
         "orchestrator.graph.initial_projection",
         "orchestrator.graph.build_projection",
         "orchestrator.graph.reduce_event",
+        "orchestrator.graph.projections.initial_projection",
+        "orchestrator.graph.projections.build_projection",
+        "orchestrator.graph.projections.reduce_event",
         "orchestrator.graph_runtime.controller.rebuild_projection",
     }
 )
-_CONTEXT_PRODUCER_ORIGINS = _APPROVED_PRODUCER_ORIGINS | frozenset(
-    {"orchestrator.graph.projections.reduce_event"}
-)
+_CONTEXT_PRODUCER_ORIGINS = _APPROVED_PRODUCER_ORIGINS
 _DERIVED_VALUE_SINK_ORIGINS = frozenset({"orchestrator.graph.scheduler.NodeScheduleInfo"})
+_GRAPH_EVENT_STORE_PERSIST_ORIGIN = (
+    "orchestrator.graph_runtime.store.GraphEventStore.persist_projection_snapshot"
+)
 
 _APPROVED_SYMBOLS = frozenset(
     {
@@ -802,8 +810,10 @@ _APPROVED_SYMBOLS = frozenset(
         "orchestrator.graph.GraphEventStore",
         "orchestrator.graph.GraphDispatchContext",
         "orchestrator.graph.GraphProjectionCheckpoint",
+        "orchestrator.graph_runtime.GraphController",
         "orchestrator.graph.projections.GraphProjection",
         "orchestrator.graph_runtime.controller.GraphController",
+        "orchestrator.graph_runtime.dispatch.GraphDispatchContext",
         "orchestrator.graph_runtime.store.GraphEventStore",
         "typing.cast",
         "typing.Any",
@@ -909,6 +919,26 @@ class _ModuleSymbols:
                 {},
                 require_declaration_facts,
             )
+        for statement in tree.body:
+            if not isinstance(statement, ast.If) or not (
+                isinstance(statement.test, ast.Name)
+                and statement.test.id == "TYPE_CHECKING"
+                or isinstance(statement.test, ast.Attribute)
+                and statement.test.attr == "TYPE_CHECKING"
+            ):
+                continue
+            for imported_statement in statement.body:
+                if not isinstance(imported_statement, ast.ImportFrom):
+                    continue
+                module = _resolve_import_module(imported_statement, module_name)
+                if module is None:
+                    continue
+                for imported in imported_statement.names:
+                    if imported.name == "*":
+                        continue
+                    resolved = f"{module}.{imported.name}"
+                    if resolved in _APPROVED_SYMBOLS | _APPROVED_PRODUCER_ORIGINS:
+                        names[imported.asname or imported.name] = resolved
         declaration_annotations = cls._declaration_annotations(
             tree,
             source=source,
@@ -1399,6 +1429,7 @@ class _Collector(cst.CSTVisitor):
         ] = []
         self.diagnostic_keys: set[tuple[int, DiagnosticCode]] = set()
         self.handled: set[int] = set()
+        self.control_producer_aliases: dict[int, list[cst.Name]] = {}
 
     def visit_Module(self, node: cst.Module) -> None:
         """Seed module scope so declarations and flows use the same tables as functions."""
@@ -1516,7 +1547,14 @@ class _Collector(cst.CSTVisitor):
 
     def _tracked(self, node: cst.BaseExpression) -> bool:
         if isinstance(node, cst.Name):
-            return node.value in self.aliases.get(id(self.get_metadata(ScopeProvider, node)), set())
+            scope = self.get_metadata(ScopeProvider, node)
+            if node.value in self.aliases.get(id(scope), set()):
+                return True
+            while isinstance(scope, ComprehensionScope):
+                if scope.assignments[node.value]:
+                    return False
+                scope = scope.parent
+            return node.value in self.aliases.get(id(scope), set())
         return isinstance(node, cst.Attribute) and _attribute_key(
             node
         ) in self.tracked_attributes.get(id(self.get_metadata(ScopeProvider, node)), set())
@@ -1546,9 +1584,28 @@ class _Collector(cst.CSTVisitor):
             return None
         if not isinstance(node.func.value, cst.Name):
             return None
-        scope_id = id(self.get_metadata(ScopeProvider, node.func.value))
-        receiver_type = self.receiver_types.get(scope_id, {}).get(node.func.value.value)
+        receiver_type = self._receiver_type(node.func.value)
         return _PROJECTION_PRODUCERS.get((receiver_type, node.func.attr.value))
+
+    def _receiver_type(self, node: cst.Name) -> str | None:
+        scope_id = id(self.get_metadata(ScopeProvider, node))
+        receiver_type = self.receiver_types.get(scope_id, {}).get(node.value)
+        if receiver_type is None and node.value == "self" and len(self.lexical_names) >= 2:
+            return self.lexical_names[-2]
+        return receiver_type
+
+    def _typed_projection_producer(self, node: cst.BaseExpression) -> str | None:
+        if isinstance(node, cst.Await):
+            return self._typed_projection_producer(node.expression)
+        if (
+            not isinstance(node, cst.Call)
+            or not isinstance(node.func, cst.Attribute)
+            or not isinstance(node.func.value, cst.Name)
+        ):
+            return None
+        return _TYPED_PROJECTION_PRODUCERS.get(
+            (self._receiver_type(node.func.value), node.func.attr.value)
+        )
 
     def _call_symbol(self, node: cst.BaseExpression) -> str | None:
         """Resolve only imported aliases or already-qualified callable symbols."""
@@ -1645,6 +1702,43 @@ class _Collector(cst.CSTVisitor):
             node.value
         )
 
+    def _contains_projection_derived(self, node: cst.BaseExpression) -> bool:
+        found = False
+        collector = self
+
+        class Visitor(cst.CSTVisitor):
+            def on_visit(self, child: cst.CSTNode) -> bool:
+                nonlocal found
+                if isinstance(child, (cst.Attribute, cst.Call, cst.Subscript)) and (
+                    collector._projection_derived(child)
+                ):
+                    found = True
+                    return False
+                return not found
+
+        node.visit(Visitor())
+        return found
+
+    def _derived_sink_arguments(self, node: cst.Call) -> tuple[cst.BaseExpression, ...]:
+        if self._qualified_import_origin(node.func) not in _DERIVED_VALUE_SINK_ORIGINS:
+            return ()
+        return tuple(
+            argument.value
+            for argument in node.args
+            if self._projection_derived(argument.value)
+            or self._contains_projection_derived(argument.value)
+        )
+
+    def _inside_derived_sink(self, node: cst.CSTNode) -> bool:
+        current = self.get_metadata(ParentNodeProvider, node, None)
+        while current is not None:
+            if isinstance(current, cst.Call) and self._derived_sink_arguments(current):
+                return True
+            if isinstance(current, cst.BaseStatement):
+                return False
+            current = self.get_metadata(ParentNodeProvider, current, None)
+        return False
+
     def _is_projection_method_call(self, node: cst.BaseExpression) -> bool:
         if not isinstance(node, cst.Call) or not isinstance(node.func, cst.Attribute):
             return False
@@ -1731,7 +1825,23 @@ class _Collector(cst.CSTVisitor):
     def _unresolved_control_binding(
         self, target: cst.Name, value: cst.BaseExpression | None, node: cst.CSTNode
     ) -> bool:
-        if not self._inside_control_flow(node) or not (
+        inside_control = self._inside_control_flow(node)
+        if inside_control and value is not None and self._known_projection_value(value):
+            was_known = self._known_alias(target)
+            self._add_alias(target)
+            if was_known:
+                return True
+            current: cst.CSTNode | None = node
+            while current is not None:
+                if isinstance(
+                    current,
+                    (cst.If, cst.For, cst.While, cst.Try, cst.With, cst.Match, cst.ExceptHandler),
+                ):
+                    self.control_producer_aliases.setdefault(id(current), []).append(target)
+                    break
+                current = self.get_metadata(ParentNodeProvider, current, None)
+            return True
+        if not inside_control or not (
             (value is not None and self._known_projection_value(value))
             or self._known_alias(target)
             or self._possible_alias(target)
@@ -1784,6 +1894,7 @@ class _Collector(cst.CSTVisitor):
                 "orchestrator.graph",
                 "orchestrator.graph.callbacks",
                 "orchestrator.graph._commands",
+                "orchestrator.graph.commands",
                 "orchestrator.graph.patch_validator",
                 "orchestrator.graph.projections",
                 "orchestrator.graph.projection_queries",
@@ -1800,6 +1911,16 @@ class _Collector(cst.CSTVisitor):
         if not isinstance(node, cst.Call):
             return None
         callee_origin = self._qualified_import_origin(node.func)
+        if (
+            callee_origin is None
+            and isinstance(node.func, cst.Attribute)
+            and isinstance(node.func.value, cst.Name)
+            and node.func.value.value == "self"
+            and node.func.attr.value == "persist_projection_snapshot"
+            and len(self.lexical_names) >= 2
+            and self.lexical_names[-2] == "GraphEventStore"
+        ):
+            callee_origin = _GRAPH_EVENT_STORE_PERSIST_ORIGIN
         if isinstance(node.func, cst.Attribute) and self._tracked(node.func.value):
             return ProjectionCallContext(
                 callee_origin=callee_origin,
@@ -1856,7 +1977,26 @@ class _Collector(cst.CSTVisitor):
                 )
             if argument.keyword is None:
                 positional_index += 1
-        return roles[0] if len(roles) == 1 else None
+        if len(roles) != 1:
+            return None
+        context = roles[0]
+        owner = self._annotation_name(node.func)
+        if not owner and isinstance(node.func, cst.Name) and node.func.value in self.typed_fields:
+            owner = node.func.value
+        typed_owner = (
+            owner
+            if owner in self.typed_fields
+            else owner.rsplit(".", 1)[-1]
+            if owner is not None and owner.rsplit(".", 1)[-1] in self.typed_fields
+            else None
+        )
+        if (
+            typed_owner is not None
+            and context.projection_role == "keyword"
+            and context.keyword_name in self.typed_fields[typed_owner]
+        ):
+            return context.model_copy(update={"receiver_type_origin": typed_owner})
+        return context
 
     def _context(self, node: cst.CSTNode) -> ProjectionCallContext | None:
         """Return context already proved while classifying this collector site."""
@@ -1904,9 +2044,7 @@ class _Collector(cst.CSTVisitor):
             isinstance(node, cst.Call)
             and (origin := self._qualified_import_origin(node.func)) in _DERIVED_VALUE_SINK_ORIGINS
         ):
-            derived_arguments = [
-                argument.value for argument in node.args if self._projection_derived(argument.value)
-            ]
+            derived_arguments = self._derived_sink_arguments(node)
             if derived_arguments:
                 return ProjectionCallContext(
                     callee_origin=origin,
@@ -1918,11 +2056,7 @@ class _Collector(cst.CSTVisitor):
             isinstance(value, cst.Call)
             and (origin := self._qualified_import_origin(value.func)) in _DERIVED_VALUE_SINK_ORIGINS
         ):
-            derived_arguments = [
-                argument.value
-                for argument in value.args
-                if self._projection_derived(argument.value)
-            ]
+            derived_arguments = self._derived_sink_arguments(value)
             if derived_arguments:
                 return ProjectionCallContext(
                     callee_origin=origin,
@@ -2040,8 +2174,9 @@ class _Collector(cst.CSTVisitor):
             if isinstance(node, cst.Call) and isinstance(node.func, cst.Attribute)
             else node.target.value
             if isinstance(node, cst.Del) and isinstance(node.target, cst.Subscript)
-            else node.value
+            else field_subscript.value
             if isinstance(node, cst.Subscript)
+            and (field_subscript := self._tracked_field_subscript(node)) is not None
             else node
         )
         return ProjectionCallContext(
@@ -2271,14 +2406,30 @@ class _Collector(cst.CSTVisitor):
                         node,
                     )
             return
+        if (
+            len(node.targets) == 1
+            and isinstance(node.targets[0].target, cst.Name)
+            and (typed_producer := self._typed_projection_producer(node.value)) is not None
+        ):
+            target = node.targets[0].target
+            scope_id = id(self.get_metadata(ScopeProvider, target))
+            self._discard_attributes_for(target)
+            self.receiver_types.setdefault(scope_id, {})[target.value] = typed_producer
+            self.binding_types.setdefault(scope_id, {})[target.value] = typed_producer
+            self.tracked_attributes.setdefault(scope_id, set()).update(
+                f"{target.value}.{field}" for field in self.typed_fields[typed_producer]
+            )
+            return
         if producer_target := self._unpack_first_producer_target(node):
             self._add_alias(producer_target)
             return
+        producer_receivers = {receiver for receiver, _ in _PROJECTION_PRODUCERS}
         if (
             len(node.targets) == 1
             and isinstance(node.targets[0].target, cst.Name)
             and isinstance(node.value, cst.Call)
-            and (owner := self._annotation_name(node.value.func)) in self.typed_fields
+            and (owner := self._annotation_name(node.value.func))
+            in {*self.typed_fields, *producer_receivers}
         ):
             scope_id = id(self.get_metadata(ScopeProvider, node.targets[0].target))
             self._discard_attributes_for(node.targets[0].target)
@@ -2286,7 +2437,8 @@ class _Collector(cst.CSTVisitor):
             self.binding_types.setdefault(scope_id, {})[node.targets[0].target.value] = owner
             for argument in node.value.args:
                 if (
-                    argument.keyword is not None
+                    owner in self.typed_fields
+                    and argument.keyword is not None
                     and argument.keyword.value in self.typed_fields[owner]
                     and self._known_projection_value(argument.value)
                 ):
@@ -2365,6 +2517,10 @@ class _Collector(cst.CSTVisitor):
                 )
         if self._tracked(node.iter):
             self._record(AccessKind.DIRECT_ITERATION, None, node.iter)
+
+    def leave_For(self, original_node: cst.For) -> None:
+        for target in self.control_producer_aliases.pop(id(original_node), []):
+            self._add_possible_alias(target)
 
     def visit_NamedExpr(self, node: cst.NamedExpr) -> None:
         if isinstance(node.target, cst.Name):
@@ -2611,15 +2767,27 @@ class _Collector(cst.CSTVisitor):
                     node,
                 )
                 return
-        if any(self._projection_derived(argument.value) for argument in node.args):
+        derived_arguments = tuple(
+            argument.value for argument in node.args if self._projection_derived(argument.value)
+        )
+        derived_sink_arguments = self._derived_sink_arguments(node)
+        if derived_sink_arguments:
             self._diagnostic(
                 DiagnosticCode.UNSUPPORTED_CALL,
                 "projection escapes through an unrecognized callable",
                 node,
             )
-            for argument in node.args:
-                if self._projection_derived(argument.value):
-                    self._handle_projection_derived(argument.value)
+            return
+        if derived_arguments:
+            self._diagnostic(
+                DiagnosticCode.UNSUPPORTED_CALL,
+                "projection escapes through an unrecognized callable",
+                node,
+            )
+            if self._annotation_name(node.func) != "object":
+                for argument in node.args:
+                    if self._projection_derived(argument.value):
+                        self._handle_projection_derived(argument.value)
 
     def visit_Attribute(self, node: cst.Attribute) -> None:
         if self._is_reflective_attribute(node):
@@ -2796,7 +2964,9 @@ class _Collector(cst.CSTVisitor):
 
     def visit_Subscript(self, node: cst.Subscript) -> None:
         if id(node) in self.handled:
-            return
+            parent = self.get_metadata(ParentNodeProvider, node)
+            if not self._inside_derived_sink(node) or isinstance(parent, cst.Subscript):
+                return
         field_subscript = self._tracked_field_subscript(node)
         if field_subscript is None:
             return

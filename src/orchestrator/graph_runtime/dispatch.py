@@ -24,6 +24,9 @@ from orchestrator.artifacts import ArtifactStore
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.graph import (
+    file_state_records_view,
+    input_bindings_view,
+    leases_view,
     CheckResultRecord,
     EventEnvelope,
     GraphCommandContext,
@@ -807,7 +810,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             msg = f"cleanup_requested missing file_state_record_id: {cleanup_id}"
             raise ValueError(msg)
         projection = rebuild_projection(events)
-        compromised_record = projection["file_state_records"].get(record_id)
+        compromised_record = file_state_records_view(projection).get(record_id)
         if compromised_record is None:
             msg = f"unknown cleanup file_state record: {record_id}"
             raise ValueError(msg)
@@ -905,7 +908,7 @@ async def _recovered_lease_still_active(
     execution_id: str,
 ) -> bool:
     projection = await controller.read_projection(run_id)
-    lease = projection["leases"].get(lease_id)
+    lease = leases_view(projection).get(lease_id)
     if lease is None or lease.state != "active":
         return False
     lease_execution_id = lease.execution_id
@@ -963,7 +966,7 @@ def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[st
     projection = rebuild_projection(events)
     _guard_no_pending_compromised_file_state_bindings(projection, node_id)
     bound_record_ids: set[str] = set()
-    for port, binding in projection["input_bindings"].get(node_id, {}).items():
+    for port, binding in input_bindings_view(projection).get(node_id, {}).items():
         if not port.startswith("requirement_"):
             continue
         bound_record_ids.update(binding.record_ids)
@@ -1085,9 +1088,9 @@ def _guard_no_pending_compromised_file_state_bindings(
     compromised and still awaiting cleanup, dispatch must stop before a runner
     can consume that snapshot identity.
     """
-    for binding in projection["input_bindings"].get(node_id, {}).values():
+    for binding in input_bindings_view(projection).get(node_id, {}).values():
         for raw_record_id in binding.record_ids:
-            record = projection["file_state_records"].get(raw_record_id)
+            record = file_state_records_view(projection).get(raw_record_id)
             if record is None:
                 continue
             if record.compromised is True and record.superseded_pending is True:

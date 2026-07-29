@@ -24,6 +24,10 @@ from orchestrator.db import (
     resolve_default_journal_path_from_session,
 )
 from orchestrator.graph import (
+    node_states_view,
+    ready_nodes_view,
+    task_states_view,
+    run_state as query_run_state,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -1272,11 +1276,11 @@ def _assign_projection_snapshot(
 ) -> None:
     row.run_id = run_id
     row.position = position
-    row.run_state = projection["run_state"]
-    row.node_states = dict(projection["node_states"])
-    row.task_states = dict(projection["task_states"])
+    row.run_state = query_run_state(projection)
+    row.node_states = dict(node_states_view(projection))
+    row.task_states = dict(task_states_view(projection))
     row.leases = project_leases([], projection=projection)
-    row.ready_nodes = list(projection["ready_nodes"])
+    row.ready_nodes = list(ready_nodes_view(projection))
     row.scheduler = dict(project_scheduler_view([], projection=projection))
     row.lease_view = dict(project_lease_view([], projection=projection))
     if events is None:
@@ -1327,7 +1331,7 @@ def _decisions_with_projection_checkpoint(
         **decisions,
         _CHECKPOINT_SCHEMA_VERSION_KEY: PROJECTION_SCHEMA_VERSION,
         _CHECKPOINT_PROJECTION_KEY: projection_to_checkpoint(projection),
-        _CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),
+        _CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(query_run_state(projection)),
     }
 
 

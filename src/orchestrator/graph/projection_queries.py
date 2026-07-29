@@ -14,6 +14,7 @@ from orchestrator.graph.models import (
     CallbackIdempotencyEvent,
     CandidateProjection,
     CheckResultProjection,
+    CommandDefinitionProjection,
     CleanupRequestedProjection,
     EdgeProjection,
     EnvironmentFailureProjection,
@@ -32,9 +33,208 @@ from orchestrator.graph.models import (
 from orchestrator.graph.projections import (
     AcceptedOutputRecord,
     GraphProjection,
+    GraphRecordSummary,
     LatestRoutineSnapshotRecord,
     RecoveryNodeIndexEntry,
 )
+
+
+def accepted_graph_patches_by_node_view(projection: GraphProjection) -> dict[str, list[str]]:
+    return deepcopy(projection["accepted_graph_patches_by_node"])
+
+
+def accepted_no_successor_patches_by_node_view(
+    projection: GraphProjection,
+) -> dict[str, list[str]]:
+    return deepcopy(projection["accepted_no_successor_patches_by_node"])
+
+
+def accepted_output_records_by_node_port_view(
+    projection: GraphProjection,
+) -> dict[str, dict[str, list[AcceptedOutputRecord]]]:
+    return deepcopy(projection["accepted_output_records_by_node_port"])
+
+
+def accepted_record_summaries_by_id_view(
+    projection: GraphProjection,
+) -> dict[str, GraphRecordSummary]:
+    return deepcopy(projection["accepted_record_summaries_by_id"])
+
+
+def active_requirement_versions_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["active_requirement_versions"])
+
+
+def callback_idempotency_events_view(
+    projection: GraphProjection,
+) -> dict[str, CallbackIdempotencyEvent]:
+    return deepcopy(projection["callback_idempotency_events"])
+
+
+def check_results_view(projection: GraphProjection) -> dict[str, CheckResultProjection]:
+    return deepcopy(projection["check_results"])
+
+
+def cleanup_applied_ids_view(projection: GraphProjection) -> dict[str, bool]:
+    return dict(projection["cleanup_applied_ids"])
+
+
+def cleanup_requested_events_view(
+    projection: GraphProjection,
+) -> dict[str, CleanupRequestedProjection]:
+    return deepcopy(projection["cleanup_requested_events"])
+
+
+def edges_view(projection: GraphProjection) -> dict[str, EdgeProjection]:
+    return deepcopy(projection["edges"])
+
+
+def environment_failures_view(
+    projection: GraphProjection,
+) -> dict[str, EnvironmentFailureProjection]:
+    return deepcopy(projection["environment_failures"])
+
+
+def failed_verification_candidate_ids_view(projection: GraphProjection) -> dict[str, bool]:
+    return dict(projection["failed_verification_candidate_ids"])
+
+
+def failed_verification_results_by_record_id_view(
+    projection: GraphProjection,
+) -> dict[str, VerificationResultProjection]:
+    return deepcopy(projection["failed_verification_results_by_record_id"])
+
+
+def file_state_records_view(projection: GraphProjection) -> dict[str, FileStateRecord]:
+    return deepcopy(projection["file_state_records"])
+
+
+def input_bindings_view(
+    projection: GraphProjection,
+) -> dict[str, dict[str, InputBindingProjection]]:
+    return deepcopy(projection["input_bindings"])
+
+
+def last_deferred_reasons_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["last_deferred_reasons"])
+
+
+def leases_view(projection: GraphProjection) -> dict[str, LeaseProjection]:
+    return deepcopy(projection["leases"])
+
+
+def node_attempts_view(projection: GraphProjection) -> dict[str, int]:
+    return dict(projection["node_attempts"])
+
+
+def node_command_definitions_view(
+    projection: GraphProjection,
+) -> dict[str, CommandDefinitionProjection]:
+    return deepcopy(projection["node_command_definitions"])
+
+
+def node_creation_positions_view(projection: GraphProjection) -> dict[str, int]:
+    return dict(projection["node_creation_positions"])
+
+
+def node_gate_decisions_view(projection: GraphProjection) -> dict[str, bool]:
+    return dict(projection["node_gate_decisions"])
+
+
+def node_failed_candidates_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["node_failed_candidates"])
+
+
+def node_pending_appeals_view(projection: GraphProjection) -> dict[str, bool]:
+    return dict(projection["node_pending_appeals"])
+
+
+def node_preconditions_view(projection: GraphProjection) -> dict[str, list[str]]:
+    return deepcopy(projection["node_preconditions"])
+
+
+def node_kinds_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["node_kinds"])
+
+
+def node_resource_claims_view(
+    projection: GraphProjection,
+) -> dict[str, list[ResourceClaimProjection]]:
+    return deepcopy(projection["node_resource_claims"])
+
+
+def node_roles_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["node_roles"])
+
+
+def node_states_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["node_states"])
+
+
+def node_task_regions_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["node_task_regions"])
+
+
+def output_records_by_node_port_view(
+    projection: GraphProjection,
+) -> dict[str, dict[str, list[AcceptedOutputRecordPayload]]]:
+    return deepcopy(projection["output_records_by_node_port"])
+
+
+def passed_verification_candidate_ids_view(projection: GraphProjection) -> list[str]:
+    return list(projection["passed_verification_candidate_ids"])
+
+
+def passed_verification_results_by_record_id_view(
+    projection: GraphProjection,
+) -> dict[str, VerificationResultProjection]:
+    return deepcopy(projection["passed_verification_results_by_record_id"])
+
+
+def planner_generations_view(projection: GraphProjection) -> dict[str, int]:
+    return dict(projection["planner_generations"])
+
+
+def planner_session_carryovers_view(projection: GraphProjection) -> dict[str, str | None]:
+    return dict(projection["planner_session_carryovers"])
+
+
+def planner_sessions_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["planner_sessions"])
+
+
+def ready_nodes_view(projection: GraphProjection) -> list[str]:
+    return list(projection["ready_nodes"])
+
+
+def recorded_node_usage_keys_view(projection: GraphProjection) -> dict[str, bool]:
+    return dict(projection["recorded_node_usage_keys"])
+
+
+def recovery_nodes_by_record_id_view(
+    projection: GraphProjection,
+) -> dict[str, list[RecoveryNodeIndexEntry]]:
+    return deepcopy(projection["recovery_nodes_by_record_id"])
+
+
+def retry_not_before_by_node_view(projection: GraphProjection) -> dict[str, str | None]:
+    return dict(projection["retry_not_before_by_node"])
+
+
+def task_candidates_view(
+    projection: GraphProjection,
+) -> dict[str, list[CandidateProjection]]:
+    return deepcopy(projection["task_candidates"])
+
+
+def task_states_view(projection: GraphProjection) -> dict[str, str]:
+    return dict(projection["task_states"])
+
+
+def verifier_verdicts_view(
+    projection: GraphProjection,
+) -> dict[str, VerifierVerdictProjection]:
+    return deepcopy(projection["verifier_verdicts"])
 
 
 def resource_claims_for_node(

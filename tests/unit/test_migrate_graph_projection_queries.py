@@ -12,13 +12,20 @@ from scripts.codemods.migrate_graph_projection_queries import (
     PlannedOperation,
     QueryCompositionGroup,
     QueryCompositionPlan,
+    QueryMutationHandoff,
+    QueryReplacementPlan,
+    QueryReplacementRecipe,
+    QuerySourceApplyPlan,
     SourceSnapshot,
     SourceLocator,
     compile_operation_stream,
     compile_query_composition_plan,
+    compile_query_replacement_plan,
+    apply_query_replacement_plan,
     plan_reviewed_dispositions,
     require_complete_receiver_physical_context,
     shape_summary,
+    write_query_source_apply_plan,
 )
 from scripts.graph_projection_inventory import (
     AccessKind,
@@ -67,6 +74,70 @@ def _compile_occurrence_composition(
         generated_fixture_family_counts=(),
     )
     return compile_query_composition_plan((source,), stream, disposition), stream, disposition
+
+
+def _compile_physical_replacements(
+    source: SourceSnapshot,
+) -> QueryReplacementPlan:
+    inventory = inventory_sources((source,), load_manifest(MANIFEST_PATH))
+    stream = compile_operation_stream(
+        (source,), inventory, query_migration_skeleton(inventory, ROOT)
+    )
+    selected = tuple(
+        site
+        for site in stream.sites
+        if site.origin == "occurrence"
+        and site.anchor.context is not None
+        and site.anchor.context.physical_access_kind is not None
+    )
+    operations = tuple(
+        PlannedOperation(
+            disposition="query_transform",
+            reason="synthetic replacement contract",
+            consumed_site_ids=(site.original_site_id,),
+            shape_key=site.shape_key,
+        )
+        for site in sorted(selected, key=lambda item: item.original_site_id)
+    )
+    disposition = DispositionPlan(
+        operations=operations,
+        reviewed_deferred_site_ids=(),
+        generated_fixture_operations=(),
+        pending_site_ids=(),
+        disposition_counts=(("query_transform", len(operations)),),
+        shape_group_counts=tuple(sorted(Counter(item.shape_key for item in operations).items())),
+        rule_family_counts=(),
+        symbol_origin_counts=(),
+        generated_fixture_family_counts=(),
+    )
+    composition = compile_query_composition_plan((source,), stream, disposition)
+    return compile_query_replacement_plan((source,), stream, disposition, composition)
+
+
+def _merge_replacement_plans(*plans: QueryReplacementPlan) -> QueryReplacementPlan:
+    recipes = tuple(
+        sorted(
+            (recipe for plan in plans for recipe in plan.recipes),
+            key=lambda item: (item.relative_path, item.source_span, item.consumed_site_ids),
+        )
+    )
+    handoffs = tuple(
+        sorted(
+            (handoff for plan in plans for handoff in plan.mutation_handoffs),
+            key=lambda item: (item.relative_path, item.source_span, item.consumed_site_ids),
+        )
+    )
+    return QueryReplacementPlan(
+        recipes=recipes,
+        mutation_handoffs=handoffs,
+        unmatched_family_counts=(),
+        rule_family_counts=tuple(
+            sorted(Counter(rule for recipe in recipes for rule in recipe.rule_ids).items())
+        ),
+        query_import_counts=tuple(
+            sorted(Counter(name for recipe in recipes for name in recipe.query_imports).items())
+        ),
+    )
 
 
 def test_inventory_sources_matches_filesystem_adapter_for_equivalent_snapshot(
@@ -232,6 +303,24 @@ def test_compile_operation_stream_anchors_diagnostics_from_snapshots_without_rep
     assert diagnostic.locator.line == inventory.diagnostics[0].line + 1
     assert diagnostic.normalized_expression == 'return projection["run_state"] == "active"'
     assert diagnostic.anchor.normalized_expression == "projection['run_state'] == 'active'"
+
+
+def test_compile_operation_stream_excludes_comparison_children_from_occurrence_matches() -> None:
+    source = SourceSnapshot(
+        relative_path="src/not-present-on-disk.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    if projection['run_state'] is not None:\n"
+            "        return projection['run_state']\n"
+            "    return None\n"
+        ),
+    )
+    inventory = inventory_sources((source,), load_manifest(MANIFEST_PATH))
+
+    stream = compile_operation_stream((source,), inventory, query_migration_skeleton(inventory))
+
+    assert len([site for site in stream.sites if site.origin == "occurrence"]) == 1
 
 
 def test_compile_operation_stream_refuses_ambiguous_diagnostic_snapshot_anchor() -> None:
@@ -987,6 +1076,7 @@ def test_query_composition_group_reanchors_outer_expression() -> None:
         old_field_name="run_state",
         diagnostic_code=None,
         normalized_expression="projection['run_state']",
+        domain="lifecycle",
         ordinal=0,
         source_digest=source_digest(source.source),
         locator=SourceLocator(line=4, column=16),
@@ -1135,3 +1225,318 @@ def test_query_composition_models_refuse_invalid_direct_construction() -> None:
                 }
             )
         )
+
+
+def test_query_replacements_preserve_outer_cst_and_exact_collection_operations() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "from orchestrator.graph.scheduler import NodeScheduleInfo\n\n"
+            "def read(projection: GraphProjection, node_id: str) -> object:\n"
+            "    return NodeScheduleInfo(\n"
+            "        state=projection['node_states'].get(node_id, ''),\n"
+            "        required_edges=node_id in projection['node_states'],\n"
+            "        resource_claims=sorted(projection['node_states'].items()),\n"
+            "        priority=projection['run_state'],\n"
+            "    )\n"
+        ),
+    )
+
+    plan = _compile_physical_replacements(source)
+
+    assert len(plan.recipes) == 1
+    replacement = plan.recipes[0].replacement_outer_expression
+    assert "node_states_view(projection).get(node_id, '')" in replacement
+    assert "node_id in node_states_view(projection)" in replacement
+    assert "sorted(node_states_view(projection).items())" in replacement
+    assert "priority=run_state(projection)" in replacement
+    assert plan.mutation_handoffs == ()
+    assert plan.unmatched_family_counts == ()
+    assert plan.rule_family_counts == (
+        ("mapping_snapshot", 3),
+        ("scalar_read", 1),
+    )
+    assert plan.query_import_counts == (("node_states_view", 1), ("run_state", 1))
+
+
+def test_query_replacements_preserve_nested_node_port_lookup_and_independent_defaults() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "from orchestrator.graph.scheduler import NodeScheduleInfo\n\n"
+            "def read(projection: GraphProjection, node_id: str, port: str) -> object:\n"
+            "    return NodeScheduleInfo(\n"
+            "        required_edges=projection['input_bindings'].get(node_id, {}).get(port)\n"
+            "    )\n"
+        ),
+    )
+
+    plan = _compile_physical_replacements(source)
+
+    assert len(plan.recipes) == 1
+    assert "input_bindings_view(projection).get(node_id, {}).get(port)" in (
+        plan.recipes[0].replacement_outer_expression
+    )
+    assert plan.recipes[0].query_imports == ("input_bindings_view",)
+
+
+def test_query_replacements_preserve_comprehension_structure() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "from orchestrator.graph.scheduler import NodeScheduleInfo\n\n"
+            "def read(projection: GraphProjection, node_ids: list[str]) -> object:\n"
+            "    return NodeScheduleInfo(upstream_states={\n"
+            "        node_id: projection['node_states'][node_id]\n"
+            "        for node_id in node_ids\n"
+            "        if node_id in projection['node_states']\n"
+            "    })\n"
+        ),
+    )
+
+    plan = _compile_physical_replacements(source)
+
+    assert sum(len(item.consumed_site_ids) for item in plan.recipes) == 2
+    assert all(
+        "projection['node_states']" not in item.replacement_outer_expression
+        for item in plan.recipes
+    )
+
+
+def test_query_replacements_handoff_structural_mutations_without_inventing_a_query() -> None:
+    source = SourceSnapshot(
+        relative_path="tests/fixture.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def seed(projection: GraphProjection) -> None:\n"
+            "    projection['run_state'] = 'active'\n"
+        ),
+    )
+
+    plan = _compile_physical_replacements(source)
+
+    assert plan.recipes == ()
+    assert len(plan.mutation_handoffs) == 1
+    handoff = plan.mutation_handoffs[0]
+    assert handoff.effective_old_field == "run_state"
+    assert handoff.access_kind == "direct_assignment"
+    assert handoff.rule_id == "fixture_direct_assignment"
+    assert plan.consumed_site_ids == frozenset(handoff.consumed_site_ids)
+
+
+def test_query_replacement_plan_is_deterministic_and_refuses_unknown_structural_family() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    inventory = inventory_sources((source,), load_manifest(MANIFEST_PATH))
+    stream = compile_operation_stream(
+        (source,), inventory, query_migration_skeleton(inventory, ROOT)
+    )
+    plan, _, disposition = _compile_occurrence_composition(source)
+
+    first = compile_query_replacement_plan((source,), stream, disposition, plan)
+    shuffled = compile_query_replacement_plan(
+        (source,),
+        stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
+        disposition.model_copy(update={"operations": tuple(reversed(disposition.operations))}),
+        plan,
+    )
+    assert first == shuffled
+
+    unmatched_source = SourceSnapshot(
+        relative_path="src/unmatched.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    return projection['node_candidates']\n"
+        ),
+    )
+    with pytest.raises(AnchorRefusedError, match="unmatched query replacement structural families"):
+        _compile_physical_replacements(unmatched_source)
+
+
+def test_query_replacement_models_refuse_overlapping_spans_and_blank_handoffs() -> None:
+    first = QueryReplacementRecipe(
+        relative_path="src/example.py",
+        source_span=(1, 0, 1, 23),
+        original_outer_expression="projection['run_state']",
+        replacement_outer_expression="run_state(projection)",
+        consumed_site_ids=("first",),
+        query_imports=("run_state",),
+        rule_ids=("scalar_read",),
+    )
+    second = first.model_copy(update={"consumed_site_ids": ("second",)})
+    with pytest.raises(ValueError, match="overlap"):
+        QueryReplacementPlan(
+            recipes=(first, second),
+            mutation_handoffs=(),
+            unmatched_family_counts=(),
+            rule_family_counts=(("scalar_read", 2),),
+            query_import_counts=(("run_state", 2),),
+        )
+    with pytest.raises(ValueError, match="nonblank"):
+        QueryMutationHandoff(
+            relative_path=" ",
+            source_span=(1, 0, 1, 23),
+            original_outer_expression="projection['run_state']",
+            consumed_site_ids=("mutation",),
+            effective_old_field="run_state",
+            access_kind="direct_assignment",
+            operation_shape="direct_assignment",
+            rule_id="fixture_direct_assignment",
+        )
+
+
+def test_query_source_apply_replaces_exact_outer_and_routes_merged_imports() -> None:
+    external = SourceSnapshot(
+        relative_path="src/orchestrator/graph_runtime/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection, run_state\n\n"
+            "def read(projection: GraphProjection, node_id: str) -> object:\n"
+            "    return projection['node_states'][node_id], projection['run_state']\n"
+        ),
+    )
+    internal = SourceSnapshot(
+        relative_path="src/orchestrator/graph/example.py",
+        source=(
+            "from orchestrator.graph.projection_queries import node_kind\n\n"
+            "from orchestrator.graph.projections import GraphProjection\n\n"
+            "def read(projection: GraphProjection, node_id: str) -> object:\n"
+            "    return projection['node_states'][node_id]\n"
+        ),
+    )
+    plan = _merge_replacement_plans(
+        _compile_physical_replacements(external),
+        _compile_physical_replacements(internal),
+    )
+
+    applied = apply_query_replacement_plan((external, internal), plan)
+
+    assert isinstance(applied, QuerySourceApplyPlan)
+    by_path = {item.relative_path: item.transformed_source for item in applied.updates}
+    assert (
+        "from orchestrator.graph import node_states_view, GraphProjection, run_state"
+        in by_path[external.relative_path]
+    )
+    assert "node_states_view" in by_path[external.relative_path]
+    assert "run_state" in by_path[external.relative_path]
+    assert (
+        "from orchestrator.graph.projection_queries import node_states_view, node_kind"
+        in by_path[internal.relative_path]
+    )
+    assert "projection['node_states']" not in by_path[external.relative_path]
+    assert "projection['run_state']" not in by_path[external.relative_path]
+    assert applied.consumed_site_ids == plan.consumed_site_ids
+
+
+def test_query_source_apply_is_idempotent_and_leaves_mutation_handoff_unchanged() -> None:
+    read_source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    mutation_source = SourceSnapshot(
+        relative_path="tests/fixture.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def seed(projection: GraphProjection) -> None:\n"
+            "    projection['run_state'] = 'active'\n"
+        ),
+    )
+    plan = _merge_replacement_plans(
+        _compile_physical_replacements(read_source),
+        _compile_physical_replacements(mutation_source),
+    )
+
+    first = apply_query_replacement_plan((read_source, mutation_source), plan)
+    transformed = tuple(
+        SourceSnapshot(relative_path=item.relative_path, source=item.transformed_source)
+        for item in first.updates
+    ) + (mutation_source,)
+    second = apply_query_replacement_plan(transformed, plan)
+
+    assert tuple(item.transformed_source for item in second.updates) == tuple(
+        item.transformed_source for item in first.updates
+    )
+    assert mutation_source.relative_path not in {item.relative_path for item in first.updates}
+    assert len(plan.mutation_handoffs) == 1
+
+
+def test_query_source_apply_refuses_stale_expression_before_producing_updates() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    plan = _compile_physical_replacements(source)
+    stale = source.model_copy(
+        update={"source": source.source.replace("run_state']", "run_state' ]")}
+    )
+
+    with pytest.raises(AnchorRefusedError, match="exact outer expression"):
+        apply_query_replacement_plan((stale,), plan)
+
+
+def test_query_source_apply_aliases_query_import_that_conflicts_with_a_local_binding() -> None:
+    source = SourceSnapshot(
+        relative_path="src/orchestrator/graph/example.py",
+        source=(
+            "from orchestrator.graph.projections import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    run_state = projection['run_state']\n"
+            "    return run_state\n"
+        ),
+    )
+    plan = _compile_physical_replacements(source)
+
+    applied = apply_query_replacement_plan((source,), plan)
+    transformed = applied.updates[0].transformed_source
+
+    assert (
+        "from orchestrator.graph.projection_queries import run_state as query_run_state"
+        in transformed
+    )
+    assert "run_state = query_run_state(projection)" in transformed
+
+
+def test_query_source_atomic_write_validates_every_original_before_writing(tmp_path: Path) -> None:
+    first = SourceSnapshot(
+        relative_path="src/first.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    second = first.model_copy(update={"relative_path": "src/second.py"})
+    plan = _merge_replacement_plans(
+        _compile_physical_replacements(first),
+        _compile_physical_replacements(second),
+    )
+    applied = apply_query_replacement_plan((first, second), plan)
+    for source in (first, second):
+        path = tmp_path / source.relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source.source)
+    second_path = tmp_path / second.relative_path
+    second_path.write_text("stale\n")
+
+    with pytest.raises(AnchorRefusedError, match="changed before atomic apply"):
+        write_query_source_apply_plan(tmp_path, applied)
+
+    assert (tmp_path / first.relative_path).read_text() == first.source
+    assert second_path.read_text() == "stale\n"

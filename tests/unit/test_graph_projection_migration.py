@@ -11,9 +11,9 @@ from scripts.codemods.migrate_graph_projection_queries import (
     SourceSnapshot,
     compile_operation_stream,
     compile_query_composition_plan,
+    compile_query_replacement_plan,
     plan_reviewed_dispositions,
     plan_structural_dispositions,
-    require_complete_receiver_physical_context,
 )
 from scripts.graph_projection_inventory import (
     AccessInventory,
@@ -25,7 +25,6 @@ from scripts.graph_projection_inventory import (
     load_manifest,
     load_query_migration_manifest,
     query_migration_skeleton,
-    validate_query_migration_manifest,
 )
 
 
@@ -91,29 +90,26 @@ def test_default_tracked_provider_reports_real_prompt_dispatch_recovery_and_stor
     assert all("worktrees/" not in path and "vendor/" not in path for path in diagnosed_paths)
 
 
-def test_repository_inventory_includes_controller_rebuild_dispatch_reads(
+def test_repository_inventory_includes_controller_rebuild_dispatch_queries(
     live_migration_context: LiveMigrationContext,
 ) -> None:
     inventory = live_migration_context.inventory
     dispatch_diagnostics = {
-        (item.qualified_function, item.line)
+        item.qualified_function
         for item in inventory.diagnostics
         if item.relative_path == "src/orchestrator/graph_runtime/dispatch.py"
     }
 
-    assert ("GraphDispatchExecutor._dispatch_snapshot_cleanup", 810) in dispatch_diagnostics
-    assert ("_requirements_for_node", 966) in dispatch_diagnostics
-    source_lines = (ROOT / "src/orchestrator/graph_runtime/dispatch.py").read_text().splitlines()
+    assert "GraphDispatchExecutor._dispatch_snapshot_cleanup" in dispatch_diagnostics
+    assert "_requirements_for_node" in dispatch_diagnostics
+    source = (ROOT / "src/orchestrator/graph_runtime/dispatch.py").read_text()
+    assert "compromised_record = file_state_records_view(projection).get(record_id)" in source
     assert (
-        source_lines[809].strip()
-        == 'compromised_record = projection["file_state_records"].get(record_id)'
-    )
-    assert source_lines[965].strip() == (
-        'for port, binding in projection["input_bindings"].get(node_id, {}).items():'
+        "for port, binding in input_bindings_view(projection).get(node_id, {}).items():" in source
     )
 
 
-def test_repository_inventory_keeps_representative_task_3c_physical_reads(
+def test_repository_inventory_keeps_representative_task_3c_query_flows(
     live_migration_context: LiveMigrationContext,
 ) -> None:
     sites = {
@@ -126,7 +122,7 @@ def test_repository_inventory_keeps_representative_task_3c_physical_reads(
         for site in live_migration_context.skeleton.unclassified_sites
     }
     source_lines = {
-        relative_path: (ROOT / relative_path).read_text().splitlines()
+        relative_path: (ROOT / relative_path).read_text()
         for relative_path in (
             "src/orchestrator/graph_runtime/dispatch.py",
             "src/orchestrator/graph_runtime/prompts.py",
@@ -135,41 +131,45 @@ def test_repository_inventory_keeps_representative_task_3c_physical_reads(
         )
     }
 
-    assert source_lines["src/orchestrator/graph_runtime/dispatch.py"][809].strip() == (
-        'compromised_record = projection["file_state_records"].get(record_id)'
+    assert (
+        "compromised_record = file_state_records_view(projection).get(record_id)"
+        in source_lines["src/orchestrator/graph_runtime/dispatch.py"]
     )
-    assert source_lines["src/orchestrator/graph_runtime/prompts.py"][551].strip() == (
-        'ready_nodes = sorted(projection["ready_nodes"])'
+    assert (
+        "ready_nodes = sorted(ready_nodes_view(projection))"
+        in source_lines["src/orchestrator/graph_runtime/prompts.py"]
     )
-    assert source_lines["src/orchestrator/graph/callbacks.py"][68].strip() == (
-        'lease = projection["leases"].get(request.lease_id)'
+    assert (
+        "lease = leases_view(projection).get(request.lease_id)"
+        in source_lines["src/orchestrator/graph/callbacks.py"]
     )
-    assert source_lines["src/orchestrator/graph/patch_validator.py"][145].strip() == (
-        'and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}'
+    assert (
+        'and node_kinds_view(projection).get(node_id) in {"worker", "verifier", "check"}'
+        in (source_lines["src/orchestrator/graph/patch_validator.py"])
     )
     assert {
         (
             "src/orchestrator/graph_runtime/dispatch.py",
             "GraphDispatchExecutor._dispatch_snapshot_cleanup",
-            'compromised_record = projection["file_state_records"].get(record_id)',
+            "compromised_record = file_state_records_view(projection).get(record_id)",
             "record_file_state",
         ),
         (
             "src/orchestrator/graph_runtime/prompts.py",
             "_planner_outstanding_failures",
-            'for region_id, failure in projection["environment_failures"].items():',
+            "for region_id, failure in environment_failures_view(projection).items():",
             "planning_session",
         ),
         (
             "src/orchestrator/graph/callbacks.py",
             "validate_callback",
-            'lease = projection["leases"].get(request.lease_id)',
+            "lease = leases_view(projection).get(request.lease_id)",
             "cleanup_callback",
         ),
         (
             "src/orchestrator/graph/patch_validator.py",
             "validate_patch",
-            'and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}',
+            'and node_kinds_view(projection).get(node_id) in {"worker", "verifier", "check"}',
             "governance_requirements",
         ),
     } <= sites
@@ -187,13 +187,7 @@ def test_repository_inventory_keeps_verification_recovery_provenance(
         (
             "src/orchestrator/graph/_commands.py",
             "_current_failed_verification_results",
-            "projection['passed_verification_candidate_ids']",
-            "verification_recovery",
-        ),
-        (
-            "src/orchestrator/graph_runtime/recovery.py",
-            "recover",
-            "projection = rebuild_projection(events)",
+            "passed_candidates = passed_verification_candidate_ids_view(projection)",
             "verification_recovery",
         ),
     } <= sites
@@ -211,21 +205,22 @@ def test_checked_in_diagnostic_artifact_exactly_matches_full_repository_report(
 def test_checked_query_ledger_matches_the_fresh_repository_inventory(
     live_migration_context: LiveMigrationContext,
 ) -> None:
-    inventory = live_migration_context.inventory
     ledger = live_migration_context.ledger
     skeleton = live_migration_context.skeleton
 
-    lifecycle_keys = {
-        site.site_key for site in skeleton.unclassified_sites if site.domain == "lifecycle"
-    }
-    classified_keys = {
-        disposition.site_key
-        for disposition in ledger.dispositions
-        if disposition.site_key in lifecycle_keys
-    }
+    current_keys = {site.site_key for site in skeleton.unclassified_sites}
+    reviewed_keys = {item.site_key for item in ledger.dispositions}
+    deferred_keys = {item.site_key for item in ledger.unclassified_sites}
 
-    assert classified_keys == lifecycle_keys
-    assert not {site.site_key for site in ledger.unclassified_sites} & lifecycle_keys
+    assert reviewed_keys <= current_keys
+    assert deferred_keys <= current_keys
+    assert not reviewed_keys & deferred_keys
+    assert Counter(item.disposition for item in ledger.dispositions) == {
+        "approved_core": 80,
+        "projection_neutral": 65,
+    }
+    assert Counter(site.domain for site in ledger.unclassified_sites) == {"test_fixture": 408}
+    assert not any(item.disposition == "query_transform" for item in ledger.dispositions)
     assert {
         disposition.disposition
         for disposition in ledger.dispositions
@@ -234,68 +229,21 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory(
     core_keys = {
         site.site_key for site in skeleton.unclassified_sites if site.domain == "approved_core"
     }
-    assert {
+    reviewed_core_keys = {
         disposition.site_key
         for disposition in ledger.dispositions
         if disposition.disposition == "approved_core"
-    } == core_keys
-    assert not {site.site_key for site in ledger.unclassified_sites} & core_keys
-    assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="approved_core") == {
-        "approved_core": len(core_keys)
     }
-    lifecycle_dispositions = [
-        disposition for disposition in ledger.dispositions if disposition.site_key in lifecycle_keys
-    ]
-    assert all(
-        disposition.disposition == "query_transform"
-        for disposition in lifecycle_dispositions
-        if 'projection["' in disposition.normalized_source_pattern
-    )
-    assert all(
-        disposition.disposition == "projection_neutral"
-        for disposition in lifecycle_dispositions
-        if 'projection["' not in disposition.normalized_source_pattern
-        and disposition.diagnostic_code is not None
-    )
-    target_domains = {
-        "cleanup_callback",
-        "governance_requirements",
-        "lease",
-        "node_task_edge_binding",
-        "planning_session",
-        "record_file_state",
-    }
-    for domain in target_domains:
-        domain_keys = {
-            site.site_key for site in skeleton.unclassified_sites if site.domain == domain
-        }
-        assert {
-            disposition.site_key
-            for disposition in ledger.dispositions
-            if disposition.site_key in domain_keys
-        } == domain_keys
-        assert not {site.site_key for site in ledger.unclassified_sites} & domain_keys
-        assert validate_query_migration_manifest(ledger, inventory, ROOT, domain=domain) == {
-            domain: len(domain_keys)
-        }
-    assert Counter(site.domain for site in ledger.unclassified_sites) == {"test_fixture": 349}
-    verification_recovery_keys = {
-        site.site_key
-        for site in skeleton.unclassified_sites
-        if site.domain == "verification_recovery"
-    }
+    assert reviewed_core_keys < core_keys
+    generated_core_keys = core_keys - reviewed_core_keys
+    assert len(generated_core_keys) == 42
     assert {
-        disposition.site_key
-        for disposition in ledger.dispositions
-        if disposition.site_key in verification_recovery_keys
-    } == verification_recovery_keys
-    assert not {site.site_key for site in ledger.unclassified_sites} & verification_recovery_keys
-    assert validate_query_migration_manifest(
-        ledger, inventory, ROOT, domain="verification_recovery"
-    ) == {"verification_recovery": 151}
-    assert validate_query_migration_manifest(ledger, inventory, ROOT, domain="lifecycle") == {
-        "lifecycle": len(lifecycle_keys)
-    }
+        site.relative_path
+        for site in skeleton.unclassified_sites
+        if site.site_key in generated_core_keys
+    } == {"src/orchestrator/graph/projection_queries.py"}
+    assert not {site.site_key for site in ledger.unclassified_sites} & core_keys
+    assert len(current_keys - reviewed_keys - deferred_keys) == 351
 
 
 def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
@@ -307,15 +255,14 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
 
     assert len(plan.operations) == len(ledger.dispositions)
     assert len(plan.consumed_site_ids) == len(ledger.dispositions)
-    assert len(plan.deferred_site_ids) == 349
-    assert len(plan.pending_site_ids) == 100
+    assert len(plan.deferred_site_ids) == 408
+    assert len(plan.pending_site_ids) == 351
     assert plan.consumed_site_ids | set(plan.deferred_site_ids) | set(plan.pending_site_ids) == {
         site.original_site_id for site in stream.sites
     }
     assert plan.disposition_counts == (
         ("approved_core", 80),
-        ("projection_neutral", 73),
-        ("query_transform", 201),
+        ("projection_neutral", 65),
     )
     assert plan.shape_group_counts == tuple(sorted(plan.shape_group_counts))
     assert all(operation.reason for operation in plan.operations)
@@ -324,14 +271,7 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
     )
     assert plan.deferred_site_ids == tuple(sorted(plan.deferred_site_ids))
     assert plan.pending_site_ids == tuple(sorted(plan.pending_site_ids))
-    query_transform_sites = {
-        operation.consumed_site_ids[0]
-        for operation in plan.operations
-        if operation.disposition == "query_transform"
-    }
-    for site in stream.sites:
-        if site.original_site_id in query_transform_sites:
-            require_complete_receiver_physical_context(site)
+    assert not any(operation.disposition == "query_transform" for operation in plan.operations)
     reasons = {item.site_key: (item.disposition, item.reason) for item in ledger.dispositions}
     assert {
         (item.consumed_site_ids[0], item.disposition, item.reason) for item in plan.operations
@@ -384,8 +324,8 @@ def test_live_repository_compilation_includes_every_remaining_fixture_site(
         site.site_key for site in ledger.unclassified_sites if site.domain == "test_fixture"
     }
     compiled_site_ids = [site.original_site_id for site in stream.sites]
-    assert len(raw_fixture_site_ids) == 449
-    assert len(deferred_fixture_site_ids) == 349
+    assert len(raw_fixture_site_ids) == 481
+    assert len(deferred_fixture_site_ids) == 408
     assert deferred_fixture_site_ids <= raw_fixture_site_ids
     assert all(compiled_site_ids.count(site_id) == 1 for site_id in raw_fixture_site_ids)
     assert all(compiled_site_ids.count(site_id) == 1 for site_id in deferred_fixture_site_ids)
@@ -403,29 +343,28 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
     ledger = live_migration_context.ledger
 
     assert plan.pending_site_ids == ()
-    assert len(plan.operations) == 433
-    assert len(plan.deferred_site_ids) == 370
+    assert len(plan.operations) == 428
+    assert len(plan.deferred_site_ids) == 476
     assert plan.disposition_counts == (
-        ("approved_core", 80),
-        ("projection_neutral", 152),
-        ("query_transform", 201),
+        ("approved_core", 122),
+        ("projection_neutral", 306),
     )
     assert plan.rule_family_counts == (
-        ("derived_value_sink", 1),
-        ("projector_fixture_flow", 2),
-        ("public_graph_call", 116),
-        ("typed_projection_binding", 27),
-        ("typed_projector_binding", 6),
+        ("handled_projection_comparison", 1),
+        ("projector_fixture_flow", 6),
+        ("public_graph_call", 270),
+        ("typed_projection_binding", 26),
+        ("typed_projection_field_constructor", 1),
+        ("typed_projection_return", 2),
     )
     assert plan.generated_fixture_family_counts == (
-        ("literal_field_update_mutation", 3),
+        ("literal_field_update_mutation", 9),
         ("physical_append_extend", 1),
-        ("physical_nested_assignment", 17),
+        ("physical_nested_assignment", 58),
     )
-    assert len(plan.reviewed_deferred_site_ids) == 349
-    assert len(plan.generated_fixture_operations) == 21
-    assert sum(count for _, count in plan.symbol_origin_counts) == 152
-    assert dict(plan.symbol_origin_counts)["orchestrator.graph.scheduler.NodeScheduleInfo"] == 1
+    assert len(plan.reviewed_deferred_site_ids) == 408
+    assert len(plan.generated_fixture_operations) == 68
+    assert sum(count for _, count in plan.symbol_origin_counts) == 306
     assert plan == plan_structural_dispositions(
         stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
         ledger.model_copy(
@@ -437,7 +376,7 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
     )
 
 
-def test_live_query_composition_plan_closes_reviewed_query_transform_sites(
+def test_live_query_composition_plan_has_no_remaining_query_transform_sites(
     live_migration_context: LiveMigrationContext,
 ) -> None:
     plan = compile_query_composition_plan(
@@ -446,5 +385,26 @@ def test_live_query_composition_plan_closes_reviewed_query_transform_sites(
         live_migration_context.structural_plan,
     )
 
-    assert len(plan.groups) == 187
-    assert len(plan.consumed_site_ids) == 201
+    assert plan.groups == ()
+    assert plan.consumed_site_ids == frozenset()
+
+
+def test_live_query_replacement_plan_is_empty_after_atomic_source_apply(
+    live_migration_context: LiveMigrationContext,
+) -> None:
+    composition = compile_query_composition_plan(
+        live_migration_context.sources,
+        live_migration_context.stream,
+        live_migration_context.structural_plan,
+    )
+    plan = compile_query_replacement_plan(
+        live_migration_context.sources,
+        live_migration_context.stream,
+        live_migration_context.structural_plan,
+        composition,
+    )
+    assert plan.recipes == ()
+    assert plan.mutation_handoffs == ()
+    assert plan.rule_family_counts == ()
+    assert plan.query_import_counts == ()
+    assert plan.unmatched_family_counts == ()
