@@ -19418,7 +19418,7 @@
         "relative_path": "scripts/codemods/__init__.py"
       },
       {
-        "digest": "90cc25ba0917b48be56c2729a7af861e631b6459a2eb1d451cb366eb65be3775",
+        "digest": "92b9a547ab8765aae9dea75a7666c74c5098c0fe8469ec810d50facef54b9389",
         "relative_path": "scripts/codemods/migrate_graph_projection_queries.py"
       },
       {
@@ -21994,7 +21994,7 @@
         "relative_path": "tests/unit/test_graph_projection_inventory.py"
       },
       {
-        "digest": "834eea8c6fb3ba35a3e00c228abe7b0da8da04bf01b3b6ce250028f3ce1ee58a",
+        "digest": "fed7e420749ccee67b8df843f3bd33f27e7f7202b3699fd1a870424d90c030ae",
         "relative_path": "tests/unit/test_graph_projection_migration.py"
       },
       {
@@ -22102,7 +22102,7 @@
         "relative_path": "tests/unit/test_merge_readiness.py"
       },
       {
-        "digest": "9e6c82768f362f90faed725915b4b9b36c3cbe409fa3db44d7c0e66bb22bb1e5",
+        "digest": "2ee6a984056bf539a48e31115729fab2e546473f771fb0e6e3d1dbae3c76ecbe",
         "relative_path": "tests/unit/test_migrate_graph_projection_queries.py"
       },
       {

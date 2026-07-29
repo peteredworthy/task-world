@@ -388,3 +388,32 @@ same focused command
 - Negative evidence checks now use a different but valid neutral rule, an allowed public origin paired with the wrong argument relationship, and a grouped two-site operation. Production classification is not rerun or used as the oracle in any case.
 
 Final focused rerun: import rewrite/catalog **9 passed in 6.49s**; independent migration policy **2 passed in 111.24s**; focused Ruff/format and Pyright passed.
+
+## Controller Final Verification
+
+After the final independently approved policy fix, the controller regenerated
+the access baseline and ran the long gates directly in the foreground:
+
+- `uv run python -m scripts.codemods.migrate_graph_projection_queries --assert-clean`
+  - passed: 750 current sites.
+- `uv run python scripts/graph_projection_inventory.py --diagnose`
+  - 745 raw collector diagnostics; 0 unresolved flows.
+- `uv run python scripts/graph_projection_inventory.py --write-baseline`
+  and `--check`
+  - passed; three source digests changed for the final codemod and migration-test
+    policy edits.
+- `uv run python scripts/check_graph_projection_boundaries.py`
+  - passed with zero violations.
+- Task 3f focused suite
+  - 361 passed.
+- Broad graph suite
+  - 137 passed.
+- `make test-graph-projection-migration`
+  - 12 passed, 3,851 deselected in 242.08s.
+- `uv run ruff check .` and `uv run ruff format --check .`
+  - passed; 751 files formatted.
+- `uv run pyright`
+  - 0 errors, 0 warnings, 0 informations.
+- `make test`
+  - 5,152 passed, 3 skipped, with the three existing Python 3.12 aiosqlite
+    datetime-adapter deprecation warnings.
