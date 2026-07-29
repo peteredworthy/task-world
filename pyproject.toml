@@ -23,6 +23,7 @@ dependencies = [
     "openhands-tools>=1.10.0",
     "python-dotenv>=1.0.0",
     "graphifyy>=0.4.2",
+    "immutables>=0.21,<1",
 ]
 
 [project.optional-dependencies]
