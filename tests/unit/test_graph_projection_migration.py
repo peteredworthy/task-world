@@ -333,9 +333,10 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
     )
     assert plan.rule_family_counts == (
         ("fixture_mutation_helper", 1),
-        ("fixture_projection_argument", 274),
+        ("fixture_projection_argument", 265),
         ("fixture_projection_keyword", 25),
         ("handled_projection_comparison", 10),
+        ("projection_cast", 9),
         ("projector_fixture_flow", 6),
         ("public_graph_call", 265),
         ("typed_projection_binding", 33),

@@ -1,5 +1,7 @@
 from collections import Counter
+import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -8,6 +10,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     CstAnchorEvidence,
     DispositionPlan,
     FixtureMutationPlan,
+    QueryMigrationReport,
     MigrationSite,
     OperationStream,
     PlannedOperation,
@@ -21,6 +24,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     SourceLocator,
     compile_operation_stream,
     compile_fixture_mutation_plan,
+    compile_query_migration_report,
     compile_query_composition_plan,
     compile_query_replacement_plan,
     apply_query_replacement_plan,
@@ -28,8 +32,13 @@ from scripts.codemods.migrate_graph_projection_queries import (
     plan_reviewed_dispositions,
     require_complete_receiver_physical_context,
     shape_summary,
+    load_git_python_sources,
+    main as migration_main,
+    query_migration_report_json,
+    run_query_migration_mode,
     write_query_source_apply_plan,
     write_fixture_source_apply_plan,
+    write_query_migration_report,
     _generated_fixture_rule,
     _generated_query_rule,
     _neutral_rule,
@@ -51,6 +60,205 @@ from scripts.graph_projection_inventory import (
 
 ROOT = Path(__file__).parents[2]
 MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(
+        ("git", "-c", "user.name=Test", "-c", "user.email=test@example.com", *args),
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+def _historical_repo(tmp_path: Path) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "--quiet")
+    source = repo / "tests" / "fixture.py"
+    source.parent.mkdir()
+    source.write_text(
+        "from orchestrator.graph import GraphProjection\n\n"
+        "def read(projection: GraphProjection) -> object:\n"
+        "    return projection['run_state']\n"
+    )
+    (repo / "README.md").write_text("ignored\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "--quiet", "-m", "baseline")
+    return repo, _git(repo, "rev-parse", "HEAD")
+
+
+def test_load_git_python_sources_reads_only_tracked_baseline_python(tmp_path: Path) -> None:
+    repo, revision = _historical_repo(tmp_path)
+    (repo / "tests" / "fixture.py").write_text("changed\n")
+    (repo / "tests" / "untracked.py").write_text("untracked\n")
+
+    sources = load_git_python_sources(repo, revision)
+
+    assert tuple(source.relative_path for source in sources) == ("tests/fixture.py",)
+    assert "projection['run_state']" in sources[0].source
+
+
+def test_query_migration_report_links_every_baseline_site_deterministically() -> None:
+    source = SourceSnapshot(
+        relative_path="tests/fixture.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    return projection['run_state']\n"
+        ),
+    )
+    manifest = load_manifest(MANIFEST_PATH)
+
+    report = compile_query_migration_report((source,), manifest)
+    encoded = query_migration_report_json(report)
+
+    assert isinstance(report, QueryMigrationReport)
+    assert len(report.sites) == report.baseline_site_count
+    assert {site.disposition for site in report.sites} == {"transformed"}
+    transformed = next(site for site in report.sites if site.disposition == "transformed")
+    assert transformed.before_normalized_form == "projection['run_state']"
+    assert transformed.replacement == "run_state(projection)"
+    assert transformed.after_form == transformed.replacement
+    assert encoded == query_migration_report_json(report)
+    assert encoded.endswith(b"\n")
+    assert json.loads(encoded)["baseline_site_count"] == len(report.sites)
+
+
+def test_query_migration_report_links_nested_physical_diagnostic_to_outer_recipe() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "from orchestrator.graph.scheduler import NodeScheduleInfo\n\n"
+            "def read(projection: GraphProjection, node_id: str) -> object:\n"
+            "    return NodeScheduleInfo(kind=projection['node_kinds'].get(node_id, 'worker'))\n"
+        ),
+    )
+
+    report = compile_query_migration_report((source,), load_manifest(MANIFEST_PATH))
+
+    transformed = [site for site in report.sites if site.disposition == "transformed"]
+    assert len(transformed) == 2
+    assert {site.replacement for site in transformed} == {
+        "NodeScheduleInfo(kind=node_kinds_view(projection).get(node_id, 'worker'))"
+    }
+    assert {site.rule_id for site in transformed} == {
+        "physical_literal_subscript_read",
+        "physical_wrapper:mapping_snapshot",
+    }
+
+
+def test_query_migration_report_transforms_physical_mapping_update_diagnostic() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> dict[str, str]:\n"
+            "    snapshot: dict[str, str] = {}\n"
+            "    snapshot.update(projection['node_states'])\n"
+            "    return snapshot\n"
+        ),
+    )
+
+    report = compile_query_migration_report((source,), load_manifest(MANIFEST_PATH))
+
+    transformed = [site for site in report.sites if site.disposition == "transformed"]
+    assert len(transformed) == 1
+    assert transformed[0].replacement == "snapshot.update(node_states_view(projection))"
+    assert transformed[0].rule_id == "physical_literal_subscript_read"
+
+
+def test_query_migration_modes_check_apply_and_assert_clean_use_atomic_report(
+    tmp_path: Path,
+) -> None:
+    repo, revision = _historical_repo(tmp_path)
+    current = repo / "tests" / "fixture.py"
+    current.write_text(
+        "from orchestrator.graph import GraphProjection, run_state\n\n"
+        "def read(projection: GraphProjection) -> object:\n"
+        "    return run_state(projection)\n"
+    )
+    manifest = load_manifest(MANIFEST_PATH).model_copy(update={"baseline_revision": revision})
+    report_path = repo / "tests" / "fixtures" / "query_migration_report.json"
+
+    checked = run_query_migration_mode(repo, manifest, "check", report_path=report_path)
+    assert isinstance(checked, QueryMigrationReport)
+    assert not report_path.exists()
+
+    applied = run_query_migration_mode(repo, manifest, "apply", report_path=report_path)
+    assert report_path.read_bytes() == query_migration_report_json(applied)
+    assert (
+        run_query_migration_mode(repo, manifest, "assert-clean", report_path=report_path)
+        == applied.current_closure
+    )
+
+    report_path.write_text("{}\n")
+    with pytest.raises(AnchorRefusedError, match="report"):
+        run_query_migration_mode(repo, manifest, "assert-clean", report_path=report_path)
+
+
+def test_write_query_migration_report_refuses_stale_expected_bytes(tmp_path: Path) -> None:
+    report = compile_query_migration_report(
+        (
+            SourceSnapshot(
+                relative_path="tests/fixture.py",
+                source=(
+                    "from orchestrator.graph import GraphProjection\n\n"
+                    "def read(projection: GraphProjection) -> object:\n"
+                    "    return projection['run_state']\n"
+                ),
+            ),
+        ),
+        load_manifest(MANIFEST_PATH),
+    )
+    target = tmp_path / "report.json"
+    target.write_text("stale\n")
+
+    with pytest.raises(AnchorRefusedError, match="changed before atomic apply"):
+        write_query_migration_report(target, report, expected_bytes=b"other\n")
+
+    assert target.read_text() == "stale\n"
+
+
+def test_query_migration_report_refuses_unknown_fixture_key_shape() -> None:
+    source = SourceSnapshot(
+        relative_path="tests/fixture.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def seed(projection: GraphProjection) -> None:\n"
+            "    projection['node_states'][0] = 'ready'\n"
+        ),
+    )
+
+    with pytest.raises(AnchorRefusedError, match="string literal"):
+        compile_query_migration_report((source,), load_manifest(MANIFEST_PATH))
+
+
+def test_query_migration_report_classifies_structural_projection_cast() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from typing import Any, cast\n"
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def read(projection: GraphProjection) -> object:\n"
+            "    projection_data = cast(dict[str, Any], projection)\n"
+            "    return projection_data\n"
+        ),
+    )
+
+    report = compile_query_migration_report((source,), load_manifest(MANIFEST_PATH))
+
+    assert {site.rule_id for site in report.sites} == {"projection_cast"}
+    assert {site.disposition for site in report.sites} == {"projection_neutral"}
+
+
+def test_query_migration_cli_requires_exactly_one_mode() -> None:
+    with pytest.raises(SystemExit):
+        migration_main(())
+    with pytest.raises(SystemExit):
+        migration_main(("--check", "--apply"))
 
 
 def _compile_occurrence_composition(

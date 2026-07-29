@@ -1,15 +1,18 @@
-"""Compile authoritative GraphProjection inventory sites into anchored operation groups.
-
-This is deliberately a compiler front end only: it never changes consumer source.
-"""
+"""Compile, report, and apply authoritative GraphProjection query migrations."""
 
 from __future__ import annotations
 
+import argparse
 import ast
 from collections import Counter, defaultdict
 from collections.abc import Iterable
+import io
+import json
 import os
 from pathlib import Path
+import subprocess
+import sys
+import tarfile
 import tempfile
 from typing import Literal
 
@@ -31,9 +34,13 @@ from scripts.graph_projection_inventory import (
     DiagnosticCode,
     InventorySource,
     ProjectionCallContext,
+    ProjectionMigrationManifest,
     QueryMigrationManifest,
     disposition_site_key,
+    inventory_sources,
+    load_manifest,
     occurrence_id,
+    query_migration_skeleton,
     source_digest,
 )
 
@@ -254,8 +261,10 @@ class DispositionPlan(BaseModel):
             or pending & set(consumed)
         ):
             raise ValueError("plan partitions overlap")
-        if not self.disposition_counts or not self.shape_group_counts:
-            raise ValueError("derived plan counts must be nonempty")
+        if bool(self.operations) != bool(self.disposition_counts) or bool(self.operations) != bool(
+            self.shape_group_counts
+        ):
+            raise ValueError("derived plan counts must match operation emptiness")
         if self.disposition_counts != tuple(
             sorted(Counter(item.disposition for item in self.operations).items())
         ):
@@ -738,6 +747,64 @@ class FixtureSourceApplyPlan(BaseModel):
         consumed = [site_id for item in self.updates for site_id in item.consumed_site_ids]
         if len(paths) != len(frozenset(paths)) or len(consumed) != len(frozenset(consumed)):
             raise ValueError("fixture source update paths and consumed IDs must be unique")
+        return self
+
+
+class QueryMigrationReportSite(BaseModel):
+    """One exact baseline site linked to its structural migration outcome."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    site_id: str
+    relative_path: str
+    qualified_function: str
+    disposition: Literal["transformed", "approved_core", "projection_neutral"]
+    rule_id: str
+    before_normalized_form: str
+    replacement: str | None
+    after_form: str
+
+
+class CurrentTreeClosure(BaseModel):
+    """Fast current-tree evidence that no generated migration work remains."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    occurrence_count: int
+    diagnostic_count: int
+    site_count: int
+    approved_core_count: int
+    projection_neutral_count: int
+
+
+class QueryMigrationReport(BaseModel):
+    """Deterministic exact linkage from historical sites to migration outcomes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_version: Literal[1] = 1
+    baseline_revision: str
+    baseline_site_count: int
+    disposition_counts: tuple[tuple[str, int], ...]
+    rule_counts: tuple[tuple[str, int], ...]
+    sites: tuple[QueryMigrationReportSite, ...]
+    current_closure: CurrentTreeClosure | None = None
+
+    @model_validator(mode="after")
+    def _validate_report(self) -> "QueryMigrationReport":
+        if self.baseline_site_count != len(self.sites):
+            raise ValueError("baseline report count does not match site linkage")
+        if tuple(sorted(self.sites, key=lambda item: item.site_id)) != self.sites:
+            raise ValueError("baseline report sites must be canonically ordered")
+        ids = [item.site_id for item in self.sites]
+        if len(ids) != len(frozenset(ids)):
+            raise ValueError("baseline report site IDs must be unique")
+        if self.disposition_counts != tuple(
+            sorted(Counter(item.disposition for item in self.sites).items())
+        ):
+            raise ValueError("baseline report disposition counts do not match sites")
+        if self.rule_counts != tuple(sorted(Counter(item.rule_id for item in self.sites).items())):
+            raise ValueError("baseline report rule counts do not match sites")
         return self
 
 
@@ -2432,11 +2499,6 @@ def plan_reviewed_dispositions(
         raise AnchorRefusedError("deferred fixture ledger does not match anchored stream")
     disposition_counts = tuple(sorted(Counter(item.disposition for item in operations).items()))
     shape_group_counts = tuple(sorted(Counter(item.shape_key for item in operations).items()))
-    if (
-        dict(disposition_counts).get("query_transform", 0) != 0
-        or dict(disposition_counts).get("approved_core") != 80
-    ):
-        raise AnchorRefusedError("reviewed disposition checkpoint counts do not match")
     return DispositionPlan(
         operations=tuple(operations),
         reviewed_deferred_site_ids=deferred,
@@ -2454,6 +2516,27 @@ def _neutral_rule(site: MigrationSite) -> tuple[str, str] | None:
     """Return one finite structural rule and its proven origin, or fail closed."""
     anchor = site.anchor
     context = anchor.context
+    if (
+        site.diagnostic_code is DiagnosticCode.UNSUPPORTED_CALL
+        and context is not None
+        and context.projection_role == "positional"
+        and context.positional_index == 1
+        and context.physical_access_kind is None
+    ):
+        try:
+            expression = cst.parse_expression(anchor.normalized_expression)
+        except cst.ParserSyntaxError:
+            expression = None
+        if (
+            isinstance(expression, cst.Call)
+            and isinstance(expression.func, cst.Name)
+            and expression.func.value == "cast"
+            and len(expression.args) == 2
+            and not expression.args[1].star
+            and expression.args[1].keyword is None
+            and _normalized_node(expression.args[1].value) == context.projection_expression
+        ):
+            return "projection_cast", "typing.cast"
     if site.domain == "test_fixture" and site.diagnostic_code is DiagnosticCode.UNSUPPORTED_BINDING:
         try:
             statement = cst.parse_statement(f"{site.normalized_expression}\n")
@@ -2649,8 +2732,8 @@ def _generated_query_rule(site: MigrationSite) -> StructuralQueryRuleOperation |
             "extend",
             "literal_field_mutation",
             "literal_field_update",
-            "update",
         }
+        or (site.operation_shape == "update" and site.origin != "diagnostic")
     ):
         return None
     rule_id = f"physical_{context.physical_access_kind.value}"
@@ -3454,3 +3537,424 @@ def compile_operation_stream(
 def shape_summary(stream: OperationStream) -> dict[str, int]:
     """Return deterministic structural grouping counts without site or source policy."""
     return dict(sorted(Counter(site.shape_key for site in stream.sites).items()))
+
+
+def _git_environment() -> dict[str, str]:
+    return {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GIT_PAGER": "cat"}
+
+
+def load_git_python_sources(root: Path, revision: str) -> tuple[SourceSnapshot, ...]:
+    """Load tracked Python sources from one git tree without checking it out."""
+    try:
+        result = subprocess.run(
+            (
+                "git",
+                "-c",
+                "core.pager=cat",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                str(root),
+                "archive",
+                "--format=tar",
+                revision,
+            ),
+            check=True,
+            capture_output=True,
+            env=_git_environment(),
+        )
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = (
+            error.stderr.decode(errors="replace").strip()
+            if isinstance(error, subprocess.CalledProcessError) and error.stderr
+            else str(error)
+        )
+        raise AnchorRefusedError(f"cannot load baseline git tree {revision}: {detail}") from error
+    sources: list[SourceSnapshot] = []
+    try:
+        with tarfile.open(fileobj=io.BytesIO(result.stdout), mode="r:") as archive:
+            for member in sorted(archive.getmembers(), key=lambda item: item.name):
+                path = Path(member.name)
+                if not member.isfile() or path.suffix != ".py":
+                    continue
+                if path.parts[:1] not in {("src",), ("tests",), ("scripts",)}:
+                    continue
+                extracted = archive.extractfile(member)
+                if extracted is None:
+                    raise AnchorRefusedError(
+                        f"baseline git archive omitted bytes for {member.name}"
+                    )
+                sources.append(
+                    SourceSnapshot(
+                        relative_path=path.as_posix(),
+                        source=extracted.read().decode("utf-8"),
+                    )
+                )
+    except (tarfile.TarError, UnicodeDecodeError) as error:
+        raise AnchorRefusedError(f"cannot decode baseline git tree {revision}") from error
+    return tuple(sources)
+
+
+def load_current_python_sources(root: Path) -> tuple[SourceSnapshot, ...]:
+    """Load the current bytes for tracked Python sources in migration scope."""
+    try:
+        paths = subprocess.run(
+            (
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "-z",
+                "--",
+                "src/*.py",
+                "tests/*.py",
+                "scripts/*.py",
+            ),
+            check=True,
+            capture_output=True,
+            env=_git_environment(),
+        ).stdout.split(b"\0")
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise AnchorRefusedError("cannot list current tracked Python sources") from error
+    sources: list[SourceSnapshot] = []
+    for raw_path in paths:
+        if not raw_path:
+            continue
+        try:
+            relative_path = raw_path.decode("utf-8")
+            source = (root / relative_path).read_text()
+        except (OSError, UnicodeDecodeError) as error:
+            raise AnchorRefusedError("cannot load current tracked Python sources") from error
+        sources.append(SourceSnapshot(relative_path=relative_path, source=source))
+    return tuple(sorted(sources, key=lambda item: item.relative_path))
+
+
+def _empty_query_ledger(revision: str) -> QueryMigrationManifest:
+    return QueryMigrationManifest(
+        baseline_revision=revision,
+        dispositions=(),
+        unclassified_sites=(),
+    )
+
+
+def compile_query_migration_report(
+    sources: Iterable[SourceSnapshot],
+    manifest: ProjectionMigrationManifest,
+    *,
+    current_closure: CurrentTreeClosure | None = None,
+) -> QueryMigrationReport:
+    """Compile every baseline site to one deterministic structural report row."""
+    snapshots = tuple(sources)
+    inventory = inventory_sources(snapshots, manifest, require_declaration_facts=True)
+    stream = compile_operation_stream(snapshots, inventory, query_migration_skeleton(inventory))
+    disposition = plan_structural_dispositions(
+        stream, _empty_query_ledger(manifest.baseline_revision)
+    )
+    composition = compile_query_composition_plan(snapshots, stream, disposition)
+    replacements = compile_query_replacement_plan(snapshots, stream, disposition, composition)
+    fixture_mutations = compile_fixture_mutation_plan(
+        snapshots, stream, disposition.generated_fixture_operations
+    )
+
+    operations = {
+        site_id: operation
+        for operation in disposition.operations
+        for site_id in operation.consumed_site_ids
+    }
+    neutral_rules = {item.site_id: item.rule_id for item in disposition.neutral_rule_operations}
+    query_rules = {item.site_id: item.rule_id for item in disposition.generated_query_operations}
+    query_recipes = {
+        site_id: recipe for recipe in replacements.recipes for site_id in recipe.consumed_site_ids
+    }
+    query_recipes_by_outer = {
+        (
+            recipe.relative_path,
+            recipe.source_span[0],
+            _normalized_node(cst.parse_expression(recipe.original_outer_expression)),
+        ): recipe
+        for recipe in replacements.recipes
+    }
+    stream_by_id = {site.original_site_id: site for site in stream.sites}
+    query_recipes_by_physical_context: dict[
+        tuple[str, str, str | None, AccessKind | None, str | None],
+        list[QueryReplacementRecipe],
+    ] = defaultdict(list)
+    for recipe in replacements.recipes:
+        for consumed_id in recipe.consumed_site_ids:
+            consumed_site = stream_by_id[consumed_id]
+            context = consumed_site.anchor.context
+            if context is None:
+                continue
+            key = (
+                consumed_site.relative_path,
+                consumed_site.qualified_function,
+                context.physical_old_field_name,
+                context.physical_access_kind,
+                context.physical_operation_shape,
+            )
+            if recipe not in query_recipes_by_physical_context[key]:
+                query_recipes_by_physical_context[key].append(recipe)
+    fixture_recipes = {
+        site_id: recipe
+        for recipe in fixture_mutations.recipes
+        for site_id in recipe.consumed_site_ids
+    }
+    rows: list[QueryMigrationReportSite] = []
+    for site in stream.sites:
+        site_id = site.original_site_id
+        replacement: str | None = None
+        if site_id in fixture_recipes:
+            recipe = fixture_recipes[site_id]
+            report_disposition: Literal["transformed", "approved_core", "projection_neutral"] = (
+                "transformed"
+            )
+            rule_id = recipe.rule_id
+            replacement = recipe.replacement_statement
+        else:
+            operation = operations.get(site_id)
+            if operation is None:
+                raise AnchorRefusedError(f"baseline report has no disposition for {site_id}")
+            if operation.disposition == "query_transform":
+                recipe = query_recipes.get(site_id)
+                rule_id = query_rules.get(site_id)
+                if recipe is None or rule_id is None:
+                    raise AnchorRefusedError(f"baseline query site has no exact recipe: {site_id}")
+                report_disposition = "transformed"
+                replacement = recipe.replacement_outer_expression
+            elif operation.disposition == "approved_core":
+                report_disposition = "approved_core"
+                rule_id = "approved_core"
+            elif operation.disposition == "projection_neutral":
+                rule_id = neutral_rules.get(site_id, "")
+                if not rule_id:
+                    raise AnchorRefusedError(f"baseline neutral site has no finite rule: {site_id}")
+                if site.anchor.context is not None and site.anchor.context.physical_access_kind:
+                    recipe = query_recipes_by_outer.get(
+                        (
+                            site.relative_path,
+                            site.locator.line,
+                            site.anchor.normalized_expression,
+                        )
+                    )
+                    context = site.anchor.context
+                    if recipe is None and context is not None:
+                        candidates = [
+                            candidate
+                            for candidate in query_recipes_by_physical_context.get(
+                                (
+                                    site.relative_path,
+                                    site.qualified_function,
+                                    context.physical_old_field_name,
+                                    context.physical_access_kind,
+                                    context.physical_operation_shape,
+                                ),
+                                [],
+                            )
+                            if candidate.source_span[0]
+                            <= site.locator.line
+                            <= candidate.source_span[2]
+                        ]
+                        if len(candidates) > 1:
+                            raise AnchorRefusedError(
+                                "baseline physical diagnostic has ambiguous transformed outer recipe"
+                            )
+                        recipe = candidates[0] if candidates else None
+                    if recipe is None:
+                        raise AnchorRefusedError(
+                            f"baseline physical diagnostic has no transformed outer recipe: {site_id}"
+                        )
+                    report_disposition = "transformed"
+                    rule_id = "physical_wrapper:" + "+".join(recipe.rule_ids)
+                    replacement = recipe.replacement_outer_expression
+                else:
+                    report_disposition = "projection_neutral"
+            else:
+                raise AnchorRefusedError(f"baseline report rejects disposition for {site_id}")
+        rows.append(
+            QueryMigrationReportSite(
+                site_id=site_id,
+                relative_path=site.relative_path,
+                qualified_function=site.qualified_function,
+                disposition=report_disposition,
+                rule_id=rule_id,
+                before_normalized_form=site.normalized_expression,
+                replacement=replacement,
+                after_form=replacement or site.normalized_expression,
+            )
+        )
+    rows.sort(key=lambda item: item.site_id)
+    return QueryMigrationReport(
+        baseline_revision=manifest.baseline_revision,
+        baseline_site_count=len(rows),
+        disposition_counts=tuple(sorted(Counter(item.disposition for item in rows).items())),
+        rule_counts=tuple(sorted(Counter(item.rule_id for item in rows).items())),
+        sites=tuple(rows),
+        current_closure=current_closure,
+    )
+
+
+def compile_current_tree_closure(
+    sources: Iterable[SourceSnapshot], manifest: ProjectionMigrationManifest
+) -> CurrentTreeClosure:
+    """Prove that current tracked sources contain no generated migration work."""
+    snapshots = tuple(sources)
+    inventory = inventory_sources(snapshots, manifest, require_declaration_facts=True)
+    stream = compile_operation_stream(snapshots, inventory, query_migration_skeleton(inventory))
+    disposition = plan_structural_dispositions(
+        stream, _empty_query_ledger(manifest.baseline_revision)
+    )
+    composition = compile_query_composition_plan(snapshots, stream, disposition)
+    replacements = compile_query_replacement_plan(snapshots, stream, disposition, composition)
+    fixture_mutations = compile_fixture_mutation_plan(
+        snapshots, stream, disposition.generated_fixture_operations
+    )
+    noncore_occurrences = tuple(
+        occurrence.relative_path
+        for occurrence in inventory.occurrences
+        if occurrence.relative_path not in _APPROVED_CORE_PATHS
+    )
+    if noncore_occurrences:
+        raise AnchorRefusedError(
+            f"current physical occurrences escape approved core: {tuple(sorted(noncore_occurrences))!r}"
+        )
+    if (
+        disposition.pending_site_ids
+        or disposition.reviewed_deferred_site_ids
+        or disposition.generated_fixture_operations
+        or composition.groups
+        or replacements.recipes
+        or replacements.mutation_handoffs
+        or fixture_mutations.recipes
+    ):
+        raise AnchorRefusedError("current tree retains generated migration work")
+    counts = dict(disposition.disposition_counts)
+    return CurrentTreeClosure(
+        occurrence_count=len(inventory.occurrences),
+        diagnostic_count=len(inventory.diagnostics),
+        site_count=len(stream.sites),
+        approved_core_count=counts.get("approved_core", 0),
+        projection_neutral_count=counts.get("projection_neutral", 0),
+    )
+
+
+def query_migration_report_json(report: QueryMigrationReport) -> bytes:
+    """Return canonical report JSON bytes with a trailing newline."""
+    return (
+        json.dumps(
+            report.model_dump(mode="json"),
+            sort_keys=True,
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    ).encode()
+
+
+def write_query_migration_report(
+    target: Path,
+    report: QueryMigrationReport,
+    *,
+    expected_bytes: bytes | None = None,
+) -> None:
+    """Atomically write one validated report after checking expected current bytes."""
+    if expected_bytes is not None and (
+        not target.is_file() or target.read_bytes() != expected_bytes
+    ):
+        raise AnchorRefusedError("query migration report changed before atomic apply")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(query_migration_report_json(report))
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.exists():
+            os.chmod(temporary, target.stat().st_mode)
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def run_query_migration_mode(
+    root: Path,
+    manifest: ProjectionMigrationManifest,
+    mode: Literal["check", "apply", "assert-clean"],
+    *,
+    report_path: Path,
+) -> QueryMigrationReport | CurrentTreeClosure:
+    """Execute one whole-tree migration mode against injected repository paths."""
+    current_sources = load_current_python_sources(root)
+    closure = compile_current_tree_closure(current_sources, manifest)
+    if mode == "assert-clean":
+        if not report_path.exists():
+            raise AnchorRefusedError("checked query migration report is missing")
+        raw = report_path.read_bytes()
+        try:
+            report = QueryMigrationReport.model_validate_json(raw)
+        except ValueError as error:
+            raise AnchorRefusedError("checked query migration report is invalid") from error
+        expected_report = compile_query_migration_report(
+            load_git_python_sources(root, manifest.baseline_revision),
+            manifest,
+            current_closure=closure,
+        )
+        if (
+            query_migration_report_json(report) != raw
+            or report.current_closure != closure
+            or query_migration_report_json(expected_report) != raw
+        ):
+            raise AnchorRefusedError("checked query migration report bytes or closure are stale")
+        return closure
+
+    report = compile_query_migration_report(
+        load_git_python_sources(root, manifest.baseline_revision),
+        manifest,
+        current_closure=closure,
+    )
+    if mode == "apply":
+        expected = report_path.read_bytes() if report_path.exists() else None
+        if load_current_python_sources(root) != current_sources:
+            raise AnchorRefusedError("current tracked sources changed before atomic apply")
+        write_query_migration_report(report_path, report, expected_bytes=expected)
+    elif mode != "check":
+        raise AnchorRefusedError(f"unknown query migration mode: {mode}")
+    return report
+
+
+def main(argv: Iterable[str] | None = None) -> int:
+    """Run the whole-tree query migration report contract."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument("--check", action="store_true")
+    modes.add_argument("--apply", action="store_true")
+    modes.add_argument("--assert-clean", action="store_true")
+    args = parser.parse_args(tuple(argv) if argv is not None else None)
+    mode: Literal["check", "apply", "assert-clean"] = (
+        "check" if args.check else "apply" if args.apply else "assert-clean"
+    )
+    root = Path(__file__).parents[2]
+    manifest = load_manifest(root / "scripts/codemods/graph_projection_manifest.yaml")
+    report_path = root / "tests/fixtures/graph_projection_migration/query_migration_report.json"
+    try:
+        result = run_query_migration_mode(
+            root,
+            manifest,
+            mode,
+            report_path=report_path,
+        )
+    except (AnchorRefusedError, OSError, ValueError) as error:
+        print(f"query migration {mode} failed: {error}", file=sys.stderr)
+        return 1
+    count = (
+        result.baseline_site_count
+        if isinstance(result, QueryMigrationReport)
+        else result.site_count
+    )
+    print(f"query migration {mode} passed: {count} sites")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

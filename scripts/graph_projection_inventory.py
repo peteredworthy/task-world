@@ -72,7 +72,7 @@ class ProjectionMigrationManifest(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    baseline_revision: str
+    baseline_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     fields: tuple[FieldOwnership, ...] = Field(min_length=73, max_length=73)
     node_creation_fields: frozenset[str]
     node_creation_ownership: tuple[NodeCreationFieldOwnership, ...]
