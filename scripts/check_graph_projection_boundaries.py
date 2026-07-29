@@ -51,28 +51,42 @@ _GROUPED_STORAGE_NAMES = frozenset(
         "usage",
     }
 )
-_MUTABLE_METHODS = frozenset(
+_MAPPING_MUTABLE_METHODS = frozenset({"clear", "pop", "popitem", "setdefault", "update"})
+_SEQUENCE_MUTABLE_METHODS = frozenset(
+    {"append", "clear", "extend", "insert", "pop", "remove", "reverse", "sort"}
+)
+_SET_MUTABLE_METHODS = frozenset(
     {
-        "__delitem__",
-        "__iadd__",
-        "__ior__",
-        "__isub__",
-        "__setitem__",
         "add",
-        "append",
         "clear",
+        "difference_update",
         "discard",
-        "extend",
-        "insert",
         "intersection_update",
         "pop",
         "remove",
-        "reverse",
-        "setdefault",
-        "sort",
         "symmetric_difference_update",
         "update",
     }
+)
+_INPLACE_DUNDER_MUTABLE_METHODS = frozenset(
+    {
+        "__setitem__",
+        "__delitem__",
+        "__setattr__",
+        "__delattr__",
+        "__iadd__",
+        "__imul__",
+        "__ior__",
+        "__iand__",
+        "__ixor__",
+        "__isub__",
+    }
+)
+_MUTABLE_METHODS = frozenset().union(
+    _MAPPING_MUTABLE_METHODS,
+    _SEQUENCE_MUTABLE_METHODS,
+    _SET_MUTABLE_METHODS,
+    _INPLACE_DUNDER_MUTABLE_METHODS,
 )
 
 

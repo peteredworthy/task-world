@@ -1482,7 +1482,7 @@ class _Collector(cst.CSTVisitor):
         certainty: Literal["definite", "possible"] | None = None
         if self._projection_derived(node) or self._known_projection_value(node):
             certainty = "definite"
-        elif isinstance(node, cst.Name) and self._possible_alias(node):
+        elif self._possible_projection_derived(node):
             certainty = "possible"
         if certainty is None:
             return
@@ -1761,8 +1761,20 @@ class _Collector(cst.CSTVisitor):
     def _projection_derived(self, node: cst.BaseExpression) -> bool:
         if self._tracked(node) or self._is_projection_method_call(node):
             return True
-        return isinstance(node, (cst.Attribute, cst.Subscript)) and self._projection_derived(
-            node.value
+        return isinstance(
+            node, (cst.Await, cst.Attribute, cst.Subscript)
+        ) and self._projection_derived(
+            node.expression if isinstance(node, cst.Await) else node.value
+        )
+
+    def _possible_projection_derived(self, node: cst.BaseExpression) -> bool:
+        """Return whether a bounded alias can derive this wrapper expression."""
+        if isinstance(node, cst.Name):
+            return self._possible_alias(node)
+        return isinstance(node, (cst.Await, cst.Attribute, cst.Subscript)) and (
+            self._possible_projection_derived(
+                node.expression if isinstance(node, cst.Await) else node.value
+            )
         )
 
     def _contains_projection_derived(self, node: cst.BaseExpression) -> bool:
@@ -2878,6 +2890,9 @@ class _Collector(cst.CSTVisitor):
             )
 
     def visit_Name(self, node: cst.Name) -> None:
+        self._record_provenance(node)
+
+    def visit_Await(self, node: cst.Await) -> None:
         self._record_provenance(node)
 
     def _nested_projection_value(self, node: cst.BaseExpression) -> bool:

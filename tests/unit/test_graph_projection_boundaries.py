@@ -1,6 +1,8 @@
 from pathlib import Path
 import subprocess
 
+import pytest
+
 from scripts.check_graph_projection_boundaries import (
     ALLOWED_STORAGE_READERS,
     check_projection_boundaries,
@@ -245,3 +247,97 @@ def test_boundary_provenance_candidate_selection_uses_only_collector_seed_origin
     assert all(
         has_projection_provenance_seed(source) for source in sources_with_supported_collector_seeds
     )
+
+
+def test_boundary_guard_tracks_direct_awaited_producer_access(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphController
+
+async def read(controller: GraphController) -> None:
+    (await controller.read_projection())["run_state"]
+"""
+    )
+
+    violations = check_projection_boundaries(tmp_path, paths=(source,))
+
+    assert [(item.line, item.code) for item in violations] == [
+        (4, "legacy_projection_subscript"),
+    ]
+
+
+def test_boundary_guard_tracks_possible_alias_nested_and_grouped_mutations(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphProjection
+
+def mutate(projection: GraphProjection, other: object, condition: bool, key: str) -> None:
+    if condition:
+        alias = projection
+    else:
+        alias = other
+    alias["nodes"][key] = {}
+    alias.records.by_id.update({})
+"""
+    )
+
+    violations = check_projection_boundaries(tmp_path, paths=(source,))
+
+    assert [(item.line, item.code) for item in violations] == [
+        (8, "dynamic_projection_access"),
+        (8, "legacy_projection_subscript"),
+        (8, "mutable_projection_operation"),
+        (9, "forbidden_grouped_storage_access"),
+        (9, "mutable_projection_operation"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "method",
+    (
+        "clear",
+        "pop",
+        "popitem",
+        "setdefault",
+        "update",
+        "append",
+        "extend",
+        "insert",
+        "remove",
+        "reverse",
+        "sort",
+        "add",
+        "difference_update",
+        "discard",
+        "intersection_update",
+        "symmetric_difference_update",
+        "__setitem__",
+        "__delitem__",
+        "__setattr__",
+        "__delattr__",
+        "__iadd__",
+        "__imul__",
+        "__ior__",
+        "__iand__",
+        "__ixor__",
+        "__isub__",
+    ),
+)
+def test_boundary_guard_rejects_complete_explicit_mutator_policy(
+    tmp_path: Path, method: str
+) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        f"""from orchestrator.graph import GraphProjection
+
+def mutate(projection: GraphProjection) -> None:
+    projection.records.by_id.{method}()
+"""
+    )
+
+    violations = check_projection_boundaries(tmp_path, paths=(source,))
+
+    assert any(item.code == "mutable_projection_operation" for item in violations)

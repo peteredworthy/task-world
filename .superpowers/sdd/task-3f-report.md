@@ -212,3 +212,57 @@ uv run pyright scripts/check_graph_projection_boundaries.py scripts/graph_projec
 ```
 
 Concern: the parallel portion deliberately uses process workers because the LibCST metadata work is CPU-bound; this increases peak process/memory use for large scans. It is limited to eight workers, skipped for fewer than four candidates, and worker failure propagates rather than silently weakening the guard. Existing reported violations remain intentionally unresolved under this task's scope.
+
+## Independent-review correctness fixes (uncommitted)
+
+### Root cause and RED/GREEN
+
+Review found three independent gaps in the initial provenance boundary:
+
+1. `_known_projection_value()` understood `cst.Await`, but no `visit_Await()` recorded the outer expression position that the AST boundary visitor receives.
+2. Possible aliases were recorded only at exact `Name` positions; their Attribute/Subscript/Await wrappers consequently did not have source-position facts for nested stores or mutation receivers.
+3. The explicit mutator table missed mapping `popitem`, set `difference_update`, and several required attribute/in-place dunders.
+
+```text
+RED
+uv run pytest tests/unit/test_graph_projection_boundaries.py::test_boundary_guard_tracks_direct_awaited_producer_access tests/unit/test_graph_projection_boundaries.py::test_boundary_guard_tracks_possible_alias_nested_and_grouped_mutations tests/unit/test_graph_projection_boundaries.py::test_boundary_guard_rejects_complete_explicit_mutator_policy -q
+9 failed, 19 passed
+
+GREEN
+same focused command
+28 passed
+```
+
+The awaited test is an end-to-end direct `(await controller.read_projection())["run_state"]` access. The control-flow test assigns either a typed projection or unrelated object, then checks both nested assignment and grouped descendant mutation. The parameterized real-source mutator test covers the complete reviewed mapping, sequence, set, and dunder method union.
+
+### Implementation
+
+- Added `visit_Await()` provenance recording. The fact uses the real LibCST `Await` position rather than a name/string heuristic.
+- Added `_possible_projection_derived()` for the same bounded `Await`, `Attribute`, and `Subscript` wrapper chain supported by definite provenance. This preserves the collector's existing lexical bindings and source-order semantics while providing independent boundary facts at each outer receiver/store expression.
+- Made `_projection_derived()` include `Await` wrappers for symmetric definite handling.
+- Split the finite mutator policy into explicit mapping, sequence, set, and in-place-dunder tables and unioned them. The policy now includes `popitem`, `difference_update`, `__setattr__`, `__delattr__`, `__imul__`, `__iand__`, and `__ixor__` alongside the previously covered methods.
+
+### Verification and remeasurement
+
+```text
+uv run pytest tests/unit/test_graph_projection_boundaries.py tests/unit/test_graph_projection_inventory.py -q
+149 passed in 6.05s
+
+uv run ruff check scripts/check_graph_projection_boundaries.py scripts/graph_projection_inventory.py tests/unit/test_graph_projection_boundaries.py
+All checks passed
+
+uv run ruff format --check scripts/check_graph_projection_boundaries.py scripts/graph_projection_inventory.py tests/unit/test_graph_projection_boundaries.py
+3 files already formatted
+
+uv run pyright scripts/check_graph_projection_boundaries.py scripts/graph_projection_inventory.py tests/unit/test_graph_projection_boundaries.py
+0 errors, 0 warnings, 0 informations
+
+/usr/bin/time -p uv run python scripts/check_graph_projection_boundaries.py
+real 14.99
+```
+
+Candidate instrumentation remained stable: all 764 tracked Python files AST-parse, 634 are storage-shaped, and only 112 enter LibCST provenance. The full guard count was **48 before review fixes and 48 after**. No newly discovered repository violation was emitted because the repaired awaiting/possible-alias/method shapes occur in focused adversarial tests rather than in tracked broad-scan sources; existing violation output was otherwise unchanged. The 14.99-second full command remains below the 30-second target.
+
+### Concerns
+
+Possible provenance remains deliberately bounded to the collector's existing control-flow alias facts and its finite wrapper forms; it does not infer arbitrary transformations. The unchanged process-worker cap, deterministic `map` order, all-file AST/import scan, exact storage allowlist, and malformed-source fail-closed behavior remain in effect. The known 48 broad-scan violations are still outside this task's migration scope.
