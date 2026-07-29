@@ -5,7 +5,6 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from scripts.codemods.migrate_graph_projection_queries import (
-    AnchorRefusedError,
     DispositionPlan,
     OperationStream,
     SourceSnapshot,
@@ -219,7 +218,7 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory(
         "approved_core": 80,
         "projection_neutral": 65,
     }
-    assert Counter(site.domain for site in ledger.unclassified_sites) == {"test_fixture": 408}
+    assert Counter(site.domain for site in ledger.unclassified_sites) == {}
     assert not any(item.disposition == "query_transform" for item in ledger.dispositions)
     assert {
         disposition.disposition
@@ -236,14 +235,14 @@ def test_checked_query_ledger_matches_the_fresh_repository_inventory(
     }
     assert reviewed_core_keys < core_keys
     generated_core_keys = core_keys - reviewed_core_keys
-    assert len(generated_core_keys) == 42
+    assert len(generated_core_keys) == 56
     assert {
         site.relative_path
         for site in skeleton.unclassified_sites
         if site.site_key in generated_core_keys
     } == {"src/orchestrator/graph/projection_queries.py"}
     assert not {site.site_key for site in ledger.unclassified_sites} & core_keys
-    assert len(current_keys - reviewed_keys - deferred_keys) == 351
+    assert len(current_keys - reviewed_keys - deferred_keys) == 609
 
 
 def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
@@ -255,8 +254,8 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
 
     assert len(plan.operations) == len(ledger.dispositions)
     assert len(plan.consumed_site_ids) == len(ledger.dispositions)
-    assert len(plan.deferred_site_ids) == 408
-    assert len(plan.pending_site_ids) == 351
+    assert len(plan.deferred_site_ids) == 0
+    assert len(plan.pending_site_ids) == 609
     assert plan.consumed_site_ids | set(plan.deferred_site_ids) | set(plan.pending_site_ids) == {
         site.original_site_id for site in stream.sites
     }
@@ -288,24 +287,7 @@ def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
         )
         == plan
     )
-    deferred = ledger.unclassified_sites[0]
-    with pytest.raises(AnchorRefusedError, match="deferred fixture"):
-        plan_reviewed_dispositions(
-            stream,
-            ledger.model_copy(
-                update={
-                    "unclassified_sites": (
-                        deferred.model_copy(update={"domain": "post_ledger"}),
-                        *ledger.unclassified_sites[1:],
-                    )
-                }
-            ),
-        )
-    without_fixture = plan_reviewed_dispositions(
-        stream,
-        ledger.model_copy(update={"unclassified_sites": ledger.unclassified_sites[1:]}),
-    )
-    assert deferred.site_key in without_fixture.pending_site_ids
+    assert ledger.unclassified_sites == ()
 
 
 def test_live_repository_compilation_includes_every_remaining_fixture_site(
@@ -324,8 +306,8 @@ def test_live_repository_compilation_includes_every_remaining_fixture_site(
         site.site_key for site in ledger.unclassified_sites if site.domain == "test_fixture"
     }
     compiled_site_ids = [site.original_site_id for site in stream.sites]
-    assert len(raw_fixture_site_ids) == 481
-    assert len(deferred_fixture_site_ids) == 408
+    assert len(raw_fixture_site_ids) == 317
+    assert len(deferred_fixture_site_ids) == 0
     assert deferred_fixture_site_ids <= raw_fixture_site_ids
     assert all(compiled_site_ids.count(site_id) == 1 for site_id in raw_fixture_site_ids)
     assert all(compiled_site_ids.count(site_id) == 1 for site_id in deferred_fixture_site_ids)
@@ -343,28 +325,28 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
     ledger = live_migration_context.ledger
 
     assert plan.pending_site_ids == ()
-    assert len(plan.operations) == 428
-    assert len(plan.deferred_site_ids) == 476
+    assert len(plan.operations) == 754
+    assert len(plan.deferred_site_ids) == 0
     assert plan.disposition_counts == (
-        ("approved_core", 122),
-        ("projection_neutral", 306),
+        ("approved_core", 136),
+        ("projection_neutral", 618),
     )
     assert plan.rule_family_counts == (
-        ("handled_projection_comparison", 1),
+        ("fixture_mutation_helper", 1),
+        ("fixture_projection_argument", 274),
+        ("fixture_projection_keyword", 25),
+        ("handled_projection_comparison", 10),
         ("projector_fixture_flow", 6),
-        ("public_graph_call", 270),
-        ("typed_projection_binding", 26),
+        ("public_graph_call", 265),
+        ("typed_projection_binding", 33),
         ("typed_projection_field_constructor", 1),
         ("typed_projection_return", 2),
+        ("typed_projector_binding", 1),
     )
-    assert plan.generated_fixture_family_counts == (
-        ("literal_field_update_mutation", 9),
-        ("physical_append_extend", 1),
-        ("physical_nested_assignment", 58),
-    )
-    assert len(plan.reviewed_deferred_site_ids) == 408
-    assert len(plan.generated_fixture_operations) == 68
-    assert sum(count for _, count in plan.symbol_origin_counts) == 306
+    assert plan.generated_fixture_family_counts == ()
+    assert len(plan.reviewed_deferred_site_ids) == 0
+    assert len(plan.generated_fixture_operations) == 0
+    assert sum(count for _, count in plan.symbol_origin_counts) == 618
     assert plan == plan_structural_dispositions(
         stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
         ledger.model_copy(

@@ -22,6 +22,7 @@ from orchestrator.graph.models import (
     InputBindingProjection,
     InvalidTestBlockProjection,
     LeaseProjection,
+    NodeCreationProjection,
     OversightDecisionProjection,
     PendingGateDecisionProjection,
     RequirementRevisionProjection,
@@ -41,6 +42,80 @@ from orchestrator.graph.projections import (
 
 def accepted_graph_patches_by_node_view(projection: GraphProjection) -> dict[str, list[str]]:
     return deepcopy(projection["accepted_graph_patches_by_node"])
+
+
+def approval_decisions_view(
+    projection: GraphProjection,
+) -> dict[str, ApprovalDecisionProjection]:
+    return deepcopy(projection["approval_decisions"])
+
+
+def authority_decisions_view(
+    projection: GraphProjection,
+) -> dict[str, AuthorityDecisionProjection]:
+    return deepcopy(projection["authority_decisions"])
+
+
+def decision_request_details_view(
+    projection: GraphProjection,
+) -> dict[str, PendingGateDecisionProjection]:
+    return deepcopy(projection["decision_request_details"])
+
+
+def execution_count_by_node_kind_view(projection: GraphProjection) -> dict[str, int]:
+    return dict(projection["execution_count_by_node_kind"])
+
+
+def invalid_test_blocks_view(
+    projection: GraphProjection,
+) -> dict[str, InvalidTestBlockProjection]:
+    return deepcopy(projection["invalid_test_blocks"])
+
+
+def latency_ms_by_node_kind_view(projection: GraphProjection) -> dict[str, int]:
+    return dict(projection["latency_ms_by_node_kind"])
+
+
+def node_allowed_actions_view(projection: GraphProjection) -> dict[str, list[str]]:
+    return deepcopy(projection["node_allowed_actions"])
+
+
+def node_creation_payloads_view(
+    projection: GraphProjection,
+) -> dict[str, NodeCreationProjection]:
+    return deepcopy(projection["node_creation_payloads"])
+
+
+def node_output_ports_view(
+    projection: GraphProjection,
+) -> dict[str, dict[str, list[str]]]:
+    return deepcopy(projection["node_output_ports"])
+
+
+def output_record_payloads_view(
+    projection: GraphProjection,
+) -> dict[str, AcceptedOutputRecordPayload]:
+    return deepcopy(projection["output_record_payloads"])
+
+
+def requirement_revisions_view(
+    projection: GraphProjection,
+) -> dict[str, RequirementRevisionProjection]:
+    return deepcopy(projection["requirement_revisions"])
+
+
+def support_evidence_view(
+    projection: GraphProjection,
+) -> dict[str, SupportEvidenceProjection]:
+    return deepcopy(projection["support_evidence"])
+
+
+def tokens_by_node_kind_view(projection: GraphProjection) -> dict[str, int]:
+    return dict(projection["tokens_by_node_kind"])
+
+
+def tokens_by_node_view(projection: GraphProjection) -> dict[str, int]:
+    return dict(projection["tokens_by_node"])
 
 
 def accepted_no_successor_patches_by_node_view(

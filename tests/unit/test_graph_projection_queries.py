@@ -7,6 +7,8 @@ import yaml
 from pydantic import ValidationError
 
 from orchestrator.graph import (
+    environment_failures_view,
+    file_state_records_view,
     Actor,
     ActorKind,
     ApprovalDecisionProjection,
@@ -36,7 +38,9 @@ from orchestrator.graph import (
     accepted_no_successor_patch_id,
     accepted_no_successor_patch_ids,
     approval_decision,
+    approval_decisions_view,
     authority_decision,
+    authority_decisions_view,
     authority_revision_blocker,
     bound_record_ids,
     callback_idempotency_event,
@@ -49,6 +53,8 @@ from orchestrator.graph import (
     cleanup_request,
     cleanup_requested_events_view,
     decision_request,
+    decision_request_details_view,
+    execution_count_by_node_kind_view,
     configured_gates,
     build_projection,
     completion_decision_passed,
@@ -70,18 +76,22 @@ from orchestrator.graph import (
     initial_projection,
     invalid_test_block,
     invalid_test_blocks,
+    invalid_test_blocks_view,
     iter_edges,
     iter_leases,
     lease_by_id,
     lease_generation,
     latest_routine_snapshot_record,
+    latency_ms_by_node_kind_view,
     node_allowed_actions,
+    node_allowed_actions_view,
     node_attempt,
     node_attempts_view,
     node_candidate_id,
     node_command_definition,
     node_command_definitions_view,
     node_creation_position,
+    node_creation_payloads_view,
     node_creation_positions_view,
     node_exists,
     node_failed_candidate_id,
@@ -102,9 +112,11 @@ from orchestrator.graph import (
     node_state,
     node_task_region,
     node_resource_claims_view,
+    node_output_ports_view,
     open_proposal_blocker,
     output_record_ids_for_node_port,
     output_record_payload,
+    output_record_payloads_view,
     output_records_by_node_port_view,
     oversight_decision,
     planner_generation,
@@ -126,8 +138,12 @@ from orchestrator.graph import (
     recovery_nodes_for_record,
     ready_nodes_view,
     requirement_revision,
+    requirement_revisions_view,
     recorded_node_usage_keys_view,
     resource_claims_for_node,
+    support_evidence_view,
+    tokens_by_node_kind_view,
+    tokens_by_node_view,
     run_state,
     retry_not_before_by_node_view,
     task_candidates,
@@ -154,7 +170,12 @@ from scripts.graph_projection_inventory import (
     query_migration_skeleton,
     validate_query_migration_manifest,
 )
-from tests.unit.graph_test_utils import canonical_event_payload
+from tests.unit.graph_test_utils import (
+    projection_fixture_append,
+    projection_fixture_set,
+    projection_fixture_update,
+    canonical_event_payload,
+)
 from tests.graph_fr17_fixture import less_used_events
 
 
@@ -224,60 +245,121 @@ def test_verification_and_recovery_queries_preserve_missing_values() -> None:
 
 def test_verification_and_recovery_queries_preserve_order_and_isolation() -> None:
     projection = initial_projection()
-    projection["verifier_verdicts"]["candidate-1"] = VerifierVerdictProjection(
-        candidate_id="candidate-1", verdict="passed", position=1
+    projection = projection_fixture_set(
+        projection,
+        "verifier_verdicts",
+        ("candidate-1",),
+        VerifierVerdictProjection(candidate_id="candidate-1", verdict="passed", position=1),
     )
-    projection["passed_verification_results_by_record_id"]["passed-1"] = (
-        VerificationResultProjection(
-            node_id="verifier-1", record_id="passed-1", candidate_id="candidate-1"
-        )
+    projection = projection_fixture_set(
+        projection,
+        "passed_verification_results_by_record_id",
+        ("passed-1",),
+        (
+            VerificationResultProjection(
+                node_id="verifier-1", record_id="passed-1", candidate_id="candidate-1"
+            )
+        ),
     )
-    projection["failed_verification_results_by_record_id"]["failed-1"] = (
-        VerificationResultProjection(
-            node_id="verifier-2", record_id="failed-1", candidate_id="candidate-2"
-        )
+    projection = projection_fixture_set(
+        projection,
+        "failed_verification_results_by_record_id",
+        ("failed-1",),
+        (
+            VerificationResultProjection(
+                node_id="verifier-2", record_id="failed-1", candidate_id="candidate-2"
+            )
+        ),
     )
-    projection["passed_verification_results_by_record_id"]["passed-2"] = (
-        VerificationResultProjection(node_id="verifier-2", record_id="passed-2")
+    projection = projection_fixture_set(
+        projection,
+        "passed_verification_results_by_record_id",
+        ("passed-2",),
+        (VerificationResultProjection(node_id="verifier-2", record_id="passed-2")),
     )
-    projection["failed_verification_results_by_record_id"]["failed-2"] = (
-        VerificationResultProjection(node_id="verifier-3", record_id="failed-2")
+    projection = projection_fixture_set(
+        projection,
+        "failed_verification_results_by_record_id",
+        ("failed-2",),
+        (VerificationResultProjection(node_id="verifier-3", record_id="failed-2")),
     )
-    projection["passed_verification_candidate_ids"].extend(("candidate-2", "candidate-1"))
-    projection["failed_verification_candidate_ids"].update(
-        {"candidate-3": True, "candidate-2": True}
+    projection = projection_fixture_append(
+        projection_fixture_append(projection, "passed_verification_candidate_ids", "candidate-2"),
+        "passed_verification_candidate_ids",
+        "candidate-1",
     )
-    projection["recovery_nodes_by_record_id"]["failed-1"] = [
-        RecoveryNodeIndexEntry(node_id="recovery-2", recovery_reason="second"),
-        RecoveryNodeIndexEntry(node_id="recovery-1", recovery_reason="first"),
-    ]
-    projection["recovery_nodes_by_record_id"]["failed-2"] = [
-        RecoveryNodeIndexEntry(node_id="recovery-3", recovery_reason="third")
-    ]
-    projection["node_states"].update({"node-2": "running", "node-1": "ready"})
-    projection["task_states"].update({"task-2": "pending", "task-1": "accepted"})
-    projection["recorded_node_usage_keys"]["usage-1"] = True
-    projection["accepted_output_records_by_node_port"]["node-2"] = {
-        "z-port": [{"record_id": "record-3", "payload": {"nested": ["original"]}}],
-        "a-port": [
-            {"record_id": "record-2", "payload": {"nested": ["original"]}},
-            {"record_id": "record-1", "payload": {"nested": ["original"]}},
+    projection = projection_fixture_update(
+        projection, "failed_verification_candidate_ids", {"candidate-3": True, "candidate-2": True}
+    )
+    projection = projection_fixture_set(
+        projection,
+        "recovery_nodes_by_record_id",
+        ("failed-1",),
+        [
+            RecoveryNodeIndexEntry(node_id="recovery-2", recovery_reason="second"),
+            RecoveryNodeIndexEntry(node_id="recovery-1", recovery_reason="first"),
         ],
-    }
-    projection["accepted_output_records_by_node_port"]["node-1"] = {
-        "b-port": [{"record_id": "record-0", "payload": {"nested": ["original"]}}]
-    }
-    projection["check_results"]["check-2"] = CheckResultProjection(
-        node_id="check-2", status="failed", position=2, candidate_record_ids=["candidate-2"]
     )
-    projection["check_results"]["check-1"] = CheckResultProjection(
-        node_id="check-1", status="passed", position=1, candidate_record_ids=["candidate-1"]
+    projection = projection_fixture_set(
+        projection,
+        "recovery_nodes_by_record_id",
+        ("failed-2",),
+        [RecoveryNodeIndexEntry(node_id="recovery-3", recovery_reason="third")],
     )
-    projection["invalid_test_blocks"]["region-2"] = InvalidTestBlockProjection(position=2)
-    projection["invalid_test_blocks"]["region-1"] = InvalidTestBlockProjection(position=1)
-    projection["configured_gates"]["region-1"] = {"gate-2": True, "gate-1": True}
-    projection["gate_decisions"]["region-1"] = {"gate-2": False}
-    projection["node_gate_decisions"]["gate-node"] = True
+    projection = projection_fixture_update(
+        projection, "node_states", {"node-2": "running", "node-1": "ready"}
+    )
+    projection = projection_fixture_update(
+        projection, "task_states", {"task-2": "pending", "task-1": "accepted"}
+    )
+    projection = projection_fixture_set(projection, "recorded_node_usage_keys", ("usage-1",), True)
+    projection = projection_fixture_set(
+        projection,
+        "accepted_output_records_by_node_port",
+        ("node-2",),
+        {
+            "z-port": [{"record_id": "record-3", "payload": {"nested": ["original"]}}],
+            "a-port": [
+                {"record_id": "record-2", "payload": {"nested": ["original"]}},
+                {"record_id": "record-1", "payload": {"nested": ["original"]}},
+            ],
+        },
+    )
+    projection = projection_fixture_set(
+        projection,
+        "accepted_output_records_by_node_port",
+        ("node-1",),
+        {"b-port": [{"record_id": "record-0", "payload": {"nested": ["original"]}}]},
+    )
+    projection = projection_fixture_set(
+        projection,
+        "check_results",
+        ("check-2",),
+        CheckResultProjection(
+            node_id="check-2", status="failed", position=2, candidate_record_ids=["candidate-2"]
+        ),
+    )
+    projection = projection_fixture_set(
+        projection,
+        "check_results",
+        ("check-1",),
+        CheckResultProjection(
+            node_id="check-1", status="passed", position=1, candidate_record_ids=["candidate-1"]
+        ),
+    )
+    projection = projection_fixture_set(
+        projection, "invalid_test_blocks", ("region-2",), InvalidTestBlockProjection(position=2)
+    )
+    projection = projection_fixture_set(
+        projection, "invalid_test_blocks", ("region-1",), InvalidTestBlockProjection(position=1)
+    )
+    projection = projection_fixture_set(
+        projection, "configured_gates", ("region-1",), {"gate-2": True, "gate-1": True}
+    )
+    projection = projection_fixture_set(
+        projection, "gate_decisions", ("region-1",), {"gate-2": False}
+    )
+    projection = projection_fixture_set(projection, "node_gate_decisions", ("gate-node",), True)
 
     assert verifier_verdict(projection, "candidate-1") is not None
     assert passed_verification_result(projection, "passed-1") is not None
@@ -377,66 +459,137 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
 
 def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() -> None:
     projection = build_projection(less_used_events("task-3c-query"))
-    projection["file_state_records"]["file-state-query"] = FileStateRecord(
-        record_id="file-state-query", record_type="file_state", cleanup_excluded_paths=["secret"]
+    projection = projection_fixture_set(
+        projection,
+        "file_state_records",
+        ("file-state-query",),
+        FileStateRecord(
+            record_id="file-state-query",
+            record_type="file_state",
+            cleanup_excluded_paths=["secret"],
+        ),
     )
-    projection["output_record_payloads"]["file-state-query"] = projection["file_state_records"][
-        "file-state-query"
-    ]
-    projection["node_output_ports"]["worker-source"] = {
-        "failure_record": ["failure-record-1", "failure-record-2"]
-    }
-    projection["planner_successors"]["planner-fr17"] = "planner-next"
-    projection["accepted_graph_patches_by_node"]["planner-fr17"] = ["patch-1", "patch-2"]
-    projection["accepted_no_successor_patches_by_node"]["planner-fr17"] = ["no-successor-1"]
-    projection["accepted_no_successor_patch_ids_by_node"]["planner-fr17"] = "no-successor-1"
-    projection["planner_generations"]["planner-fr17"] = 3
-    projection["planner_sessions"]["planner-fr17"] = "session-1"
-    projection["planner_session_states"]["session-1"] = "active"
-    projection["planner_session_current_nodes"]["session-1"] = "planner-fr17"
-    projection["planner_session_carryovers"]["session-1"] = "carryover-1"
-    projection["planner_region_labels"]["planner-fr17"] = "region-1"
-    projection["open_proposal_blockers"]["proposal-1"] = {"reasons": ["original"]}
-    projection["authority_revision_blockers"]["revision-1"] = {"reasons": ["original"]}
-    projection["approval_decisions"]["approval-1"] = ApprovalDecisionProjection(
-        node_id="approval-1", decision="approved", scope={"items": ["original"]}
+    projection = projection_fixture_set(
+        projection,
+        "output_record_payloads",
+        ("file-state-query",),
+        file_state_records_view(projection)["file-state-query"],
     )
-    projection["authority_decisions"]["authority-1"] = AuthorityDecisionProjection(
-        node_id="authority-1", decision="granted", scope={"items": ["original"]}
+    projection = projection_fixture_set(
+        projection,
+        "node_output_ports",
+        ("worker-source",),
+        {"failure_record": ["failure-record-1", "failure-record-2"]},
     )
-    projection["requirement_revisions"]["version-1"] = RequirementRevisionProjection(
-        requirement_id="requirement-1",
-        version_id="version-1",
-        change_classification="clarification",
-        requires_authority=False,
-        position=1,
-        validation_strengthening=False,
+    projection = projection_fixture_set(
+        projection, "planner_successors", ("planner-fr17",), "planner-next"
     )
-    projection["active_requirement_versions"]["requirement-1"] = "version-1"
-    projection["support_evidence"]["support-1"] = SupportEvidenceProjection(
-        support_id="support-1",
-        evidence_id="evidence-1",
-        requirement_id="requirement-1",
-        requirement_version_id="version-1",
-        status="current",
-        position=1,
+    projection = projection_fixture_set(
+        projection, "accepted_graph_patches_by_node", ("planner-fr17",), ["patch-1", "patch-2"]
     )
-    projection["cleanup_requested_events"]["cleanup-1"] = CleanupRequestedProjection(
-        cleanup_id="cleanup-1", position=1, paths=["secret"]
+    projection = projection_fixture_set(
+        projection, "accepted_no_successor_patches_by_node", ("planner-fr17",), ["no-successor-1"]
     )
-    projection["cleanup_applied_ids"]["cleanup-1"] = True
-    projection["callback_idempotency_events"]["key-1"] = CallbackIdempotencyEvent(
-        event_type="callback_accepted",
-        node_id="worker-source",
-        idempotency_key="key-1",
-        outcome="accepted",
-        payload={"nested": ["original"]},
+    projection = projection_fixture_set(
+        projection, "accepted_no_successor_patch_ids_by_node", ("planner-fr17",), "no-successor-1"
     )
-    projection["environment_failures"]["region-2"] = EnvironmentFailureProjection(
-        position=2, task_region_id="region-2", reason="second"
+    projection = projection_fixture_set(projection, "planner_generations", ("planner-fr17",), 3)
+    projection = projection_fixture_set(
+        projection, "planner_sessions", ("planner-fr17",), "session-1"
     )
-    projection["environment_failures"]["region-1"] = EnvironmentFailureProjection(
-        position=1, task_region_id="region-1", reason="first"
+    projection = projection_fixture_set(
+        projection, "planner_session_states", ("session-1",), "active"
+    )
+    projection = projection_fixture_set(
+        projection, "planner_session_current_nodes", ("session-1",), "planner-fr17"
+    )
+    projection = projection_fixture_set(
+        projection, "planner_session_carryovers", ("session-1",), "carryover-1"
+    )
+    projection = projection_fixture_set(
+        projection, "planner_region_labels", ("planner-fr17",), "region-1"
+    )
+    projection = projection_fixture_set(
+        projection, "open_proposal_blockers", ("proposal-1",), {"reasons": ["original"]}
+    )
+    projection = projection_fixture_set(
+        projection, "authority_revision_blockers", ("revision-1",), {"reasons": ["original"]}
+    )
+    projection = projection_fixture_set(
+        projection,
+        "approval_decisions",
+        ("approval-1",),
+        ApprovalDecisionProjection(
+            node_id="approval-1", decision="approved", scope={"items": ["original"]}
+        ),
+    )
+    projection = projection_fixture_set(
+        projection,
+        "authority_decisions",
+        ("authority-1",),
+        AuthorityDecisionProjection(
+            node_id="authority-1", decision="granted", scope={"items": ["original"]}
+        ),
+    )
+    projection = projection_fixture_set(
+        projection,
+        "requirement_revisions",
+        ("version-1",),
+        RequirementRevisionProjection(
+            requirement_id="requirement-1",
+            version_id="version-1",
+            change_classification="clarification",
+            requires_authority=False,
+            position=1,
+            validation_strengthening=False,
+        ),
+    )
+    projection = projection_fixture_set(
+        projection, "active_requirement_versions", ("requirement-1",), "version-1"
+    )
+    projection = projection_fixture_set(
+        projection,
+        "support_evidence",
+        ("support-1",),
+        SupportEvidenceProjection(
+            support_id="support-1",
+            evidence_id="evidence-1",
+            requirement_id="requirement-1",
+            requirement_version_id="version-1",
+            status="current",
+            position=1,
+        ),
+    )
+    projection = projection_fixture_set(
+        projection,
+        "cleanup_requested_events",
+        ("cleanup-1",),
+        CleanupRequestedProjection(cleanup_id="cleanup-1", position=1, paths=["secret"]),
+    )
+    projection = projection_fixture_set(projection, "cleanup_applied_ids", ("cleanup-1",), True)
+    projection = projection_fixture_set(
+        projection,
+        "callback_idempotency_events",
+        ("key-1",),
+        CallbackIdempotencyEvent(
+            event_type="callback_accepted",
+            node_id="worker-source",
+            idempotency_key="key-1",
+            outcome="accepted",
+            payload={"nested": ["original"]},
+        ),
+    )
+    projection = projection_fixture_set(
+        projection,
+        "environment_failures",
+        ("region-2",),
+        EnvironmentFailureProjection(position=2, task_region_id="region-2", reason="second"),
+    )
+    projection = projection_fixture_set(
+        projection,
+        "environment_failures",
+        ("region-1",),
+        EnvironmentFailureProjection(position=1, task_region_id="region-1", reason="first"),
     )
 
     assert output_record_payload(projection, "recovery-plan-1") is not None
@@ -565,16 +718,16 @@ def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() 
     assert fresh_snapshot is not None
     assert fresh_snapshot.record_id == "routine-snapshot-fr17"
     fresh_requirement = requirement_revision(projection, "version-1")
-    assert fresh_requirement is not projection["requirement_revisions"]["version-1"]
+    assert fresh_requirement is not requirement_revisions_view(projection)["version-1"]
     assert fresh_requirement.position == 1
     fresh_support = support_evidence(projection, "support-1")
-    assert fresh_support is not projection["support_evidence"]["support-1"]
+    assert fresh_support is not support_evidence_view(projection)["support-1"]
     assert fresh_support.status == "current"
     fresh_environment = environment_failure(projection, "region-1")
-    assert fresh_environment is not projection["environment_failures"]["region-1"]
+    assert fresh_environment is not environment_failures_view(projection)["region-1"]
     assert fresh_environment.position == 1
     environments = environment_failures(projection)
-    assert environments[0][1] is not projection["environment_failures"]["region-2"]
+    assert environments[0][1] is not environment_failures_view(projection)["region-2"]
     assert tuple(failure.position for _, failure in environments) == (2, 1)
 
 
@@ -720,6 +873,8 @@ def test_exact_collection_views_preserve_shape_and_isolate_nested_values() -> No
 
     mapping_views = (
         accepted_no_successor_patches_by_node_view,
+        approval_decisions_view,
+        authority_decisions_view,
         accepted_output_records_by_node_port_view,
         accepted_record_summaries_by_id_view,
         active_requirement_versions_view,
@@ -727,25 +882,37 @@ def test_exact_collection_views_preserve_shape_and_isolate_nested_values() -> No
         check_results_view,
         cleanup_applied_ids_view,
         cleanup_requested_events_view,
+        decision_request_details_view,
+        execution_count_by_node_kind_view,
         failed_verification_candidate_ids_view,
         failed_verification_results_by_record_id_view,
+        invalid_test_blocks_view,
         last_deferred_reasons_view,
+        latency_ms_by_node_kind_view,
+        node_allowed_actions_view,
         node_attempts_view,
         node_command_definitions_view,
         node_creation_positions_view,
+        node_creation_payloads_view,
         node_gate_decisions_view,
         node_failed_candidates_view,
         node_pending_appeals_view,
         node_preconditions_view,
         node_resource_claims_view,
+        node_output_ports_view,
         node_roles_view,
         output_records_by_node_port_view,
+        output_record_payloads_view,
         passed_verification_results_by_record_id_view,
         planner_generations_view,
         recorded_node_usage_keys_view,
         recovery_nodes_by_record_id_view,
+        requirement_revisions_view,
         retry_not_before_by_node_view,
         task_candidates_view,
+        support_evidence_view,
+        tokens_by_node_kind_view,
+        tokens_by_node_view,
         verifier_verdicts_view,
     )
     assert all(isinstance(view(projection), dict) for view in mapping_views)

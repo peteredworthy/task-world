@@ -17,6 +17,7 @@ from orchestrator.graph import node_contract_summary
 from orchestrator.graph.models import EdgeProjection, PatchEnvelope, PatchOp
 from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import GraphProjection, initial_projection
+from tests.unit.graph_test_utils import projection_fixture_replace
 
 
 def _patch(ops: list[dict[str, Any]], *, proposed_by: str = "planner-1") -> PatchEnvelope:
@@ -31,22 +32,26 @@ def _patch(ops: list[dict[str, Any]], *, proposed_by: str = "planner-1") -> Patc
 
 def _projection_with_classified_gap_successor(gap_node_id: str) -> GraphProjection:
     projection = initial_projection()
-    projection["edges"] = {
-        "edge-gap-corrective": EdgeProjection.model_validate(
-            {
-                "edge_id": "edge-gap-corrective",
-                "from_node_id": gap_node_id,
-                "from_port": "classified_gap",
-                "to_node_id": "worker-corrective",
-                "to_port": "classified_gap",
-                "required": True,
-                "accepted_record_selector": {
-                    "record_type": "gap_classification",
-                    "schema": "GapClassification",
-                },
-            }
-        )
-    }
+    projection = projection_fixture_replace(
+        projection,
+        "edges",
+        {
+            "edge-gap-corrective": EdgeProjection.model_validate(
+                {
+                    "edge_id": "edge-gap-corrective",
+                    "from_node_id": gap_node_id,
+                    "from_port": "classified_gap",
+                    "to_node_id": "worker-corrective",
+                    "to_port": "classified_gap",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "gap_classification",
+                        "schema": "GapClassification",
+                    },
+                }
+            )
+        },
+    )
     return projection
 
 

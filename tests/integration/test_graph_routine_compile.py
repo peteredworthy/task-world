@@ -11,6 +11,8 @@ from sqlalchemy import func, select
 from orchestrator.config import RoutineConfig, load_routine_from_path
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    input_bindings_view,
+    node_kinds_view,
     EventEnvelope,
     FakeClock,
     GraphProjection,
@@ -48,7 +50,7 @@ def test_routine_corpus_loads_and_compiles_cleanly(routine_path: Path) -> None:
     assert _count_nodes(projection, "verifier") == _verifier_count(routine)
     assert _count_nodes(projection, "check") == _check_count(routine)
     assert _count_nodes(projection, "gate") == _gate_count(routine)
-    assert len(projection["node_kinds"]) >= 3
+    assert len(node_kinds_view(projection)) >= 3
 
 
 def test_dynamic_graph_feature_routine_loads_with_graph_head_config() -> None:
@@ -138,10 +140,12 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
     )
     projection = _project(events)
 
-    assert projection["node_kinds"]["root"] == "root"
-    assert projection["node_kinds"]["routine-snapshot"] == "artifact"
+    assert node_kinds_view(projection)["root"] == "root"
+    assert node_kinds_view(projection)["routine-snapshot"] == "artifact"
     planner_ids = [
-        node_id for node_id, node_kind in projection["node_kinds"].items() if node_kind == "planner"
+        node_id
+        for node_id, node_kind in node_kinds_view(projection).items()
+        if node_kind == "planner"
     ]
     assert planner_ids == ["planner-s-01"]
     assert len(planner_ids) == 1
@@ -156,7 +160,7 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
     assert output_ports == {"graph_patch", "completion"}
     assert planner.payload["state"] == "planned"
 
-    planner_input_binding = projection["input_bindings"][planner_ids[0]]["routine_snapshot"]
+    planner_input_binding = input_bindings_view(projection)[planner_ids[0]]["routine_snapshot"]
     assert planner_input_binding.record_ids == ["routine-snapshot-record"]
     snapshot_record = _accepted_record(events, "routine-snapshot-record")
     assert snapshot_record.payload["record_type"] == "routine_snapshot"
@@ -393,7 +397,7 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
             stored_events = await GraphEventStore(session).read_run(run_id)
 
         projection = rebuild_projection(stored_events)
-        node_count = len(projection["node_kinds"])
+        node_count = len(node_kinds_view(projection))
         events_per_node = len(stored_events) / node_count
         ms_per_node = elapsed_seconds * 1000 / node_count
         print(
@@ -439,7 +443,7 @@ def _gate_count(routine: RoutineConfig) -> int:
 
 
 def _count_nodes(projection: GraphProjection, kind: str) -> int:
-    return sum(1 for node_kind in projection["node_kinds"].values() if node_kind == kind)
+    return sum(1 for node_kind in node_kinds_view(projection).values() if node_kind == kind)
 
 
 class CompletedLease:

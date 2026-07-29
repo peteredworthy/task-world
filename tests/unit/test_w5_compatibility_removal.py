@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from orchestrator.graph import GraphPatchAcceptedPayload, NodeStateChangedPayload, build_projection
+from orchestrator.graph import (
+    accepted_output_records_by_node_port_view,
+    GraphPatchAcceptedPayload,
+    NodeStateChangedPayload,
+    build_projection,
+)
 from orchestrator.graph import (
     EdgeProjection,
     InputBindingProjection,
@@ -63,7 +68,7 @@ def test_output_replay_requires_exact_record_type_discriminator() -> None:
         ]
     )
 
-    assert projection["accepted_output_records_by_node_port"] == {}
+    assert accepted_output_records_by_node_port_view(projection) == {}
 
 
 def test_output_replay_rejects_unknown_nonempty_discriminator() -> None:
@@ -84,7 +89,7 @@ def test_output_replay_rejects_unknown_nonempty_discriminator() -> None:
         ]
     )
 
-    assert projection["accepted_output_records_by_node_port"] == {}
+    assert accepted_output_records_by_node_port_view(projection) == {}
 
 
 @pytest.mark.parametrize("record_type", ["fan_out_inputs"])
@@ -106,7 +111,7 @@ def test_output_replay_accepts_each_explicit_generic_discriminator(record_type: 
         ]
     )
 
-    records = projection["accepted_output_records_by_node_port"]
+    records = accepted_output_records_by_node_port_view(projection)
     assert records["fanout-reader-1"]["reader_output"][0]["record_id"] == "fan-out-1"
 
 
@@ -192,4 +197,4 @@ def test_verification_record_rejects_unknown_nested_fields(nested_key: str) -> N
         ]
     )
 
-    assert projection["accepted_output_records_by_node_port"] == {}
+    assert accepted_output_records_by_node_port_view(projection) == {}

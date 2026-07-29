@@ -4,6 +4,9 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.graph import (
+    failed_verification_candidate_ids_view,
+    passed_verification_candidate_ids_view,
+    verifier_verdicts_view,
     EVENT_PAYLOAD_MODELS,
     Actor,
     ActorKind,
@@ -110,9 +113,9 @@ def test_verification_replay_ignores_contradictory_outcome(
 
     projection = reduce_event(initial_projection(), event)
 
-    assert projection["verifier_verdicts"] == {}
-    assert projection["passed_verification_candidate_ids"] == []
-    assert projection["failed_verification_candidate_ids"] == {}
+    assert verifier_verdicts_view(projection) == {}
+    assert passed_verification_candidate_ids_view(projection) == []
+    assert failed_verification_candidate_ids_view(projection) == {}
 
 
 def test_sparse_input_bound_serialization_preserves_explicit_empty_fields() -> None:

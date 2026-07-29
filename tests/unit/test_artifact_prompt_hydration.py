@@ -18,6 +18,7 @@ from orchestrator.graph_runtime import (
     hydrate_artifact_excerpt,
     planner_evidence,
 )
+from tests.unit.graph_test_utils import projection_fixture_set
 
 
 @pytest.mark.asyncio
@@ -48,14 +49,19 @@ async def test_explicit_hydration_requires_a_typed_reference(tmp_path: Path) -> 
 
 def test_default_planner_evidence_keeps_check_output_tails_without_references() -> None:
     projection = initial_projection()
-    projection["input_bindings"]["planner-1"] = {
-        "check_result": InputBindingProjection(
-            to_node_id="planner-1",
-            to_port="check_result",
-            record_ids=["check-1"],
-            bound_at_position=2,
-        )
-    }
+    projection = projection_fixture_set(
+        projection,
+        "input_bindings",
+        ("planner-1",),
+        {
+            "check_result": InputBindingProjection(
+                to_node_id="planner-1",
+                to_port="check_result",
+                record_ids=["check-1"],
+                bound_at_position=2,
+            )
+        },
+    )
     record_payload: dict[str, Any] = {
         "record_id": "check-1",
         "record_kind": "output",

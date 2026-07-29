@@ -15,6 +15,7 @@ from orchestrator.graph import (
     reduce_event,
     validate_callback,
 )
+from tests.unit.graph_test_utils import projection_fixture_replace
 
 
 def _projection(
@@ -24,8 +25,10 @@ def _projection(
     leases: dict[str, dict[str, Any]] | None = None,
 ) -> GraphProjection:
     projection = initial_projection()
-    projection["run_state"] = run_state
-    projection["node_states"] = node_states or {"worker-1": "running"}
+    projection = projection_fixture_replace(projection, "run_state", run_state)
+    projection = projection_fixture_replace(
+        projection, "node_states", node_states or {"worker-1": "running"}
+    )
     raw_leases = leases or {
         "lease-1": {
             "lease_id": "lease-1",
@@ -36,9 +39,11 @@ def _projection(
             "base_snapshot_id": "snapshot-1",
         }
     }
-    projection["leases"] = {
-        lease_id: LeaseProjection.model_validate(lease) for lease_id, lease in raw_leases.items()
-    }
+    projection = projection_fixture_replace(
+        projection,
+        "leases",
+        {lease_id: LeaseProjection.model_validate(lease) for lease_id, lease in raw_leases.items()},
+    )
     return projection
 
 

@@ -11,6 +11,7 @@ from orchestrator.graph_runtime import (
     horizon_region_templates,
     instantiate_horizon_template,
 )
+from tests.unit.graph_test_utils import projection_fixture_set
 
 
 def test_horizon_templates_include_required_purposes_with_allowed_ops() -> None:
@@ -174,7 +175,7 @@ def _projection_for_template(purpose: str, region_id: str) -> GraphProjection:
     if upstream is None:
         return projection
     node_id, kind, role = upstream
-    projection["node_kinds"][node_id] = kind
-    projection["node_roles"][node_id] = role
-    projection["node_states"][node_id] = "completed"
+    projection = projection_fixture_set(projection, "node_kinds", (node_id,), kind)
+    projection = projection_fixture_set(projection, "node_roles", (node_id,), role)
+    projection = projection_fixture_set(projection, "node_states", (node_id,), "completed")
     return projection

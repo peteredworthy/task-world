@@ -628,6 +628,119 @@ class QuerySourceApplyPlan(BaseModel):
         return self
 
 
+class FixtureMutationRecipe(BaseModel):
+    """One exact fixture mutation statement replaced by immutable rebinding."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    relative_path: str
+    source_span: tuple[int, int, int, int]
+    original_statement: str
+    replacement_statement: str
+    consumed_site_ids: tuple[str, ...]
+    helper_import: str
+    rule_id: str
+
+    @model_validator(mode="after")
+    def _validate_recipe(self) -> "FixtureMutationRecipe":
+        if any(
+            not value.strip()
+            for value in (
+                self.relative_path,
+                self.original_statement,
+                self.replacement_statement,
+                self.helper_import,
+                self.rule_id,
+            )
+        ):
+            raise ValueError("fixture mutation recipe fields must be nonblank")
+        if (
+            self.source_span[:2] >= self.source_span[2:]
+            or not self.consumed_site_ids
+            or tuple(sorted(self.consumed_site_ids)) != self.consumed_site_ids
+            or len(self.consumed_site_ids) != len(frozenset(self.consumed_site_ids))
+        ):
+            raise ValueError("fixture mutation recipe span and IDs must be canonical")
+        for statement in (self.original_statement, self.replacement_statement):
+            module = cst.parse_module(f"{statement}\n")
+            if len(module.body) != 1 or not isinstance(module.body[0], cst.SimpleStatementLine):
+                raise ValueError("fixture mutation recipe must contain one simple statement")
+        return self
+
+
+class FixtureMutationPlan(BaseModel):
+    """Canonical exact-once fixture mutation recipes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    recipes: tuple[FixtureMutationRecipe, ...]
+
+    @property
+    def consumed_site_ids(self) -> frozenset[str]:
+        return frozenset(site_id for item in self.recipes for site_id in item.consumed_site_ids)
+
+    @model_validator(mode="after")
+    def _validate_plan(self) -> "FixtureMutationPlan":
+        if self.recipes != tuple(
+            sorted(self.recipes, key=lambda item: (item.relative_path, item.source_span))
+        ):
+            raise ValueError("fixture mutation recipes must be canonically ordered")
+        consumed = [site_id for item in self.recipes for site_id in item.consumed_site_ids]
+        spans = [(item.relative_path, item.source_span) for item in self.recipes]
+        if len(consumed) != len(frozenset(consumed)) or len(spans) != len(frozenset(spans)):
+            raise ValueError("fixture mutation recipes must have unique IDs and spans")
+        return self
+
+
+class FixtureSourceUpdate(BaseModel):
+    """One validated fixture source update produced without filesystem writes."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    relative_path: str
+    original_source: str
+    transformed_source: str
+    consumed_site_ids: tuple[str, ...]
+    helper_imports: tuple[str, ...]
+
+    @model_validator(mode="after")
+    def _validate_update(self) -> "FixtureSourceUpdate":
+        if not self.relative_path.strip() or not self.consumed_site_ids:
+            raise ValueError("fixture source update path and consumed IDs must be nonempty")
+        if (
+            tuple(sorted(self.consumed_site_ids)) != self.consumed_site_ids
+            or len(self.consumed_site_ids) != len(frozenset(self.consumed_site_ids))
+            or tuple(sorted(frozenset(self.helper_imports))) != self.helper_imports
+        ):
+            raise ValueError("fixture source update IDs and imports must be canonical")
+        for source in (self.original_source, self.transformed_source):
+            cst.parse_module(source)
+            ast.parse(source)
+        return self
+
+
+class FixtureSourceApplyPlan(BaseModel):
+    """Canonical fixture updates ready for one validated atomic write."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    updates: tuple[FixtureSourceUpdate, ...]
+
+    @property
+    def consumed_site_ids(self) -> frozenset[str]:
+        return frozenset(site_id for update in self.updates for site_id in update.consumed_site_ids)
+
+    @model_validator(mode="after")
+    def _validate_apply_plan(self) -> "FixtureSourceApplyPlan":
+        if self.updates != tuple(sorted(self.updates, key=lambda item: item.relative_path)):
+            raise ValueError("fixture source updates must be canonically ordered")
+        paths = [item.relative_path for item in self.updates]
+        consumed = [site_id for item in self.updates for site_id in item.consumed_site_ids]
+        if len(paths) != len(frozenset(paths)) or len(consumed) != len(frozenset(consumed)):
+            raise ValueError("fixture source update paths and consumed IDs must be unique")
+        return self
+
+
 def _spans_overlap(left: tuple[int, int, int, int], right: tuple[int, int, int, int]) -> bool:
     return left[:2] < right[2:] and right[:2] < left[2:]
 
@@ -901,6 +1014,8 @@ def compile_query_composition_plan(
 
 
 _MAPPING_QUERY_BY_FIELD = {
+    "approval_decisions": "approval_decisions_view",
+    "authority_decisions": "authority_decisions_view",
     "accepted_graph_patches_by_node": "accepted_graph_patches_by_node_view",
     "accepted_no_successor_patches_by_node": "accepted_no_successor_patches_by_node_view",
     "accepted_output_records_by_node_port": "accepted_output_records_by_node_port_view",
@@ -910,20 +1025,27 @@ _MAPPING_QUERY_BY_FIELD = {
     "check_results": "check_results_view",
     "cleanup_applied_ids": "cleanup_applied_ids_view",
     "cleanup_requested_events": "cleanup_requested_events_view",
+    "decision_request_details": "decision_request_details_view",
     "edges": "edges_view",
     "environment_failures": "environment_failures_view",
+    "execution_count_by_node_kind": "execution_count_by_node_kind_view",
     "failed_verification_candidate_ids": "failed_verification_candidate_ids_view",
     "failed_verification_results_by_record_id": "failed_verification_results_by_record_id_view",
     "file_state_records": "file_state_records_view",
     "input_bindings": "input_bindings_view",
+    "invalid_test_blocks": "invalid_test_blocks_view",
     "last_deferred_reasons": "last_deferred_reasons_view",
+    "latency_ms_by_node_kind": "latency_ms_by_node_kind_view",
     "leases": "leases_view",
     "node_attempts": "node_attempts_view",
+    "node_allowed_actions": "node_allowed_actions_view",
     "node_command_definitions": "node_command_definitions_view",
+    "node_creation_payloads": "node_creation_payloads_view",
     "node_creation_positions": "node_creation_positions_view",
     "node_gate_decisions": "node_gate_decisions_view",
     "node_failed_candidates": "node_failed_candidates_view",
     "node_kinds": "node_kinds_view",
+    "node_output_ports": "node_output_ports_view",
     "node_pending_appeals": "node_pending_appeals_view",
     "node_preconditions": "node_preconditions_view",
     "node_resource_claims": "node_resource_claims_view",
@@ -931,15 +1053,20 @@ _MAPPING_QUERY_BY_FIELD = {
     "node_states": "node_states_view",
     "node_task_regions": "node_task_regions_view",
     "output_records_by_node_port": "output_records_by_node_port_view",
+    "output_record_payloads": "output_record_payloads_view",
     "passed_verification_results_by_record_id": "passed_verification_results_by_record_id_view",
     "planner_generations": "planner_generations_view",
     "planner_session_carryovers": "planner_session_carryovers_view",
     "planner_sessions": "planner_sessions_view",
     "recorded_node_usage_keys": "recorded_node_usage_keys_view",
     "recovery_nodes_by_record_id": "recovery_nodes_by_record_id_view",
+    "requirement_revisions": "requirement_revisions_view",
     "retry_not_before_by_node": "retry_not_before_by_node_view",
     "task_candidates": "task_candidates_view",
     "task_states": "task_states_view",
+    "support_evidence": "support_evidence_view",
+    "tokens_by_node": "tokens_by_node_view",
+    "tokens_by_node_kind": "tokens_by_node_kind_view",
     "verifier_verdicts": "verifier_verdicts_view",
 }
 _SEQUENCE_QUERY_BY_FIELD = {
@@ -1444,6 +1571,332 @@ def write_query_source_apply_plan(root: Path, plan: QuerySourceApplyPlan) -> tup
                 temporary.unlink()
 
 
+def _fixture_small_statement(
+    node: cst.CSTNode, parents: dict[cst.CSTNode, cst.CSTNode]
+) -> cst.BaseSmallStatement:
+    current = node
+    while not isinstance(current, cst.BaseSmallStatement):
+        parent = parents.get(current)
+        if parent is None or isinstance(parent, cst.BaseStatement):
+            raise AnchorRefusedError("fixture mutation has no simple statement boundary")
+        current = parent
+    return current
+
+
+def _fixture_subscript_parts(
+    node: cst.BaseExpression,
+) -> tuple[cst.Name, tuple[cst.BaseExpression, ...]]:
+    parts: list[cst.BaseExpression] = []
+    current = node
+    while isinstance(current, cst.Subscript):
+        if len(current.slice) != 1 or not isinstance(current.slice[0].slice, cst.Index):
+            raise AnchorRefusedError("fixture mutation requires simple subscript indexes")
+        parts.append(current.slice[0].slice.value)
+        current = current.value
+    if not isinstance(current, cst.Name):
+        raise AnchorRefusedError("fixture mutation requires a writable Name receiver")
+    parts.reverse()
+    if not parts:
+        raise AnchorRefusedError("fixture mutation requires a physical field subscript")
+    return current, tuple(parts)
+
+
+def _fixture_string_literal(node: cst.BaseExpression, *, label: str) -> str:
+    if not isinstance(node, cst.SimpleString):
+        raise AnchorRefusedError(f"fixture mutation {label} must be a string literal")
+    value = ast.literal_eval(node.value)
+    if not isinstance(value, str):
+        raise AnchorRefusedError(f"fixture mutation {label} must be a string literal")
+    return value
+
+
+def _fixture_key_code(node: cst.BaseExpression, module: cst.Module) -> str:
+    if isinstance(node, cst.Name):
+        return node.value
+    _fixture_string_literal(node, label="key")
+    return module.code_for_node(node)
+
+
+def _fixture_call_argument(call: cst.Call) -> cst.BaseExpression:
+    if len(call.args) != 1 or call.args[0].keyword is not None or call.args[0].star != "":
+        raise AnchorRefusedError("fixture mutation call requires one positional argument")
+    return call.args[0].value
+
+
+def _compile_fixture_statement(
+    statement: cst.BaseSmallStatement,
+    module: cst.Module,
+    operation: GeneratedFixtureOperation,
+) -> tuple[str, str]:
+    helper: str
+    replacement: str
+    if isinstance(statement, cst.Assign):
+        if len(statement.targets) != 1:
+            raise AnchorRefusedError("fixture mutation assignment requires one target")
+        receiver, parts = _fixture_subscript_parts(statement.targets[0].target)
+        field = _fixture_string_literal(parts[0], label="field")
+        value = module.code_for_node(statement.value)
+        if len(parts) == 1 and operation.rule_id == "literal_field_update_mutation":
+            helper = "projection_fixture_replace"
+            replacement = f"{receiver.value} = {helper}({receiver.value}, {field!r}, {value})"
+        elif len(parts) > 1 and operation.rule_id == "physical_nested_assignment":
+            keys = tuple(_fixture_key_code(key, module) for key in parts[1:])
+            key_tuple = f"({', '.join(keys)}{',' if len(keys) == 1 else ''})"
+            helper = "projection_fixture_set"
+            replacement = (
+                f"{receiver.value} = {helper}({receiver.value}, {field!r}, {key_tuple}, {value})"
+            )
+        else:
+            raise AnchorRefusedError("fixture mutation assignment disagrees with its rule")
+        return helper, replacement
+
+    if not isinstance(statement, cst.Expr) or not isinstance(statement.value, cst.Call):
+        raise AnchorRefusedError("fixture mutation requires assignment or bare call")
+    call = statement.value
+    if not isinstance(call.func, cst.Attribute) or not isinstance(call.func.attr, cst.Name):
+        raise AnchorRefusedError("fixture mutation requires a named method call")
+    receiver, parts = _fixture_subscript_parts(call.func.value)
+    if len(parts) != 1:
+        raise AnchorRefusedError("fixture mutation method requires a field receiver")
+    field = _fixture_string_literal(parts[0], label="field")
+    argument = _fixture_call_argument(call)
+    argument_code = module.code_for_node(argument)
+    if call.func.attr.value == "update" and operation.rule_id == "literal_field_update_mutation":
+        helper = "projection_fixture_update"
+        return helper, f"{receiver.value} = {helper}({receiver.value}, {field!r}, {argument_code})"
+    if call.func.attr.value == "append" and operation.rule_id == "physical_append_extend":
+        helper = "projection_fixture_append"
+        return helper, f"{receiver.value} = {helper}({receiver.value}, {field!r}, {argument_code})"
+    if call.func.attr.value == "extend" and operation.rule_id == "physical_append_extend":
+        if not isinstance(argument, (cst.Tuple, cst.List)) or any(
+            not isinstance(element, cst.Element) for element in argument.elements
+        ):
+            raise AnchorRefusedError("fixture extend requires a finite tuple or list literal")
+        helper = "projection_fixture_append"
+        expression = receiver.value
+        for element in argument.elements:
+            assert isinstance(element, cst.Element)
+            value = module.code_for_node(element.value)
+            expression = f"{helper}({expression}, {field!r}, {value})"
+        return helper, f"{receiver.value} = {expression}"
+    raise AnchorRefusedError("fixture mutation method disagrees with its rule")
+
+
+def compile_fixture_mutation_plan(
+    sources: Iterable[SourceSnapshot],
+    stream: OperationStream,
+    operations: Iterable[GeneratedFixtureOperation],
+) -> FixtureMutationPlan:
+    """Compile generated fixture operations into exact immutable rebinding recipes."""
+    operations = tuple(operations)
+    operation_ids = [item.site_id for item in operations]
+    sites = {site.original_site_id: site for site in stream.sites}
+    if len(operation_ids) != len(frozenset(operation_ids)) or any(
+        site_id not in sites for site_id in operation_ids
+    ):
+        raise AnchorRefusedError("fixture mutation inputs do not have exact ID closure")
+    selected_sites = tuple(sites[site_id] for site_id in operation_ids)
+    anchored = _reanchor_operation_stream_sites(sources, selected_sites)
+    recipes: list[FixtureMutationRecipe] = []
+    for operation in operations:
+        site = sites[operation.site_id]
+        if _generated_fixture_rule(site) != operation:
+            raise AnchorRefusedError("fixture mutation operation evidence is stale")
+        node, parents, positions, module = anchored[operation.site_id]
+        statement = _fixture_small_statement(node, parents)
+        position = positions[statement]
+        span = (
+            position.start.line,
+            position.start.column,
+            position.end.line,
+            position.end.column,
+        )
+        original = module.code_for_node(statement).strip()
+        helper, replacement = _compile_fixture_statement(statement, module, operation)
+        recipes.append(
+            FixtureMutationRecipe(
+                relative_path=site.relative_path,
+                source_span=span,
+                original_statement=original,
+                replacement_statement=replacement,
+                consumed_site_ids=(operation.site_id,),
+                helper_import=helper,
+                rule_id=operation.rule_id,
+            )
+        )
+    recipes.sort(key=lambda item: (item.relative_path, item.source_span))
+    result = FixtureMutationPlan(recipes=tuple(recipes))
+    if result.consumed_site_ids != frozenset(operation_ids):
+        raise AnchorRefusedError("fixture mutation plan does not close generated IDs")
+    return result
+
+
+def _fixture_import_aliases(source: str, imports: tuple[str, ...]) -> dict[str, str]:
+    tree = ast.parse(source)
+    existing = {
+        alias.name: alias.asname
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "tests.unit.graph_test_utils"
+        for alias in node.names
+        if alias.asname is not None
+    }
+    bound = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    } | {node.arg for node in ast.walk(tree) if isinstance(node, ast.arg)}
+    occupied = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)} | bound
+    aliases: dict[str, str] = {}
+    for name in imports:
+        if name in existing:
+            aliases[name] = existing[name]
+            continue
+        if name not in bound:
+            continue
+        alias = f"fixture_{name}"
+        while alias in occupied:
+            alias = f"_{alias}"
+        aliases[name] = alias
+        occupied.add(alias)
+    return aliases
+
+
+def _aliased_fixture_statement(statement: str, aliases: dict[str, str]) -> cst.BaseSmallStatement:
+    parsed = cst.parse_statement(f"{statement}\n")
+    assert isinstance(parsed, cst.SimpleStatementLine)
+
+    class Transformer(cst.CSTTransformer):
+        def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.Call:
+            if isinstance(original_node.func, cst.Name) and original_node.func.value in aliases:
+                return updated_node.with_changes(func=cst.Name(aliases[original_node.func.value]))
+            return updated_node
+
+    transformed = parsed.body[0].visit(Transformer())
+    assert isinstance(transformed, cst.BaseSmallStatement)
+    return transformed
+
+
+def _apply_fixture_source_recipes(
+    source: SourceSnapshot, recipes: tuple[FixtureMutationRecipe, ...]
+) -> FixtureSourceUpdate:
+    module = cst.parse_module(source.source)
+    by_span = {recipe.source_span: recipe for recipe in recipes}
+    if len(by_span) != len(recipes):
+        raise AnchorRefusedError("fixture mutation recipes repeat a source span")
+    imports = tuple(sorted({recipe.helper_import for recipe in recipes}))
+    aliases = _fixture_import_aliases(source.source, imports)
+    replacements = {
+        recipe.source_span: _aliased_fixture_statement(recipe.replacement_statement, aliases)
+        for recipe in recipes
+    }
+    matched: set[tuple[int, int, int, int]] = set()
+
+    class Transformer(cst.CSTTransformer):
+        METADATA_DEPENDENCIES = (PositionProvider,)
+
+        def on_leave(self, original_node: cst.CSTNode, updated_node: cst.CSTNode) -> cst.CSTNode:
+            if not isinstance(original_node, cst.BaseSmallStatement):
+                return updated_node
+            position = self.get_metadata(PositionProvider, original_node)
+            span = (
+                position.start.line,
+                position.start.column,
+                position.end.line,
+                position.end.column,
+            )
+            recipe = by_span.get(span)
+            if recipe is None:
+                return updated_node
+            if module.code_for_node(original_node).strip() != recipe.original_statement:
+                raise AnchorRefusedError(
+                    f"fixture mutation recipe does not match exact statement: "
+                    f"{source.relative_path}:{span}"
+                )
+            matched.add(span)
+            return replacements[span]
+
+    transformed = MetadataWrapper(module).visit(Transformer())
+    if set(by_span) != matched:
+        raise AnchorRefusedError("fixture mutation recipe does not match exact statement")
+
+    context = CodemodContext()
+    for name in imports:
+        AddImportsVisitor.add_needed_import(
+            context, "tests.unit.graph_test_utils", name, asname=aliases.get(name)
+        )
+    transformed = AddImportsVisitor(context).transform_module(transformed)
+    transformed_source = transformed.code
+    ast.parse(transformed_source)
+    return FixtureSourceUpdate(
+        relative_path=source.relative_path,
+        original_source=source.source,
+        transformed_source=transformed_source,
+        consumed_site_ids=tuple(
+            sorted(site_id for recipe in recipes for site_id in recipe.consumed_site_ids)
+        ),
+        helper_imports=imports,
+    )
+
+
+def apply_fixture_mutation_plan(
+    sources: Iterable[SourceSnapshot], plan: FixtureMutationPlan
+) -> FixtureSourceApplyPlan:
+    """Validate every fixture recipe and produce updates without filesystem writes."""
+    snapshots = tuple(sources)
+    by_path = {source.relative_path: source for source in snapshots}
+    if len(by_path) != len(snapshots):
+        raise AnchorRefusedError("fixture mutation apply received duplicate source paths")
+    grouped: dict[str, list[FixtureMutationRecipe]] = defaultdict(list)
+    for recipe in plan.recipes:
+        grouped[recipe.relative_path].append(recipe)
+    if set(grouped) - by_path.keys():
+        raise AnchorRefusedError("fixture mutation apply is missing recipe snapshots")
+    result = FixtureSourceApplyPlan(
+        updates=tuple(
+            _apply_fixture_source_recipes(by_path[path], tuple(grouped[path]))
+            for path in sorted(grouped)
+        )
+    )
+    if result.consumed_site_ids != plan.consumed_site_ids:
+        raise AnchorRefusedError("fixture mutation apply does not close recipe IDs")
+    return result
+
+
+def write_fixture_source_apply_plan(root: Path, plan: FixtureSourceApplyPlan) -> tuple[str, ...]:
+    """Write a fully validated fixture apply plan with atomic replacements."""
+    root = root.resolve()
+    targets: list[tuple[FixtureSourceUpdate, Path]] = []
+    for update in plan.updates:
+        relative = Path(update.relative_path)
+        target = (root / relative).resolve()
+        if relative.is_absolute() or root not in target.parents:
+            raise AnchorRefusedError("fixture source apply path escapes the repository root")
+        if not target.is_file() or target.read_text() != update.original_source:
+            raise AnchorRefusedError(
+                f"fixture source changed before atomic apply: {update.relative_path}"
+            )
+        targets.append((update, target))
+
+    temporary_paths: list[tuple[str, Path]] = []
+    try:
+        for update, target in targets:
+            descriptor, temporary_name = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+            temporary = Path(temporary_name)
+            with os.fdopen(descriptor, "w") as handle:
+                handle.write(update.transformed_source)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, target.stat().st_mode)
+            temporary_paths.append((update.relative_path, temporary))
+        for (_, target), (_, temporary) in zip(targets, temporary_paths, strict=True):
+            os.replace(temporary, target)
+        return tuple(path for path, _ in temporary_paths)
+    finally:
+        for _, temporary in temporary_paths:
+            if temporary.exists():
+                temporary.unlink()
+
+
 _GRAPH_ORIGIN = "orchestrator.graph"
 _PROJECTION_FACTORIES = frozenset(
     {
@@ -1533,6 +1986,14 @@ _PUBLIC_PROJECTION_CALLS = frozenset(
     )
 )
 _DERIVED_VALUE_SINKS = frozenset({"orchestrator.graph.scheduler.NodeScheduleInfo"})
+_FIXTURE_MUTATION_HELPERS = frozenset(
+    {
+        "projection_fixture_append",
+        "projection_fixture_replace",
+        "projection_fixture_set",
+        "projection_fixture_update",
+    }
+)
 _APPROVED_CORE_PATHS = frozenset(
     {
         "src/orchestrator/graph/projection_models.py",
@@ -1993,6 +2454,34 @@ def _neutral_rule(site: MigrationSite) -> tuple[str, str] | None:
     """Return one finite structural rule and its proven origin, or fail closed."""
     anchor = site.anchor
     context = anchor.context
+    if site.domain == "test_fixture" and site.diagnostic_code is DiagnosticCode.UNSUPPORTED_BINDING:
+        try:
+            statement = cst.parse_statement(f"{site.normalized_expression}\n")
+        except cst.ParserSyntaxError:
+            statement = None
+        if isinstance(statement, cst.SimpleStatementLine) and len(statement.body) == 1:
+            assignment = statement.body[0]
+            if (
+                isinstance(assignment, cst.Assign)
+                and len(assignment.targets) == 1
+                and isinstance(assignment.targets[0].target, cst.Name)
+            ):
+                receiver = assignment.targets[0].target.value
+                call = assignment.value
+                helpers: list[str] = []
+                while isinstance(call, cst.Call) and isinstance(call.func, cst.Name):
+                    helper = call.func.value.lstrip("_")
+                    if helper.startswith("fixture_"):
+                        helper = helper.removeprefix("fixture_")
+                    if helper not in _FIXTURE_MUTATION_HELPERS or not call.args:
+                        break
+                    helpers.append(helper)
+                    call = call.args[0].value
+                if helpers and isinstance(call, cst.Name) and call.value == receiver:
+                    return (
+                        "fixture_mutation_helper",
+                        f"tests.unit.graph_test_utils.{helpers[0]}",
+                    )
     if (
         site.diagnostic_code is DiagnosticCode.UNSUPPORTED_BINDING
         and site.parent_shape == "return"
@@ -2036,6 +2525,22 @@ def _neutral_rule(site: MigrationSite) -> tuple[str, str] | None:
         and context.physical_access_kind is None
     ):
         return "typed_projection_field_constructor", context.receiver_type_origin
+    if (
+        site.domain == "test_fixture"
+        and context is not None
+        and context.physical_access_kind is None
+        and context.projection_role == "keyword"
+        and context.keyword_name in {"projection", "graph_projection"}
+    ):
+        return "fixture_projection_keyword", context.callee_origin or "collector"
+    if (
+        site.domain == "test_fixture"
+        and context is not None
+        and context.physical_access_kind is None
+        and context.projection_role == "positional"
+        and context.positional_index is not None
+    ):
+        return "fixture_projection_argument", context.callee_origin or "collector"
     if context is not None and context.physical_access_kind is not None:
         return None
     if (
@@ -2044,6 +2549,20 @@ def _neutral_rule(site: MigrationSite) -> tuple[str, str] | None:
         and context.projection_role == "derived_value"
     ):
         return "derived_value_sink", context.callee_origin
+    if (
+        site.domain == "test_fixture"
+        and context is not None
+        and context.physical_access_kind is None
+        and context.callee_origin is not None
+        and context.callee_origin.startswith("orchestrator.graph.")
+        and (
+            context.projection_role == "positional"
+            and context.positional_index == 0
+            or context.projection_role == "keyword"
+            and context.keyword_name == "projection"
+        )
+    ):
+        return "fixture_public_graph_call", context.callee_origin
     if (
         context is not None
         and context.callee_origin in _PUBLIC_PROJECTION_CALLS
@@ -2065,7 +2584,8 @@ def _generated_fixture_rule(site: MigrationSite) -> GeneratedFixtureOperation | 
     """Recognize only the approved physical mutation families from anchor facts."""
     context = site.anchor.context
     if (
-        context is None
+        site.domain != "test_fixture"
+        or context is None
         or context.projection_role != "receiver"
         or context.physical_access_kind is None
         or context.physical_old_field_name is None
@@ -2115,13 +2635,22 @@ def _generated_query_rule(site: MigrationSite) -> StructuralQueryRuleOperation |
     """Recognize one pending physical read without consuming its neutral outer flow."""
     context = site.anchor.context
     if (
-        site.domain == "test_fixture"
-        or context is None
+        context is None
         or context.projection_role != "receiver"
         or context.physical_old_field_name is None
         or context.physical_access_kind not in {AccessKind.GET, AccessKind.LITERAL_SUBSCRIPT_READ}
         or context.physical_operation_shape != context.physical_access_kind.value
         or site.parent_shape in {"assignment", "assignment_target", "deletion", "mutation"}
+        or site.operation_shape
+        in {
+            "append",
+            "append_extend",
+            "assignment",
+            "extend",
+            "literal_field_mutation",
+            "literal_field_update",
+            "update",
+        }
     ):
         return None
     rule_id = f"physical_{context.physical_access_kind.value}"
@@ -2212,7 +2741,10 @@ def plan_structural_dispositions(
             )
         )
 
-    for site_id in initial.pending_site_ids:
+    structural_site_ids = tuple(
+        sorted({*initial.reviewed_deferred_site_ids, *initial.pending_site_ids})
+    )
+    for site_id in structural_site_ids:
         site = by_id[site_id]
         if _approved_core_rule(site):
             operations.append(
@@ -2223,6 +2755,10 @@ def plan_structural_dispositions(
                     shape_key=site.shape_key,
                 )
             )
+            continue
+        fixture_operation = _generated_fixture_rule(site)
+        if fixture_operation is not None:
+            generated_fixture_operations.append(fixture_operation)
             continue
         context = site.anchor.context
         if (
@@ -2305,14 +2841,10 @@ def plan_structural_dispositions(
             continue
         rule = _neutral_rule(site)
         if rule is None:
-            fixture_operation = _generated_fixture_rule(site)
-            if fixture_operation is None:
-                raise AnchorRefusedError(
-                    "pending site has no finite neutral or generated fixture rule: "
-                    f"{site_id}:{site.shape_key}"
-                )
-            generated_fixture_operations.append(fixture_operation)
-            continue
+            raise AnchorRefusedError(
+                "pending site has no finite neutral or generated fixture rule: "
+                f"{site_id}:{site.shape_key}"
+            )
         family, origin = rule
         operations.append(
             PlannedOperation(
@@ -2341,15 +2873,13 @@ def plan_structural_dispositions(
     generated_query_family_counts = tuple(
         sorted(Counter(item.rule_id for item in generated_query_operations).items())
     )
-    if len(operations) + len(initial.reviewed_deferred_site_ids) + len(
-        generated_fixture_operations
-    ) != len(stream.sites):
+    if len(operations) + len(generated_fixture_operations) != len(stream.sites):
         raise AnchorRefusedError(
             "structural disposition partition does not match the approved counts"
         )
     return DispositionPlan(
         operations=tuple(operations),
-        reviewed_deferred_site_ids=initial.reviewed_deferred_site_ids,
+        reviewed_deferred_site_ids=(),
         generated_fixture_operations=tuple(generated_fixture_operations),
         pending_site_ids=(),
         disposition_counts=disposition_counts,

@@ -4,6 +4,12 @@ from pydantic import ValidationError
 from orchestrator.config import RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    node_allowed_actions_view,
+    node_attempts_view,
+    node_creation_payloads_view,
+    node_preconditions_view,
+    node_resource_claims_view,
+    node_task_regions_view,
     FakeClock,
     NodeCreatedPayload,
     SequentialIdGenerator,
@@ -77,8 +83,8 @@ def test_node_created_reducer_reads_direct_membership_fields() -> None:
             )
         ]
     )
-    assert projection["node_task_regions"]["worker-1"] == "task-1"
-    assert projection["node_attempts"]["worker-1"] == 2
+    assert node_task_regions_view(projection)["worker-1"] == "task-1"
+    assert node_attempts_view(projection)["worker-1"] == 2
 
 
 def test_direct_authority_controls_take_precedence_over_nested_authority() -> None:
@@ -103,7 +109,7 @@ def test_direct_authority_controls_take_precedence_over_nested_authority() -> No
             )
         ]
     )
-    created = projection["node_creation_payloads"]["worker-1"]
+    created = node_creation_payloads_view(projection)["worker-1"]
 
     assert [claim.paths for claim in created.resource_claims] == [["direct"]]
     assert created.allowed_actions == ["direct_action"]
@@ -132,7 +138,7 @@ def test_explicit_empty_direct_controls_take_precedence_on_node_created() -> Non
             )
         ]
     )
-    created = projection["node_creation_payloads"]["worker-1"]
+    created = node_creation_payloads_view(projection)["worker-1"]
 
     assert created.resource_claims == []
     assert created.allowed_actions == []
@@ -175,9 +181,9 @@ def test_explicit_empty_authority_change_controls_override_nested_authority() ->
         ]
     )
 
-    assert projection["node_resource_claims"]["worker-1"] == []
-    assert projection["node_allowed_actions"]["worker-1"] == []
-    assert projection["node_preconditions"]["worker-1"] == []
+    assert node_resource_claims_view(projection)["worker-1"] == []
+    assert node_allowed_actions_view(projection)["worker-1"] == []
+    assert node_preconditions_view(projection)["worker-1"] == []
 
 
 def test_compiler_node_created_producer_matches_typed_payload_json() -> None:

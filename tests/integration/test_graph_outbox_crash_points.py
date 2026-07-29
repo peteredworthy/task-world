@@ -20,6 +20,9 @@ from orchestrator.db import (
     init_db,
 )
 from orchestrator.graph import (
+    file_state_records_view,
+    leases_view,
+    node_states_view,
     EVENT_PAYLOAD_MODELS,
     Actor,
     ActorKind,
@@ -519,8 +522,8 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
     assert report.awaiting_start_ack == second_report.awaiting_start_ack
     lease_id = str(report.awaiting_start_ack[0]["lease_id"])
     projection = rebuild_projection(await _read_events(session_factory, run_id))
-    assert projection["leases"][lease_id].state == "active"
-    assert projection["node_states"]["worker-1"] == "leased"
+    assert leases_view(projection)[lease_id].state == "active"
+    assert node_states_view(projection)["worker-1"] == "leased"
 
 
 @pytest.mark.asyncio
@@ -699,8 +702,8 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
     ]
     assert died.events[3].payload["record_type"] == "recovery_plan"
     assert died.events[3].payload["value"]["action"] == "retry"
-    assert projection_after_death["leases"][lease_id].state == "revoked"
-    assert projection_after_death["node_states"]["worker-1"] == "ready"
+    assert leases_view(projection_after_death)[lease_id].state == "revoked"
+    assert node_states_view(projection_after_death)["worker-1"] == "ready"
     assert any(event.event_type == "runtime_retry_scheduled" for event in died.events)
     assert [event.event_type for event in relearnt.events] == [
         "node_ready",
@@ -710,7 +713,7 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
     ]
     new_lease_id = str(relearnt.outbox_items[0].payload["lease_id"])
     assert new_lease_id != lease_id
-    assert projection_after_relearn["leases"][new_lease_id].state == "active"
+    assert leases_view(projection_after_relearn)[new_lease_id].state == "active"
     assert call_log == [first.outbox_items[0].event_id, relearnt.outbox_items[0].event_id]
     assert await _outbox_statuses(session_factory) == ["completed", "completed"]
 
@@ -1010,9 +1013,9 @@ async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
 
     events = await _read_events(session_factory, "cleanup-before-side-effect")
     projection = rebuild_projection(events)
-    original = projection["file_state_records"][record_id]
+    original = file_state_records_view(projection)[record_id]
     superseding_id = str(original.superseded_by_record_id)
-    superseding = projection["file_state_records"][superseding_id]
+    superseding = file_state_records_view(projection)[superseding_id]
     new_snapshot_id = str(superseding.snapshot_id)
     new_ref = f"refs/orchestrator/snapshots/{new_snapshot_id}"
 
@@ -1079,7 +1082,7 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
 
     events_after = await _read_events(session_factory, "cleanup-after-ref-delete")
     projection = rebuild_projection(events_after)
-    original = projection["file_state_records"][record_id]
+    original = file_state_records_view(projection)[record_id]
     superseding_records = [
         event
         for event in events_after

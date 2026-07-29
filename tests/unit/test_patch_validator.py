@@ -18,6 +18,7 @@ from orchestrator.graph.patch_validator import (
     validate_patch,
 )
 from orchestrator.graph.projections import GraphProjection, initial_projection
+from tests.unit.graph_test_utils import projection_fixture_replace, projection_fixture_set
 
 
 def _patch(
@@ -63,20 +64,26 @@ def _projection(
 ) -> GraphProjection:
     projection = initial_projection()
     if node_states is not None:
-        projection["node_states"] = node_states
+        projection = projection_fixture_replace(projection, "node_states", node_states)
     if node_kinds is not None:
-        projection["node_kinds"] = node_kinds
+        projection = projection_fixture_replace(projection, "node_kinds", node_kinds)
     if node_roles is not None:
-        projection["node_roles"] = node_roles
+        projection = projection_fixture_replace(projection, "node_roles", node_roles)
     if edges is not None:
-        projection["edges"] = {
-            edge_id: EdgeProjection.model_validate(edge) for edge_id, edge in edges.items()
-        }
+        projection = projection_fixture_replace(
+            projection,
+            "edges",
+            {edge_id: EdgeProjection.model_validate(edge) for edge_id, edge in edges.items()},
+        )
     if resource_claims is not None:
-        projection["node_resource_claims"] = {
-            node_id: [ResourceClaimProjection.model_validate(claim) for claim in claims]
-            for node_id, claims in resource_claims.items()
-        }
+        projection = projection_fixture_replace(
+            projection,
+            "node_resource_claims",
+            {
+                node_id: [ResourceClaimProjection.model_validate(claim) for claim in claims]
+                for node_id, claims in resource_claims.items()
+            },
+        )
     return projection
 
 
@@ -925,16 +932,21 @@ def test_gap_planner_can_submit_no_op_patch() -> None:
 
 def test_gap_planner_no_op_allowed_when_classified_gap_successor_waits() -> None:
     projection = initial_projection()
-    projection["edges"]["edge-gap-to-corrective"] = EdgeProjection.model_validate(
-        {
-            "edge_id": "edge-gap-to-corrective",
-            "from_node_id": "planner-1",
-            "from_port": "gap_classification",
-            "to_node_id": "worker-corrective",
-            "to_port": "classified_gap",
-            "required": True,
-            "dependency_type": "input_binding",
-        }
+    projection = projection_fixture_set(
+        projection,
+        "edges",
+        ("edge-gap-to-corrective",),
+        EdgeProjection.model_validate(
+            {
+                "edge_id": "edge-gap-to-corrective",
+                "from_node_id": "planner-1",
+                "from_port": "gap_classification",
+                "to_node_id": "worker-corrective",
+                "to_port": "classified_gap",
+                "required": True,
+                "dependency_type": "input_binding",
+            }
+        ),
     )
 
     result = _validate(_patch([]), projection=projection, actor_role="gap_planner")

@@ -23,6 +23,7 @@ from scripts.graph_projection_inventory import (
     load_manifest,
     occurrence_id,
 )
+from tests.unit.graph_test_utils import projection_fixture_set
 
 
 MANIFEST_PATH = Path(__file__).parents[2] / "scripts/codemods/graph_projection_manifest.yaml"
@@ -167,7 +168,7 @@ def test_resource_claim_query_returns_an_immutable_sequence() -> None:
         position=1,
         resource_claims=[{"mode": "read", "scope": "repo"}],
     ).resource_claims[0]
-    projection["node_resource_claims"]["worker-1"] = [claim]
+    projection = projection_fixture_set(projection, "node_resource_claims", ("worker-1",), [claim])
 
     assert resource_claims_for_node(projection, "worker-1") == (claim,)
     assert resource_claims_for_node(projection, "missing") == ()

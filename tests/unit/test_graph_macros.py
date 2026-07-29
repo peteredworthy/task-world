@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from orchestrator.graph import (
+    node_kinds_view,
     EventEnvelope,
     FakeClock,
     PatchEnvelope,
@@ -14,7 +15,7 @@ from orchestrator.graph import (
     validate_patch,
 )
 from orchestrator.graph.command_models import SubmitPatchCommand
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import projection_fixture_set, apply_command
 
 
 def _patch(payload: dict[str, Any], proposed_by_node_id: str = "planner-1") -> PatchEnvelope:
@@ -75,9 +76,9 @@ def test_create_work_region_macro_expands_to_valid_patch() -> None:
 
 def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
     projection = initial_projection()
-    projection["node_kinds"]["planner-gap"] = "planner"
-    projection["node_roles"]["planner-gap"] = "gap_planner"
-    projection["node_states"]["planner-gap"] = "running"
+    projection = projection_fixture_set(projection, "node_kinds", ("planner-gap",), "planner")
+    projection = projection_fixture_set(projection, "node_roles", ("planner-gap",), "gap_planner")
+    projection = projection_fixture_set(projection, "node_states", ("planner-gap",), "running")
     patch = _patch(
         {
             "patch_id": "macro-corrective",
@@ -132,12 +133,12 @@ def test_create_join_macro_uses_distinct_source_record_ports() -> None:
     )
 
     projection = initial_projection()
-    projection["node_kinds"]["worker-1"] = "worker"
-    projection["node_roles"]["worker-1"] = "builder"
-    projection["node_states"]["worker-1"] = "completed"
-    projection["node_kinds"]["check-1"] = "check"
-    projection["node_roles"]["check-1"] = "invariant_gate"
-    projection["node_states"]["check-1"] = "completed"
+    projection = projection_fixture_set(projection, "node_kinds", ("worker-1",), "worker")
+    projection = projection_fixture_set(projection, "node_roles", ("worker-1",), "builder")
+    projection = projection_fixture_set(projection, "node_states", ("worker-1",), "completed")
+    projection = projection_fixture_set(projection, "node_kinds", ("check-1",), "check")
+    projection = projection_fixture_set(projection, "node_roles", ("check-1",), "invariant_gate")
+    projection = projection_fixture_set(projection, "node_states", ("check-1",), "completed")
     result = validate_patch(
         patch,
         current_position=0,
@@ -243,8 +244,8 @@ def test_submit_patch_command_accepts_macro_invocations() -> None:
         projection = reduce_event(projection, event)
 
     assert output[0].event_type == "graph_patch_accepted"
-    assert projection["node_kinds"]["worker-feature-region"] == "worker"
-    assert projection["node_kinds"]["verifier-feature-region"] == "verifier"
+    assert node_kinds_view(projection)["worker-feature-region"] == "worker"
+    assert node_kinds_view(projection)["verifier-feature-region"] == "verifier"
 
 
 def test_macro_invocations_reject_missing_required_typed_args() -> None:

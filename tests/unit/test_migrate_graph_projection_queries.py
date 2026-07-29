@@ -7,6 +7,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     AnchorRefusedError,
     CstAnchorEvidence,
     DispositionPlan,
+    FixtureMutationPlan,
     MigrationSite,
     OperationStream,
     PlannedOperation,
@@ -19,16 +20,23 @@ from scripts.codemods.migrate_graph_projection_queries import (
     SourceSnapshot,
     SourceLocator,
     compile_operation_stream,
+    compile_fixture_mutation_plan,
     compile_query_composition_plan,
     compile_query_replacement_plan,
     apply_query_replacement_plan,
+    apply_fixture_mutation_plan,
     plan_reviewed_dispositions,
     require_complete_receiver_physical_context,
     shape_summary,
     write_query_source_apply_plan,
+    write_fixture_source_apply_plan,
+    _generated_fixture_rule,
+    _generated_query_rule,
+    _neutral_rule,
 )
 from scripts.graph_projection_inventory import (
     AccessKind,
+    DiagnosticCode,
     MigrationDisposition,
     SourceDigest,
     ProjectionCallContext,
@@ -138,6 +146,219 @@ def _merge_replacement_plans(*plans: QueryReplacementPlan) -> QueryReplacementPl
             sorted(Counter(name for recipe in recipes for name in recipe.query_imports).items())
         ),
     )
+
+
+def _compile_fixture_mutations(source: SourceSnapshot) -> FixtureMutationPlan:
+    inventory = inventory_sources((source,), load_manifest(MANIFEST_PATH))
+    stream = compile_operation_stream(
+        (source,), inventory, query_migration_skeleton(inventory, ROOT)
+    )
+    operations = tuple(
+        operation
+        for site in stream.sites
+        if (operation := _generated_fixture_rule(site)) is not None
+    )
+    return compile_fixture_mutation_plan((source,), stream, operations)
+
+
+def test_fixture_mutation_plan_compiles_four_helpers_and_literal_extend() -> None:
+    source = SourceSnapshot(
+        relative_path="tests/fixture.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def seed(projection: GraphProjection, node_id: str) -> GraphProjection:\n"
+            "    projection['run_state'] = 'active'\n"
+            "    projection['node_states'][node_id] = 'ready'\n"
+            "    projection['node_roles'].update({'node-1': 'builder'})\n"
+            "    projection['ready_nodes'].append(node_id)\n"
+            "    projection['ready_nodes'].extend(('node-2', 'node-3'))\n"
+            "    return projection\n"
+        ),
+    )
+
+    plan = _compile_fixture_mutations(source)
+    applied = apply_fixture_mutation_plan((source,), plan)
+    transformed = applied.updates[0].transformed_source
+
+    assert len(plan.recipes) == 5
+    assert "from tests.unit.graph_test_utils import " in transformed
+    assert "projection_fixture_replace" in transformed
+    assert "projection_fixture_set" in transformed
+    assert "projection_fixture_update" in transformed
+    assert "projection_fixture_append" in transformed
+    assert (
+        "projection = projection_fixture_replace(projection, 'run_state', 'active')" in transformed
+    )
+    assert (
+        "projection = projection_fixture_set(projection, 'node_states', (node_id,), 'ready')"
+        in transformed
+    )
+    assert "projection = projection_fixture_update(" in transformed
+    assert transformed.count("projection_fixture_append(") == 3
+    assert applied.consumed_site_ids == plan.consumed_site_ids
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "context.graph_projection['run_state'] = 'active'",
+        "projection['node_states'][0] = 'active'",
+        "projection['node_states'].update(values, extra=True)",
+        "projection['ready_nodes'].extend(values)",
+    ],
+)
+def test_fixture_mutation_plan_fails_closed_for_unproved_shapes(statement: str) -> None:
+    source = SourceSnapshot(
+        relative_path="tests/fixture.py",
+        source=(
+            "from orchestrator.graph import GraphDispatchContext, GraphProjection\n\n"
+            "def seed(projection: GraphProjection, context: GraphDispatchContext, "
+            "values: object) -> None:\n"
+            f"    {statement}\n"
+        ),
+    )
+    inventory = inventory_sources((source,), load_manifest(MANIFEST_PATH))
+    stream = compile_operation_stream(
+        (source,), inventory, query_migration_skeleton(inventory, ROOT)
+    )
+    operations = tuple(
+        operation
+        for site in stream.sites
+        if (operation := _generated_fixture_rule(site)) is not None
+    )
+
+    with pytest.raises(AnchorRefusedError):
+        compile_fixture_mutation_plan((source,), stream, operations)
+
+
+def test_fixture_mutation_apply_aliases_collision_and_requires_fresh_idempotent_plan() -> None:
+    source = SourceSnapshot(
+        relative_path="tests/fixture.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def seed(projection: GraphProjection) -> GraphProjection:\n"
+            "    projection_fixture_replace = None\n"
+            "    projection['run_state'] = 'active'\n"
+            "    return projection\n"
+        ),
+    )
+    plan = _compile_fixture_mutations(source)
+
+    first = apply_fixture_mutation_plan((source,), plan)
+    transformed = SourceSnapshot(
+        relative_path=source.relative_path, source=first.updates[0].transformed_source
+    )
+    with pytest.raises(AnchorRefusedError, match="exact statement"):
+        apply_fixture_mutation_plan((transformed,), plan)
+    fresh_plan = _compile_fixture_mutations(transformed)
+    second = apply_fixture_mutation_plan((transformed,), fresh_plan)
+
+    assert "projection_fixture_replace as fixture_projection_fixture_replace" in transformed.source
+    assert "projection = fixture_projection_fixture_replace(" in transformed.source
+    assert fresh_plan.recipes == ()
+    assert second.updates == ()
+
+
+def test_fixture_mutation_atomic_write_validates_every_original_before_writing(
+    tmp_path: Path,
+) -> None:
+    first = SourceSnapshot(
+        relative_path="tests/first.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def seed(projection: GraphProjection) -> None:\n"
+            "    projection['run_state'] = 'active'\n"
+        ),
+    )
+    second = first.model_copy(update={"relative_path": "tests/second.py"})
+    first_plan = _compile_fixture_mutations(first)
+    second_plan = _compile_fixture_mutations(second)
+    plan = FixtureMutationPlan(
+        recipes=tuple(
+            sorted(
+                (*first_plan.recipes, *second_plan.recipes),
+                key=lambda item: (item.relative_path, item.source_span),
+            )
+        )
+    )
+    applied = apply_fixture_mutation_plan((first, second), plan)
+    for source in (first, second):
+        path = tmp_path / source.relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source.source)
+    second_path = tmp_path / second.relative_path
+    second_path.write_text("stale\n")
+
+    with pytest.raises(AnchorRefusedError, match="changed before atomic apply"):
+        write_fixture_source_apply_plan(tmp_path, applied)
+
+    assert (tmp_path / first.relative_path).read_text() == first.source
+
+
+def test_fixture_reads_and_mutations_use_structural_rules() -> None:
+    source = SourceSnapshot(
+        relative_path="tests/fixture.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def use(projection: GraphProjection) -> object:\n"
+            "    value = projection['run_state']\n"
+            "    projection['node_states']['node'] = 'active'\n"
+            "    return value\n"
+        ),
+    )
+    inventory = inventory_sources((source,), load_manifest(MANIFEST_PATH))
+    skeleton = query_migration_skeleton(inventory)
+    stream = compile_operation_stream((source,), inventory, skeleton)
+    read = next(site for site in stream.sites if site.old_field_name == "run_state")
+    mutation = next(site for site in stream.sites if site.old_field_name == "node_states")
+
+    assert _generated_query_rule(read) is not None
+    assert _generated_fixture_rule(mutation) is not None
+
+
+def test_fixture_mutation_helper_rebinding_is_a_finite_neutral_flow() -> None:
+    expression = "projection = projection_fixture_replace(projection, 'run_state', 'active')"
+    helper_site = MigrationSite(
+        origin="diagnostic",
+        original_site_id="helper-site",
+        relative_path="tests/fixture.py",
+        qualified_function="seed",
+        access_kind=None,
+        old_field_name=None,
+        diagnostic_code=DiagnosticCode.UNSUPPORTED_BINDING,
+        normalized_expression=expression,
+        domain="test_fixture",
+        ordinal=0,
+        source_digest="0" * 64,
+        locator=SourceLocator(line=1, column=0),
+        anchor=CstAnchorEvidence(
+            node_type="Assign",
+            normalized_expression=expression,
+            same_expression_ordinal=0,
+        ),
+        parent_shape="bare_expression",
+        operation_shape="typed_pass_through",
+    )
+
+    assert _neutral_rule(helper_site) == (
+        "fixture_mutation_helper",
+        "tests.unit.graph_test_utils.projection_fixture_replace",
+    )
+
+
+def test_structural_plan_rejects_nonfixture_mutation_as_fixture_handoff() -> None:
+    source = SourceSnapshot(
+        relative_path="src/example.py",
+        source=(
+            "from orchestrator.graph import GraphProjection\n\n"
+            "def use(projection: GraphProjection) -> None:\n"
+            "    projection['run_state'] = 'active'\n"
+        ),
+    )
+    inventory = inventory_sources((source,), load_manifest(MANIFEST_PATH))
+    skeleton = query_migration_skeleton(inventory)
+    stream = compile_operation_stream((source,), inventory, skeleton)
+    assert _generated_fixture_rule(stream.sites[0]) is None
 
 
 def test_inventory_sources_matches_filesystem_adapter_for_equivalent_snapshot(

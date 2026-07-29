@@ -9,6 +9,35 @@ import yaml
 import pytest
 
 from orchestrator.graph import (
+    accepted_output_records_by_node_port_view,
+    approval_decisions_view,
+    authority_decisions_view,
+    callback_idempotency_events_view,
+    check_results_view,
+    cleanup_applied_ids_view,
+    cleanup_requested_events_view,
+    completion_decision_passed,
+    decision_request_details_view,
+    edges_view,
+    environment_failures_view,
+    failed_verification_candidate_ids_view,
+    failed_verification_results_by_record_id_view,
+    file_state_records_view,
+    input_bindings_view,
+    invalid_test_blocks_view,
+    leases_view,
+    node_creation_payloads_view,
+    node_creation_positions_view,
+    node_output_ports_view,
+    node_states_view,
+    output_record_payloads_view,
+    output_records_by_node_port_view,
+    passed_verification_results_by_record_id_view,
+    recovery_nodes_by_record_id_view,
+    requirement_revisions_view,
+    retry_not_before_by_node_view,
+    task_candidates_view,
+    verifier_verdicts_view,
     Actor,
     ActorKind,
     ApprovalDecisionProjection,
@@ -72,7 +101,7 @@ from orchestrator.graph import (
     support_evidence_freshness_from_projection,
 )
 from orchestrator.graph import projections
-from tests.unit.graph_test_utils import apply_command, command_context
+from tests.unit.graph_test_utils import projection_fixture_set, apply_command, command_context
 from tests.unit.graph_test_utils import canonical_event_payload
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
@@ -216,7 +245,7 @@ def test_callback_idempotency_projection_uses_typed_payload() -> None:
         ),
     )
 
-    projected = projection["callback_idempotency_events"]["worker-1\0key-1"]
+    projected = callback_idempotency_events_view(projection)["worker-1\0key-1"]
 
     assert isinstance(projected, CallbackIdempotencyEvent)
     assert projected.outcome == "callback_accepted"
@@ -257,7 +286,7 @@ def test_callback_idempotency_projection_allows_empty_callback_payload() -> None
         ),
     )
 
-    projected = projection["callback_idempotency_events"]["worker-1\0key-1"]
+    projected = callback_idempotency_events_view(projection)["worker-1\0key-1"]
 
     assert isinstance(projected, CallbackIdempotencyEvent)
     assert projected.payload is None
@@ -278,7 +307,7 @@ def test_approval_decision_projection_uses_typed_payload() -> None:
         ),
     )
 
-    projected = projection["approval_decisions"]["gate-1"]
+    projected = approval_decisions_view(projection)["gate-1"]
 
     assert isinstance(projected, ApprovalDecisionProjection)
     assert projected.node_id == "gate-1"
@@ -301,7 +330,7 @@ def test_authority_decision_projection_uses_typed_payload() -> None:
         ),
     )
 
-    projected = projection["authority_decisions"]["authority-1"]
+    projected = authority_decisions_view(projection)["authority-1"]
 
     assert isinstance(projected, AuthorityDecisionProjection)
     assert projected.node_id == "authority-1"
@@ -330,8 +359,8 @@ def test_decision_projection_accepts_canonical_decision_payloads() -> None:
         ),
     )
 
-    assert projection["approval_decisions"]["gate-1"].decision == "approved"
-    assert projection["authority_decisions"]["authority-1"].decision == "denied"
+    assert approval_decisions_view(projection)["gate-1"].decision == "approved"
+    assert authority_decisions_view(projection)["authority-1"].decision == "denied"
 
 
 def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
@@ -493,7 +522,7 @@ def test_decision_request_details_projection_checkpoint_round_trips_typed_payloa
     ]:
         projection = reduce_event(projection, event)
 
-    projected = projection["decision_request_details"]["human-gate-1"]
+    projected = decision_request_details_view(projection)["human-gate-1"]
     assert isinstance(projected, PendingGateDecisionProjection)
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
@@ -559,7 +588,7 @@ def test_environment_failure_projection_uses_check_result_record() -> None:
         ).model_copy(update={"position": 17}),
     )
 
-    projected = projection["environment_failures"]["task-1"]
+    projected = environment_failures_view(projection)["task-1"]
 
     assert isinstance(projected, EnvironmentFailureProjection)
     assert projected.position == 17
@@ -624,7 +653,7 @@ def test_environment_failure_projection_derives_missing_reason_from_check_record
         events[1],
     )
 
-    projected = projection["environment_failures"]["task-1"]
+    projected = environment_failures_view(projection)["task-1"]
 
     assert isinstance(projected, EnvironmentFailureProjection)
     assert projected.reason == "check tool error while running: check command"
@@ -637,7 +666,7 @@ def test_file_state_projection_uses_typed_payload() -> None:
         _file_state_event("task-1", "cand-1", 21),
     )
 
-    projected = projection["file_state_records"]["file-state-cand-1"]
+    projected = file_state_records_view(projection)["file-state-cand-1"]
 
     assert isinstance(projected, FileStateRecord)
     assert projected.record_id == "file-state-cand-1"
@@ -721,7 +750,7 @@ def test_task_candidate_projection_uses_typed_payload() -> None:
         ).model_copy(update={"position": 31}),
     )
 
-    projected = projection["task_candidates"]["task-1"][0]
+    projected = task_candidates_view(projection)["task-1"][0]
 
     assert isinstance(projected, CandidateProjection)
     assert projected.candidate_id == "candidate-1"
@@ -782,7 +811,7 @@ def test_verifier_verdict_projection_uses_typed_payload() -> None:
         ).model_copy(update={"position": 34}),
     )
 
-    projected = projection["verifier_verdicts"]["candidate-1"]
+    projected = verifier_verdicts_view(projection)["candidate-1"]
 
     assert isinstance(projected, VerifierVerdictProjection)
     assert projected.candidate_id == "candidate-1"
@@ -841,7 +870,7 @@ def test_requirement_revision_projection_uses_typed_payload() -> None:
         ).model_copy(update={"position": 37}),
     )
 
-    projected = projection["requirement_revisions"]["R-1.v2"]
+    projected = requirement_revisions_view(projection)["R-1.v2"]
 
     assert isinstance(projected, RequirementRevisionProjection)
     assert projected.model_dump(mode="json", exclude_none=True) == {
@@ -1035,7 +1064,7 @@ def test_malformed_file_state_payload_is_tolerated_without_raw_projection_entry(
         ).model_copy(update={"position": 23}),
     )
 
-    assert projection["file_state_records"] == {}
+    assert file_state_records_view(projection) == {}
 
 
 def test_task_projection_accepts_file_state_via_producer_node_task_region_fallback() -> None:
@@ -1087,7 +1116,7 @@ def test_file_state_projection_uses_direct_membership_fields() -> None:
         ),
     )
 
-    projected = projection["file_state_records"]["file-state-cand-1"]
+    projected = file_state_records_view(projection)["file-state-cand-1"]
 
     assert projected.task_region_id == "task-1"
     assert projected.candidate_id == "cand-1"
@@ -1114,7 +1143,7 @@ def test_node_creation_projection_uses_typed_payload() -> None:
         ).model_copy(update={"position": 23}),
     )
 
-    projected = projection["node_creation_payloads"]["worker-1"]
+    projected = node_creation_payloads_view(projection)["worker-1"]
 
     assert isinstance(projected, NodeCreationProjection)
     assert projected.node_id == "worker-1"
@@ -1150,19 +1179,21 @@ def test_node_creation_projection_retains_first_typed_retry_limit() -> None:
 
     projection = build_projection(events)
 
-    assert projection["node_creation_payloads"]["worker-1"].max_attempts == 2
-    assert "worker-2" not in projection["node_creation_payloads"]
+    assert node_creation_payloads_view(projection)["worker-1"].max_attempts == 2
+    assert "worker-2" not in node_creation_payloads_view(projection)
 
 
 def test_clone_projection_covers_initial_keys_without_nested_aliasing() -> None:
     state = initial_projection()
-    state["node_output_ports"]["worker-1"] = {"candidate": ["record-1"]}
+    state = projection_fixture_set(
+        state, "node_output_ports", ("worker-1",), {"candidate": ["record-1"]}
+    )
 
     cloned = projections._clone_projection(state)
 
     assert set(cloned) == set(initial_projection())
     cloned["node_output_ports"]["worker-1"]["candidate"].append("record-2")
-    assert state["node_output_ports"]["worker-1"]["candidate"] == ["record-1"]
+    assert node_output_ports_view(state)["worker-1"]["candidate"] == ["record-1"]
 
 
 def test_node_creation_projection_checkpoint_round_trips_typed_payload() -> None:
@@ -1204,8 +1235,8 @@ def test_malformed_node_created_payload_is_tolerated_without_raw_projection_entr
         ),
     )
 
-    assert projection["node_creation_payloads"] == {}
-    assert projection["node_states"] == {}
+    assert node_creation_payloads_view(projection) == {}
+    assert node_states_view(projection) == {}
 
 
 def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
@@ -1252,7 +1283,7 @@ def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
     for event in events:
         projection = reduce_event(projection, event)
 
-    binding = projection["input_bindings"]["summarizer-1"]["source_records"]
+    binding = input_bindings_view(projection)["summarizer-1"]["source_records"]
     assert binding.binding_policy == "bind_all"
     assert binding.record_ids == ["candidate-1", "candidate-2"]
     assert binding.record_bound_positions == {"candidate-1": 4, "candidate-2": 5}
@@ -1300,7 +1331,7 @@ def test_edge_projection_uses_typed_payload_and_preserves_topology_shape() -> No
     for event in events:
         projection = reduce_event(projection, event)
 
-    edge = projection["edges"]["edge-source-records"]
+    edge = edges_view(projection)["edge-source-records"]
     assert isinstance(edge, EdgeProjection)
     assert edge.accepted_record_selector == {
         "record_type": "candidate",
@@ -1363,7 +1394,7 @@ def test_input_binding_projection_uses_typed_payload_and_drops_raw_event_extras(
     ]:
         projection = reduce_event(projection, event)
 
-    binding = projection["input_bindings"]["summarizer-1"]["source_records"]
+    binding = input_bindings_view(projection)["summarizer-1"]["source_records"]
     assert isinstance(binding, InputBindingProjection)
     assert binding.record_ids == ["candidate-1"]
     assert binding.trigger == "record_accepted"
@@ -1847,7 +1878,7 @@ def test_lease_projection_uses_typed_payload_and_preserves_public_shape() -> Non
     )
 
     projection = reduce_event(initial_projection(), event)
-    projected = projection["leases"]["lease-1"]
+    projected = leases_view(projection)["lease-1"]
 
     assert isinstance(projected, LeaseProjection)
     assert project_leases([], projection=projection) == {
@@ -1949,17 +1980,17 @@ def test_output_record_payloads_are_typed_at_fold() -> None:
 
     projection = reduce_event(initial_projection(), event)
 
-    payload = projection["output_record_payloads"]["summary-1"]
+    payload = output_record_payloads_view(projection)["summary-1"]
     assert isinstance(payload, OutputRecord)
     assert payload.record_id == "summary-1"
     assert payload.producer_node_id == "fanout-reader-1"
     assert payload.port == "reader_output"
 
-    by_port = projection["output_records_by_node_port"]["fanout-reader-1"]["reader_output"][0]
+    by_port = output_records_by_node_port_view(projection)["fanout-reader-1"]["reader_output"][0]
     assert isinstance(by_port, OutputRecord)
     assert by_port.value == {"summary": "done"}
 
-    accepted = projection["accepted_output_records_by_node_port"]["fanout-reader-1"][
+    accepted = accepted_output_records_by_node_port_view(projection)["fanout-reader-1"][
         "reader_output"
     ][0]
     assert isinstance(accepted["payload"], OutputRecord)
@@ -2026,13 +2057,13 @@ def test_verification_result_projections_are_typed_at_fold() -> None:
     ]:
         projection = reduce_event(projection, event)
 
-    passed = projection["passed_verification_results_by_record_id"]["verification-pass-1"]
+    passed = passed_verification_results_by_record_id_view(projection)["verification-pass-1"]
     assert isinstance(passed, VerificationResultProjection)
     assert passed.node_id == "verifier-1"
     assert passed.candidate_id == "candidate-1"
     assert passed.task_region_id == "task-1"
 
-    failed = projection["failed_verification_results_by_record_id"]["verification-fail-1"]
+    failed = failed_verification_results_by_record_id_view(projection)["verification-fail-1"]
     assert isinstance(failed, VerificationResultProjection)
     assert failed.node_id == "verifier-2"
     assert failed.candidate_id == "candidate-2"
@@ -2047,8 +2078,8 @@ def test_canonical_verification_result_payload_projects_required_identifiers() -
     ]:
         projection = reduce_event(projection, event)
 
-    assert set(projection["passed_verification_results_by_record_id"]) == {"missing-node"}
-    assert set(projection["failed_verification_results_by_record_id"]) == {
+    assert set(passed_verification_results_by_record_id_view(projection)) == {"missing-node"}
+    assert set(failed_verification_results_by_record_id_view(projection)) == {
         "verification-candidate-1"
     }
 
@@ -2104,7 +2135,7 @@ def test_check_result_projection_summary_is_typed_at_fold() -> None:
         ).model_copy(update={"position": 12}),
     )
 
-    check_result = projection["check_results"]["check-1"]
+    check_result = check_results_view(projection)["check-1"]
     assert isinstance(check_result, CheckResultProjection)
     assert check_result.status == "failed"
     assert check_result.position == 12
@@ -2129,7 +2160,7 @@ def test_sparse_check_result_fixture_is_completed_to_a_canonical_failed_summary(
         ),
     )
 
-    check_result = projection["check_results"]["check-legacy"]
+    check_result = check_results_view(projection)["check-legacy"]
     assert isinstance(check_result, CheckResultProjection)
     assert check_result.status == "failed"
     assert check_result.record_id == "check-result-legacy"
@@ -2450,14 +2481,14 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
     )
 
     assert (
-        _accepted_output_records_as_dicts(projection["accepted_output_records_by_node_port"])
+        _accepted_output_records_as_dicts(accepted_output_records_by_node_port_view(projection))
         == legacy_accepted_by_port
     )
     assert {
         record_id: result.model_dump(mode="json")
-        for record_id, result in projection["failed_verification_results_by_record_id"].items()
+        for record_id, result in failed_verification_results_by_record_id_view(projection).items()
     } == legacy_failed_verifications
-    assert projection["recovery_nodes_by_record_id"] == legacy_recovery_nodes
+    assert recovery_nodes_by_record_id_view(projection) == legacy_recovery_nodes
 
 
 def test_residual_command_projection_fields_fold_incrementally() -> None:
@@ -2514,11 +2545,11 @@ def test_residual_command_projection_fields_fold_incrementally() -> None:
     for event in events:
         projection = reduce_event(projection, event)
 
-    assert projection["node_creation_positions"] == {"worker-1": 3}
-    assert projection["completion_decision_passed"] is True
+    assert node_creation_positions_view(projection) == {"worker-1": 3}
+    assert completion_decision_passed(projection) is True
     assert {
         record_id: result.model_dump(mode="json")
-        for record_id, result in projection["passed_verification_results_by_record_id"].items()
+        for record_id, result in passed_verification_results_by_record_id_view(projection).items()
     } == {
         "verification-1": {
             "node_id": "verifier-1",
@@ -2527,13 +2558,14 @@ def test_residual_command_projection_fields_fold_incrementally() -> None:
             "task_region_id": "task-1",
         }
     }
-    assert projection["failed_verification_candidate_ids"] == {"candidate-2": True}
-    assert projection["retry_not_before_by_node"] == {"worker-1": "2025-01-01T00:01:00+00:00"}
-    assert projection["cleanup_requested_events"]["cleanup-1"].position == 8
+    assert failed_verification_candidate_ids_view(projection) == {"candidate-2": True}
+    assert retry_not_before_by_node_view(projection) == {"worker-1": "2025-01-01T00:01:00+00:00"}
+    assert cleanup_requested_events_view(projection)["cleanup-1"].position == 8
     assert (
-        projection["cleanup_requested_events"]["cleanup-1"].file_state_record_id == "file-state-1"
+        cleanup_requested_events_view(projection)["cleanup-1"].file_state_record_id
+        == "file-state-1"
     )
-    assert projection["cleanup_applied_ids"] == {"cleanup-1": True}
+    assert cleanup_applied_ids_view(projection) == {"cleanup-1": True}
 
 
 def test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes() -> None:
@@ -2558,7 +2590,7 @@ def test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes() -> No
     ]:
         projection = reduce_event(projection, event)
 
-    projected = projection["cleanup_requested_events"]["cleanup-1"]
+    projected = cleanup_requested_events_view(projection)["cleanup-1"]
 
     assert isinstance(projected, CleanupRequestedProjection)
     assert projected.cleanup_id == "cleanup-1"
@@ -2925,7 +2957,7 @@ def test_projection_immutability() -> None:
         "cleanup_requested_events": {},
         "cleanup_applied_ids": {},
     }
-    assert next_state["node_states"] == {"worker-1": "running"}
+    assert node_states_view(next_state) == {"worker-1": "running"}
 
 
 def test_run_state_transitions() -> None:
@@ -3632,7 +3664,7 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
     projection = initial_projection()
     for event in events:
         projection = reduce_event(projection, event)
-    check_result = projection["check_results"]["check-final-1"]
+    check_result = check_results_view(projection)["check-final-1"]
     assert check_result.candidate_record_ids == ["candidate-1"]
     assert check_result.file_state_record_ids == ["file-state-candidate-1"]
     assert check_result.evaluated_record_ids == ["candidate-1", "file-state-candidate-1"]
@@ -4115,7 +4147,7 @@ def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> N
     for event in events:
         projection = reduce_event(projection, event)
 
-    candidate = projection["task_candidates"]["task-1"][0]
+    candidate = task_candidates_view(projection)["task-1"][0]
     assert isinstance(candidate, CandidateProjection)
     assert candidate.candidate_id == "candidate-1"
     assert candidate.attempt_number == 0
@@ -4695,7 +4727,7 @@ def test_invalid_test_block_projection_uses_typed_payload_and_preserves_task_sta
     for event in events:
         projection = reduce_event(projection, event)
 
-    projected = projection["invalid_test_blocks"]["task-1"]
+    projected = invalid_test_blocks_view(projection)["task-1"]
 
     assert isinstance(projected, InvalidTestBlockProjection)
     assert projected.accepted is True
