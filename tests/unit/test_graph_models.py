@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph import GradeRow, StoredArtifactRef
-from orchestrator.graph.models import (
+from orchestrator.graph import (
     Actor,
     ActorKind,
     AnalysisSummaryValue,

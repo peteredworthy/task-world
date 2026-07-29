@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from orchestrator.graph import PLANNER_OPS, PatchEnvelope, initial_projection, validate_patch
-from orchestrator.graph.projections import GraphProjection
+from orchestrator.graph import GraphProjection
 from orchestrator.graph_runtime import (
     HORIZON_REGION_PURPOSES,
     horizon_region_templates,

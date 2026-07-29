@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tokenize
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -272,6 +273,98 @@ class ReportLinkage(BaseModel):
     raw_diagnostic_count: int
     unresolved_diagnostic_count: int
     historical_site_count: int
+
+
+class CurrentClosureSite(BaseModel):
+    """One exact current source site and its finite closure disposition evidence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    site_id: str
+    origin: Literal["occurrence", "diagnostic"]
+    relative_path: str
+    qualified_function: str
+    disposition: Literal["approved_core", "projection_neutral"]
+    rule_id: str
+
+    @field_validator("site_id", "relative_path", "qualified_function", "rule_id")
+    @classmethod
+    def required_text_is_nonblank(cls, value: str) -> str:
+        return _nonblank(value)
+
+
+class CurrentClosureIdentity(BaseModel):
+    """Canonical digest and exact evidence for current migration closure."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+    sites: tuple[CurrentClosureSite, ...]
+
+
+def _current_closure_site_sort_key(site: CurrentClosureSite) -> tuple[str, str, str, str, str, str]:
+    return (
+        site.site_id,
+        site.origin,
+        site.relative_path,
+        site.qualified_function,
+        site.disposition,
+        site.rule_id,
+    )
+
+
+def current_closure_identity_bytes(sites: Iterable[CurrentClosureSite]) -> bytes:
+    """Encode sorted exact current-site evidence independently of report serialization."""
+    canonical_sites = tuple(sorted(sites, key=_current_closure_site_sort_key))
+    if len(canonical_sites) != len({site.site_id for site in canonical_sites}):
+        raise ValueError("current closure sites must have unique site IDs")
+    return (
+        json.dumps(
+            [site.model_dump(mode="json") for site in canonical_sites],
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+
+
+def current_closure_identity(
+    inventory: AccessInventory, sites: Iterable[CurrentClosureSite]
+) -> CurrentClosureIdentity:
+    """Bind finite closure evidence to exactly the current collector site identities."""
+    canonical_sites = tuple(sorted(sites, key=_current_closure_site_sort_key))
+    expected = {
+        occurrence.occurrence_id: (
+            "occurrence",
+            occurrence.relative_path,
+            occurrence.qualified_function,
+        )
+        for occurrence in inventory.occurrences
+    }
+    expected.update(
+        {
+            _diagnostic_site_key(inventory.baseline_revision, diagnostic): (
+                "diagnostic",
+                diagnostic.relative_path,
+                diagnostic.qualified_function,
+            )
+            for diagnostic in inventory.diagnostics
+        }
+    )
+    actual = {
+        site.site_id: (site.origin, site.relative_path, site.qualified_function)
+        for site in canonical_sites
+    }
+    if len(actual) != len(canonical_sites):
+        raise ValueError("current closure sites must have unique site IDs")
+    if actual != expected:
+        raise ValueError("current closure site IDs or source evidence differ")
+    encoded = current_closure_identity_bytes(canonical_sites)
+    return CurrentClosureIdentity(
+        digest=hashlib.sha256(encoded).hexdigest(),
+        sites=canonical_sites,
+    )
 
 
 class AccessInventoryBaseline(BaseModel):
@@ -3256,6 +3349,38 @@ def source_digest(source: str) -> str:
     return hashlib.sha256(repr(tokens).encode()).hexdigest()
 
 
+def _collect_inventory_snapshot(
+    input: tuple[InventorySource, ProjectionMigrationManifest, bool, bool],
+) -> SourceInventory:
+    """Collect one candidate source independently for deterministic parallel scans."""
+    snapshot, manifest, allow_implicit_graph_projection, require_declaration_facts = input
+    source = snapshot.source
+    relative_path = snapshot.relative_path
+    try:
+        module = cst.parse_module(source)
+    except cst.ParserSyntaxError:
+        return collect_source(
+            source,
+            relative_path=relative_path,
+            baseline_revision=manifest.baseline_revision,
+        )
+    symbols = _module_symbols(
+        source,
+        allow_implicit_graph_projection=allow_implicit_graph_projection,
+        module_name=_module_name(relative_path),
+        require_declaration_facts=require_declaration_facts,
+    )
+    collector = _Collector(
+        relative_path,
+        manifest.baseline_revision,
+        {field.old_name: field for field in manifest.fields},
+        symbols,
+        source,
+    )
+    MetadataWrapper(module).visit(collector)
+    return collector.result()
+
+
 def inventory_sources(
     sources: Iterable[InventorySource],
     manifest: ProjectionMigrationManifest,
@@ -3268,6 +3393,7 @@ def inventory_sources(
     snapshots = tuple(sorted(sources, key=lambda item: item.relative_path))
     if len({item.relative_path for item in snapshots}) != len(snapshots):
         raise ValueError("inventory sources must have unique relative paths")
+    candidate_inputs: list[tuple[InventorySource, ProjectionMigrationManifest, bool, bool]] = []
     for snapshot in snapshots:
         source = snapshot.source
         relative_path = snapshot.relative_path
@@ -3292,32 +3418,20 @@ def inventory_sources(
                 )
             )
             continue
-        try:
-            module = cst.parse_module(source)
-        except cst.ParserSyntaxError:
-            inventories.append(
-                collect_source(
-                    source,
-                    relative_path=relative_path,
-                    baseline_revision=manifest.baseline_revision,
-                )
+        candidate_inputs.append(
+            (
+                snapshot,
+                manifest,
+                allow_implicit_graph_projection,
+                require_declaration_facts,
             )
-            continue
-        symbols = _module_symbols(
-            source,
-            allow_implicit_graph_projection=allow_implicit_graph_projection,
-            module_name=_module_name(relative_path),
-            require_declaration_facts=require_declaration_facts,
         )
-        collector = _Collector(
-            relative_path,
-            manifest.baseline_revision,
-            {field.old_name: field for field in manifest.fields},
-            symbols,
-            source,
-        )
-        MetadataWrapper(module).visit(collector)
-        inventories.append(collector.result())
+    if len(candidate_inputs) < 4:
+        inventories.extend(map(_collect_inventory_snapshot, candidate_inputs))
+    else:
+        worker_count = min(8, len(candidate_inputs), os.cpu_count() or 1)
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            inventories.extend(executor.map(_collect_inventory_snapshot, candidate_inputs))
     return AccessInventory(
         baseline_revision=manifest.baseline_revision,
         occurrences=tuple(
@@ -3454,9 +3568,10 @@ def validate_report_linkage(
 ) -> ReportLinkage:
     """Refuse a baseline unless the canonical report closes every exact historical site.
 
-    The collector continues to retain current diagnostics as provenance.  They are
-    resolved only by the report's finite current-closure counts; this deliberately
-    avoids broad suppression based on paths, functions, or source substrings.
+    The collector continues to retain current diagnostics as provenance. They are
+    resolved only by exact current-site evidence authenticated by the shared
+    inventory digest; this deliberately avoids broad suppression based on paths,
+    functions, or source substrings.
     """
     try:
         raw = json.loads(report_path.read_text())
@@ -3512,6 +3627,26 @@ def validate_report_linkage(
         or approved + neutral != (expected_closure["site_count"])
     ):
         raise ValueError("malformed query migration report current disposition closure")
+    try:
+        identity_raw = closure.get("identity")
+        if not isinstance(identity_raw, dict):
+            raise ValueError("identity must be an object")
+        normalized_identity = dict(identity_raw)
+        if isinstance(normalized_identity.get("sites"), list):
+            normalized_identity["sites"] = tuple(normalized_identity["sites"])
+        identity = CurrentClosureIdentity.model_validate(normalized_identity)
+        expected_identity = current_closure_identity(current_inventory, identity.sites)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"malformed query migration report current closure identity: {error}"
+        ) from error
+    if identity != expected_identity:
+        raise ValueError("stale query migration report current closure identity differs")
+    if (
+        sum(site.disposition == "approved_core" for site in identity.sites) != approved
+        or sum(site.disposition == "projection_neutral" for site in identity.sites) != neutral
+    ):
+        raise ValueError("malformed query migration report current closure evidence counts")
     return ReportLinkage(
         raw_diagnostic_count=len(current_inventory.diagnostics),
         unresolved_diagnostic_count=0,

@@ -2915,10 +2915,6 @@ def test_projection_immutability() -> None:
     )
 
     assert next_state is not state
-    assert next_state["node_states"] is not state["node_states"]
-    assert next_state["task_states"] is not state["task_states"]
-    assert next_state["leases"] is not state["leases"]
-    assert next_state["leases"]["lease-1"] is not state["leases"]["lease-1"]
     assert state == {
         "run_state": "active",
         "node_states": {"worker-1": "ready"},

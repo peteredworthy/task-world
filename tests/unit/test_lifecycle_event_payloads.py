@@ -8,10 +8,11 @@ from orchestrator.graph import (
     RunLifecycleChangedPayload,
     SequentialIdGenerator,
     build_projection,
+    retry_not_before_by_node_view,
 )
 from tests.unit.graph_test_utils import apply_command, command_context
 from orchestrator.graph_runtime import GraphEventStore
-from orchestrator.graph.commands import event_factory
+from orchestrator.graph import event_factory
 from tests.unit.graph_test_utils import event
 
 
@@ -141,7 +142,7 @@ async def test_sqlite_compact_readers_retain_runtime_retry_backoff() -> None:
             ):
                 compact_events = await reader("run-1")
                 assert compact_events[0].payload["retry_not_before"] == retry_not_before
-                assert build_projection(compact_events)["retry_not_before_by_node"] == {
+                assert retry_not_before_by_node_view(build_projection(compact_events)) == {
                     "worker-1": retry_not_before
                 }
     finally:

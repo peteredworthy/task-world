@@ -18,7 +18,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
 )
 from orchestrator.graph_runtime import GraphEventStore
-from orchestrator.graph.commands import event_factory
+from orchestrator.graph import event_factory
 from tests.unit.graph_test_utils import event
 
 

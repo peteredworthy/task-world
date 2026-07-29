@@ -12,7 +12,7 @@ from orchestrator.graph import (
     evaluate_readiness,
     schedule,
 )
-from orchestrator.graph.scheduler import ResourceClaim
+from orchestrator.graph import SchedulerResourceClaim as ResourceClaim
 
 
 def _repo_claim(

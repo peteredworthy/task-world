@@ -14,9 +14,9 @@ from typing import Any
 import pytest
 
 from orchestrator.graph import node_contract_summary
-from orchestrator.graph.models import EdgeProjection, PatchEnvelope, PatchOp
-from orchestrator.graph.patch_validator import validate_patch
-from orchestrator.graph.projections import GraphProjection, initial_projection
+from orchestrator.graph import EdgeProjection, PatchEnvelope, PatchOp
+from orchestrator.graph import validate_patch
+from orchestrator.graph import GraphProjection, initial_projection
 from tests.unit.graph_test_utils import projection_fixture_replace
 
 

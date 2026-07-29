@@ -23,6 +23,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     QuerySourceApplyPlan,
     SourceSnapshot,
     SourceLocator,
+    compile_current_operation_stream,
     compile_operation_stream,
     compile_fixture_mutation_plan,
     compile_query_migration_report,
@@ -37,6 +38,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     main as migration_main,
     query_migration_report_json,
     run_query_migration_mode,
+    rewrite_graph_submodule_imports,
     write_query_source_apply_plan,
     write_fixture_source_apply_plan,
     write_query_migration_report,
@@ -61,6 +63,61 @@ from scripts.graph_projection_inventory import (
 
 ROOT = Path(__file__).parents[2]
 MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
+
+
+def test_public_graph_import_rewrite_preserves_alias_comments_and_is_idempotent() -> None:
+    source = (
+        "from orchestrator.graph.projections import GraphProjection as Projection  # public\n"
+        "import orchestrator.graph.models as graph_models\n"
+    )
+
+    transformed = rewrite_graph_submodule_imports(source)
+
+    assert transformed == (
+        "from orchestrator.graph import GraphProjection as Projection  # public\n"
+        "import orchestrator.graph as graph_models\n"
+    )
+    assert rewrite_graph_submodule_imports(transformed) == transformed
+
+
+def test_public_graph_import_rewrite_distinguishes_same_terminal_symbol_origins() -> None:
+    source = (
+        "from orchestrator.graph.models import ResourceClaim as ModelResourceClaim  # model\n"
+        "from orchestrator.graph.scheduler import ResourceClaim as SchedulerClaim  # scheduler\n"
+    )
+
+    assert rewrite_graph_submodule_imports(source) == (
+        "from orchestrator.graph import ResourceClaim as ModelResourceClaim  # model\n"
+        "from orchestrator.graph import SchedulerResourceClaim as SchedulerClaim  # scheduler\n"
+    )
+
+
+def test_public_graph_import_rewrite_preserves_scheduler_local_binding() -> None:
+    source = "from orchestrator.graph.scheduler import ResourceClaim\n"
+
+    assert rewrite_graph_submodule_imports(source) == (
+        "from orchestrator.graph import SchedulerResourceClaim as ResourceClaim\n"
+    )
+
+
+def test_current_operation_stream_matches_full_stream_for_representative_sources() -> None:
+    sources = tuple(
+        SourceSnapshot(
+            relative_path=f"tests/source_{index}.py",
+            source=(
+                "from orchestrator.graph import GraphProjection\n\n"
+                "def read(projection: GraphProjection) -> object:\n"
+                "    return projection['run_state']\n"
+            ),
+        )
+        for index in range(4)
+    )
+    manifest = load_manifest(MANIFEST_PATH)
+    inventory = inventory_sources(sources, manifest, require_declaration_facts=True)
+
+    assert compile_current_operation_stream(sources, inventory) == compile_operation_stream(
+        sources, inventory, query_migration_skeleton(inventory)
+    )
 
 
 def _git(repo: Path, *args: str) -> str:

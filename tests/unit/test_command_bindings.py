@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
-from orchestrator.graph.command_bindings import resolve_check_command_definition
+from orchestrator.graph import resolve_check_command_definition
 
 
 def _dynamic_feature_event(dynamic_feature: dict[str, Any]) -> EventEnvelope:

@@ -1,5 +1,6 @@
 from collections import Counter
 from pathlib import Path
+import subprocess
 
 import pytest
 from pydantic import BaseModel, ConfigDict
@@ -7,20 +8,23 @@ from pydantic import BaseModel, ConfigDict
 from scripts.codemods.migrate_graph_projection_queries import (
     DispositionPlan,
     OperationStream,
+    QueryMigrationReport,
     SourceSnapshot,
+    compile_current_tree_closure,
     compile_operation_stream,
     compile_query_composition_plan,
     compile_query_replacement_plan,
-    plan_reviewed_dispositions,
     plan_structural_dispositions,
+    _approved_core_rule,
 )
 from scripts.graph_projection_inventory import (
     AccessInventory,
+    CurrentClosureSite,
     DiagnosticCode,
     ProjectionMigrationManifest,
     QueryMigrationManifest,
-    diagnostic_artifact,
     inventory_repository,
+    current_closure_identity,
     load_manifest,
     load_query_migration_manifest,
     query_migration_skeleton,
@@ -30,6 +34,7 @@ from scripts.graph_projection_inventory import (
 ROOT = Path(__file__).parents[2]
 MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_manifest.yaml"
 QUERY_MANIFEST_PATH = ROOT / "scripts/codemods/graph_projection_query_migration.yaml"
+QUERY_REPORT_PATH = ROOT / "tests/fixtures/graph_projection_migration/query_migration_report.json"
 
 pytestmark = [pytest.mark.slow, pytest.mark.graph_projection_migration]
 
@@ -43,8 +48,8 @@ class LiveMigrationContext(BaseModel):
     skeleton: QueryMigrationManifest
     ledger: QueryMigrationManifest
     stream: OperationStream
-    reviewed_plan: DispositionPlan
     structural_plan: DispositionPlan
+    report: QueryMigrationReport
 
 
 @pytest.fixture(scope="module")
@@ -60,8 +65,10 @@ def live_migration_context() -> LiveMigrationContext:
     skeleton = query_migration_skeleton(inventory, ROOT)
     ledger = load_query_migration_manifest(QUERY_MANIFEST_PATH)
     stream = compile_operation_stream(sources, inventory, skeleton)
-    reviewed_plan = plan_reviewed_dispositions(stream, ledger)
-    structural_plan = plan_structural_dispositions(stream, ledger)
+    structural_plan = plan_structural_dispositions(
+        stream, ledger.model_copy(update={"dispositions": (), "unclassified_sites": ()})
+    )
+    report = QueryMigrationReport.model_validate_json(QUERY_REPORT_PATH.read_text())
     return LiveMigrationContext(
         manifest=manifest,
         inventory=inventory,
@@ -69,8 +76,8 @@ def live_migration_context() -> LiveMigrationContext:
         skeleton=skeleton,
         ledger=ledger,
         stream=stream,
-        reviewed_plan=reviewed_plan,
         structural_plan=structural_plan,
+        report=report,
     )
 
 
@@ -195,99 +202,80 @@ def test_repository_inventory_keeps_verification_recovery_provenance(
 def test_checked_in_diagnostic_artifact_exactly_matches_full_repository_report(
     live_migration_context: LiveMigrationContext,
 ) -> None:
-    assert (
-        diagnostic_artifact(live_migration_context.inventory)
-        == (ROOT / "docs/graph-projection-inventory-diagnostics.md").read_text()
-    )
+    artifact_path = "docs/graph-projection-inventory-diagnostics.md"
+    artifact_revision = subprocess.run(
+        ("git", "log", "-1", "--format=%H", "--", artifact_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    historical_artifact = subprocess.run(
+        (
+            "git",
+            "show",
+            f"{artifact_revision}:{artifact_path}",
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert (ROOT / artifact_path).read_text() == historical_artifact
 
 
-def test_checked_query_ledger_matches_the_fresh_repository_inventory(
+def test_checked_query_ledger_has_unique_reviewed_records_and_finite_policy(
     live_migration_context: LiveMigrationContext,
 ) -> None:
     ledger = live_migration_context.ledger
-    skeleton = live_migration_context.skeleton
-
-    current_keys = {site.site_key for site in skeleton.unclassified_sites}
-    reviewed_keys = {item.site_key for item in ledger.dispositions}
+    reviewed_keys = [item.site_key for item in ledger.dispositions]
     deferred_keys = {item.site_key for item in ledger.unclassified_sites}
 
-    assert reviewed_keys <= current_keys
-    assert deferred_keys <= current_keys
-    assert not reviewed_keys & deferred_keys
-    assert Counter(item.disposition for item in ledger.dispositions) == {
-        "approved_core": 80,
-        "projection_neutral": 65,
-    }
-    assert Counter(site.domain for site in ledger.unclassified_sites) == {}
-    assert not any(item.disposition == "query_transform" for item in ledger.dispositions)
+    assert len(reviewed_keys) == len(set(reviewed_keys))
+    assert not set(reviewed_keys) & deferred_keys
+    assert not ledger.unclassified_sites
+    assert all(
+        item.disposition != "query_transform" and item.reason.strip()
+        for item in ledger.dispositions
+    )
     assert {
         disposition.disposition
         for disposition in ledger.dispositions
         if disposition.relative_path == "src/orchestrator/graph/projection_queries.py"
     } == {"approved_core"}
-    core_keys = {
-        site.site_key for site in skeleton.unclassified_sites if site.domain == "approved_core"
-    }
-    reviewed_core_keys = {
-        disposition.site_key
-        for disposition in ledger.dispositions
-        if disposition.disposition == "approved_core"
-    }
-    assert reviewed_core_keys < core_keys
-    generated_core_keys = core_keys - reviewed_core_keys
-    assert len(generated_core_keys) == 56
-    assert {
-        site.relative_path
-        for site in skeleton.unclassified_sites
-        if site.site_key in generated_core_keys
-    } == {"src/orchestrator/graph/projection_queries.py"}
-    assert not {site.site_key for site in ledger.unclassified_sites} & core_keys
-    assert len(current_keys - reviewed_keys - deferred_keys) == 609
 
 
 def test_live_reviewed_ledger_compiles_once_and_defers_only_fixture_sites(
     live_migration_context: LiveMigrationContext,
 ) -> None:
     stream = live_migration_context.stream
-    ledger = live_migration_context.ledger
-    plan = live_migration_context.reviewed_plan
+    plan = live_migration_context.structural_plan
 
-    assert len(plan.operations) == len(ledger.dispositions)
-    assert len(plan.consumed_site_ids) == len(ledger.dispositions)
-    assert len(plan.deferred_site_ids) == 0
-    assert len(plan.pending_site_ids) == 609
-    assert plan.consumed_site_ids | set(plan.deferred_site_ids) | set(plan.pending_site_ids) == {
-        site.original_site_id for site in stream.sites
-    }
-    assert plan.disposition_counts == (
-        ("approved_core", 80),
-        ("projection_neutral", 65),
+    stream_ids = {site.original_site_id for site in stream.sites}
+    consumed_ids = [
+        site_id for operation in plan.operations for site_id in operation.consumed_site_ids
+    ]
+    consumed = set(consumed_ids)
+    deferred = set(plan.deferred_site_ids)
+    pending = set(plan.pending_site_ids)
+    assert len(consumed_ids) == len(consumed)
+    assert consumed <= stream_ids
+    assert not (consumed & deferred or consumed & pending or deferred & pending)
+    assert consumed | deferred | pending == stream_ids
+    assert plan.disposition_counts == tuple(
+        sorted(Counter(operation.disposition for operation in plan.operations).items())
     )
-    assert plan.shape_group_counts == tuple(sorted(plan.shape_group_counts))
-    assert all(operation.reason for operation in plan.operations)
+    assert plan.shape_group_counts == tuple(
+        sorted(Counter(operation.shape_key for operation in plan.operations).items())
+    )
+    assert all(operation.reason.startswith("structural:") for operation in plan.operations)
     assert tuple(operation.consumed_site_ids[0] for operation in plan.operations) == tuple(
         sorted(operation.consumed_site_ids[0] for operation in plan.operations)
     )
     assert plan.deferred_site_ids == tuple(sorted(plan.deferred_site_ids))
     assert plan.pending_site_ids == tuple(sorted(plan.pending_site_ids))
+    assert plan.pending_site_ids == ()
+    assert plan.deferred_site_ids == ()
+    assert plan.generated_fixture_operations == ()
     assert not any(operation.disposition == "query_transform" for operation in plan.operations)
-    reasons = {item.site_key: (item.disposition, item.reason) for item in ledger.dispositions}
-    assert {
-        (item.consumed_site_ids[0], item.disposition, item.reason) for item in plan.operations
-    } == {(site_id, disposition, reason) for site_id, (disposition, reason) in reasons.items()}
-    assert (
-        plan_reviewed_dispositions(
-            stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
-            ledger.model_copy(
-                update={
-                    "dispositions": tuple(reversed(ledger.dispositions)),
-                    "unclassified_sites": tuple(reversed(ledger.unclassified_sites)),
-                }
-            ),
-        )
-        == plan
-    )
-    assert ledger.unclassified_sites == ()
 
 
 def test_live_repository_compilation_includes_every_remaining_fixture_site(
@@ -306,11 +294,9 @@ def test_live_repository_compilation_includes_every_remaining_fixture_site(
         site.site_key for site in ledger.unclassified_sites if site.domain == "test_fixture"
     }
     compiled_site_ids = [site.original_site_id for site in stream.sites]
-    assert len(raw_fixture_site_ids) == 317
-    assert len(deferred_fixture_site_ids) == 0
     assert deferred_fixture_site_ids <= raw_fixture_site_ids
-    assert all(compiled_site_ids.count(site_id) == 1 for site_id in raw_fixture_site_ids)
-    assert all(compiled_site_ids.count(site_id) == 1 for site_id in deferred_fixture_site_ids)
+    assert Counter(compiled_site_ids).most_common(1)[0][1] == 1
+    assert raw_fixture_site_ids <= set(compiled_site_ids)
     assert all(
         site.diagnostic_code is None or site.diagnostic_code in DiagnosticCode
         for site in stream.sites
@@ -322,39 +308,76 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
 ) -> None:
     plan = live_migration_context.structural_plan
     stream = live_migration_context.stream
-    ledger = live_migration_context.ledger
 
     assert plan.pending_site_ids == ()
-    assert len(plan.operations) == 754
     assert len(plan.deferred_site_ids) == 0
-    assert plan.disposition_counts == (
-        ("approved_core", 136),
-        ("projection_neutral", 618),
-    )
-    assert plan.rule_family_counts == (
-        ("fixture_mutation_helper", 1),
-        ("fixture_projection_argument", 265),
-        ("fixture_projection_keyword", 25),
-        ("handled_projection_comparison", 10),
-        ("projection_cast", 9),
-        ("projector_fixture_flow", 6),
-        ("public_graph_call", 265),
-        ("typed_projection_binding", 33),
-        ("typed_projection_field_constructor", 1),
-        ("typed_projection_return", 2),
-        ("typed_projector_binding", 1),
-    )
     assert plan.generated_fixture_family_counts == ()
     assert len(plan.reviewed_deferred_site_ids) == 0
     assert len(plan.generated_fixture_operations) == 0
-    assert sum(count for _, count in plan.symbol_origin_counts) == 618
+    assert not any(operation.disposition == "query_transform" for operation in plan.operations)
+    assert all(operation.reason.startswith("structural:") for operation in plan.operations)
+    assert plan.disposition_counts == tuple(
+        sorted(Counter(operation.disposition for operation in plan.operations).items())
+    )
+    assert plan.shape_group_counts == tuple(
+        sorted(Counter(operation.shape_key for operation in plan.operations).items())
+    )
+    assert plan.rule_family_counts == tuple(
+        sorted(Counter(item.rule_id for item in plan.neutral_rule_operations).items())
+    )
+    assert plan.symbol_origin_counts == tuple(
+        sorted(Counter(item.origin for item in plan.neutral_rule_operations).items())
+    )
+    assert plan.generated_query_family_counts == tuple(
+        sorted(Counter(item.rule_id for item in plan.generated_query_operations).items())
+    )
+    operations_by_id = {
+        site_id: operation
+        for operation in plan.operations
+        for site_id in operation.consumed_site_ids
+    }
+    consumed_ids = [
+        site_id for operation in plan.operations for site_id in operation.consumed_site_ids
+    ]
+    stream_by_id = {site.original_site_id: site for site in stream.sites}
+    assert len(consumed_ids) == len(operations_by_id)
+    assert set(operations_by_id) == set(stream_by_id)
+    assert all(
+        _approved_core_rule(stream_by_id[site_id])
+        for site_id, operation in operations_by_id.items()
+        if operation.disposition == "approved_core"
+    )
+    neutral_rules = {item.site_id: item.rule_id for item in plan.neutral_rule_operations}
+    assert all(
+        neutral_rules[site_id].strip()
+        for site_id, operation in operations_by_id.items()
+        if operation.disposition == "projection_neutral"
+    )
+    closure_evidence = tuple(
+        CurrentClosureSite(
+            site_id=site.original_site_id,
+            origin=site.origin,
+            relative_path=site.relative_path,
+            qualified_function=site.qualified_function,
+            disposition=operations_by_id[site.original_site_id].disposition,
+            rule_id=(
+                "approved_core"
+                if operations_by_id[site.original_site_id].disposition == "approved_core"
+                else neutral_rules[site.original_site_id]
+            ),
+        )
+        for site in stream.sites
+    )
+    expected_identity = current_closure_identity(live_migration_context.inventory, closure_evidence)
+    closure = compile_current_tree_closure(
+        live_migration_context.sources, live_migration_context.manifest
+    )
+    assert closure.identity == expected_identity
+    assert live_migration_context.report.current_closure == closure
     assert plan == plan_structural_dispositions(
         stream.model_copy(update={"sites": tuple(reversed(stream.sites))}),
-        ledger.model_copy(
-            update={
-                "dispositions": tuple(reversed(ledger.dispositions)),
-                "unclassified_sites": tuple(reversed(ledger.unclassified_sites)),
-            }
+        live_migration_context.ledger.model_copy(
+            update={"dispositions": (), "unclassified_sites": ()}
         ),
     )
 

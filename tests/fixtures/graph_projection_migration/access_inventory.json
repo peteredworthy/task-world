@@ -6244,7 +6244,7 @@
       },
       {
         "code": "unsupported_call",
-        "column": 43,
+        "column": 42,
         "context": {
           "argument_star": null,
           "callee_origin": "orchestrator.graph.projection_queries.resource_claims_for_node",
@@ -6261,7 +6261,7 @@
         "line": 849,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "resource_claims_for_node(projection, node_id)",
-        "normalized_source_pattern": "for claim in _resource_claim_dicts(resource_claims_for_node(projection, node_id))",
+        "normalized_source_pattern": "for claim in resource_claim_dicts(resource_claims_for_node(projection, node_id))",
         "qualified_function": "_existing_resource_claim_rank",
         "relative_path": "src/orchestrator/graph/patch_validator.py",
         "remediation": "replace the dynamic call with a typed projection query",
@@ -12191,7 +12191,7 @@
         "column": 15,
         "context": {
           "argument_star": null,
-          "callee_origin": "orchestrator.graph.projections.projection_to_checkpoint",
+          "callee_origin": "orchestrator.graph.projection_to_checkpoint",
           "keyword_name": null,
           "physical_access_kind": null,
           "physical_old_field_name": null,
@@ -12826,7 +12826,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 171,
+        "line": 175,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "projection_fixture_set(projection, 'node_resource_claims', ('worker-1',), [claim])",
         "normalized_source_pattern": "projection = projection_fixture_set(projection, \"node_resource_claims\", (\"worker-1\",), [claim])",
@@ -17524,62 +17524,6 @@
         "context": null,
         "line": 2918,
         "message": "projection comparison is unsupported",
-        "normalized_cst_expression": "next_state['node_states'] is not state['node_states']",
-        "normalized_source_pattern": "assert next_state[\"node_states\"] is not state[\"node_states\"]",
-        "qualified_function": "test_projection_immutability",
-        "relative_path": "tests/unit/test_graph_projections.py",
-        "remediation": "compare an explicit typed projection field",
-        "same_pattern_ordinal": 0,
-        "source_node_type": "Comparison"
-      },
-      {
-        "code": "unsupported_comparison",
-        "column": 11,
-        "context": null,
-        "line": 2919,
-        "message": "projection comparison is unsupported",
-        "normalized_cst_expression": "next_state['task_states'] is not state['task_states']",
-        "normalized_source_pattern": "assert next_state[\"task_states\"] is not state[\"task_states\"]",
-        "qualified_function": "test_projection_immutability",
-        "relative_path": "tests/unit/test_graph_projections.py",
-        "remediation": "compare an explicit typed projection field",
-        "same_pattern_ordinal": 0,
-        "source_node_type": "Comparison"
-      },
-      {
-        "code": "unsupported_comparison",
-        "column": 11,
-        "context": null,
-        "line": 2920,
-        "message": "projection comparison is unsupported",
-        "normalized_cst_expression": "next_state['leases'] is not state['leases']",
-        "normalized_source_pattern": "assert next_state[\"leases\"] is not state[\"leases\"]",
-        "qualified_function": "test_projection_immutability",
-        "relative_path": "tests/unit/test_graph_projections.py",
-        "remediation": "compare an explicit typed projection field",
-        "same_pattern_ordinal": 0,
-        "source_node_type": "Comparison"
-      },
-      {
-        "code": "unsupported_comparison",
-        "column": 11,
-        "context": null,
-        "line": 2921,
-        "message": "projection comparison is unsupported",
-        "normalized_cst_expression": "next_state['leases']['lease-1'] is not state['leases']['lease-1']",
-        "normalized_source_pattern": "assert next_state[\"leases\"][\"lease-1\"] is not state[\"leases\"][\"lease-1\"]",
-        "qualified_function": "test_projection_immutability",
-        "relative_path": "tests/unit/test_graph_projections.py",
-        "remediation": "compare an explicit typed projection field",
-        "same_pattern_ordinal": 0,
-        "source_node_type": "Comparison"
-      },
-      {
-        "code": "unsupported_comparison",
-        "column": 11,
-        "context": null,
-        "line": 2922,
-        "message": "projection comparison is unsupported",
         "normalized_cst_expression": "state == {'run_state': 'active', 'node_states': {'worker-1': 'ready'}, 'task_states': {'task-1': 'running'}, 'leases': {'lease-1': {'lease_id': 'lease-1', 'state': 'active'}}, 'ready_nodes': ['worker-1'], 'node_kinds': {}, 'node_roles': {}, 'node_creation_positions': {}, 'node_task_regions': {}, 'node_attempts': {}, 'node_candidates': {}, 'node_failed_candidates': {}, 'node_resource_claims': {}, 'node_allowed_actions': {}, 'node_preconditions': {}, 'node_command_definitions': {}, 'edges': {}, 'input_bindings': {}, 'node_pending_appeals': {}, 'node_gate_decisions': {}, 'task_candidates': {}, 'verifier_verdicts': {}, 'completion_decision_passed': False, 'passed_verification_results_by_record_id': {}, 'failed_verification_candidate_ids': {}, 'invalid_test_blocks': {}, 'configured_gates': {}, 'gate_decisions': {}, 'environment_failures': {}, 'file_state_records': {}, 'planner_generation_budget': 8, 'planner_successors': {}, 'planner_generations': {}, 'retry_not_before_by_node': {}, 'cleanup_requested_events': {}, 'cleanup_applied_ids': {}}",
         "normalized_source_pattern": "assert state == {",
         "qualified_function": "test_projection_immutability",
@@ -17604,7 +17548,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 2960,
+        "line": 2956,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "node_states_view(next_state)",
         "normalized_source_pattern": "assert node_states_view(next_state) == {\"worker-1\": \"running\"}",
@@ -17630,7 +17574,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 3666,
+        "line": 3662,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "reduce_event(projection, event)",
         "normalized_source_pattern": "projection = reduce_event(projection, event)",
@@ -17656,7 +17600,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 3667,
+        "line": 3663,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "check_results_view(projection)",
         "normalized_source_pattern": "check_result = check_results_view(projection)[\"check-final-1\"]",
@@ -17682,7 +17626,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 4003,
+        "line": 3999,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "reduce_event(full_projection, event)",
         "normalized_source_pattern": "full_projection = reduce_event(full_projection, event)",
@@ -17708,7 +17652,7 @@
           "projection_role": "keyword",
           "receiver_type_origin": null
         },
-        "line": 4005,
+        "line": 4001,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "project_task_states(events, projection=full_projection)",
         "normalized_source_pattern": "assert project_task_states(events, projection=full_projection) == project_task_states(events)",
@@ -17734,7 +17678,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 4148,
+        "line": 4144,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "reduce_event(projection, event)",
         "normalized_source_pattern": "projection = reduce_event(projection, event)",
@@ -17760,7 +17704,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 4150,
+        "line": 4146,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "task_candidates_view(projection)",
         "normalized_source_pattern": "candidate = task_candidates_view(projection)[\"task-1\"][0]",
@@ -17786,7 +17730,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 4468,
+        "line": 4464,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "reduce_event(initial, _event('unknown_event', {'to_state': 'failed'}))",
         "normalized_source_pattern": "next_state = reduce_event(initial, _event(\"unknown_event\", {\"to_state\": \"failed\"}))",
@@ -17800,7 +17744,7 @@
         "code": "unsupported_comparison",
         "column": 11,
         "context": null,
-        "line": 4470,
+        "line": 4466,
         "message": "projection comparison is unsupported",
         "normalized_cst_expression": "next_state == initial",
         "normalized_source_pattern": "assert next_state == initial",
@@ -17814,7 +17758,7 @@
         "code": "unsupported_comparison",
         "column": 11,
         "context": null,
-        "line": 4471,
+        "line": 4467,
         "message": "projection comparison is unsupported",
         "normalized_cst_expression": "next_state is not initial",
         "normalized_source_pattern": "assert next_state is not initial",
@@ -17840,7 +17784,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 4728,
+        "line": 4724,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "reduce_event(projection, event)",
         "normalized_source_pattern": "projection = reduce_event(projection, event)",
@@ -17866,7 +17810,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 4730,
+        "line": 4726,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "invalid_test_blocks_view(projection)",
         "normalized_source_pattern": "projected = invalid_test_blocks_view(projection)[\"task-1\"]",
@@ -17892,7 +17836,7 @@
           "projection_role": "positional",
           "receiver_type_origin": null
         },
-        "line": 4753,
+        "line": 4749,
         "message": "projection escapes through an unrecognized callable",
         "normalized_cst_expression": "projection_to_checkpoint(projection)",
         "normalized_source_pattern": "restored = projection_from_checkpoint(projection_to_checkpoint(projection))",
@@ -19454,6 +19398,10 @@
         "relative_path": "scripts/check_delegation_boundaries.py"
       },
       {
+        "digest": "160e016ca627ce54aa3d9509f850a9cb1e8979c21d121e93c22b45f4f83138a8",
+        "relative_path": "scripts/check_graph_projection_boundaries.py"
+      },
+      {
         "digest": "0a8f059e829ffcb72d69e22f393a12cdb800e45185173eddf886af161ad9a7c0",
         "relative_path": "scripts/check_module_imports.py"
       },
@@ -19470,7 +19418,7 @@
         "relative_path": "scripts/codemods/__init__.py"
       },
       {
-        "digest": "466fec94e09145b6459a404b7272e6d4c4f52ac9440f6b438484df903d0ddd2f",
+        "digest": "90cc25ba0917b48be56c2729a7af861e631b6459a2eb1d451cb366eb65be3775",
         "relative_path": "scripts/codemods/migrate_graph_projection_queries.py"
       },
       {
@@ -19506,7 +19454,7 @@
         "relative_path": "scripts/generate_graph_projection_goldens.py"
       },
       {
-        "digest": "b1974f32ed1ca63b0a8d884cd76382d651a7dadf3147c0f367c3a15046ebe2e6",
+        "digest": "e1cf8bcb56d279e6bf128c7fa66d741b4c60750a8474bd7e2280a343f78d12b9",
         "relative_path": "scripts/graph_projection_inventory.py"
       },
       {
@@ -20254,7 +20202,7 @@
         "relative_path": "src/orchestrator/git/worktree.py"
       },
       {
-        "digest": "d8a54d0f79611037a64b0f613a1d41a725b7c811738d42e88c0352bc82b87cb5",
+        "digest": "2b251d1801f6f01026b8b290243e6c78f1201120910c32b6317cf2ab4a2cde83",
         "relative_path": "src/orchestrator/graph/__init__.py"
       },
       {
@@ -20330,7 +20278,7 @@
         "relative_path": "src/orchestrator/graph/models.py"
       },
       {
-        "digest": "96134b118b3c3bfd5074cfd0870e8ca0ae380445a5224f1c8c1f997c27313cd4",
+        "digest": "683563f05a752b175af9b9123e1f31b52e640bd6d7bed99034351bbd8ed60766",
         "relative_path": "src/orchestrator/graph/patch_validator.py"
       },
       {
@@ -21158,7 +21106,7 @@
         "relative_path": "tests/integration/test_graph_activity_stream.py"
       },
       {
-        "digest": "3dfa367438d2b2c2939427b4a8755550df80fd430dd6d1210a268a19779c75ef",
+        "digest": "6581219d5337bc0f996f730d196808471672f0e7b93debf01d4b24d43009179a",
         "relative_path": "tests/integration/test_graph_api.py"
       },
       {
@@ -21262,7 +21210,7 @@
         "relative_path": "tests/integration/test_graph_node_detail_read_models.py"
       },
       {
-        "digest": "63c993d6da03501afd82dea91fe017ee9eae5a24854f0c5ffa59cbe5a4fa25ea",
+        "digest": "23edb3b35de37ba312e2834e4e7eb20d068f9c02362478a054f94a81fa991203",
         "relative_path": "tests/integration/test_graph_outbox_crash_points.py"
       },
       {
@@ -21362,7 +21310,7 @@
         "relative_path": "tests/integration/test_output_batching.py"
       },
       {
-        "digest": "bf5523748f832a057dcf41b96ba60ae5f9b714dc65b8218641e82db93f873a86",
+        "digest": "428e507d34266c10a3b96f176ac32b32a9bbd406d91000fd2231a8e3577c9b3c",
         "relative_path": "tests/integration/test_oversight_retired.py"
       },
       {
@@ -21658,7 +21606,7 @@
         "relative_path": "tests/unit/test_branch_ops.py"
       },
       {
-        "digest": "c197a31c24220e4c39caac9a6ad0867638c8fb4addd0be4598fceeb88dc1c85b",
+        "digest": "01c65be22e126c085b6247e9992d113406c0689752e92a79fdf12cce7f05df52",
         "relative_path": "tests/unit/test_callback_patch_command_payloads.py"
       },
       {
@@ -21730,7 +21678,7 @@
         "relative_path": "tests/unit/test_codex_server_transport.py"
       },
       {
-        "digest": "57ed154d9c875b8f83ee1d3068cd76f33bbbf16e114c111d4c4805b17479eb4c",
+        "digest": "3b8b87eb9cf50c7b9a52de630e1f870e0dd20b12853a652d23280ae051051b23",
         "relative_path": "tests/unit/test_command_bindings.py"
       },
       {
@@ -21790,7 +21738,7 @@
         "relative_path": "tests/unit/test_decision_event_payloads.py"
       },
       {
-        "digest": "af955b5c819197deb3e5629eff0092eeafc8331a13819f27e1ea23827ab79b7c",
+        "digest": "8c85ac88f426259a50d97002279ae02faf6f6db9b0313b5701b3ed4662ae4b7e",
         "relative_path": "tests/unit/test_decision_record_command_payloads.py"
       },
       {
@@ -21894,11 +21842,11 @@
         "relative_path": "tests/unit/test_file_state_gatekeeper_event_payloads.py"
       },
       {
-        "digest": "e55ad6e7dc8f5d6b9656bb865854457d32be62d3c6956f829cea2a2d55de23da",
+        "digest": "197a0d5c40fa63007986dd80008ab293822f935446c442c9fe3796ada5d747c0",
         "relative_path": "tests/unit/test_final_review_contracts.py"
       },
       {
-        "digest": "0d5d5fdf9bcf283d2856ec68fb6afac8198c866c652d41779ffc4c19e7d9e1cc",
+        "digest": "e4662ab62aaa8d7bf6b602909918b7a9f01241a9fc5ab0b2c865ffaa082f6773",
         "relative_path": "tests/unit/test_fixture_corpus.py"
       },
       {
@@ -21970,7 +21918,7 @@
         "relative_path": "tests/unit/test_graph_driver_logic.py"
       },
       {
-        "digest": "e1e8122f5bfa8ae28b9da8a948b44f28dcb3aa6ce8121b7396ff03b44cb920d1",
+        "digest": "09f20c28530396b36b049a052085d7b8b2f9d9d1b0ecc164bdf2a639ac6ee253",
         "relative_path": "tests/unit/test_graph_dynamic_contract.py"
       },
       {
@@ -21990,7 +21938,7 @@
         "relative_path": "tests/unit/test_graph_gatekeeper.py"
       },
       {
-        "digest": "8cb97fcb07f76dfcb6c39c5c9b0e5f410c8020c652589bff7406a30940828c10",
+        "digest": "88b0746742ad68e660de504c44370144c47c509a98f2b6d806a24f4b2e8777da",
         "relative_path": "tests/unit/test_graph_horizon_templates.py"
       },
       {
@@ -21998,7 +21946,7 @@
         "relative_path": "tests/unit/test_graph_journal_configuration.py"
       },
       {
-        "digest": "a9e5da68d2a7bfae753132d43839d54135b1e943eb39d19790ef1a08dc511200",
+        "digest": "4a10b335ebd959a08f8c0464bdf9bc2900720f3ed4b4125815ff147f70071863",
         "relative_path": "tests/unit/test_graph_macros.py"
       },
       {
@@ -22010,7 +21958,7 @@
         "relative_path": "tests/unit/test_graph_mcp_tools.py"
       },
       {
-        "digest": "661ae4de805d35ab2db83b2e95f6055fce0b4cbb616de90a110d14c50ea4eebb",
+        "digest": "a270035bc4689e3b923270c5c7a04daf9b26adb2f0af6936962a3a96261bf8a5",
         "relative_path": "tests/unit/test_graph_models.py"
       },
       {
@@ -22034,15 +21982,19 @@
         "relative_path": "tests/unit/test_graph_planner_session.py"
       },
       {
+        "digest": "8272d77f92d2eb0e323ea90cb8e3a72e932eaa174ba32447a506adb5e3e32816",
+        "relative_path": "tests/unit/test_graph_projection_boundaries.py"
+      },
+      {
         "digest": "7e2ac9a0fc675cdca4ef1eee8f786084f5abb206f80df23d4871796d8d270fef",
         "relative_path": "tests/unit/test_graph_projection_goldens.py"
       },
       {
-        "digest": "00d12164f3e83ed803f53476175cba0964cd097ac4a1d598403b40f44e2bf98c",
+        "digest": "ca73aa220d3e7eca78b3bb4d0ac83f23bb5c2d2295a3ce486772e6dbc882edcd",
         "relative_path": "tests/unit/test_graph_projection_inventory.py"
       },
       {
-        "digest": "5e9d4019fded802cc18846771673110a7ae60731e68ba826cfbc7d792c2e29e3",
+        "digest": "834eea8c6fb3ba35a3e00c228abe7b0da8da04bf01b3b6ce250028f3ce1ee58a",
         "relative_path": "tests/unit/test_graph_projection_migration.py"
       },
       {
@@ -22054,7 +22006,7 @@
         "relative_path": "tests/unit/test_graph_projection_test_speed.py"
       },
       {
-        "digest": "f7257064d0c6a553b7a30908ca1d986541d6d8f167a7b43a9b2501f4f87eb4f0",
+        "digest": "ca0d2f1c8bf372d47ee9ef6d4ccf30c88d721b5dff39e09aab269283ec709467",
         "relative_path": "tests/unit/test_graph_projections.py"
       },
       {
@@ -22066,7 +22018,7 @@
         "relative_path": "tests/unit/test_graph_recovery_selection.py"
       },
       {
-        "digest": "65e6b49541d109fe5b53fff28f0fa261b1039ed887abe89722680c8b3b84fe57",
+        "digest": "f93a66246cd8feff764b2cf444f715dc203fd1498b80d49b2be2ce9ac90ea531",
         "relative_path": "tests/unit/test_graph_runtime_store_mirror_guards.py"
       },
       {
@@ -22114,11 +22066,11 @@
         "relative_path": "tests/unit/test_lease_event_payloads.py"
       },
       {
-        "digest": "124afa09b283ff6ee65d3709d5ccfaf4837b7d8f8dab4e1ce3c8879381e5973c",
+        "digest": "512301b63edc156cea70f272cb6bfba5195dd824656956c6ca64b8aca0c5a8a1",
         "relative_path": "tests/unit/test_lifecycle_command_payloads.py"
       },
       {
-        "digest": "f99cae6a408fb35fb1106d08f298e8f06f6b655f3fd00372ee636392748b0a67",
+        "digest": "2e1c8db7284ec1028a60a5412bebe97081aa056395c73108744720cf80014231",
         "relative_path": "tests/unit/test_lifecycle_event_payloads.py"
       },
       {
@@ -22150,7 +22102,7 @@
         "relative_path": "tests/unit/test_merge_readiness.py"
       },
       {
-        "digest": "708ee2af6b894de86e4a14124a00b693768efb617eb8f9bebfde5febf61b7dd1",
+        "digest": "9e6c82768f362f90faed725915b4b9b36c3cbe409fa3db44d7c0e66bb22bb1e5",
         "relative_path": "tests/unit/test_migrate_graph_projection_queries.py"
       },
       {
@@ -22170,7 +22122,7 @@
         "relative_path": "tests/unit/test_model_token_usage.py"
       },
       {
-        "digest": "3528242550fed058b13e347e2232186dd8d6a066cad959a37867240b997ff56e",
+        "digest": "bd65a63dd8986ecc795b97cefedbf22dcd064cfd371305930f8105c583625cb6",
         "relative_path": "tests/unit/test_node_created_event_payloads.py"
       },
       {
@@ -22226,7 +22178,7 @@
         "relative_path": "tests/unit/test_patch_event_payloads.py"
       },
       {
-        "digest": "443d310be7857739d822315029fb8807240790bdd907536a07c6b1005daf7f2c",
+        "digest": "70bc5ae503311850ce246f731dc99fd5f0a36e1895844ff4c981ecb28df51a87",
         "relative_path": "tests/unit/test_patch_validator.py"
       },
       {
@@ -22354,15 +22306,15 @@
         "relative_path": "tests/unit/test_runtime_event_payloads.py"
       },
       {
-        "digest": "e87d1615c01675474e23590405957b2a1eaf7219d373423f04acca62e3c5636b",
+        "digest": "27247c46bb41c41d21208d2354c1a500b8dac401166843e1d40f8a9d82b6810a",
         "relative_path": "tests/unit/test_scenario_harness.py"
       },
       {
-        "digest": "6cef7e92c16019b409535d1d44d931181882f4a0812f225d3cc777613afc9072",
+        "digest": "cdcaeef106e14d105f50541b2e6c53bf2e78e9cad6bc8890c75289c6448ee891",
         "relative_path": "tests/unit/test_scheduler.py"
       },
       {
-        "digest": "86b7faa4d8612f27a289b6a8d40ab7447cda5e4881ec318f0e3aadad68a4fd16",
+        "digest": "b37b6fdb762a70abb2e331a5da3c8e5810db956ec90ec86c45eb2c2f58428191",
         "relative_path": "tests/unit/test_scheduling_command_payloads.py"
       },
       {
@@ -22449,7 +22401,7 @@
   },
   "linkage": {
     "historical_site_count": 542,
-    "raw_diagnostic_count": 749,
+    "raw_diagnostic_count": 745,
     "unresolved_diagnostic_count": 0
   }
 }

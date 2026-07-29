@@ -753,7 +753,7 @@ def _op_resource_claim_dicts(op: dict[str, Any]) -> list[dict[str, Any]]:
     ``create_gate``, ``create_appeal`` via ``node``; ``create_revision_attempt`` via
     ``worker_node``/``verifier_node``).
     """
-    claims = list(_resource_claim_dicts(op.get("resource_claims")))
+    claims = list(resource_claim_dicts(op.get("resource_claims")))
     for node_key in ("node", "worker_node", "verifier_node"):
         node = op.get(node_key)
         if not isinstance(node, dict):
@@ -761,7 +761,7 @@ def _op_resource_claim_dicts(op: dict[str, Any]) -> list[dict[str, Any]]:
         authority = cast(dict[str, Any], node).get("authority")
         if isinstance(authority, dict):
             claims.extend(
-                _resource_claim_dicts(cast(dict[str, Any], authority).get("resource_claims"))
+                resource_claim_dicts(cast(dict[str, Any], authority).get("resource_claims"))
             )
     return claims
 
@@ -835,7 +835,7 @@ def _resource_claim_escalation_reason(
     if existing_rank is None:
         return None
 
-    for claim in _resource_claim_dicts(op.get("resource_claims")):
+    for claim in resource_claim_dicts(op.get("resource_claims")):
         mode = claim.get("mode")
         requested_rank = MODE_RANK.get(mode) if isinstance(mode, str) else None
         if requested_rank is not None and requested_rank > existing_rank:
@@ -846,7 +846,7 @@ def _resource_claim_escalation_reason(
 def _existing_resource_claim_rank(projection: GraphProjection, node_id: str) -> int | None:
     ranks = [
         rank
-        for claim in _resource_claim_dicts(resource_claims_for_node(projection, node_id))
+        for claim in resource_claim_dicts(resource_claims_for_node(projection, node_id))
         if isinstance(claim.get("mode"), str)
         for rank in [MODE_RANK.get(claim["mode"])]
         if rank is not None
@@ -854,7 +854,7 @@ def _existing_resource_claim_rank(projection: GraphProjection, node_id: str) -> 
     return max(ranks) if ranks else None
 
 
-def _resource_claim_dicts(raw_claims: Any) -> list[dict[str, Any]]:
+def resource_claim_dicts(raw_claims: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_claims, Sequence):
         return []
 

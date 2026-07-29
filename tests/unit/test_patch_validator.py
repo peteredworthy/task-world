@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from orchestrator.graph import ResourceClaimProjection
-from orchestrator.graph.models import (
+from orchestrator.graph import (
     Actor,
     ActorKind,
     EdgeProjection,
@@ -12,12 +12,12 @@ from orchestrator.graph.models import (
     PatchEnvelope,
     PatchOp,
 )
-from orchestrator.graph.patch_validator import (
+from orchestrator.graph import (
     PatchValidationResult,
-    _resource_claim_dicts,
+    resource_claim_dicts,
     validate_patch,
 )
-from orchestrator.graph.projections import GraphProjection, initial_projection
+from orchestrator.graph import GraphProjection, initial_projection
 from tests.unit.graph_test_utils import projection_fixture_replace, projection_fixture_set
 
 
@@ -1089,7 +1089,7 @@ def test_set_resource_claims_escalation_rejected() -> None:
 def test_resource_claim_dicts_accepts_read_only_sequence() -> None:
     claim = ResourceClaimProjection(mode="read", scope="repo")
 
-    assert _resource_claim_dicts((claim,)) == [claim.model_dump()]
+    assert resource_claim_dicts((claim,)) == [claim.model_dump()]
 
 
 def test_set_resource_claims_narrowing_accepted() -> None:

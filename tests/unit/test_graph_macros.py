@@ -14,7 +14,7 @@ from orchestrator.graph import (
     reduce_event,
     validate_patch,
 )
-from orchestrator.graph.command_models import SubmitPatchCommand
+from orchestrator.graph import SubmitPatchCommand
 from tests.unit.graph_test_utils import projection_fixture_set, apply_command
 
 

@@ -213,6 +213,14 @@ uv run pyright scripts/check_graph_projection_boundaries.py scripts/graph_projec
 
 Concern: the parallel portion deliberately uses process workers because the LibCST metadata work is CPU-bound; this increases peak process/memory use for large scans. It is limited to eight workers, skipped for fewer than four candidates, and worker failure propagates rather than silently weakening the guard. Existing reported violations remain intentionally unresolved under this task's scope.
 
+## Final migration completion
+
+- The mechanical public-import migration reduced the boundary guard from **48 to 0** violations. The canonical current closure is **750** sites with exact sorted identity/digest evidence in `query_migration_report.json`.
+- RED/GREEN: focused migration tests initially exposed the removed full-report recipe variables; restoring full-mode composition/replacement/fixture compilation made **245** inventory/migration/boundary tests pass. The full migration gate then exposed incomplete public exports; the facade now exports each mechanically migrated symbol.
+- Fast `--assert-clean` intentionally loads no historical tree and compiles no transformation plans. Its fresh inventory and per-source anchoring use bounded process workers while preserving the full stream exactly. Isolated timing: **21.98s** (previously 105.43s). Boundary guard timing: **13.62s**, zero violations.
+- Regenerated the report with `--apply`; `--assert-clean`, inventory diagnose/write-baseline/check, and the boundary guard passed. The historical diagnostic artifact remains unchanged and migration coverage now checks it against the manifest baseline bytes rather than the intentionally transformed current inventory.
+- Final files include the codemod fast closure path, parallel inventory collection, public graph facade exports, transformed consumers, canonical migration report/inventory, and migration coverage. No concerns beyond the bounded process-worker peak memory noted above.
+
 ## Independent-review correctness fixes (uncommitted)
 
 ### Root cause and RED/GREEN
@@ -266,3 +274,47 @@ Candidate instrumentation remained stable: all 764 tracked Python files AST-pars
 ### Concerns
 
 Possible provenance remains deliberately bounded to the collector's existing control-flow alias facts and its finite wrapper forms; it does not infer arbitrary transformations. The unchanged process-worker cap, deterministic `map` order, all-file AST/import scan, exact storage allowlist, and malformed-source fail-closed behavior remain in effect. The known 48 broad-scan violations are still outside this task's migration scope.
+
+## Final Task 3f completion
+
+### Facade collision fix
+
+- The public facade continues to expose the Pydantic `ResourceClaim` unchanged and now exports the scheduler dataclass as `SchedulerResourceClaim`.
+- The LibCST import rewrite keys its public-name rename on the original submodule origin. A scheduler `ResourceClaim` therefore becomes `SchedulerResourceClaim`; when no local alias was supplied, the codemod preserves the consumer's local binding with `as ResourceClaim`.
+- RED/GREEN coverage exercises simultaneous model/scheduler `ResourceClaim` imports with aliases and comments, proves their distinct facade symbols, and checks the unaliased scheduler local-binding case. The scheduler test consumer was restored to its original scheduler import and regenerated with the codemod, yielding `SchedulerResourceClaim as ResourceClaim` rather than a manual broad consumer edit.
+
+### Migration-test cleanup
+
+- Removed generated site-total, disposition-distribution, and rule-family-count snapshots from the migration gate. The historical ledger is now checked as a finite, unique reviewed catalog; current closure uses an empty historical ledger and structural compilation, matching the production current-closure path.
+- The live invariants now prove: exact disjoint consumed/deferred/pending partitioning of known current IDs; unique consumed operation IDs; no pending, deferred, generated-fixture, or query-transform work at closure; approved-core rows satisfy the exact finite core predicate; projection-neutral rows have structural reasons and finite rules; all stored summary Counters equal independently recomputed Counters; and independently constructed current closure evidence has the same identity as both the live closure and canonical report.
+- This permits legitimate generated-site drift after artifact regeneration while still failing missing, duplicate, unclassified, or policy/rule drift.
+
+### Final focused evidence before lint/type/full-suite gate
+
+```text
+uv run pytest tests/unit/test_migrate_graph_projection_queries.py tests/unit/test_scheduler.py tests/unit/test_graph_models.py tests/unit/test_graph_projection_inventory.py tests/unit/test_graph_projection_boundaries.py -q
+407 passed in 7.51s
+
+make test-graph-projection-migration
+11 passed, 3845 deselected in 205.01s
+
+/usr/bin/time -p uv run python -m scripts.codemods.migrate_graph_projection_queries --assert-clean
+query migration assert-clean passed: 750 sites
+real 22.96s
+
+inventory --diagnose / --write-baseline / --check
+Raw collector diagnostics: 745; unresolved flows: 0
+real 35.81s / 36.41s / 34.70s
+
+/usr/bin/time -p uv run python scripts/check_graph_projection_boundaries.py
+exit 0 (zero violations), real 13.75s
+
+uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/integration/test_graph_fr17_acceptance.py -q
+137 passed in 5.15s
+
+uv run ruff format . && uv run ruff check . && uv run pyright
+1 file reformatted; all checks passed; 0 errors, 0 warnings, 0 informations
+
+make test
+5146 passed, 3 skipped, 3 aiosqlite datetime-adapter deprecation warnings in 98.98s
+```

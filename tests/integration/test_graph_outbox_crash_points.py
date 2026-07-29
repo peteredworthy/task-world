@@ -1051,7 +1051,7 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
     cleanup_event = next(
         event for event in events_before if event.event_type == "cleanup_requested"
     )
-    compromised_record = rebuild_projection(events_before)["file_state_records"][record_id]
+    compromised_record = file_state_records_view(rebuild_projection(events_before))[record_id]
     first_cleanup = apply_cleanup_requested(
         worktree_path=repo,
         cleanup_request=cleanup_event.payload,

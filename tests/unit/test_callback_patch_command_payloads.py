@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.graph.command_models import (
+from orchestrator.graph import (
     AcknowledgeStartCommand,
     AgentDiedCommand,
     PatchCommandContext,
@@ -11,7 +11,7 @@ from orchestrator.graph.command_models import (
     SubmitPatchCommand,
 )
 from orchestrator.graph import GraphCommandContext, initial_projection
-from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
+from orchestrator.graph import FakeClock, SequentialIdGenerator
 from tests.unit.graph_test_utils import apply_command
 
 

@@ -8,7 +8,7 @@ from sqlalchemy import update
 
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import RunModel
-from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
+from orchestrator.graph import FakeClock, SequentialIdGenerator
 from orchestrator.graph_runtime import seed_run
 from tests.integration.conftest import cleanup_runs_for_repo
 from tests.integration.signal_helpers import DrainFn

@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.graph.command_models import (
+from orchestrator.graph import (
     ReconcileCommand,
     ScheduleTickCommand,
     SeedCompiledEventsCommand,

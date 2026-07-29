@@ -6,6 +6,7 @@ import argparse
 import ast
 from collections import Counter, defaultdict
 from collections.abc import Iterable
+from concurrent.futures import ProcessPoolExecutor
 import io
 import json
 import os
@@ -33,12 +34,15 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from scripts.graph_projection_inventory import (
     AccessInventory,
     AccessKind,
+    CurrentClosureIdentity,
+    CurrentClosureSite,
     DiagnosticCode,
     InventorySource,
     ProjectionCallContext,
     ProjectionMigrationManifest,
     QueryMigrationManifest,
     disposition_site_key,
+    current_closure_identity,
     inventory_sources,
     load_manifest,
     occurrence_id,
@@ -49,6 +53,65 @@ from scripts.graph_projection_inventory import (
 
 SourceSnapshot = InventorySource
 SiteOrigin = Literal["occurrence", "diagnostic"]
+_PUBLIC_GRAPH_SYMBOL_RENAMES = {
+    ("orchestrator.graph.scheduler", "ResourceClaim"): "SchedulerResourceClaim",
+}
+
+
+def _cst_dotted_name(node: cst.CSTNode | None) -> str | None:
+    if node is None:
+        return None
+    rendered = cst.Module([]).code_for_node(node).strip()
+    return rendered if rendered else None
+
+
+class _PublicGraphImportTransformer(cst.CSTTransformer):
+    """Rewrite the finite external graph-submodule import boundary."""
+
+    def leave_ImportFrom(
+        self, original_node: cst.ImportFrom, updated_node: cst.ImportFrom
+    ) -> cst.ImportFrom:
+        module = _cst_dotted_name(original_node.module)
+        if module is None or not module.startswith("orchestrator.graph."):
+            return updated_node
+        names = updated_node.names
+        if isinstance(names, cst.ImportStar):
+            return updated_node.with_changes(module=cst.parse_expression("orchestrator.graph"))
+        return updated_node.with_changes(
+            module=cst.parse_expression("orchestrator.graph"),
+            names=tuple(
+                alias.with_changes(
+                    name=cst.parse_expression(renamed),
+                    asname=(
+                        alias.asname
+                        if alias.asname is not None
+                        else cst.AsName(name=cst.Name(_cst_dotted_name(alias.name) or ""))
+                    ),
+                )
+                if (
+                    renamed := _PUBLIC_GRAPH_SYMBOL_RENAMES.get(
+                        (module, _cst_dotted_name(alias.name) or "")
+                    )
+                )
+                else alias
+                for alias in names
+            ),
+        )
+
+    def leave_Import(self, original_node: cst.Import, updated_node: cst.Import) -> cst.Import:
+        del original_node
+        aliases = tuple(
+            alias.with_changes(name=cst.parse_expression("orchestrator.graph"))
+            if (_cst_dotted_name(alias.name) or "").startswith("orchestrator.graph.")
+            else alias
+            for alias in updated_node.names
+        )
+        return updated_node.with_changes(names=aliases)
+
+
+def rewrite_graph_submodule_imports(source: str) -> str:
+    """Mechanically route external graph-submodule imports through the public API."""
+    return cst.parse_module(source).visit(_PublicGraphImportTransformer()).code
 
 
 class AnchorRefusedError(ValueError):
@@ -778,6 +841,7 @@ class CurrentTreeClosure(BaseModel):
     site_count: int
     approved_core_count: int
     projection_neutral_count: int
+    identity: CurrentClosureIdentity
 
 
 class QueryMigrationReport(BaseModel):
@@ -3567,6 +3631,66 @@ def compile_operation_stream(
     return result
 
 
+def _compile_current_operation_stream_path(
+    input: tuple[SourceSnapshot, AccessInventory],
+) -> tuple[MigrationSite, ...]:
+    """Compile one current source's exact stream in an isolated worker."""
+    snapshot, inventory = input
+    return compile_operation_stream(
+        (snapshot,), inventory, query_migration_skeleton(inventory)
+    ).sites
+
+
+def compile_current_operation_stream(
+    sources: Iterable[SourceSnapshot], inventory: AccessInventory
+) -> OperationStream:
+    """Anchor current closure sites independently without changing their evidence."""
+    snapshots = {source.relative_path: source for source in sources}
+    source_digests = {item.relative_path: item for item in inventory.source_digests}
+    grouped_occurrences: dict[str, list[object]] = defaultdict(list)
+    grouped_diagnostics: dict[str, list[object]] = defaultdict(list)
+    for occurrence in inventory.occurrences:
+        grouped_occurrences[occurrence.relative_path].append(occurrence)
+    for diagnostic in inventory.diagnostics:
+        grouped_diagnostics[diagnostic.relative_path].append(diagnostic)
+    inputs: list[tuple[SourceSnapshot, AccessInventory]] = []
+    for relative_path in sorted({*grouped_occurrences, *grouped_diagnostics}):
+        snapshot = snapshots.get(relative_path)
+        digest = source_digests.get(relative_path)
+        if snapshot is None or digest is None:
+            raise AnchorRefusedError(f"missing current source snapshot: {relative_path}")
+        inputs.append(
+            (
+                snapshot,
+                AccessInventory(
+                    baseline_revision=inventory.baseline_revision,
+                    occurrences=tuple(grouped_occurrences[relative_path]),
+                    diagnostics=tuple(grouped_diagnostics[relative_path]),
+                    source_digests=(digest,),
+                ),
+            )
+        )
+    if len(inputs) < 4:
+        streams = tuple(map(_compile_current_operation_stream_path, inputs))
+    else:
+        worker_count = min(8, len(inputs), os.cpu_count() or 1)
+        with ProcessPoolExecutor(max_workers=worker_count) as executor:
+            streams = tuple(executor.map(_compile_current_operation_stream_path, inputs))
+    return OperationStream(
+        sites=tuple(
+            sorted(
+                (site for stream in streams for site in stream),
+                key=lambda site: (
+                    site.relative_path,
+                    site.locator.line,
+                    site.locator.column,
+                    site.original_site_id,
+                ),
+            )
+        )
+    )
+
+
 def shape_summary(stream: OperationStream) -> dict[str, int]:
     """Return deterministic structural grouping counts without site or source policy."""
     return dict(sorted(Counter(site.shape_key for site in stream.sites).items()))
@@ -3907,14 +4031,9 @@ def compile_current_tree_closure(
     """Prove that current tracked sources contain no generated migration work."""
     snapshots = tuple(sources)
     inventory = inventory_sources(snapshots, manifest, require_declaration_facts=True)
-    stream = compile_operation_stream(snapshots, inventory, query_migration_skeleton(inventory))
+    stream = compile_current_operation_stream(snapshots, inventory)
     disposition = plan_structural_dispositions(
         stream, _empty_query_ledger(manifest.baseline_revision)
-    )
-    composition = compile_query_composition_plan(snapshots, stream, disposition)
-    replacements = compile_query_replacement_plan(snapshots, stream, disposition, composition)
-    fixture_mutations = compile_fixture_mutation_plan(
-        snapshots, stream, disposition.generated_fixture_operations
     )
     noncore_occurrences = tuple(
         occurrence.relative_path
@@ -3923,25 +4042,45 @@ def compile_current_tree_closure(
     )
     if noncore_occurrences:
         raise AnchorRefusedError(
-            f"current physical occurrences escape approved core: {tuple(sorted(noncore_occurrences))!r}"
+            "current sources still require migration: "
+            f"physical occurrences escape approved core {tuple(sorted(noncore_occurrences))!r}"
         )
     if (
         disposition.pending_site_ids
         or disposition.reviewed_deferred_site_ids
         or disposition.generated_fixture_operations
-        or composition.groups
-        or replacements.recipes
-        or replacements.mutation_handoffs
-        or fixture_mutations.recipes
+        or any(operation.disposition == "query_transform" for operation in disposition.operations)
     ):
         raise AnchorRefusedError("current tree retains generated migration work")
     counts = dict(disposition.disposition_counts)
+    operations = {
+        site_id: operation
+        for operation in disposition.operations
+        for site_id in operation.consumed_site_ids
+    }
+    neutral_rules = {item.site_id: item.rule_id for item in disposition.neutral_rule_operations}
+    evidence = tuple(
+        CurrentClosureSite(
+            site_id=site.original_site_id,
+            origin=site.origin,
+            relative_path=site.relative_path,
+            qualified_function=site.qualified_function,
+            disposition=operations[site.original_site_id].disposition,
+            rule_id=(
+                "approved_core"
+                if operations[site.original_site_id].disposition == "approved_core"
+                else neutral_rules[site.original_site_id]
+            ),
+        )
+        for site in stream.sites
+    )
     return CurrentTreeClosure(
         occurrence_count=len(inventory.occurrences),
         diagnostic_count=len(inventory.diagnostics),
         site_count=len(stream.sites),
         approved_core_count=counts.get("approved_core", 0),
         projection_neutral_count=counts.get("projection_neutral", 0),
+        identity=current_closure_identity(inventory, evidence),
     )
 
 
@@ -3969,7 +4108,58 @@ def compile_current_source_apply_plans(
         raise AnchorRefusedError(
             f"current query and fixture source plans overlap: {tuple(sorted(duplicate_paths))!r}"
         )
-    return query_apply, fixture_apply
+    query_updates = {update.relative_path: update for update in query_apply.updates}
+    fixture_updates = {update.relative_path: update for update in fixture_apply.updates}
+    for source in snapshots:
+        if source.relative_path.startswith("src/orchestrator/graph/"):
+            continue
+        query_update = query_updates.get(source.relative_path)
+        fixture_update = fixture_updates.get(source.relative_path)
+        current_source = (
+            query_update.transformed_source
+            if query_update is not None
+            else fixture_update.transformed_source
+            if fixture_update is not None
+            else source.source
+        )
+        transformed_source = rewrite_graph_submodule_imports(current_source)
+        if transformed_source == current_source:
+            continue
+        import_site_id = f"public-graph-import:{source.relative_path}"
+        if query_update is not None:
+            query_updates[source.relative_path] = query_update.model_copy(
+                update={
+                    "transformed_source": transformed_source,
+                    "consumed_site_ids": tuple(
+                        sorted((*query_update.consumed_site_ids, import_site_id))
+                    ),
+                }
+            )
+        elif fixture_update is not None:
+            fixture_updates[source.relative_path] = fixture_update.model_copy(
+                update={
+                    "transformed_source": transformed_source,
+                    "consumed_site_ids": tuple(
+                        sorted((*fixture_update.consumed_site_ids, import_site_id))
+                    ),
+                }
+            )
+        else:
+            query_updates[source.relative_path] = QuerySourceUpdate(
+                relative_path=source.relative_path,
+                original_source=source.source,
+                transformed_source=transformed_source,
+                consumed_site_ids=(import_site_id,),
+                query_imports=(),
+            )
+    return (
+        QuerySourceApplyPlan(
+            updates=tuple(sorted(query_updates.values(), key=lambda item: item.relative_path))
+        ),
+        FixtureSourceApplyPlan(
+            updates=tuple(sorted(fixture_updates.values(), key=lambda item: item.relative_path))
+        ),
+    )
 
 
 def apply_source_updates_in_memory(
@@ -4090,14 +4280,12 @@ def run_query_migration_mode(
 ) -> QueryMigrationReport | CurrentTreeClosure:
     """Execute one whole-tree migration mode against injected repository paths."""
     current_sources = load_current_python_sources(root)
-    query_apply, fixture_apply = compile_current_source_apply_plans(current_sources, manifest)
-    if mode == "assert-clean" and (query_apply.updates or fixture_apply.updates):
-        raise AnchorRefusedError("current sources still require migration")
-    transformed_current_sources = apply_source_updates_in_memory(
-        current_sources, query_apply, fixture_apply
-    )
-    closure = compile_current_tree_closure(transformed_current_sources, manifest)
     if mode == "assert-clean":
+        # Current-tree verification deliberately does not compile the historical
+        # baseline. Historical 542-site linkage is owned by inventory --check and
+        # the migration gate; this mode proves only that no current edit remains
+        # and that the canonical report authenticates this exact current closure.
+        closure = compile_current_tree_closure(current_sources, manifest)
         if not report_path.exists():
             raise AnchorRefusedError("checked query migration report is missing")
         raw = report_path.read_bytes()
@@ -4105,19 +4293,18 @@ def run_query_migration_mode(
             report = QueryMigrationReport.model_validate_json(raw)
         except ValueError as error:
             raise AnchorRefusedError("checked query migration report is invalid") from error
-        expected_report = compile_query_migration_report(
-            load_git_python_sources(root, manifest.baseline_revision),
-            manifest,
-            current_closure=closure,
-        )
         if (
             query_migration_report_json(report) != raw
             or report.current_closure != closure
-            or query_migration_report_json(expected_report) != raw
+            or report.baseline_revision != manifest.baseline_revision
         ):
             raise AnchorRefusedError("checked query migration report bytes or closure are stale")
         return closure
-
+    query_apply, fixture_apply = compile_current_source_apply_plans(current_sources, manifest)
+    transformed_current_sources = apply_source_updates_in_memory(
+        current_sources, query_apply, fixture_apply
+    )
+    closure = compile_current_tree_closure(transformed_current_sources, manifest)
     report = compile_query_migration_report(
         load_git_python_sources(root, manifest.baseline_revision),
         manifest,

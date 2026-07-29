@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import subprocess
 
@@ -17,7 +18,10 @@ from scripts.graph_projection_inventory import (
     DiagnosticCode,
     InventoryDiagnostic,
     collect_source,
+    current_closure_identity,
+    CurrentClosureSite,
     diagnostic_report,
+    disposition_site_key,
     inventory_paths,
     inventory_repository,
     load_manifest,
@@ -2643,6 +2647,40 @@ def test_report_linkage_resolves_every_historical_diagnostic_without_erasing_raw
 ) -> None:
     from scripts.graph_projection_inventory import validate_report_linkage
 
+    historical = AccessInventory(
+        baseline_revision="baseline",
+        occurrences=(),
+        diagnostics=(
+            InventoryDiagnostic(
+                relative_path="source.py",
+                qualified_function="read",
+                line=1,
+                column=0,
+                code=DiagnosticCode.UNSUPPORTED_CALL,
+                message="raw provenance remains",
+            ),
+        ),
+    )
+    closure_site_id = disposition_site_key(
+        baseline_revision="baseline",
+        relative_path="source.py",
+        qualified_function="read",
+        normalized_source_pattern="<unknown>",
+        diagnostic_code=DiagnosticCode.UNSUPPORTED_CALL,
+    )
+    identity = current_closure_identity(
+        historical,
+        (
+            CurrentClosureSite(
+                site_id=closure_site_id,
+                origin="diagnostic",
+                relative_path="source.py",
+                qualified_function="read",
+                disposition="projection_neutral",
+                rule_id="public_graph_call",
+            ),
+        ),
+    )
     report = tmp_path / "query_migration_report.json"
     report.write_text(
         """{
@@ -2653,7 +2691,8 @@ def test_report_linkage_resolves_every_historical_diagnostic_without_erasing_raw
     "diagnostic_count": 1,
     "site_count": 1,
     "approved_core_count": 0,
-    "projection_neutral_count": 1
+    "projection_neutral_count": 1,
+    "identity": %s
   },
   "disposition_counts": [["projection_neutral", 1]],
   "rule_counts": [["public_graph_call", 1]],
@@ -2669,20 +2708,7 @@ def test_report_linkage_resolves_every_historical_diagnostic_without_erasing_raw
     "after_form": "run_state(projection)"
   }]
 }\n"""
-    )
-    historical = AccessInventory(
-        baseline_revision="baseline",
-        occurrences=(),
-        diagnostics=(
-            InventoryDiagnostic(
-                relative_path="source.py",
-                qualified_function="read",
-                line=1,
-                column=0,
-                code=DiagnosticCode.UNSUPPORTED_CALL,
-                message="raw provenance remains",
-            ),
-        ),
+        % json.dumps(identity.model_dump(mode="json"))
     )
 
     linkage = validate_report_linkage(
@@ -2694,3 +2720,43 @@ def test_report_linkage_resolves_every_historical_diagnostic_without_erasing_raw
 
     assert linkage.raw_diagnostic_count == 1
     assert linkage.unresolved_diagnostic_count == 0
+
+
+def test_current_closure_identity_is_deterministic_and_rejects_site_substitution() -> None:
+    inventory = AccessInventory(
+        baseline_revision="baseline",
+        occurrences=(
+            AccessOccurrence(
+                occurrence_id="occurrence-id",
+                relative_path="source.py",
+                qualified_function="read",
+                normalized_expression="projection['run_state']",
+                same_expression_ordinal=0,
+                old_field_name="run_state",
+                kind=AccessKind.LITERAL_SUBSCRIPT_READ,
+                line=1,
+                column=0,
+                ordering_sensitivity_disposition="insensitive",
+            ),
+        ),
+        diagnostics=(),
+    )
+    evidence = (
+        CurrentClosureSite(
+            site_id="occurrence-id",
+            origin="occurrence",
+            relative_path="source.py",
+            qualified_function="read",
+            disposition="approved_core",
+            rule_id="approved_core",
+        ),
+    )
+
+    identity = current_closure_identity(inventory, evidence)
+
+    assert current_closure_identity(inventory, evidence) == identity
+    with pytest.raises(ValueError, match="current closure site IDs"):
+        current_closure_identity(
+            inventory,
+            (evidence[0].model_copy(update={"site_id": "count-equal-substitution"}),),
+        )
