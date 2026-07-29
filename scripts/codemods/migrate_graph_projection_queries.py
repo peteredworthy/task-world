@@ -10,10 +10,12 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
 import tempfile
+import textwrap
 from typing import Literal
 
 import libcst as cst
@@ -86,6 +88,7 @@ class MigrationSite(BaseModel):
     old_field_name: str | None
     diagnostic_code: DiagnosticCode | None
     normalized_expression: str
+    report_context: str | None = None
     domain: str
     ordinal: int
     source_digest: str
@@ -758,7 +761,7 @@ class QueryMigrationReportSite(BaseModel):
     site_id: str
     relative_path: str
     qualified_function: str
-    disposition: Literal["transformed", "approved_core", "projection_neutral"]
+    disposition: Literal["transformed", "approved_core", "projection_neutral", "rejected"]
     rule_id: str
     before_normalized_form: str
     replacement: str | None
@@ -2117,6 +2120,8 @@ def _context_call_origin(name: QualifiedName | None) -> str | None:
     imported = _approved_import_origin(name)
     if imported is not None:
         return imported
+    if name is not None and name.source.name == "IMPORT" and name.name == "typing.cast":
+        return name.name
     if (
         name is not None
         and name.source.name == "LOCAL"
@@ -2519,6 +2524,7 @@ def _neutral_rule(site: MigrationSite) -> tuple[str, str] | None:
     if (
         site.diagnostic_code is DiagnosticCode.UNSUPPORTED_CALL
         and context is not None
+        and context.callee_origin == "typing.cast"
         and context.projection_role == "positional"
         and context.positional_index == 1
         and context.physical_access_kind is None
@@ -3015,6 +3021,31 @@ def _transparent_parent(node: cst.CSTNode, parents: dict[cst.CSTNode, cst.CSTNod
     return parent
 
 
+def _report_context(
+    node: cst.CSTNode, parents: dict[cst.CSTNode, cst.CSTNode], module: cst.Module
+) -> str | None:
+    """Return the enclosing statement header or simple statement for report rendering."""
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, cst.SimpleStatementLine):
+            return module.code_for_node(current).strip()
+        if isinstance(current, cst.If):
+            return f"if {module.code_for_node(current.test).strip()}:"
+        if isinstance(current, cst.For):
+            asynchronous = "async " if current.asynchronous is not None else ""
+            target = module.code_for_node(current.target).strip()
+            iterable = module.code_for_node(current.iter).strip()
+            return f"{asynchronous}for {target} in {iterable}:"
+        if isinstance(current, cst.While):
+            return f"while {module.code_for_node(current.test).strip()}:"
+        if isinstance(current, cst.With):
+            asynchronous = "async " if current.asynchronous is not None else ""
+            items = ", ".join(module.code_for_node(item).strip() for item in current.items)
+            return f"{asynchronous}with {items}:"
+    return None
+
+
 def _parent_shape(node: cst.CSTNode, parents: dict[cst.CSTNode, cst.CSTNode]) -> str:
     if isinstance(node, cst.Del):
         return "deletion"
@@ -3411,6 +3442,7 @@ def compile_operation_stream(
                     old_field_name=occurrence.old_field_name,
                     diagnostic_code=None,
                     normalized_expression=occurrence.normalized_expression,
+                    report_context=_report_context(node, parents, module),
                     domain=skeleton_site.domain,
                     ordinal=next(
                         ordinal for ordinal, candidate in enumerate(nodes) if candidate is node
@@ -3492,6 +3524,7 @@ def compile_operation_stream(
                     old_field_name=None,
                     diagnostic_code=diagnostic.code,
                     normalized_expression=pattern,
+                    report_context=_report_context(node, parents, module),
                     domain=skeleton_site.domain,
                     ordinal=ordinal,
                     source_digest=source_digest(snapshot.source),
@@ -3637,6 +3670,68 @@ def _empty_query_ledger(revision: str) -> QueryMigrationManifest:
     )
 
 
+def _report_after_form(
+    site: MigrationSite,
+    replacement: str | None,
+    *,
+    original_outer_expression: str | None = None,
+) -> str:
+    """Preserve the anchored statement context around a transformed expression."""
+    if replacement is None:
+        return site.report_context or site.normalized_expression
+    anchor = (
+        _normalized_node(cst.parse_expression(original_outer_expression))
+        if original_outer_expression is not None
+        else site.anchor.normalized_expression
+    )
+    if anchor is None:
+        raise AnchorRefusedError(
+            f"report replacement outer expression is not normalizable: {site.original_site_id}"
+        )
+    normalized_context = site.report_context or site.normalized_expression
+    if re.match(
+        r"^(for|if|while|with|try|except|elif|else|finally)\b", normalized_context
+    ) and not (normalized_context.rstrip().endswith(":")):
+        normalized_context += ":"
+    body = textwrap.indent(normalized_context, "    ")
+    placeholder = "__codemod_report_placeholder__"
+    has_incomplete_compound = body.rstrip().endswith(":")
+    if has_incomplete_compound:
+        body = f"{body}\n        {placeholder}"
+    try:
+        module = cst.parse_module(f"def _report_context() -> None:\n{body}\n")
+    except cst.ParserSyntaxError as error:
+        raise AnchorRefusedError(
+            f"report site has an unparseable normalized context: {site.original_site_id}"
+        ) from error
+
+    class ReplaceAnchor(cst.CSTTransformer):
+        def __init__(self) -> None:
+            self.matches = 0
+
+        def on_leave(self, original_node: cst.CSTNode, updated_node: cst.CSTNode) -> cst.CSTNode:
+            if (
+                isinstance(original_node, cst.BaseExpression)
+                and _normalized_node(original_node) == anchor
+            ):
+                self.matches += 1
+                return cst.parse_expression(replacement)
+            return updated_node
+
+    transformer = ReplaceAnchor()
+    transformed = module.visit(transformer)
+    if transformer.matches != 1:
+        raise AnchorRefusedError(
+            f"report site cannot uniquely replace anchored expression: {site.original_site_id}"
+        )
+    transformed_body = transformed.code.splitlines()[1:]
+    if has_incomplete_compound:
+        if transformed_body[-1].strip() != placeholder:
+            raise AnchorRefusedError("report compound statement placeholder was not preserved")
+        transformed_body.pop()
+    return textwrap.dedent("\n".join(transformed_body)).strip()
+
+
 def compile_query_migration_report(
     sources: Iterable[SourceSnapshot],
     manifest: ProjectionMigrationManifest,
@@ -3703,6 +3798,8 @@ def compile_query_migration_report(
     for site in stream.sites:
         site_id = site.original_site_id
         replacement: str | None = None
+        original_outer_expression: str | None = None
+        replacement_is_statement = False
         if site_id in fixture_recipes:
             recipe = fixture_recipes[site_id]
             report_disposition: Literal["transformed", "approved_core", "projection_neutral"] = (
@@ -3710,6 +3807,7 @@ def compile_query_migration_report(
             )
             rule_id = recipe.rule_id
             replacement = recipe.replacement_statement
+            replacement_is_statement = True
         else:
             operation = operations.get(site_id)
             if operation is None:
@@ -3721,6 +3819,7 @@ def compile_query_migration_report(
                     raise AnchorRefusedError(f"baseline query site has no exact recipe: {site_id}")
                 report_disposition = "transformed"
                 replacement = recipe.replacement_outer_expression
+                original_outer_expression = recipe.original_outer_expression
             elif operation.disposition == "approved_core":
                 report_disposition = "approved_core"
                 rule_id = "approved_core"
@@ -3766,6 +3865,7 @@ def compile_query_migration_report(
                     report_disposition = "transformed"
                     rule_id = "physical_wrapper:" + "+".join(recipe.rule_ids)
                     replacement = recipe.replacement_outer_expression
+                    original_outer_expression = recipe.original_outer_expression
                 else:
                     report_disposition = "projection_neutral"
             else:
@@ -3779,7 +3879,15 @@ def compile_query_migration_report(
                 rule_id=rule_id,
                 before_normalized_form=site.normalized_expression,
                 replacement=replacement,
-                after_form=replacement or site.normalized_expression,
+                after_form=(
+                    replacement
+                    if replacement_is_statement
+                    else _report_after_form(
+                        site,
+                        replacement,
+                        original_outer_expression=original_outer_expression,
+                    )
+                ),
             )
         )
     rows.sort(key=lambda item: item.site_id)
@@ -3837,6 +3945,53 @@ def compile_current_tree_closure(
     )
 
 
+def compile_current_source_apply_plans(
+    sources: Iterable[SourceSnapshot], manifest: ProjectionMigrationManifest
+) -> tuple[QuerySourceApplyPlan, FixtureSourceApplyPlan]:
+    """Compile every current-tree source rewrite without touching the filesystem."""
+    snapshots = tuple(sources)
+    inventory = inventory_sources(snapshots, manifest, require_declaration_facts=True)
+    stream = compile_operation_stream(snapshots, inventory, query_migration_skeleton(inventory))
+    disposition = plan_structural_dispositions(
+        stream, _empty_query_ledger(manifest.baseline_revision)
+    )
+    composition = compile_query_composition_plan(snapshots, stream, disposition)
+    replacements = compile_query_replacement_plan(snapshots, stream, disposition, composition)
+    fixture_mutations = compile_fixture_mutation_plan(
+        snapshots, stream, disposition.generated_fixture_operations
+    )
+    query_apply = apply_query_replacement_plan(snapshots, replacements)
+    fixture_apply = apply_fixture_mutation_plan(snapshots, fixture_mutations)
+    duplicate_paths = {update.relative_path for update in query_apply.updates} & {
+        update.relative_path for update in fixture_apply.updates
+    }
+    if duplicate_paths:
+        raise AnchorRefusedError(
+            f"current query and fixture source plans overlap: {tuple(sorted(duplicate_paths))!r}"
+        )
+    return query_apply, fixture_apply
+
+
+def apply_source_updates_in_memory(
+    sources: Iterable[SourceSnapshot],
+    query_apply: QuerySourceApplyPlan,
+    fixture_apply: FixtureSourceApplyPlan,
+) -> tuple[SourceSnapshot, ...]:
+    """Return source snapshots after independently validated non-overlapping updates."""
+    updates = {
+        update.relative_path: update for update in (*query_apply.updates, *fixture_apply.updates)
+    }
+    snapshots = tuple(sources)
+    if len(updates) != len(query_apply.updates) + len(fixture_apply.updates):
+        raise AnchorRefusedError("current source updates have duplicate paths")
+    return tuple(
+        source.model_copy(update={"source": updates[source.relative_path].transformed_source})
+        if source.relative_path in updates
+        else source
+        for source in snapshots
+    )
+
+
 def query_migration_report_json(report: QueryMigrationReport) -> bytes:
     """Return canonical report JSON bytes with a trailing newline."""
     return (
@@ -3877,6 +4032,55 @@ def write_query_migration_report(
             temporary.unlink()
 
 
+def write_repository_migration_apply(
+    root: Path,
+    query_apply: QuerySourceApplyPlan,
+    fixture_apply: FixtureSourceApplyPlan,
+    report_path: Path,
+    report: QueryMigrationReport,
+    *,
+    expected_report_bytes: bytes | None,
+) -> None:
+    """Atomically replace all prevalidated source updates and the checked report."""
+    root = root.resolve()
+    source_updates = (*query_apply.updates, *fixture_apply.updates)
+    targets: list[tuple[Path, str, int]] = []
+    for update in source_updates:
+        relative = Path(update.relative_path)
+        target = (root / relative).resolve()
+        if relative.is_absolute() or root not in target.parents:
+            raise AnchorRefusedError("repository migration source path escapes the repository root")
+        if not target.is_file() or target.read_text() != update.original_source:
+            raise AnchorRefusedError(
+                f"repository migration source changed before atomic apply: {update.relative_path}"
+            )
+        targets.append((target, update.transformed_source, target.stat().st_mode))
+    if expected_report_bytes is None:
+        if report_path.exists():
+            raise AnchorRefusedError("query migration report changed before atomic apply")
+    elif not report_path.is_file() or report_path.read_bytes() != expected_report_bytes:
+        raise AnchorRefusedError("query migration report changed before atomic apply")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    targets.append((report_path, query_migration_report_json(report).decode(), 0o644))
+    temporary_paths: list[tuple[Path, Path]] = []
+    try:
+        for target, contents, mode in targets:
+            descriptor, temporary_name = tempfile.mkstemp(dir=target.parent, suffix=".tmp")
+            temporary = Path(temporary_name)
+            with os.fdopen(descriptor, "w") as handle:
+                handle.write(contents)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temporary, mode)
+            temporary_paths.append((target, temporary))
+        for target, temporary in temporary_paths:
+            os.replace(temporary, target)
+    finally:
+        for _, temporary in temporary_paths:
+            if temporary.exists():
+                temporary.unlink()
+
+
 def run_query_migration_mode(
     root: Path,
     manifest: ProjectionMigrationManifest,
@@ -3886,7 +4090,11 @@ def run_query_migration_mode(
 ) -> QueryMigrationReport | CurrentTreeClosure:
     """Execute one whole-tree migration mode against injected repository paths."""
     current_sources = load_current_python_sources(root)
-    closure = compile_current_tree_closure(current_sources, manifest)
+    query_apply, fixture_apply = compile_current_source_apply_plans(current_sources, manifest)
+    transformed_current_sources = apply_source_updates_in_memory(
+        current_sources, query_apply, fixture_apply
+    )
+    closure = compile_current_tree_closure(transformed_current_sources, manifest)
     if mode == "assert-clean":
         if not report_path.exists():
             raise AnchorRefusedError("checked query migration report is missing")
@@ -3917,7 +4125,14 @@ def run_query_migration_mode(
         expected = report_path.read_bytes() if report_path.exists() else None
         if load_current_python_sources(root) != current_sources:
             raise AnchorRefusedError("current tracked sources changed before atomic apply")
-        write_query_migration_report(report_path, report, expected_bytes=expected)
+        write_repository_migration_apply(
+            root,
+            query_apply,
+            fixture_apply,
+            report_path,
+            report,
+            expected_report_bytes=expected,
+        )
     elif mode != "check":
         raise AnchorRefusedError(f"unknown query migration mode: {mode}")
     return report

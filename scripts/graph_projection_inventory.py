@@ -1906,11 +1906,28 @@ class _Collector(cst.CSTVisitor):
         )
         return name.name if name.name.rpartition(".")[0] in approved_modules else None
 
+    def _typing_cast_origin(self, node: cst.CSTNode) -> str | None:
+        """Resolve only the imported ``typing.cast`` symbol used by the codemod."""
+        resolved = self.get_metadata(QualifiedNameProvider, node, frozenset())
+        names = resolved() if callable(resolved) else resolved
+        if not isinstance(names, set) or len(names) != 1:
+            return None
+        name = next(iter(names))
+        if (
+            isinstance(name, QualifiedName)
+            and name.source.name == "IMPORT"
+            and name.name == "typing.cast"
+        ):
+            return name.name
+        return None
+
     def _call_context(self, node: cst.CSTNode) -> ProjectionCallContext | None:
         """Capture one collector-proven call role without performing new dataflow."""
         if not isinstance(node, cst.Call):
             return None
-        callee_origin = self._qualified_import_origin(node.func)
+        callee_origin = self._qualified_import_origin(node.func) or self._typing_cast_origin(
+            node.func
+        )
         if (
             callee_origin is None
             and isinstance(node.func, cst.Attribute)
