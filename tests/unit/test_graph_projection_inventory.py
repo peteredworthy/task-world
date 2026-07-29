@@ -2636,3 +2636,61 @@ def pass_through(projection: GraphProjection) -> object:
             "projection_expression": "projection",
         },
     }
+
+
+def test_report_linkage_resolves_every_historical_diagnostic_without_erasing_raw_evidence(
+    tmp_path: Path,
+) -> None:
+    from scripts.graph_projection_inventory import validate_report_linkage
+
+    report = tmp_path / "query_migration_report.json"
+    report.write_text(
+        """{
+  "baseline_revision": "baseline",
+  "baseline_site_count": 1,
+  "current_closure": {
+    "occurrence_count": 0,
+    "diagnostic_count": 1,
+    "site_count": 1,
+    "approved_core_count": 0,
+    "projection_neutral_count": 1
+  },
+  "disposition_counts": [["projection_neutral", 1]],
+  "rule_counts": [["public_graph_call", 1]],
+  "schema_version": 1,
+  "sites": [{
+    "site_id": "diagnostic-id",
+    "relative_path": "source.py",
+    "qualified_function": "read",
+    "disposition": "projection_neutral",
+    "rule_id": "public_graph_call",
+    "before_normalized_form": "projection['run_state']",
+    "replacement": null,
+    "after_form": "run_state(projection)"
+  }]
+}\n"""
+    )
+    historical = AccessInventory(
+        baseline_revision="baseline",
+        occurrences=(),
+        diagnostics=(
+            InventoryDiagnostic(
+                relative_path="source.py",
+                qualified_function="read",
+                line=1,
+                column=0,
+                code=DiagnosticCode.UNSUPPORTED_CALL,
+                message="raw provenance remains",
+            ),
+        ),
+    )
+
+    linkage = validate_report_linkage(
+        report,
+        historical,
+        historical,
+        historical_site_ids=("diagnostic-id",),
+    )
+
+    assert linkage.raw_diagnostic_count == 1
+    assert linkage.unresolved_diagnostic_count == 0

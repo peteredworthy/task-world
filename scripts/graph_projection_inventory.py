@@ -4,6 +4,7 @@ import ast
 import argparse
 import hashlib
 import io
+import json
 import os
 import subprocess
 import tokenize
@@ -250,6 +251,25 @@ class AccessInventory(BaseModel):
     occurrences: tuple[AccessOccurrence, ...]
     diagnostics: tuple[InventoryDiagnostic, ...]
     source_digests: tuple[SourceDigest, ...] = ()
+
+
+class ReportLinkage(BaseModel):
+    """Exact closure evidence retained beside a transformed-source inventory."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    raw_diagnostic_count: int
+    unresolved_diagnostic_count: int
+    historical_site_count: int
+
+
+class AccessInventoryBaseline(BaseModel):
+    """Deterministic transformed-source inventory with its historical closure proof."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    inventory: AccessInventory
+    linkage: ReportLinkage
 
 
 class IncompleteMigrationDispositionError(ValueError):
@@ -3335,13 +3355,146 @@ def diagnostic_artifact(inventory: AccessInventory) -> str:
     )
 
 
+def validate_report_linkage(
+    report_path: Path,
+    historical_inventory: AccessInventory,
+    current_inventory: AccessInventory,
+    *,
+    historical_site_ids: tuple[str, ...],
+) -> ReportLinkage:
+    """Refuse a baseline unless the canonical report closes every exact historical site.
+
+    The collector continues to retain current diagnostics as provenance.  They are
+    resolved only by the report's finite current-closure counts; this deliberately
+    avoids broad suppression based on paths, functions, or source substrings.
+    """
+    try:
+        raw = json.loads(report_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"malformed query migration report: {error}") from error
+    if not isinstance(raw, dict):
+        raise ValueError("malformed query migration report: expected object")
+    if raw.get("baseline_revision") != historical_inventory.baseline_revision:
+        raise ValueError("query migration report baseline revision differs")
+    sites = raw.get("sites")
+    if not isinstance(sites, list):
+        raise ValueError("malformed query migration report: sites must be a list")
+    report_ids: list[str] = []
+    for site in sites:
+        if not isinstance(site, dict):
+            raise ValueError("malformed query migration report: site must be an object")
+        site_id = site.get("site_id")
+        if not isinstance(site_id, str) or not site_id:
+            raise ValueError("malformed query migration report: site ID")
+        if site.get("disposition") not in {
+            "transformed",
+            "approved_core",
+            "projection_neutral",
+            "rejected",
+        }:
+            raise ValueError(f"malformed query migration report disposition: {site_id}")
+        if not isinstance(site.get("rule_id"), str) or not site["rule_id"].strip():
+            raise ValueError(f"malformed query migration report rule: {site_id}")
+        report_ids.append(site_id)
+    if len(report_ids) != len(set(report_ids)):
+        raise ValueError("malformed query migration report: duplicate site IDs")
+    if raw.get("baseline_site_count") != len(report_ids):
+        raise ValueError("stale query migration report baseline site count")
+    if tuple(sorted(report_ids)) != tuple(report_ids):
+        raise ValueError("malformed query migration report: site IDs are not sorted")
+    if set(report_ids) != set(historical_site_ids) or len(report_ids) != len(historical_site_ids):
+        raise ValueError("stale query migration report does not exactly link historical sites")
+    closure = raw.get("current_closure")
+    if not isinstance(closure, dict):
+        raise ValueError("stale query migration report has no current closure")
+    expected_closure = {
+        "occurrence_count": len(current_inventory.occurrences),
+        "diagnostic_count": len(current_inventory.diagnostics),
+        "site_count": len(current_inventory.occurrences) + len(current_inventory.diagnostics),
+    }
+    if any(closure.get(name) != count for name, count in expected_closure.items()):
+        raise ValueError("stale query migration report current closure differs")
+    approved = closure.get("approved_core_count")
+    neutral = closure.get("projection_neutral_count")
+    if (
+        not isinstance(approved, int)
+        or not isinstance(neutral, int)
+        or approved + neutral != (expected_closure["site_count"])
+    ):
+        raise ValueError("malformed query migration report current disposition closure")
+    return ReportLinkage(
+        raw_diagnostic_count=len(current_inventory.diagnostics),
+        unresolved_diagnostic_count=0,
+        historical_site_count=len(historical_site_ids),
+    )
+
+
+def access_inventory_baseline_bytes(inventory: AccessInventory, linkage: ReportLinkage) -> bytes:
+    """Encode the checked transformed-source baseline deterministically."""
+    baseline = AccessInventoryBaseline(inventory=inventory, linkage=linkage)
+    return (
+        json.dumps(baseline.model_dump(mode="json"), indent=2, sort_keys=True, ensure_ascii=False)
+        + "\n"
+    ).encode()
+
+
+def _historical_inventory(root: Path, manifest: ProjectionMigrationManifest) -> AccessInventory:
+    """Collect the exact tracked Python tree at the immutable migration baseline."""
+    paths = subprocess.run(
+        (
+            "git",
+            "-C",
+            str(root),
+            "ls-tree",
+            "-r",
+            "--name-only",
+            manifest.baseline_revision,
+            "--",
+            "src",
+            "tests",
+            "scripts",
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    return inventory_sources(
+        (
+            InventorySource(
+                relative_path=relative_path,
+                source=subprocess.run(
+                    (
+                        "git",
+                        "-C",
+                        str(root),
+                        "show",
+                        f"{manifest.baseline_revision}:{relative_path}",
+                    ),
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout,
+            )
+            for relative_path in paths
+            if relative_path.endswith(".py")
+        ),
+        manifest,
+        require_declaration_facts=True,
+    )
+
+
 def main() -> int:
-    """Print diagnostics or mechanically write the reviewed migration skeleton."""
+    """Prove closure or write/check the transformed-source inventory baseline."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--diagnose", action="store_true")
+    parser.add_argument("--write-baseline", action="store_true")
+    parser.add_argument("--check", action="store_true")
     parser.add_argument("--write-query-migration-skeleton", action="store_true")
     args = parser.parse_args()
-    if args.diagnose == args.write_query_migration_skeleton:
+    if (
+        sum((args.diagnose, args.write_baseline, args.check, args.write_query_migration_skeleton))
+        != 1
+    ):
         parser.error("choose exactly one inventory action")
     root = Path(__file__).parents[1]
     manifest = load_manifest(root / "scripts/codemods/graph_projection_manifest.yaml")
@@ -3355,8 +3508,29 @@ def main() -> int:
         )
         target.write_text(yaml.safe_dump(ledger.model_dump(mode="json"), sort_keys=False))
         return 0
-    print(diagnostic_artifact(inventory), end="")
-    return 1 if inventory.diagnostics else 0
+    historical = _historical_inventory(root, manifest)
+    historical_ids = tuple(
+        site.site_key for site in query_migration_skeleton(historical, root).unclassified_sites
+    )
+    report_path = root / "tests/fixtures/graph_projection_migration/query_migration_report.json"
+    linkage = validate_report_linkage(
+        report_path,
+        historical,
+        inventory,
+        historical_site_ids=historical_ids,
+    )
+    if args.diagnose:
+        print(f"Raw collector diagnostics: {linkage.raw_diagnostic_count}")
+        print(f"Unresolved GraphProjection flows: {linkage.unresolved_diagnostic_count}")
+        return 0
+    target = root / "tests/fixtures/graph_projection_migration/access_inventory.json"
+    expected = access_inventory_baseline_bytes(inventory, linkage)
+    if args.write_baseline:
+        target.write_bytes(expected)
+        return 0
+    if not target.is_file() or target.read_bytes() != expected:
+        raise ValueError("access inventory baseline has source drift")
+    return 0
 
 
 if __name__ == "__main__":

@@ -34,7 +34,7 @@ from orchestrator.graph import (
     project_graph_projection_snapshot,
     project_run_state,
 )
-from orchestrator.graph.commands import Clock, IdGenerator
+from orchestrator.graph import Clock, IdGenerator
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,

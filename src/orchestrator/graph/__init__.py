@@ -7,7 +7,7 @@ from orchestrator.graph.command_bindings import (
     check_command_uses_acceptance_fallback,
     resolve_check_command_definition,
 )
-from orchestrator.graph.commands import apply_command, serialize_event_payload
+from orchestrator.graph.commands import Clock, IdGenerator, apply_command, serialize_event_payload
 from orchestrator.graph.command_models import (
     GraphCommandContext,
     PatchCommandFields,
@@ -76,6 +76,7 @@ from orchestrator.graph.models import (
     FileStateAcceptedPayload,
     FileStateRejectedPayload,
     GatekeeperCostRecordedPayload,
+    GapClassificationRecord,
     GatekeeperVerdictRecordedPayload,
     GradeRow,
     GraphPatchAcceptedPayload,
@@ -365,6 +366,7 @@ __all__ = [
     "RETIRED_EVENT_TYPES",
     "EventEnvelope",
     "FakeClock",
+    "Clock",
     "FileStateRecord",
     "FileStateAcceptedPayload",
     "FileStateRejectedPayload",
@@ -390,6 +392,7 @@ __all__ = [
     "GraphProjectionSnapshot",
     "GraphRunOutcome",
     "GraphCommandContext",
+    "GapClassificationRecord",
     "InMemoryEventStore",
     "InputEdgeInfo",
     "InputBindingProjection",
@@ -438,6 +441,7 @@ __all__ = [
     "CheckResultRecord",
     "SchedulerView",
     "SequentialIdGenerator",
+    "IdGenerator",
     "SUMMARY_REBUILD_PAYLOAD_FIELDS",
     "VerificationResultProjection",
     "VerificationOutcomePayload",
