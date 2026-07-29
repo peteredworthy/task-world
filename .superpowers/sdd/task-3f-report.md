@@ -356,3 +356,35 @@ uv run ruff format --check scripts/codemods/migrate_graph_projection_queries.py 
 uv run pyright scripts/codemods/migrate_graph_projection_queries.py tests/unit/test_migrate_graph_projection_queries.py tests/unit/test_graph_projection_migration.py
 0 errors, 0 warnings, 0 informations
 ```
+
+## Independent review follow-up: complete catalog and exact call oracle
+
+### RED / GREEN
+
+```text
+RED
+uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_catalog_preserves_every_migrated_local_binding tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_catalog_exactly_covers_migration_diff -q
+2 failed in 5.94s
+
+GREEN
+uv run pytest tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_catalog_preserves_every_migrated_local_binding tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_catalog_exactly_covers_migration_diff tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_preserves_alias_comments_and_is_idempotent tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_distinguishes_same_terminal_symbol_origins tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_preserves_scheduler_local_binding tests/unit/test_migrate_graph_projection_queries.py::test_public_graph_import_rewrite_fails_closed_for_unsupported_imports -q
+9 passed in 5.63s
+
+RED
+uv run pytest -o addopts='' --timeout=240 --run-slow -m graph_projection_migration tests/unit/test_graph_projection_migration.py::test_structural_plan_closes_reviewed_and_public_query_test_sites tests/unit/test_graph_projection_migration.py::test_independent_semantic_policy_rejects_operation_and_allowed_policy_drift -q
+1 failed, 1 passed in 95.30s; the old oracle accepted an allowed `apply_command` origin with the wrong keyword argument relationship.
+
+GREEN
+same focused command
+2 passed in 94.87s
+```
+
+### Catalog and oracle policy
+
+- Replaced the partial module-to-symbol sets with an explicit `(source module, source symbol) -> public facade symbol` catalog. It covers the migrated clock, command binding/model/command, graph model and payload, patch-validator, projection, scenario, scheduler, and store imports, plus the concrete projection-query and scheduler fixture imports used by the codemod tests.
+- The origin-specific renames are part of the same catalog: scheduler `ResourceClaim` becomes `SchedulerResourceClaim as ResourceClaim`, and private patch-validator `_resource_claim_dicts` becomes public `resource_claim_dicts as _resource_claim_dicts`. Existing aliases remain untouched.
+- A real-git regression parses every changed Python file at `2aabb3737` and `27a5026a1`, computes the exact removed named graph-submodule pairs, and compares that set to the catalog after excluding the finite query/scheduler source-fixture entries. A second assembled regression rewrites every catalog entry, checks its public symbol/local binding, and checks second-run idempotence.
+- The independent migration oracle now requires every planned operation to consume exactly one site before indexing it. Its explicit public-call policy enumerates each accepted facade/query/runtime origin and its exact positional index or `projection` keyword relationship, and requires terminal `call` shape.
+- Negative evidence checks now use a different but valid neutral rule, an allowed public origin paired with the wrong argument relationship, and a grouped two-site operation. Production classification is not rerun or used as the oracle in any case.
+
+Final focused rerun: import rewrite/catalog **9 passed in 6.49s**; independent migration policy **2 passed in 111.24s**; focused Ruff/format and Pyright passed.

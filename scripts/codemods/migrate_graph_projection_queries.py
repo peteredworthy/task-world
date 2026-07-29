@@ -54,15 +54,119 @@ from scripts.graph_projection_inventory import (
 SourceSnapshot = InventorySource
 SiteOrigin = Literal["occurrence", "diagnostic"]
 _PUBLIC_GRAPH_IMPORTS = {
-    "orchestrator.graph.models": frozenset({"ResourceClaim"}),
-    "orchestrator.graph.projection_queries": frozenset(
-        {"node_kind", "node_states_view", "run_state"}
-    ),
-    "orchestrator.graph.projections": frozenset({"GraphProjection"}),
-    "orchestrator.graph.scheduler": frozenset({"NodeScheduleInfo", "ResourceClaim"}),
-}
-_PUBLIC_GRAPH_SYMBOL_RENAMES = {
+    ("orchestrator.graph.clock", "FakeClock"): "FakeClock",
+    ("orchestrator.graph.clock", "SequentialIdGenerator"): "SequentialIdGenerator",
+    (
+        "orchestrator.graph.command_bindings",
+        "resolve_check_command_definition",
+    ): "resolve_check_command_definition",
+    ("orchestrator.graph.command_models", "AcknowledgeStartCommand"): "AcknowledgeStartCommand",
+    ("orchestrator.graph.command_models", "AgentDiedCommand"): "AgentDiedCommand",
+    ("orchestrator.graph.command_models", "CompleteCommand"): "CompleteCommand",
+    ("orchestrator.graph.command_models", "EvaluateJoinCommand"): "EvaluateJoinCommand",
+    (
+        "orchestrator.graph.command_models",
+        "GatekeeperVerdictCommandRow",
+    ): "GatekeeperVerdictCommandRow",
+    ("orchestrator.graph.command_models", "GraphCommandContext"): "GraphCommandContext",
+    ("orchestrator.graph.command_models", "PatchCommandContext"): "PatchCommandContext",
+    ("orchestrator.graph.command_models", "RaiseAppealCommand"): "RaiseAppealCommand",
+    ("orchestrator.graph.command_models", "ReconcileCommand"): "ReconcileCommand",
+    ("orchestrator.graph.command_models", "RecordDecisionCommand"): "RecordDecisionCommand",
+    ("orchestrator.graph.command_models", "RecordHeartbeatCommand"): "RecordHeartbeatCommand",
+    (
+        "orchestrator.graph.command_models",
+        "RecordRequirementRevisionCommand",
+    ): "RecordRequirementRevisionCommand",
+    (
+        "orchestrator.graph.command_models",
+        "RecordSupportEvidenceCommand",
+    ): "RecordSupportEvidenceCommand",
+    ("orchestrator.graph.command_models", "ScheduleTickCommand"): "ScheduleTickCommand",
+    (
+        "orchestrator.graph.command_models",
+        "SeedCompiledEventsCommand",
+    ): "SeedCompiledEventsCommand",
+    ("orchestrator.graph.command_models", "SubmitCallbackCommand"): "SubmitCallbackCommand",
+    ("orchestrator.graph.command_models", "SubmitPatchCommand"): "SubmitPatchCommand",
+    ("orchestrator.graph.commands", "COMMAND_SPECS"): "COMMAND_SPECS",
+    ("orchestrator.graph.commands", "IdGenerator"): "IdGenerator",
+    ("orchestrator.graph.commands", "apply_command"): "apply_command",
+    ("orchestrator.graph.commands", "event_factory"): "event_factory",
+    ("orchestrator.graph.commands", "serialize_event_payload"): "serialize_event_payload",
+    ("orchestrator.graph.models", "Actor"): "Actor",
+    ("orchestrator.graph.models", "ActorKind"): "ActorKind",
+    ("orchestrator.graph.models", "AnalysisSummaryRecord"): "AnalysisSummaryRecord",
+    ("orchestrator.graph.models", "AnalysisSummaryValue"): "AnalysisSummaryValue",
+    ("orchestrator.graph.models", "ArtifactReferenceRecord"): "ArtifactReferenceRecord",
+    ("orchestrator.graph.models", "ArtifactReferenceValue"): "ArtifactReferenceValue",
+    ("orchestrator.graph.models", "Authority"): "Authority",
+    ("orchestrator.graph.models", "AuthorityDecisionRecord"): "AuthorityDecisionRecord",
+    ("orchestrator.graph.models", "AuthorityRequestRecord"): "AuthorityRequestRecord",
+    ("orchestrator.graph.models", "CallbackEnvelope"): "CallbackEnvelope",
+    ("orchestrator.graph.models", "CandidateProjection"): "CandidateProjection",
+    ("orchestrator.graph.models", "CandidateRecord"): "CandidateRecord",
+    ("orchestrator.graph.models", "CheckResultRecord"): "CheckResultRecord",
+    ("orchestrator.graph.models", "CheckResultValue"): "CheckResultValue",
+    ("orchestrator.graph.models", "CompletionDecisionRecord"): "CompletionDecisionRecord",
+    ("orchestrator.graph.models", "DecisionRecord"): "DecisionRecord",
+    ("orchestrator.graph.models", "DecisionRequestRecord"): "DecisionRequestRecord",
+    ("orchestrator.graph.models", "EdgeModel"): "EdgeModel",
+    ("orchestrator.graph.models", "EdgeProjection"): "EdgeProjection",
+    ("orchestrator.graph.models", "EventEnvelope"): "EventEnvelope",
+    ("orchestrator.graph.models", "FailureRecord"): "FailureRecord",
+    ("orchestrator.graph.models", "FailureRecordValue"): "FailureRecordValue",
+    ("orchestrator.graph.models", "FileEntry"): "FileEntry",
+    ("orchestrator.graph.models", "FileStateRecord"): "FileStateRecord",
+    ("orchestrator.graph.models", "GapClassificationRecord"): "GapClassificationRecord",
+    ("orchestrator.graph.models", "GapClassificationValue"): "GapClassificationValue",
+    ("orchestrator.graph.models", "GraphPatchProposalRecord"): "GraphPatchProposalRecord",
+    ("orchestrator.graph.models", "GraphPatchResultRecord"): "GraphPatchResultRecord",
+    ("orchestrator.graph.models", "GraphRecord"): "GraphRecord",
+    ("orchestrator.graph.models", "GraphRecordKind"): "GraphRecordKind",
+    ("orchestrator.graph.models", "InputBinding"): "InputBinding",
+    ("orchestrator.graph.models", "JoinResultRecord"): "JoinResultRecord",
+    ("orchestrator.graph.models", "LeaseModel"): "LeaseModel",
+    ("orchestrator.graph.models", "LeaseState"): "LeaseState",
+    ("orchestrator.graph.models", "NodeKind"): "NodeKind",
+    ("orchestrator.graph.models", "NodeMembership"): "NodeMembership",
+    ("orchestrator.graph.models", "NodeModel"): "NodeModel",
+    ("orchestrator.graph.models", "NodeState"): "NodeState",
+    ("orchestrator.graph.models", "OutputRecord"): "OutputRecord",
+    ("orchestrator.graph.models", "PatchEnvelope"): "PatchEnvelope",
+    ("orchestrator.graph.models", "PatchOp"): "PatchOp",
+    ("orchestrator.graph.models", "PlannerChainRegionPayload"): "PlannerChainRegionPayload",
+    ("orchestrator.graph.models", "PortModel"): "PortModel",
+    ("orchestrator.graph.models", "RecordSelector"): "RecordSelector",
+    ("orchestrator.graph.models", "RecoveryPlanRecord"): "RecoveryPlanRecord",
+    ("orchestrator.graph.models", "RecoveryPlanValue"): "RecoveryPlanValue",
+    ("orchestrator.graph.models", "RequirementRecord"): "RequirementRecord",
+    ("orchestrator.graph.models", "RequirementRecordValue"): "RequirementRecordValue",
+    ("orchestrator.graph.models", "ResourceClaim"): "ResourceClaim",
+    ("orchestrator.graph.models", "RoutineSnapshotRecord"): "RoutineSnapshotRecord",
+    ("orchestrator.graph.models", "RoutineSnapshotValue"): "RoutineSnapshotValue",
+    ("orchestrator.graph.models", "RunContextRecord"): "RunContextRecord",
+    ("orchestrator.graph.models", "RunContextValue"): "RunContextValue",
+    ("orchestrator.graph.models", "RunLifecycleState"): "RunLifecycleState",
+    ("orchestrator.graph.models", "RunModel"): "RunModel",
+    ("orchestrator.graph.models", "VerificationReportRecord"): "VerificationReportRecord",
+    ("orchestrator.graph.models", "VerificationReportValue"): "VerificationReportValue",
+    ("orchestrator.graph.models", "VerifierVerdictProjection"): "VerifierVerdictProjection",
+    ("orchestrator.graph.patch_validator", "PatchValidationResult"): "PatchValidationResult",
+    ("orchestrator.graph.patch_validator", "_resource_claim_dicts"): "resource_claim_dicts",
+    ("orchestrator.graph.patch_validator", "validate_patch"): "validate_patch",
+    ("orchestrator.graph.projection_queries", "node_kind"): "node_kind",
+    ("orchestrator.graph.projection_queries", "node_states_view"): "node_states_view",
+    ("orchestrator.graph.projection_queries", "run_state"): "run_state",
+    ("orchestrator.graph.projections", "GraphProjection"): "GraphProjection",
+    ("orchestrator.graph.projections", "build_projection"): "build_projection",
+    ("orchestrator.graph.projections", "initial_projection"): "initial_projection",
+    ("orchestrator.graph.projections", "projection_to_checkpoint"): "projection_to_checkpoint",
+    ("orchestrator.graph.scenario", "run_scenario"): "run_scenario",
+    ("orchestrator.graph.scheduler", "NodeScheduleInfo"): "NodeScheduleInfo",
     ("orchestrator.graph.scheduler", "ResourceClaim"): "SchedulerResourceClaim",
+    ("orchestrator.graph.store", "DuplicateEventError"): "DuplicateEventError",
+    ("orchestrator.graph.store", "InMemoryEventStore"): "InMemoryEventStore",
 }
 
 
@@ -87,11 +191,14 @@ class _PublicGraphImportTransformer(cst.CSTTransformer):
         if module is None or not module.startswith("orchestrator.graph."):
             return updated_node
         names = updated_node.names
-        supported = _PUBLIC_GRAPH_IMPORTS.get(module)
-        if isinstance(names, cst.ImportStar) or supported is None:
+        if isinstance(names, cst.ImportStar):
             raise AnchorRefusedError(f"unsupported graph submodule import: {module}")
         imported = tuple(_cst_dotted_name(alias.name) or "" for alias in names)
-        unsupported = sorted(set(imported) - supported)
+        unsupported = sorted(
+            source_symbol
+            for source_symbol in set(imported)
+            if (module, source_symbol) not in _PUBLIC_GRAPH_IMPORTS
+        )
         if unsupported:
             raise AnchorRefusedError(
                 f"unsupported graph submodule import: {module} {unsupported!r}"
@@ -107,11 +214,8 @@ class _PublicGraphImportTransformer(cst.CSTTransformer):
                         else cst.AsName(name=cst.Name(_cst_dotted_name(alias.name) or ""))
                     ),
                 )
-                if (
-                    renamed := _PUBLIC_GRAPH_SYMBOL_RENAMES.get(
-                        (module, _cst_dotted_name(alias.name) or "")
-                    )
-                )
+                if (renamed := _PUBLIC_GRAPH_IMPORTS[(module, _cst_dotted_name(alias.name) or "")])
+                != (_cst_dotted_name(alias.name) or "")
                 else alias
                 for alias in names
             ),

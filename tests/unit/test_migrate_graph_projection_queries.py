@@ -1,4 +1,5 @@
 from collections import Counter
+import ast
 import json
 from pathlib import Path
 import subprocess
@@ -42,6 +43,7 @@ from scripts.codemods.migrate_graph_projection_queries import (
     write_query_source_apply_plan,
     write_fixture_source_apply_plan,
     write_query_migration_report,
+    _PUBLIC_GRAPH_IMPORTS,
     _generated_fixture_rule,
     _generated_query_rule,
     _neutral_rule,
@@ -94,6 +96,81 @@ def test_public_graph_import_rewrite_preserves_scheduler_local_binding() -> None
     assert rewrite_graph_submodule_imports(source) == (
         "from orchestrator.graph import SchedulerResourceClaim as ResourceClaim\n"
     )
+
+
+def test_public_graph_import_catalog_preserves_every_migrated_local_binding() -> None:
+    source = "".join(
+        f"from {module} import {symbol}\n" for module, symbol in sorted(_PUBLIC_GRAPH_IMPORTS)
+    )
+
+    transformed = rewrite_graph_submodule_imports(source)
+
+    expected = "".join(
+        f"from orchestrator.graph import {public_symbol}"
+        f"{' as ' + source_symbol if public_symbol != source_symbol else ''}\n"
+        for (source_module, source_symbol), public_symbol in sorted(_PUBLIC_GRAPH_IMPORTS.items())
+    )
+    assert transformed == expected
+    assert rewrite_graph_submodule_imports(transformed) == transformed
+
+
+def test_public_graph_import_catalog_exactly_covers_migration_diff() -> None:
+    base = "2aabb3737"
+    migration = "27a5026a1"
+    changed_files = subprocess.run(
+        ("git", "diff", "--name-only", base, migration, "--", "*.py"),
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+
+    def imports(revision: str, relative_path: str) -> Counter[tuple[str, str]]:
+        result = subprocess.run(
+            ("git", "show", f"{revision}:{relative_path}"),
+            cwd=ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode:
+            return Counter()
+        return Counter(
+            (node.module, alias.name)
+            for node in ast.walk(ast.parse(result.stdout))
+            if isinstance(node, ast.ImportFrom)
+            and node.module is not None
+            and node.module.startswith("orchestrator.graph.")
+            for alias in node.names
+            if alias.name != "*"
+        )
+
+    migrated_pairs = set().union(
+        *(
+            (imports(base, relative_path) - imports(migration, relative_path)).keys()
+            for relative_path in changed_files
+        )
+    )
+    fixture_only_pairs = {
+        ("orchestrator.graph.projection_queries", "node_kind"),
+        ("orchestrator.graph.projection_queries", "node_states_view"),
+        ("orchestrator.graph.projection_queries", "run_state"),
+        ("orchestrator.graph.scheduler", "NodeScheduleInfo"),
+    }
+
+    assert set(_PUBLIC_GRAPH_IMPORTS) - fixture_only_pairs == migrated_pairs
+    assert {
+        pair: public_symbol
+        for pair, public_symbol in _PUBLIC_GRAPH_IMPORTS.items()
+        if pair
+        in {
+            ("orchestrator.graph.patch_validator", "_resource_claim_dicts"),
+            ("orchestrator.graph.scheduler", "ResourceClaim"),
+        }
+    } == {
+        ("orchestrator.graph.patch_validator", "_resource_claim_dicts"): "resource_claim_dicts",
+        ("orchestrator.graph.scheduler", "ResourceClaim"): "SchedulerResourceClaim",
+    }
 
 
 @pytest.mark.parametrize(

@@ -92,6 +92,106 @@ _NEUTRAL_RULE_IDS = frozenset(
         "projector_fixture_flow",
     }
 )
+_PUBLIC_GRAPH_POSITION_ZERO_CALLS = frozenset(
+    {
+        "orchestrator.graph.apply_command",
+        "orchestrator.graph.commands.apply_command",
+        "orchestrator.graph.edges_view",
+        "orchestrator.graph.environment_failures_view",
+        "orchestrator.graph.file_state_records_view",
+        "orchestrator.graph.input_bindings_view",
+        "orchestrator.graph.leases_view",
+        "orchestrator.graph.node_kinds_view",
+        "orchestrator.graph.node_states_view",
+        "orchestrator.graph.node_task_regions_view",
+        "orchestrator.graph.planner_generation_budget",
+        "orchestrator.graph.planner_generations_view",
+        "orchestrator.graph.planner_session_carryovers_view",
+        "orchestrator.graph.planner_sessions_view",
+        "orchestrator.graph.project_decision_view_from_projection",
+        "orchestrator.graph.projection_queries.accepted_graph_patches_by_node_view",
+        "orchestrator.graph.projection_queries.accepted_no_successor_patches_by_node_view",
+        "orchestrator.graph.projection_queries.accepted_output_records_by_node_port_view",
+        "orchestrator.graph.projection_queries.accepted_record_summaries_by_id_view",
+        "orchestrator.graph.projection_queries.active_requirement_versions_view",
+        "orchestrator.graph.projection_queries.callback_idempotency_events_view",
+        "orchestrator.graph.projection_queries.check_results_view",
+        "orchestrator.graph.projection_queries.cleanup_applied_ids_view",
+        "orchestrator.graph.projection_queries.cleanup_requested_events_view",
+        "orchestrator.graph.projection_queries.completion_decision_passed",
+        "orchestrator.graph.projection_queries.edges_view",
+        "orchestrator.graph.projection_queries.failed_verification_candidate_ids_view",
+        "orchestrator.graph.projection_queries.failed_verification_results_by_record_id_view",
+        "orchestrator.graph.projection_queries.file_state_records_view",
+        "orchestrator.graph.projection_queries.input_bindings_view",
+        "orchestrator.graph.projection_queries.last_deferred_reasons_view",
+        "orchestrator.graph.projection_queries.latest_routine_snapshot_record",
+        "orchestrator.graph.projection_queries.leases_view",
+        "orchestrator.graph.projection_queries.node_attempts_view",
+        "orchestrator.graph.projection_queries.node_command_definitions_view",
+        "orchestrator.graph.projection_queries.node_creation_positions_view",
+        "orchestrator.graph.projection_queries.node_failed_candidates_view",
+        "orchestrator.graph.projection_queries.node_gate_decisions_view",
+        "orchestrator.graph.projection_queries.node_kinds_view",
+        "orchestrator.graph.projection_queries.node_pending_appeals_view",
+        "orchestrator.graph.projection_queries.node_preconditions_view",
+        "orchestrator.graph.projection_queries.node_resource_claims_view",
+        "orchestrator.graph.projection_queries.node_roles_view",
+        "orchestrator.graph.projection_queries.node_states_view",
+        "orchestrator.graph.projection_queries.node_task_regions_view",
+        "orchestrator.graph.projection_queries.output_records_by_node_port_view",
+        "orchestrator.graph.projection_queries.passed_verification_candidate_ids_view",
+        "orchestrator.graph.projection_queries.passed_verification_results_by_record_id_view",
+        "orchestrator.graph.projection_queries.planner_generation_budget",
+        "orchestrator.graph.projection_queries.planner_generations_view",
+        "orchestrator.graph.projection_queries.planner_sessions_view",
+        "orchestrator.graph.projection_queries.ready_nodes_view",
+        "orchestrator.graph.projection_queries.recorded_node_usage_keys_view",
+        "orchestrator.graph.projection_queries.recovery_nodes_by_record_id_view",
+        "orchestrator.graph.projection_queries.resource_claims_for_node",
+        "orchestrator.graph.projection_queries.retry_not_before_by_node_view",
+        "orchestrator.graph.projection_queries.run_state",
+        "orchestrator.graph.projection_queries.task_candidates_view",
+        "orchestrator.graph.projection_queries.task_states_view",
+        "orchestrator.graph.projection_queries.verifier_verdicts_view",
+        "orchestrator.graph.projection_to_checkpoint",
+        "orchestrator.graph.ready_nodes_view",
+        "orchestrator.graph.run_state",
+        "orchestrator.graph.task_states_view",
+    }
+)
+_PUBLIC_GRAPH_KEYWORD_CALLS = frozenset(
+    {
+        "orchestrator.graph.project_decision_view",
+        "orchestrator.graph.project_final_invariant_blockers",
+        "orchestrator.graph.project_graph_projection_snapshot",
+        "orchestrator.graph.project_lease_view",
+        "orchestrator.graph.project_leases",
+        "orchestrator.graph.project_node_metadata",
+        "orchestrator.graph.project_node_states",
+        "orchestrator.graph.project_ready_nodes",
+        "orchestrator.graph.project_run_state",
+        "orchestrator.graph.project_scheduler_view",
+        "orchestrator.graph.project_task_states",
+    }
+)
+_PUBLIC_GRAPH_CALL_POLICY = {
+    **{
+        origin: frozenset({("positional", 0, None)}) for origin in _PUBLIC_GRAPH_POSITION_ZERO_CALLS
+    },
+    **{
+        origin: frozenset({("keyword", None, "projection")})
+        for origin in _PUBLIC_GRAPH_KEYWORD_CALLS
+    },
+    "orchestrator.graph.callbacks.validate_callback": frozenset({("positional", 1, None)}),
+    "orchestrator.graph.patch_validator.validate_patch": frozenset({("positional", 3, None)}),
+    "orchestrator.graph.projections.final_invariant_blockers_for_events": frozenset(
+        {("positional", 1, None)}
+    ),
+    "orchestrator.graph_runtime.store.GraphEventStore.persist_projection_snapshot": frozenset(
+        {("positional", 1, None)}
+    ),
+}
 
 pytestmark = [pytest.mark.slow, pytest.mark.graph_projection_migration]
 
@@ -142,6 +242,7 @@ def _assert_independent_semantic_policy(stream: OperationStream, plan: Dispositi
     sites = {site.original_site_id: site for site in stream.sites}
     neutral = {item.site_id: item for item in plan.neutral_rule_operations}
     for operation in plan.operations:
+        assert len(operation.consumed_site_ids) == 1
         site = sites[operation.consumed_site_ids[0]]
         context = site.anchor.context
         if operation.disposition == "approved_core":
@@ -236,18 +337,11 @@ def _assert_independent_semantic_policy(stream: OperationStream, plan: Dispositi
         elif evidence.rule_id == "public_graph_call":
             assert context is not None
             assert context.callee_origin == evidence.origin
-            if context.projection_role == "keyword":
-                assert context.keyword_name == "projection"
-            else:
-                assert context.projection_role == "positional"
-                special_positions = {
-                    "orchestrator.graph.callbacks.validate_callback": 1,
-                    "orchestrator.graph.commands.apply_command": 0,
-                    "orchestrator.graph.patch_validator.validate_patch": 3,
-                    "orchestrator.graph.projections.final_invariant_blockers_for_events": 1,
-                    "orchestrator.graph_runtime.store.GraphEventStore.persist_projection_snapshot": 1,
-                }
-                assert context.positional_index == special_positions.get(context.callee_origin, 0)
+            assert evidence.origin in _PUBLIC_GRAPH_CALL_POLICY
+            assert (context.projection_role, context.positional_index, context.keyword_name) in (
+                _PUBLIC_GRAPH_CALL_POLICY[evidence.origin]
+            )
+            assert site.operation_shape == "call"
         else:
             assert evidence.rule_id == "projector_fixture_flow"
             assert context is not None
@@ -531,22 +625,82 @@ def test_structural_plan_closes_reviewed_and_public_query_test_sites(
     )
 
 
-def test_independent_semantic_policy_rejects_nonblank_rule_drift(
+def test_independent_semantic_policy_rejects_operation_and_allowed_policy_drift(
     live_migration_context: LiveMigrationContext,
 ) -> None:
     plan = live_migration_context.structural_plan
-    first = plan.neutral_rule_operations[0]
-    altered = plan.model_copy(
+    sites_by_id = {site.original_site_id: site for site in live_migration_context.stream.sites}
+    public_evidence = next(
+        item
+        for item in plan.neutral_rule_operations
+        if item.rule_id == "public_graph_call"
+        and (context := sites_by_id[item.site_id].anchor.context) is not None
+        and context.projection_role == "keyword"
+    )
+    wrong_rule_plan = plan.model_copy(
         update={
-            "neutral_rule_operations": (
-                first.model_copy(update={"rule_id": "drifted_nonblank_rule"}),
-                *plan.neutral_rule_operations[1:],
+            "neutral_rule_operations": tuple(
+                item.model_copy(update={"rule_id": "typed_projection_return"})
+                if item.site_id == public_evidence.site_id
+                else item
+                for item in plan.neutral_rule_operations
             )
         }
     )
-
     with pytest.raises(AssertionError):
-        _assert_independent_semantic_policy(live_migration_context.stream, altered)
+        _assert_independent_semantic_policy(live_migration_context.stream, wrong_rule_plan)
+
+    wrong_origin = "orchestrator.graph.apply_command"
+    public_context = sites_by_id[public_evidence.site_id].anchor.context
+    assert public_context is not None
+    wrong_origin_plan = plan.model_copy(
+        update={
+            "neutral_rule_operations": tuple(
+                item.model_copy(update={"origin": wrong_origin})
+                if item.site_id == public_evidence.site_id
+                else item
+                for item in plan.neutral_rule_operations
+            )
+        }
+    )
+    wrong_origin_stream = live_migration_context.stream.model_copy(
+        update={
+            "sites": tuple(
+                site.model_copy(
+                    update={
+                        "anchor": site.anchor.model_copy(
+                            update={
+                                "context": public_context.model_copy(
+                                    update={"callee_origin": wrong_origin}
+                                )
+                            }
+                        )
+                    }
+                )
+                if site.original_site_id == public_evidence.site_id
+                else site
+                for site in live_migration_context.stream.sites
+            )
+        }
+    )
+    with pytest.raises(AssertionError):
+        _assert_independent_semantic_policy(wrong_origin_stream, wrong_origin_plan)
+
+    first, second = plan.operations[:2]
+    grouped_plan = plan.model_copy(
+        update={
+            "operations": (
+                first.model_copy(
+                    update={
+                        "consumed_site_ids": (*first.consumed_site_ids, *second.consumed_site_ids)
+                    }
+                ),
+                *plan.operations[1:],
+            )
+        }
+    )
+    with pytest.raises(AssertionError):
+        _assert_independent_semantic_policy(live_migration_context.stream, grouped_plan)
 
 
 def test_live_query_composition_plan_has_no_remaining_query_transform_sites(
