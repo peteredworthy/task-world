@@ -59,7 +59,10 @@ class FrozenMap[K, V](Mapping[K, V]):
         )
         return core_schema.no_info_after_validator_function(
             cls,
-            dictionary_schema,
+            core_schema.no_info_before_validator_function(
+                _mapping_to_dict,
+                dictionary_schema,
+            ),
             serialization=core_schema.wrap_serializer_function_ser_schema(
                 _serialize_frozen_map,
                 schema=dictionary_schema,
@@ -72,6 +75,13 @@ def _serialize_frozen_map(
     handler: core_schema.SerializerFunctionWrapHandler,
 ) -> Any:
     return handler(dict(value))
+
+
+def _mapping_to_dict(value: object) -> object:
+    """Permit persistent mappings to be revalidated by nested Pydantic fields."""
+    if isinstance(value, Mapping):
+        return dict(cast(Mapping[object, object], value))
+    return value
 
 
 type JsonScalar = None | bool | int | float | str

@@ -204,6 +204,11 @@ from orchestrator.graph.projection_collections import (
     map_update,
     thaw_json,
 )
+from orchestrator.graph.projection_models import (
+    ImmutableGraphProjection,
+    ProjectedRecord,
+    project_record,
+)
 from orchestrator.graph.projection_queries import (
     active_leases,
     active_requirement_version,
@@ -470,6 +475,7 @@ __all__ = [
     "FrozenJsonValue",
     "FrozenJsonValueError",
     "FrozenMap",
+    "ImmutableGraphProjection",
     "EventPayloadSpec",
     "GatekeeperTaxonomy",
     "GatekeeperCostRecordedPayload",
@@ -512,6 +518,7 @@ __all__ = [
     "OversightDecisionProjection",
     "PLANNER_OPS",
     "PROJECTION_SCHEMA_VERSION",
+    "ProjectedRecord",
     "PatchEnvelope",
     "PatchCommandFields",
     "PatchCommandContext",
@@ -696,6 +703,7 @@ __all__ = [
     "project_planner_freshness_packet",
     "project_planner_session",
     "project_ready_nodes",
+    "project_record",
     "project_requirement_freshness_facts",
     "project_requirement_revisions",
     "project_residue_report",
