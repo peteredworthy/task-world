@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "scenarios": {
+    "edge-heavy": {"description": "Alternating real nodes and dependency edges", "event_mix": "node_created,edge_created"},
+    "general": {"description": "Balanced real nodes, state changes, and output records", "event_mix": "node_created,node_state_changed,output_record_accepted"},
+    "record-heavy": {"description": "Real output records with deterministic payload values", "event_mix": "node_created,output_record_accepted"}
+  }
+}
