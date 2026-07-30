@@ -205,25 +205,61 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
             fail(path, f"references ambiguous candidate {value!r}: {', '.join(sorted(paths))}")
 
     def resolve_requirement(value: str | None, path: str) -> None:
-        requirement_ids = {
-            revision.requirement_id for revision in projection.requirements.revisions_by_id.values()
-        }
+        requirement_ids = (
+            {
+                revision.requirement_id
+                for revision in projection.requirements.revisions_by_id.values()
+            }
+            if path.count(".") == 2
+            and path.startswith("requirements.active_version_id_by_requirement.")
+            else projection.requirements.active_version_id_by_requirement
+        )
         reference(requirement_ids, value, path, "requirement")
 
     def resolve_revision(value: str | None, path: str) -> None:
-        reference(projection.requirements.revisions_by_id, value, path, "requirement revision")
+        revisions = projection.requirements.revisions_by_id
+        represented = (
+            {item.version_id for item in revisions.values()}
+            if path.count(".") == 2 and path.startswith("requirements.revisions_by_id.")
+            else revisions
+        )
+        reference(represented, value, path, "requirement revision")
 
     def resolve_support(value: str | None, path: str) -> None:
-        reference(projection.requirements.support_by_id, value, path, "support")
+        supports = projection.requirements.support_by_id
+        represented = (
+            {item.support_id for item in supports.values()}
+            if path.count(".") == 2 and path.startswith("requirements.support_by_id.")
+            else supports
+        )
+        reference(represented, value, path, "support")
 
     def resolve_lease(value: str | None, path: str) -> None:
-        reference(projection.execution.leases, value, path, "lease")
+        leases = projection.execution.leases
+        represented = (
+            {item.lease_id for item in leases.values()}
+            if path.count(".") == 2 and path.startswith("execution.leases.")
+            else leases
+        )
+        reference(represented, value, path, "lease")
 
     def resolve_cleanup(value: str | None, path: str) -> None:
-        reference(projection.execution.cleanup_requests_by_id, value, path, "cleanup request")
+        cleanups = projection.execution.cleanup_requests_by_id
+        represented = (
+            {item.cleanup_id for item in cleanups.values()}
+            if path.count(".") == 2 and path.startswith("execution.cleanup_requests_by_id.")
+            else cleanups
+        )
+        reference(represented, value, path, "cleanup request")
 
     def resolve_edge(value: str | None, path: str) -> None:
-        reference(projection.topology.edges, value, path, "edge")
+        edges = projection.topology.edges
+        represented = (
+            {item.edge_id for item in edges.values()}
+            if path.count(".") == 2 and path.startswith("topology.edges.")
+            else edges
+        )
+        reference(represented, value, path, "edge")
 
     def resolve_session(value: str | None, path: str) -> None:
         reference(projection.planning.sessions, value, path, "session")
@@ -330,6 +366,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
 
     for node_id, item in nodes.items():
         base = f"nodes.{node_id}"
+        node(item.spec.node_id, f"{base}.spec.node_id")
         if item.spec.node_id != node_id:
             fail(f"{base}.spec.node_id", f"must equal map key {node_id!r}")
         task(item.spec.task_region_id, f"{base}.spec.task_region_id")
@@ -383,6 +420,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     for record_id in sorted(records):
         item = records[record_id]
         base = f"records.by_id.{record_id}"
+        record(item.record_id, f"{base}.record_id")
         if item.record_id != record_id:
             fail(f"{base}.record_id", f"must equal map key {record_id!r}")
         node(item.producer_node_id, f"{base}.producer_node_id")
@@ -427,6 +465,8 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
 
     for record_id, summary in projection.records.summaries_by_id.items():
         base = f"records.summaries_by_id.{record_id}"
+        record(summary.record_id, f"{base}.record_id")
+        node(summary.producer_node_id, f"{base}.producer_node_id")
         item = records.get(record_id)
         if item is None:
             fail(base, f"references missing record {record_id!r}")
@@ -657,7 +697,11 @@ class ProjectionRelationResolverDispatcher:
             "*" if segment.isdigit() else segment for segment in normalized.split(".")
         )
         if map_role is not None:
-            normalized = f"{normalized}.{map_role}"
+            if map_role == "value" and diagnostic_path.endswith("]"):
+                prefix, item = normalized.rsplit(".", maxsplit=1)
+                normalized = f"{prefix}.value.{item}"
+            else:
+                normalized = f"{normalized}.{map_role}"
         exact_matches = [
             path
             for path in self._policies
@@ -670,9 +714,7 @@ class ProjectionRelationResolverDispatcher:
             matches = [
                 path
                 for path in self._policies
-                if "*" not in path
-                and normalized.startswith(f"{path}.")
-                and normalized.count(".") == path.count(".") + 1
+                if "*" not in path and normalized.startswith(f"{path}.")
             ]
         if len(matches) != 1:
             raise ProjectionRelationPolicyError(
@@ -1133,6 +1175,9 @@ def _topology_relations(
         outbound[edge.from_node_id].append(edge_id)
     for field, expected in (("inbound_edge_ids", inbound), ("outbound_edge_ids", outbound)):
         actual = getattr(topology, field)
+        for node_id, edge_ids in actual.items():
+            for index, edge_id in enumerate(edge_ids):
+                resolve_edge(edge_id, f"topology.{field}.{node_id}[{index}]")
         for node_id in set(actual) | set(expected):
             if node_id not in expected:
                 fail(f"topology.{field}.{node_id}", "is not a canonical adjacency key")
@@ -1145,6 +1190,7 @@ def _topology_relations(
         node(node_id, f"topology.input_bindings.{node_id}")
         for port, binding in ports.items():
             base = f"topology.input_bindings.{node_id}.{port}"
+            node(binding.to_node_id, f"{base}.to_node_id")
             if binding.to_node_id != node_id:
                 fail(f"{base}.to_node_id", f"must equal outer node key {node_id!r}")
             if binding.to_port != port:
@@ -1178,9 +1224,13 @@ def _planning_relations(
         node(successor, f"planning.successor_by_node.{node_id}", map_role="value")
     for field in ("accepted_patch_ids_by_node", "no_successor_patch_ids_by_node"):
         for node_id, ids in getattr(planning, field).items():
-            node(node_id, f"planning.{field}.{node_id}")
+            node(node_id, f"planning.{field}.{node_id}", map_role="key")
             for index, record_id in enumerate(ids):
-                record(record_id, f"planning.{field}.{node_id}[{index}]")
+                record(
+                    record_id,
+                    f"planning.{field}.{node_id}[{index}]",
+                    map_role="value",
+                )
     for node_id, record_id in planning.latest_no_successor_patch_id_by_node.items():
         node(
             node_id,
@@ -1247,6 +1297,7 @@ def _verification_relations(
             if result.record_id != record_id:
                 fail(f"{base}.record_id", f"must equal map key {record_id!r}")
             record(record_id, base)
+            record(result.record_id, f"{base}.record_id")
             node(result.node_id, f"{base}.node_id")
             task(result.task_region_id, f"{base}.task_region_id")
             candidate(result.candidate_id, f"{base}.candidate_id")
@@ -1266,6 +1317,7 @@ def _verification_relations(
         if result.node_id != node_id:
             fail(f"{base}.node_id", f"must equal map key {node_id!r}")
         node(node_id, base)
+        node(result.node_id, f"{base}.node_id")
         task(result.task_region_id, f"{base}.task_region_id")
         record(result.record_id, f"{base}.record_id")
         for field in ("candidate_record_ids", "file_state_record_ids", "evaluated_record_ids"):
@@ -1302,10 +1354,14 @@ def _governance_relations(
         for node_id, item in getattr(value, field).items():
             base = f"governance.{field}.{node_id}"
             node(node_id, base)
-            if hasattr(item, "node_id") and item.node_id != node_id:
-                fail(f"{base}.node_id", f"must equal map key {node_id!r}")
+            if hasattr(item, "node_id"):
+                node(item.node_id, f"{base}.node_id")
+                if item.node_id != node_id:
+                    fail(f"{base}.node_id", f"must equal map key {node_id!r}")
             if hasattr(item, "task_region_id"):
                 task(item.task_region_id, f"{base}.task_region_id")
+            if hasattr(item, "target_region_id"):
+                task(item.target_region_id, f"{base}.target_region_id")
             for related in ("appeal_node_id", "appealed_node_id", "target_node_id"):
                 if hasattr(item, related):
                     node(getattr(item, related), f"{base}.{related}")

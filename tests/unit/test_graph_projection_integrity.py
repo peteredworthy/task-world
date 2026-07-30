@@ -1,6 +1,7 @@
 """Referential-integrity contracts for immutable projection checkpoints."""
 
 from copy import deepcopy
+from dataclasses import dataclass
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast, get_args, get_origin
@@ -102,16 +103,355 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
         for record_id, item in by_id.items()
     }
 
+    record_id_by_type = {item["record_type"]: record_id for record_id, item in by_id.items()}
+    referenced_record_id = record_id_by_type["file_state"]
+    for item in by_id.values():
+        record_type = item["record_type"]
+        if record_type in {"analysis_summary", "artifact_reference", "join_result"}:
+            item["value"]["source_record_ids"] = [referenced_record_id]
+        if record_type == "candidate":
+            item.update(
+                file_state_record_id=referenced_record_id,
+                file_state_record_ids=[referenced_record_id],
+                supersedes_task_region_id="task-1",
+                supersedes_task_region_ids=["task-1"],
+            )
+            item["value"].update(
+                file_state_record_id=referenced_record_id,
+                file_state_record_ids=[referenced_record_id],
+                requirements_addressed=["requirement-1"],
+            )
+        if record_type == "check_result":
+            item.update(
+                candidate_record_id=referenced_record_id,
+                candidate_record_ids=[referenced_record_id],
+                file_state_record_ids=[referenced_record_id],
+                verification_report_record_ids=[referenced_record_id],
+                evaluated_record_ids=[referenced_record_id],
+            )
+            item["value"].update(
+                candidate_record_ids=[referenced_record_id],
+                cited_record_id=referenced_record_id,
+                evaluated_record_ids=[referenced_record_id],
+                file_state_record_ids=[referenced_record_id],
+                reused_verification_record_id=referenced_record_id,
+                verification_report_record_ids=[referenced_record_id],
+            )
+        if record_type == "file_state":
+            item.update(
+                candidate_id="candidate-1",
+                cleanup_id="cleanup-1",
+                superseded_by_record_id=referenced_record_id,
+                supersedes_record_id=referenced_record_id,
+            )
+        if record_type == "failure_record":
+            item["value"]["lease_id"] = "lease-1"
+        if record_type == "graph_patch_proposal":
+            item["value"].update(
+                proposed_by_node_id="node-1", rationale_record_id=referenced_record_id
+            )
+        if record_type == "requirement_record":
+            item["value"]["supersedes"] = "revision-0"
+        if record_type == "verification_report":
+            item.update(
+                candidate_record_id=referenced_record_id,
+                candidate_record_ids=[referenced_record_id],
+                file_state_record_ids=[referenced_record_id],
+                evaluated_record_ids=[referenced_record_id],
+            )
+            item["value"]["grades"] = [{"requirement_id": "requirement-1", "grade": "A"}]
+    node = cast(dict[str, Any], cast(dict[str, Any], raw["nodes"])["node-1"])
+    node["runtime"] = {"candidate_id": "candidate-1", "failed_candidate_id": "candidate-1"}
+    node["spec"].update(
+        task_region_id="task-1",
+        authority_request={
+            "requested_authority": ["graph_write"],
+            "target_node_id": "node-1",
+            "target_region_id": "task-1",
+            "reason": "fixture",
+        },
+        decision_request={
+            "decision_type": "fixture",
+            "options": ["continue"],
+            "consequence_summary": "fixture",
+            "target_node_id": "node-1",
+            "target_region_id": "task-1",
+        },
+        authority_request_record={
+            "record_id": record_id_by_type["authority_request_record"],
+            "record_kind": "graph_record",
+            "record_type": "authority_request_record",
+            "producer_node_id": "node-1",
+            "port": "authority_request_record",
+            "schema": "AuthorityRequest",
+            "value": {
+                "requested_authority": ["graph_write"],
+                "target_node_id": "node-1",
+                "target_region_id": "task-1",
+                "reason": "fixture",
+            },
+        },
+    )
+    cast(dict[str, Any], raw["tasks"])["task-1"]["candidates"][0]["supersedes_task_region_ids"] = [
+        "task-1"
+    ]
+    cast(dict[str, Any], raw["topology"])["input_bindings"] = {
+        "node-2": {
+            "input": {
+                "edge_id": "edge-1",
+                "to_node_id": "node-2",
+                "to_port": "input",
+                "record_ids": [referenced_record_id],
+                "bound_at_position": 1,
+                "supersedes_record_id": referenced_record_id,
+            }
+        }
+    }
+    cast(dict[str, Any], raw["planning"]).update(
+        successor_by_node={"node-1": "node-2"},
+        accepted_patch_ids_by_node={"node-1": [referenced_record_id]},
+        no_successor_patch_ids_by_node={"node-1": [referenced_record_id]},
+        latest_no_successor_patch_id_by_node={"node-1": referenced_record_id},
+        latest_routine_snapshot={
+            "record_id": referenced_record_id,
+            "producer_node_id": "node-1",
+            "port": "file_state",
+        },
+        generation_by_node={"node-1": 1},
+        region_label_by_node={"node-1": "region"},
+    )
+    cast(dict[str, Any], raw["verification"]).update(
+        failed_results_by_record_id={
+            referenced_record_id: {
+                "record_id": referenced_record_id,
+                "node_id": "node-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+            }
+        },
+        failed_candidate_ids={"candidate-1": True},
+        recovery_nodes_by_record_id={
+            referenced_record_id: [{"node_id": "node-1", "recovery_reason": "fixture"}]
+        },
+    )
+    revisions = cast(dict[str, Any], cast(dict[str, Any], raw["requirements"])["revisions_by_id"])
+    revisions["revision-0"] = {
+        "requirement_id": "requirement-1",
+        "version_id": "revision-0",
+        "change_classification": "initial",
+        "requires_authority": False,
+        "position": 0,
+        "validation_strengthening": False,
+    }
+    revisions["revision-1"]["previous_version_id"] = "revision-0"
+    cast(dict[str, Any], raw["governance"]).update(
+        pending_appeals_by_node={"node-1": True},
+        node_gate_decisions={"node-1": True},
+        configured_gates_by_task={"task-1": {"gate-1": True}},
+        gate_decisions_by_task={"task-1": {"gate-1": True}},
+        approval_decisions_by_node={
+            "node-1": {
+                "node_id": "node-1",
+                "decision": "approved",
+                "task_region_id": "task-1",
+                "appeal_node_id": "node-1",
+            }
+        },
+        authority_decisions_by_node={
+            "node-1": {
+                "node_id": "node-1",
+                "decision": "granted",
+                "task_region_id": "task-1",
+                "appeal_node_id": "node-1",
+            }
+        },
+        oversight_decisions_by_node={
+            "node-1": {
+                "node_id": "node-1",
+                "decision": "accepted",
+                "position": 1,
+                "task_region_id": "task-1",
+                "appeal_node_id": "node-1",
+                "appealed_node_id": "node-1",
+            }
+        },
+        decision_requests_by_node={
+            "node-1": {
+                "decision_type": "fixture",
+                "options": ["continue"],
+                "consequence_summary": "fixture",
+                "target_node_id": "node-1",
+                "target_region_id": "task-1",
+            }
+        },
+        authority_revision_blockers={
+            "blocker-1": {
+                "kind": "fixture",
+                "reason": "fixture",
+                "node_id": "node-1",
+                "edge_id": "edge-1",
+                "from_node_id": "node-1",
+                "proposal_id": referenced_record_id,
+                "requirement_id": "requirement-1",
+                "revision_id": "revision-1",
+                "support_ids": ["support-1"],
+                "task_region_id": "task-1",
+            }
+        },
+    )
+    cast(dict[str, Any], raw["usage"]).update(
+        tokens_by_node={"node-1": 1}, recorded_keys={"node-1": True}
+    )
+
     def replace_record_one(value: Any) -> Any:
         if isinstance(value, dict):
             return {
                 replace_record_one(key): replace_record_one(item) for key, item in value.items()
             }
-        if isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             return [replace_record_one(item) for item in value]
         return "file-state-1" if value == "record-1" else value
 
     return ImmutableGraphProjection.model_validate(replace_record_one(raw))
+
+
+@dataclass(frozen=True)
+class ResolverOutcomeCase:
+    policy_path: str
+    family: str
+    concrete_path: str
+    location: tuple[str | int, ...]
+    map_key: bool = False
+    consistency_reason: str | None = None
+
+
+def _resolver_locations(
+    value: object,
+    segments: tuple[str, ...],
+    location: tuple[str | int, ...] = (),
+) -> list[tuple[tuple[str | int, ...], bool]]:
+    if not segments:
+        if isinstance(value, str):
+            return [(location, False)]
+        if isinstance(value, (list, tuple)):
+            return [
+                (location + (index,), False)
+                for index, item in enumerate(value)
+                if isinstance(item, str)
+            ]
+        if isinstance(value, dict):
+            return [
+                found
+                for key, item in value.items()
+                for found in _resolver_locations(item, (), location + (key,))
+            ]
+        return []
+    segment, remaining = segments[0], segments[1:]
+    if segment == "key" and not remaining:
+        return [(location, True)]
+    if segment == "value" and isinstance(value, dict) and segment in value:
+        return _resolver_locations(value[segment], remaining, location + (segment,))
+    if segment == "value":
+        return _resolver_locations(value, remaining, location)
+    if segment == "*":
+        if isinstance(value, dict):
+            return [
+                found
+                for key, item in value.items()
+                for found in _resolver_locations(item, remaining, location + (key,))
+            ]
+        if isinstance(value, list):
+            return [
+                found
+                for index, item in enumerate(value)
+                for found in _resolver_locations(item, remaining, location + (index,))
+            ]
+        return []
+    if isinstance(value, dict) and segment in value:
+        return _resolver_locations(value[segment], remaining, location + (segment,))
+    return []
+
+
+def _concrete_path(location: tuple[str | int, ...]) -> str:
+    path = ""
+    for part in location:
+        path += f"[{part}]" if isinstance(part, int) else ("." if path else "") + part
+    return path
+
+
+def _consistency_reason(policy_path: str, location: tuple[str | int, ...]) -> str | None:
+    map_key_fields = {
+        "nodes.*.spec.node_id",
+        "records.by_id.*.record_id",
+        "requirements.revisions_by_id.*.version_id",
+        "requirements.support_by_id.*.support_id",
+        "topology.edges.*.edge_id",
+        "execution.leases.*.lease_id",
+        "execution.cleanup_requests_by_id.*.cleanup_id",
+        "governance.approval_decisions_by_node.*.node_id",
+        "governance.authority_decisions_by_node.*.node_id",
+        "governance.oversight_decisions_by_node.*.node_id",
+        "verification.check_results_by_node.*.node_id",
+        "verification.failed_results_by_record_id.*.record_id",
+        "verification.passed_results_by_record_id.*.record_id",
+    }
+    if policy_path in map_key_fields:
+        key = location[1] if policy_path == "nodes.*.spec.node_id" else location[2]
+        return f"must equal map key {key!r}"
+    if policy_path == "topology.input_bindings.*.*.to_node_id":
+        return f"must equal outer node key {location[2]!r}"
+    if policy_path == "execution.environment_failures_by_task.*.task_region_id":
+        return f"must equal outer task key {location[2]!r}"
+    return None
+
+
+def _resolver_outcome_cases() -> tuple[ResolverOutcomeCase, ...]:
+    raw = immutable_projection_to_checkpoint(complete_projection_fixture())
+    catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
+    direct_map_keys = {
+        "execution.applied_cleanup_ids",
+        "verification.failed_results_by_record_id",
+        "verification.passed_results_by_record_id",
+        "verification.recovery_nodes_by_record_id",
+    }
+    cases: list[ResolverOutcomeCase] = []
+    for policy_path, policy in catalog.items():
+        if policy.validation != "resolver":
+            continue
+        locations = _resolver_locations(raw, tuple(policy_path.split(".")))
+        if policy_path in direct_map_keys:
+            container: object = raw
+            for segment in policy_path.split("."):
+                assert isinstance(container, dict)
+                container = container[segment]
+            assert isinstance(container, dict)
+            locations = [((*policy_path.split("."), key), True) for key in sorted(container)]
+        assert locations, f"resolver policy has no populated fixture location: {policy_path}"
+        locations.sort(key=lambda item: _concrete_path(item[0]))
+        if policy.scope == "record":
+            by_record_type: dict[str, tuple[tuple[str | int, ...], bool]] = {}
+            records = cast(dict[str, Any], raw["records"])["by_id"]
+            for location in locations:
+                record_id = cast(str, location[0][2])
+                by_record_type.setdefault(records[record_id]["record_type"], location)
+            locations = list(by_record_type.values())
+        else:
+            locations = locations[:1]
+        cases.extend(
+            ResolverOutcomeCase(
+                policy_path=policy_path,
+                family=policy.family,
+                concrete_path=_concrete_path(location),
+                location=location,
+                map_key=map_key,
+                consistency_reason=_consistency_reason(policy_path, location),
+            )
+            for location, map_key in locations
+        )
+    return tuple(sorted(cases, key=lambda case: (case.policy_path, case.concrete_path)))
+
+
+RESOLVER_OUTCOME_CASES = _resolver_outcome_cases()
 
 
 def test_complete_fixture_exercises_every_concrete_projected_record_visitor() -> None:
@@ -122,57 +462,62 @@ def test_complete_fixture_exercises_every_concrete_projected_record_visitor() ->
     assert {type(item) for item in projection.records.by_id.values()} == set(PROJECTED_RECORD_TYPES)
 
 
+def test_public_resolver_outcome_cases_exactly_cover_static_resolver_policies() -> None:
+    catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
+
+    assert {case.policy_path for case in RESOLVER_OUTCOME_CASES} == {
+        path for path, policy in catalog.items() if policy.validation == "resolver"
+    }
+
+
 @pytest.mark.parametrize(
-    ("path", "replacement", "expected_path", "expected_reason"),
-    [
-        (
-            "records.by_id.file-state-1.cleanup_id",
-            "missing-cleanup",
-            "records.by_id.file-state-1.cleanup_id",
-            "references missing cleanup request 'missing-cleanup'",
-        ),
-        (
-            "records.by_id.failure-1.value.failed_node_id",
-            "missing-node",
-            "records.by_id.failure-1.value.failed_node_id",
-            "references missing node 'missing-node'",
-        ),
-        (
-            "records.by_id.requirement-1.value.version",
-            "missing-version",
-            "records.by_id.requirement-1.value.version",
-            "references missing requirement revision 'missing-version'",
-        ),
-        (
-            "records.by_id.candidate-record-1.candidate_id",
-            "missing-candidate",
-            "records.by_id.candidate-record-1.candidate_id",
-            "references missing candidate 'missing-candidate'",
-        ),
-        (
-            "topology.edges.edge-1.to_node_id",
-            "missing-node",
-            "topology.edges.edge-1.to_node_id",
-            "references missing node 'missing-node'",
-        ),
-    ],
+    "case",
+    RESOLVER_OUTCOME_CASES,
+    ids=lambda case: f"{case.policy_path}:{case.concrete_path}",
 )
-def test_public_integrity_reports_exact_relation_diagnostics_from_valid_projection(
-    path: str, replacement: str, expected_path: str, expected_reason: str
+def test_every_static_resolver_policy_has_an_exact_public_failure_outcome(
+    case: ResolverOutcomeCase,
 ) -> None:
-    raw = immutable_projection_to_checkpoint(complete_projection_fixture())
-    cursor: Any = raw
-    for part in path.split(".")[:-1]:
-        cursor = cursor[part]
-    cursor[path.rsplit(".", maxsplit=1)[-1]] = replacement
-    projection = ImmutableGraphProjection.model_validate(raw)
+    original = complete_projection_fixture()
+    original_checkpoint = immutable_projection_to_checkpoint(original)
+    raw = deepcopy(original_checkpoint)
+    missing = f"missing-{case.family}-6b2"
+    parent: object = raw
+    for part in case.location[:-1]:
+        if isinstance(part, int):
+            assert isinstance(parent, list)
+        else:
+            assert isinstance(parent, dict)
+        parent = parent[part]
+    final = case.location[-1]
+    if case.map_key:
+        assert isinstance(parent, dict)
+        parent[missing] = parent.pop(final)
+        expected_path = _concrete_path((*case.location[:-1], missing))
+    else:
+        if isinstance(final, int):
+            assert isinstance(parent, list)
+        else:
+            assert isinstance(parent, dict)
+        parent[final] = missing
+        expected_path = case.concrete_path
+    malformed = ImmutableGraphProjection.model_validate(raw)
+    kind = {
+        "revision": "requirement revision",
+        "cleanup": "cleanup request",
+    }.get(case.family, case.family)
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        validate_projection_integrity(projection)
+        validate_projection_integrity(malformed)
 
-    assert {item.path: item.reason for item in raised.value.diagnostics}[expected_path] == (
-        expected_reason
-    )
+    assert (expected_path, f"references missing {kind} {missing!r}") in {
+        (diagnostic.path, diagnostic.reason) for diagnostic in raised.value.diagnostics
+    }
+    if case.consistency_reason is not None:
+        assert (expected_path, case.consistency_reason) in {
+            (diagnostic.path, diagnostic.reason) for diagnostic in raised.value.diagnostics
+        }
+    assert immutable_projection_to_checkpoint(original) == original_checkpoint
 
 
 @pytest.mark.parametrize(

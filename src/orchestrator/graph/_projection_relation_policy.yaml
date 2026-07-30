@@ -896,9 +896,9 @@ policies:
   validation: resolver
 - path: tasks.*.candidates.*.candidate_id
   scope: grouped
-  family: candidate
-  rationale: Identifier is checked against represented candidate state by an integrity resolver.
-  validation: resolver
+  family: derived
+  rationale: Candidate identity is declared by this canonical task-owned collection.
+  validation: derived
 - path: tasks.*.candidates.*.file_state_record_ids
   scope: grouped
   family: record
@@ -1265,7 +1265,6 @@ validation_paths:
 - requirements.support_by_id.*.requirement_version_id
 - requirements.support_by_id.*.support_id
 - scheduling.ready_node_ids
-- tasks.*.candidates.*.candidate_id
 - tasks.*.candidates.*.file_state_record_ids
 - tasks.*.candidates.*.supersedes_task_region_ids
 - topology.edges.*.edge_id
