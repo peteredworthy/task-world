@@ -36,9 +36,9 @@ policies:
   validation: resolver
 - path: execution.cleanup_requests_by_id.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: cleanup
+  rationale: Map key is checked against represented cleanup state by an integrity resolver.
+  validation: resolver
 - path: execution.cleanup_requests_by_id.*.producer_node_id
   scope: grouped
   family: node
@@ -81,9 +81,9 @@ policies:
   validation: external
 - path: execution.leases.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: lease
+  rationale: Map key is checked against represented lease state by an integrity resolver.
+  validation: resolver
 - path: execution.leases.*.lease_id
   scope: grouped
   family: lease
@@ -826,9 +826,9 @@ policies:
   validation: resolver
 - path: requirements.active_version_id_by_requirement.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: requirement
+  rationale: Map key is checked against represented requirement state by an integrity resolver.
+  validation: resolver
 - path: requirements.active_version_id_by_requirement.*.value
   scope: grouped
   family: revision
@@ -841,9 +841,9 @@ policies:
   validation: derived
 - path: requirements.revisions_by_id.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: revision
+  rationale: Map key is checked against represented revision state by an integrity resolver.
+  validation: resolver
 - path: requirements.revisions_by_id.*.previous_version_id
   scope: grouped
   family: revision
@@ -871,9 +871,9 @@ policies:
   validation: resolver
 - path: requirements.support_by_id.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: support
+  rationale: Map key is checked against represented support state by an integrity resolver.
+  validation: resolver
 - path: requirements.support_by_id.*.requirement_id
   scope: grouped
   family: requirement
@@ -926,9 +926,9 @@ policies:
   validation: resolver
 - path: topology.edges.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: edge
+  rationale: Map key is checked against represented edge state by an integrity resolver.
+  validation: resolver
 - path: topology.edges.*.to_node_id
   scope: grouped
   family: node
@@ -1147,11 +1147,13 @@ validation_paths:
 - execution.callback_events_by_key.*.node_id
 - execution.cleanup_requests_by_id.*.cleanup_id
 - execution.cleanup_requests_by_id.*.file_state_record_id
+- execution.cleanup_requests_by_id.*.key
 - execution.cleanup_requests_by_id.*.producer_node_id
 - execution.environment_failures_by_task.*.key
 - execution.environment_failures_by_task.*.node_id
 - execution.environment_failures_by_task.*.record_id
 - execution.environment_failures_by_task.*.task_region_id
+- execution.leases.*.key
 - execution.leases.*.lease_id
 - execution.leases.*.node_id
 - execution.leases.*.session_id
@@ -1251,11 +1253,14 @@ validation_paths:
 - records.ids_by_node_port.*.value.*.value.*
 - records.summaries_by_id.*.producer_node_id
 - records.summaries_by_id.*.record_id
+- requirements.active_version_id_by_requirement.*.key
 - requirements.active_version_id_by_requirement.*.value
+- requirements.revisions_by_id.*.key
 - requirements.revisions_by_id.*.previous_version_id
 - requirements.revisions_by_id.*.requirement_id
 - requirements.revisions_by_id.*.version_id
 - requirements.support_by_id.*.evidence_id
+- requirements.support_by_id.*.key
 - requirements.support_by_id.*.requirement_id
 - requirements.support_by_id.*.requirement_version_id
 - requirements.support_by_id.*.support_id
@@ -1265,6 +1270,7 @@ validation_paths:
 - tasks.*.candidates.*.supersedes_task_region_ids
 - topology.edges.*.edge_id
 - topology.edges.*.from_node_id
+- topology.edges.*.key
 - topology.edges.*.to_node_id
 - topology.inbound_edge_ids
 - topology.input_bindings.*.*.edge_id

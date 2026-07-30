@@ -1,7 +1,9 @@
 """Referential-integrity contracts for immutable projection checkpoints."""
 
+import ast
 from copy import deepcopy
 from importlib.resources import files
+import inspect
 from pathlib import Path
 from typing import Annotated, Literal, cast, get_args, get_origin
 
@@ -26,6 +28,7 @@ from orchestrator.graph import (
     projection_relation_policy_gaps,
     projection_relation_resolver_call_sites,
     projection_relation_validation_paths,
+    validate_projection_integrity,
 )
 from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
 from tests.unit.test_graph_projection_codec import final_projection_fixture
@@ -805,10 +808,141 @@ def test_runtime_dispatcher_enforces_matched_policy_before_calling_resolver(
     assert calls.values == []
 
 
+@pytest.mark.parametrize(
+    ("policy_path", "family", "diagnostic_path"),
+    [
+        (
+            "records.by_id.*.value.requirements_addressed",
+            "requirement",
+            "records.by_id.record-1.value.requirements_addressed[0]",
+        ),
+        (
+            "records.by_id.*.value.version",
+            "revision",
+            "records.by_id.record-1.value.version",
+        ),
+        (
+            "governance.authority_revision_blockers.*.support_ids",
+            "support",
+            "governance.authority_revision_blockers.blocker-1.support_ids[0]",
+        ),
+        (
+            "records.by_id.*.value.lease_id",
+            "lease",
+            "records.by_id.record-1.value.lease_id",
+        ),
+        (
+            "records.by_id.*.cleanup_id",
+            "cleanup",
+            "records.by_id.record-1.cleanup_id",
+        ),
+        (
+            "governance.authority_revision_blockers.*.edge_id",
+            "edge",
+            "governance.authority_revision_blockers.blocker-1.edge_id",
+        ),
+        (
+            "execution.leases.*.session_id",
+            "session",
+            "execution.leases.lease-1.session_id",
+        ),
+    ],
+)
+def test_remaining_represented_families_dispatch_and_fail_closed_on_wrong_family(
+    policy_path: str,
+    family: Literal["requirement", "revision", "support", "lease", "cleanup", "edge", "session"],
+    diagnostic_path: str,
+) -> None:
+    catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
+    policy = catalog[policy_path]
+    calls = _ResolverCalls()
+    dispatcher = _runtime_dispatcher({policy_path: policy}, frozenset({policy_path}), calls)
+
+    dispatcher.resolve_runtime(family, diagnostic_path, "represented-id")
+
+    assert calls.values == [("represented-id", diagnostic_path)]
+    with pytest.raises(ProjectionRelationPolicyError, match=f"expects family '{family}'"):
+        dispatcher.resolve_runtime("node", diagnostic_path, "represented-id")
+    assert calls.values == [("represented-id", diagnostic_path)]
+
+
+def test_integrity_has_no_direct_represented_lookup_outside_dispatcher_wrappers() -> None:
+    module = inspect.getmodule(validate_projection_integrity)
+    assert module is not None
+    tree = ast.parse(inspect.getsource(module))
+    target_attributes = {
+        "revisions_by_id",
+        "support_by_id",
+        "leases",
+        "cleanup_requests_by_id",
+        "edges",
+        "sessions",
+    }
+    allowed_functions = {
+        "resolve_requirement",
+        "resolve_revision",
+        "resolve_support",
+        "resolve_lease",
+        "resolve_cleanup",
+        "resolve_edge",
+        "resolve_session",
+        "requirement",
+        "revision",
+        "support",
+        "lease",
+        "cleanup",
+        "edge",
+        "session",
+    }
+    violations: list[str] = []
+
+    class DirectLookupVisitor(ast.NodeVisitor):
+        def __init__(self) -> None:
+            self.function = ""
+
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            previous = self.function
+            self.function = node.name
+            self.generic_visit(node)
+            self.function = previous
+
+        def visit_Compare(self, node: ast.Compare) -> None:
+            if self.function not in allowed_functions and any(
+                isinstance(operator, (ast.In, ast.NotIn))
+                and (
+                    isinstance(comparator, ast.Name)
+                    and comparator.id == "requirement_ids"
+                    or isinstance(comparator, ast.Attribute)
+                    and comparator.attr in target_attributes
+                )
+                for operator, comparator in zip(node.ops, node.comparators, strict=True)
+            ):
+                violations.append(ast.unparse(node))
+            self.generic_visit(node)
+
+        def visit_Call(self, node: ast.Call) -> None:
+            function = node.func
+            if (
+                self.function not in allowed_functions
+                and isinstance(function, ast.Attribute)
+                and function.attr == "get"
+                and isinstance(function.value, ast.Attribute)
+                and function.value.attr in target_attributes
+            ):
+                violations.append(ast.unparse(node))
+            self.generic_visit(node)
+
+    DirectLookupVisitor().visit(tree)
+
+    assert violations == []
+
+
 def test_represented_map_keys_are_resolver_policies() -> None:
     catalog = projection_relation_policy_catalog()
     expected = {
+        "execution.cleanup_requests_by_id.*.key": "cleanup",
         "execution.environment_failures_by_task.*.key": "task",
+        "execution.leases.*.key": "lease",
         "governance.approval_decisions_by_node.*.key": "node",
         "governance.authority_decisions_by_node.*.key": "node",
         "governance.configured_gates_by_task.*.key": "task",
@@ -824,6 +958,10 @@ def test_represented_map_keys_are_resolver_policies() -> None:
         "planning.region_label_by_node.*.key": "node",
         "planning.session_id_by_node.*.key": "node",
         "planning.successor_by_node.*.key": "node",
+        "requirements.active_version_id_by_requirement.*.key": "requirement",
+        "requirements.revisions_by_id.*.key": "revision",
+        "requirements.support_by_id.*.key": "support",
+        "topology.edges.*.key": "edge",
         "topology.input_bindings.*.key": "node",
         "usage.recorded_keys.*.key": "node",
         "usage.tokens_by_node.*.key": "node",

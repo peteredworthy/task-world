@@ -266,6 +266,68 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     def candidate(value: str | None, path: str) -> None:
         dispatcher.resolve_runtime("candidate", path, value)
 
+    def requirement(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> None:
+        dispatcher.resolve_runtime("requirement", path, value, map_role=map_role)
+
+    def revision(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> Any:
+        dispatcher.resolve_runtime("revision", path, value, map_role=map_role)
+        return projection.requirements.revisions_by_id.get(value) if value is not None else None
+
+    def support(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> Any:
+        dispatcher.resolve_runtime("support", path, value, map_role=map_role)
+        return projection.requirements.support_by_id.get(value) if value is not None else None
+
+    def lease(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> Any:
+        dispatcher.resolve_runtime("lease", path, value, map_role=map_role)
+        return projection.execution.leases.get(value) if value is not None else None
+
+    def cleanup(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> Any:
+        dispatcher.resolve_runtime("cleanup", path, value, map_role=map_role)
+        return projection.execution.cleanup_requests_by_id.get(value) if value is not None else None
+
+    def edge(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> Any:
+        dispatcher.resolve_runtime("edge", path, value, map_role=map_role)
+        return projection.topology.edges.get(value) if value is not None else None
+
+    def session(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> Any:
+        dispatcher.resolve_runtime("session", path, value, map_role=map_role)
+        return projection.planning.sessions.get(value) if value is not None else None
+
     for node_id, item in nodes.items():
         base = f"nodes.{node_id}"
         if item.spec.node_id != node_id:
@@ -323,7 +385,19 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         if item.producer_node_id is not None:
             expected_index[item.producer_node_id][item.port].append(record_id)
         _record_relations(
-            item, base, record, task, node, candidate, candidate_tasks, projection, fail
+            item,
+            base,
+            record,
+            task,
+            node,
+            candidate,
+            requirement,
+            revision,
+            lease,
+            cleanup,
+            candidate_tasks,
+            projection,
+            fail,
         )
 
     for node_id, ports in projection.records.ids_by_node_port.items():
@@ -391,12 +465,14 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         if record_id not in projection.records.summaries_by_id:
             fail(f"records.summaries_by_id.{record_id}", "is missing canonical record summary")
 
-    _topology_relations(projection, node, record, fail)
-    _planning_relations(projection, node, record, fail)
+    _topology_relations(projection, node, record, edge, fail)
+    _planning_relations(projection, node, record, session, fail)
     _verification_relations(projection, node, task, record, candidate, fail)
-    _governance_relations(projection, node, task, fail)
-    _requirement_relations(projection, record, fail)
-    _execution_relations(projection, node, task, record, fail)
+    _governance_relations(
+        projection, node, task, record, requirement, revision, support, edge, fail
+    )
+    _requirement_relations(projection, record, requirement, revision, support, fail)
+    _execution_relations(projection, node, task, record, lease, cleanup, session, fail)
     for index, node_id in enumerate(projection.scheduling.ready_node_ids):
         node(node_id, f"scheduling.ready_node_ids[{index}]")
     for field in ("tokens_by_node", "recorded_keys"):
@@ -419,7 +495,7 @@ class RuntimeRelationResolver(Protocol):
         path: str,
         *,
         map_role: Literal["key", "value"] | None = None,
-    ) -> None: ...
+    ) -> Any: ...
 
 
 RelationFamily = Literal[
@@ -586,6 +662,14 @@ class ProjectionRelationResolverDispatcher:
         matches = exact_matches or [
             path for path in self._policies if _policy_path_matches_runtime(path, normalized)
         ]
+        if not matches:
+            matches = [
+                path
+                for path in self._policies
+                if "*" not in path
+                and normalized.startswith(f"{path}.")
+                and normalized.count(".") == path.count(".") + 1
+            ]
         if len(matches) != 1:
             raise ProjectionRelationPolicyError(
                 f"expected one relation policy for runtime path {diagnostic_path!r}, "
@@ -837,6 +921,10 @@ def _record_relations(
     task: RecordResolver,
     node: RecordResolver,
     candidate: RecordResolver,
+    requirement: RuntimeRelationResolver,
+    revision: RuntimeRelationResolver,
+    lease: RuntimeRelationResolver,
+    cleanup: RuntimeRelationResolver,
     candidate_tasks: dict[str, str],
     projection: ImmutableGraphProjection,
     fail: Callable[[str, str], None],
@@ -845,7 +933,19 @@ def _record_relations(
     if policy is None:
         raise RuntimeError(f"missing relation visitor for {type(item).__name__}")
     _visit_projected_record(
-        item, base, record, task, node, candidate, candidate_tasks, projection, fail
+        item,
+        base,
+        record,
+        task,
+        node,
+        candidate,
+        requirement,
+        revision,
+        lease,
+        cleanup,
+        candidate_tasks,
+        projection,
+        fail,
     )
 
 
@@ -890,14 +990,15 @@ def _visit_projected_record(
     task: RecordResolver,
     node: RecordResolver,
     candidate: RecordResolver,
+    requirement: RuntimeRelationResolver,
+    revision: RuntimeRelationResolver,
+    lease: RuntimeRelationResolver,
+    cleanup: RuntimeRelationResolver,
     candidate_tasks: dict[str, str],
     projection: ImmutableGraphProjection,
     fail: Callable[[str, str], None],
 ) -> None:
     """Typed visitor over every concrete public ProjectedRecord member."""
-    requirement_ids = {
-        revision.requirement_id for revision in projection.requirements.revisions_by_id.values()
-    }
 
     def candidate_for_task(
         candidate_id: str | None, candidate_path: str, task_id: str | None
@@ -932,11 +1033,7 @@ def _visit_projected_record(
         for index, value in enumerate(item.supersedes_task_region_ids):
             task(value, f"{base}.supersedes_task_region_ids[{index}]")
         for index, value in enumerate(item.value.requirements_addressed):
-            if value not in requirement_ids:
-                fail(
-                    f"{base}.value.requirements_addressed[{index}]",
-                    f"references missing requirement {value!r}",
-                )
+            requirement(value, f"{base}.value.requirements_addressed[{index}]")
     elif isinstance(item, ProjectedCheckResultRecord):
         candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         task(item.task_region_id, f"{base}.task_region_id")
@@ -966,11 +1063,7 @@ def _visit_projected_record(
     elif isinstance(item, ProjectedFailureRecord):
         task(item.task_region_id, f"{base}.task_region_id")
         node(item.value.failed_node_id, f"{base}.value.failed_node_id")
-        if (
-            item.value.lease_id is not None
-            and item.value.lease_id not in projection.execution.leases
-        ):
-            fail(f"{base}.value.lease_id", f"references missing lease {item.value.lease_id!r}")
+        lease(item.value.lease_id, f"{base}.value.lease_id")
     elif isinstance(item, ProjectedFanOutInputsRecord):
         candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         task(item.task_region_id, f"{base}.task_region_id")
@@ -981,11 +1074,7 @@ def _visit_projected_record(
         candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         record(item.supersedes_record_id, f"{base}.supersedes_record_id")
         record(item.superseded_by_record_id, f"{base}.superseded_by_record_id")
-        if (
-            item.cleanup_id is not None
-            and item.cleanup_id not in projection.execution.cleanup_requests_by_id
-        ):
-            fail(f"{base}.cleanup_id", f"references missing cleanup request {item.cleanup_id!r}")
+        cleanup(item.cleanup_id, f"{base}.cleanup_id")
     elif isinstance(item, ProjectedGapClassificationRecord):
         task(item.value.task_region_id, f"{base}.value.task_region_id")
     elif isinstance(item, ProjectedGraphPatchProposalRecord):
@@ -996,29 +1085,13 @@ def _visit_projected_record(
     elif isinstance(item, ProjectedRecoveryPlanRecord):
         return
     elif isinstance(item, ProjectedRequirementRecord):
-        revision = (
-            projection.requirements.revisions_by_id.get(item.value.version)
-            if item.value.version is not None
-            else None
-        )
-        requirement_ids = {
-            requirement.requirement_id
-            for requirement in projection.requirements.revisions_by_id.values()
-        }
-        if item.value.id not in requirement_ids:
-            fail(f"{base}.value.id", f"references missing requirement {item.value.id!r}")
-        if item.value.version is not None and (
-            revision is None or revision.requirement_id != item.value.id
-        ):
+        requirement(item.value.id, f"{base}.value.id")
+        version = revision(item.value.version, f"{base}.value.version")
+        if version is not None and version.requirement_id != item.value.id:
             fail(f"{base}.value.version", "must reference a revision for its requirement")
         if item.value.supersedes is not None:
-            superseded = projection.requirements.revisions_by_id.get(item.value.supersedes)
-            if superseded is None:
-                fail(
-                    f"{base}.value.supersedes",
-                    f"references missing requirement revision {item.value.supersedes!r}",
-                )
-            elif superseded.requirement_id != item.value.id:
+            superseded = revision(item.value.supersedes, f"{base}.value.supersedes")
+            if superseded is not None and superseded.requirement_id != item.value.id:
                 fail(
                     f"{base}.value.supersedes",
                     "must reference a revision for its requirement",
@@ -1038,11 +1111,7 @@ def _visit_projected_record(
         ):
             _record_each(values, f"{base}.{field}", record)
         for index, grade in enumerate(item.value.grades):
-            if grade.requirement_id not in requirement_ids:
-                fail(
-                    f"{base}.value.grades[{index}].requirement_id",
-                    f"references missing requirement {grade.requirement_id!r}",
-                )
+            requirement(grade.requirement_id, f"{base}.value.grades[{index}].requirement_id")
     else:  # pragma: no cover - registry equality makes this defensive only.
         raise RuntimeError(f"unhandled projected record {type(item).__name__}")
 
@@ -1051,6 +1120,7 @@ def _topology_relations(
     projection: ImmutableGraphProjection,
     node: Callable[[str | None, str], None],
     record: Callable[[str | None, str], None],
+    resolve_edge: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
 ) -> None:
     topology = projection.topology
@@ -1058,6 +1128,8 @@ def _topology_relations(
     outbound: dict[str, list[str]] = defaultdict(list)
     for edge_id, edge in topology.edges.items():
         base = f"topology.edges.{edge_id}"
+        resolve_edge(edge_id, base, map_role="key")
+        resolve_edge(edge.edge_id, f"{base}.edge_id")
         if edge.edge_id != edge_id:
             fail(f"{base}.edge_id", f"must equal map key {edge_id!r}")
         node(edge.from_node_id, f"{base}.from_node_id")
@@ -1083,10 +1155,11 @@ def _topology_relations(
             if binding.to_port != port:
                 fail(f"{base}.to_port", f"must equal outer port key {port!r}")
             if binding.edge_id is not None:
-                edge = topology.edges.get(binding.edge_id)
-                if edge is None:
-                    fail(f"{base}.edge_id", f"references missing edge {binding.edge_id!r}")
-                elif (edge.to_node_id, edge.to_port) != (node_id, port):
+                bound_edge = resolve_edge(binding.edge_id, f"{base}.edge_id")
+                if bound_edge is not None and (bound_edge.to_node_id, bound_edge.to_port) != (
+                    node_id,
+                    port,
+                ):
                     fail(f"{base}.edge_id", "must target the binding node and port")
             for index, record_id in enumerate(binding.record_ids):
                 record(record_id, f"{base}.record_ids[{index}]")
@@ -1101,6 +1174,7 @@ def _planning_relations(
     projection: ImmutableGraphProjection,
     node: RuntimeRelationResolver,
     record: RuntimeRelationResolver,
+    session: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
 ) -> None:
     planning = projection.planning
@@ -1144,14 +1218,17 @@ def _planning_relations(
                 map_role="key" if field == "session_id_by_node" else None,
             )
     for node_id, session_id in planning.session_id_by_node.items():
-        if session_id not in planning.sessions:
-            fail(
-                f"planning.session_id_by_node.{node_id}",
-                f"references missing session {session_id!r}",
-            )
-    for session_id, session in planning.sessions.items():
-        node(session.current_node_id, f"planning.sessions.{session_id}.current_node_id")
-        record(session.carryover_record_id, f"planning.sessions.{session_id}.carryover_record_id")
+        session(
+            session_id,
+            f"planning.session_id_by_node.{node_id}",
+            map_role="value",
+        )
+    for session_id, session_item in planning.sessions.items():
+        node(session_item.current_node_id, f"planning.sessions.{session_id}.current_node_id")
+        record(
+            session_item.carryover_record_id,
+            f"planning.sessions.{session_id}.carryover_record_id",
+        )
 
 
 def _verification_relations(
@@ -1211,6 +1288,11 @@ def _governance_relations(
     projection: ImmutableGraphProjection,
     node: Callable[[str | None, str], None],
     task: Callable[[str | None, str], None],
+    record: RuntimeRelationResolver,
+    requirement: RuntimeRelationResolver,
+    revision: RuntimeRelationResolver,
+    support: RuntimeRelationResolver,
+    edge: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
 ) -> None:
     value = projection.governance
@@ -1239,77 +1321,79 @@ def _governance_relations(
         base = f"governance.authority_revision_blockers.{blocker_id}"
         node(blocker.node_id, f"{base}.node_id")
         task(blocker.task_region_id, f"{base}.task_region_id")
-        if blocker.edge_id is not None and blocker.edge_id not in projection.topology.edges:
-            fail(f"{base}.edge_id", f"references missing edge {blocker.edge_id!r}")
+        edge(blocker.edge_id, f"{base}.edge_id")
         node(blocker.from_node_id, f"{base}.from_node_id")
-        if blocker.proposal_id is not None and blocker.proposal_id not in projection.records.by_id:
-            fail(f"{base}.proposal_id", f"references missing record {blocker.proposal_id!r}")
-        revision = (
-            projection.requirements.revisions_by_id.get(blocker.revision_id)
-            if blocker.revision_id is not None
-            else None
-        )
-        if blocker.revision_id is not None and revision is None:
-            fail(
-                f"{base}.revision_id",
-                f"references missing requirement revision {blocker.revision_id!r}",
-            )
-        if blocker.requirement_id is not None and blocker.requirement_id not in {
-            item.requirement_id for item in projection.requirements.revisions_by_id.values()
-        }:
-            fail(
-                f"{base}.requirement_id",
-                f"references missing requirement {blocker.requirement_id!r}",
-            )
+        record(blocker.proposal_id, f"{base}.proposal_id")
+        blocker_revision = revision(blocker.revision_id, f"{base}.revision_id")
+        requirement(blocker.requirement_id, f"{base}.requirement_id")
         if (
-            revision is not None
+            blocker_revision is not None
             and blocker.requirement_id is not None
-            and revision.requirement_id != blocker.requirement_id
+            and blocker_revision.requirement_id != blocker.requirement_id
         ):
             fail(f"{base}.revision_id", "must reference a revision for its requirement")
         for index, support_id in enumerate(blocker.support_ids):
-            if support_id not in projection.requirements.support_by_id:
-                fail(f"{base}.support_ids[{index}]", f"references missing support {support_id!r}")
+            support(support_id, f"{base}.support_ids[{index}]")
 
 
 def _requirement_relations(
     projection: ImmutableGraphProjection,
     record: Callable[[str | None, str], None],
+    requirement: RuntimeRelationResolver,
+    revision: RuntimeRelationResolver,
+    support: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
 ) -> None:
     value = projection.requirements
-    for version_id, revision in value.revisions_by_id.items():
-        if revision.version_id != version_id:
+    for version_id, revision_item in value.revisions_by_id.items():
+        revision(version_id, f"requirements.revisions_by_id.{version_id}", map_role="key")
+        revision(
+            revision_item.version_id,
+            f"requirements.revisions_by_id.{version_id}.version_id",
+        )
+        requirement(
+            revision_item.requirement_id,
+            f"requirements.revisions_by_id.{version_id}.requirement_id",
+        )
+        if revision_item.version_id != version_id:
             fail(
                 f"requirements.revisions_by_id.{version_id}.version_id",
                 f"must equal map key {version_id!r}",
             )
-        if revision.previous_version_id is not None:
-            previous = value.revisions_by_id.get(revision.previous_version_id)
-            if previous is None:
-                fail(
-                    f"requirements.revisions_by_id.{version_id}.previous_version_id",
-                    "references missing requirement revision",
-                )
-            elif previous.requirement_id != revision.requirement_id:
+        if revision_item.previous_version_id is not None:
+            previous = revision(
+                revision_item.previous_version_id,
+                f"requirements.revisions_by_id.{version_id}.previous_version_id",
+            )
+            if previous is not None and previous.requirement_id != revision_item.requirement_id:
                 fail(
                     f"requirements.revisions_by_id.{version_id}.previous_version_id",
                     "must reference a revision for the same requirement",
                 )
     for requirement_id, version_id in value.active_version_id_by_requirement.items():
-        revision = value.revisions_by_id.get(version_id)
-        if revision is None or revision.requirement_id != requirement_id:
+        base = f"requirements.active_version_id_by_requirement.{requirement_id}"
+        requirement(requirement_id, base, map_role="key")
+        active_revision = revision(version_id, base, map_role="value")
+        if active_revision is not None and active_revision.requirement_id != requirement_id:
             fail(
-                f"requirements.active_version_id_by_requirement.{requirement_id}",
+                base,
                 "must reference a revision for its requirement",
             )
-    for support_id, support in value.support_by_id.items():
+    for support_id, support_item in value.support_by_id.items():
         base = f"requirements.support_by_id.{support_id}"
-        if support.support_id != support_id:
+        support(support_id, base, map_role="key")
+        support(support_item.support_id, f"{base}.support_id")
+        requirement(support_item.requirement_id, f"{base}.requirement_id")
+        if support_item.support_id != support_id:
             fail(f"{base}.support_id", f"must equal map key {support_id!r}")
-        record(support.evidence_id, f"{base}.evidence_id")
-        revision = value.revisions_by_id.get(support.requirement_version_id)
-        if revision is None or revision.requirement_id != support.requirement_id:
+        record(support_item.evidence_id, f"{base}.evidence_id")
+        support_revision = revision(
+            support_item.requirement_version_id, f"{base}.requirement_version_id"
+        )
+        if (
+            support_revision is not None
+            and support_revision.requirement_id != support_item.requirement_id
+        ):
             fail(f"{base}.requirement_version_id", "must reference a revision for its requirement")
 
 
@@ -1318,17 +1402,21 @@ def _execution_relations(
     node: Callable[[str | None, str], None],
     task: Callable[[str | None, str], None],
     record: Callable[[str | None, str], None],
+    resolve_lease: RuntimeRelationResolver,
+    cleanup_resolver: RuntimeRelationResolver,
+    session: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
 ) -> None:
     value = projection.execution
     for lease_id, lease in value.leases.items():
         base = f"execution.leases.{lease_id}"
+        resolve_lease(lease_id, base, map_role="key")
+        resolve_lease(lease.lease_id, f"{base}.lease_id")
         if lease.lease_id != lease_id:
             fail(f"{base}.lease_id", f"must equal map key {lease_id!r}")
         node(lease.node_id, f"{base}.node_id")
         task(lease.task_region_id, f"{base}.task_region_id")
-        if lease.session_id is not None and lease.session_id not in projection.planning.sessions:
-            fail(f"{base}.session_id", f"references missing session {lease.session_id!r}")
+        session(lease.session_id, f"{base}.session_id")
     for task_id, failure in value.environment_failures_by_task.items():
         base = f"execution.environment_failures_by_task.{task_id}"
         task(task_id, base)
@@ -1344,12 +1432,11 @@ def _execution_relations(
         node(callback.node_id, f"{base}.node_id")
     for cleanup_id, cleanup in value.cleanup_requests_by_id.items():
         base = f"execution.cleanup_requests_by_id.{cleanup_id}"
+        cleanup_resolver(cleanup_id, base, map_role="key")
+        cleanup_resolver(cleanup.cleanup_id, f"{base}.cleanup_id")
         if cleanup.cleanup_id != cleanup_id:
             fail(f"{base}.cleanup_id", f"must equal map key {cleanup_id!r}")
         record(cleanup.file_state_record_id, f"{base}.file_state_record_id")
         node(cleanup.producer_node_id, f"{base}.producer_node_id")
     for cleanup_id in value.applied_cleanup_ids:
-        if cleanup_id not in value.cleanup_requests_by_id:
-            fail(
-                f"execution.applied_cleanup_ids.{cleanup_id}", "references missing cleanup request"
-            )
+        cleanup_resolver(cleanup_id, f"execution.applied_cleanup_ids.{cleanup_id}")

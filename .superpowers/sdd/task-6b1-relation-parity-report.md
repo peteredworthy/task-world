@@ -79,6 +79,48 @@ dispatching, preserving the pre-existing diagnostic path and message.
   160 explicit resolver validation paths, 49 external policies, and 19 derived
   policies. Discovery independently reports the same 228 paths.
 
+## Task 6b1b represented-family bridge completion
+
+- Added local dispatcher-backed wrappers for requirement, revision, support,
+  lease, cleanup, edge, and session relations. Typed-record visitors and
+  grouped validators now use those wrappers for requirement addresses and
+  grades, requirement record versions and supersession, failure leases,
+  file-state cleanup, authority blocker relations, requirement revisions and
+  support, planner and lease sessions, topology bindings, and applied cleanup
+  IDs.
+- Each branch dispatches represented existence before retaining map-key,
+  same-requirement, and edge-target consistency checks. The wrappers return a
+  represented object only for those secondary checks; direct membership and
+  lookup diagnostics no longer bypass dispatcher policy.
+- Reclassified the six executable canonical-key paths for cleanup requests,
+  leases, active requirements, revisions, support, and edges from derived to
+  resolver and added their validation paths. The artifact remains at 228
+  policies (155 grouped and 73 record), now with 166 resolver, 49 external,
+  and 13 derived policies.
+- Added finite dispatcher tests for all seven families, including wrong-family
+  fail-closed behavior without resolver invocation. A temporary AST structural
+  guard rejects direct membership/get resolution against canonical family
+  targets outside the local resolver closures. Literal static call-site parity
+  remains the next subtask.
+
+Focused Task 6b1b verification:
+
+```text
+uv run pytest tests/unit/test_graph_projection_integrity.py \
+  tests/unit/test_graph_projection_codec.py -q -n 0
+# 80 passed in 1.03s
+
+uv run ruff check src/orchestrator/graph/projection_codec.py \
+  tests/unit/test_graph_projection_integrity.py
+uv run ruff format --check src/orchestrator/graph/projection_codec.py \
+  tests/unit/test_graph_projection_integrity.py
+# all checks passed; 2 files already formatted
+
+uv run pyright src/orchestrator/graph/projection_codec.py \
+  tests/unit/test_graph_projection_integrity.py
+# 0 errors, 0 warnings, 0 informations
+```
+
 Focused Task 6b1a verification:
 
 ```text
