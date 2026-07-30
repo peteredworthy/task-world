@@ -20,7 +20,27 @@ from orchestrator.graph import (
     projection_relation_policy_gaps,
     projection_relation_validation_paths,
 )
+from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
 from tests.unit.test_graph_projection_codec import final_projection_fixture
+
+
+type RecursiveDiscoveryAlias = RecursiveDiscoveryAlias | FrozenJsonValue
+
+
+class RecursiveDiscoveryValue(ProjectionModel):
+    parent: "RecursiveDiscoveryValue | None" = None
+    linked_node_id: StrictStr | None = None
+
+
+class DiscoveryFixture(ProjectionModel):
+    nested: FrozenMap[StrictStr, FrozenMap[StrictStr, RecursiveDiscoveryValue]]
+    record_ids_by_node: FrozenMap[StrictStr, tuple[StrictStr, ...]]
+    session_id_by_node: FrozenMap[StrictStr, StrictStr]
+    region_label_by_node: FrozenMap[StrictStr, StrictStr]
+    ports: FrozenMap[StrictStr, StrictStr]
+    heterogeneous: tuple[StrictStr, RecursiveDiscoveryValue, FrozenJsonValue]
+    opaque: FrozenJsonValue
+    recursive_alias: RecursiveDiscoveryAlias
 
 
 def _checkpoint() -> dict[str, object]:
@@ -506,3 +526,29 @@ def test_identifier_path_parity_reports_a_new_identifier_field_without_policy() 
     assert projection_relation_policy_gaps(ProjectionWithUnreviewedIdentifier) == frozenset(
         {"new_integration_id"}
     )
+
+
+def test_identifier_policy_keeps_external_and_derived_identifier_families_explicit() -> None:
+    catalog = projection_relation_policy_catalog()
+    record_catalog = projection_record_relation_policy_catalog()
+
+    assert catalog["nodes.*.spec.command_definition_id"].family == "external"
+    assert "command definition" in catalog["nodes.*.spec.command_definition_id"].rationale
+    assert catalog["nodes.*.key"].family == "derived"
+    assert "node map key" in catalog["nodes.*.key"].rationale
+    assert record_catalog["records.by_id.*.git.ref"].family == "external"
+    assert "git" in record_catalog["records.by_id.*.git.ref"].rationale
+    assert record_catalog["records.by_id.*.value.source"].family == "external"
+    assert "external" in record_catalog["records.by_id.*.value.source"].rationale
+
+
+def test_identifier_discovery_observes_roles_without_treating_structural_keys_as_ids() -> None:
+    assert discover_projection_identifier_paths(DiscoveryFixture) == {
+        "nested.*.*.linked_node_id",
+        "record_ids_by_node.*.key",
+        "record_ids_by_node.*.value.*",
+        "session_id_by_node.*.key",
+        "session_id_by_node.*.value",
+        "region_label_by_node.*.key",
+        "heterogeneous.*.linked_node_id",
+    }

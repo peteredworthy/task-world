@@ -10,6 +10,7 @@ from typing import (
     Any,
     Callable,
     Literal,
+    TypeAliasType,
     Union,
     cast,
     get_args,
@@ -46,7 +47,7 @@ from orchestrator.graph.projection_models import (
     ProjectedRecordBase,
     ProjectionModel,
 )
-from orchestrator.graph.projection_collections import FrozenMap
+from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
 
 
 class ProjectionCheckpointCodecError(ValueError):
@@ -379,6 +380,8 @@ _EXPLICIT_IDENTIFIER_FIELDS = frozenset(
         "tree_sha",
         "content_hash",
         "idempotency_key",
+        "source_ref",
+        "hash",
     }
 )
 
@@ -395,6 +398,37 @@ def _is_string_scalar(annotation: object) -> bool:
     return annotation is str
 
 
+def _map_key_is_identifier(field_name: str, prefix: str) -> bool:
+    """Return whether a declared map field uses its keys as graph identities."""
+    if field_name in {"nodes", "tasks", "edges", "leases"}:
+        return True
+    if field_name == "by_id" and prefix in {
+        "records",
+        "requirements.revisions_by_id",
+        "requirements.support_by_id",
+    }:
+        return True
+    return (
+        "_by_node" in field_name
+        or "_by_task" in field_name
+        or "_by_record_id" in field_name
+        or "_by_requirement" in field_name
+        or "_by_id" in field_name
+    )
+
+
+def _map_value_is_identifier(field_name: str) -> bool:
+    return (
+        field_name.endswith("_ids_by_node")
+        or field_name.endswith("_id_by_node")
+        or field_name
+        in {
+            "successor_by_node",
+            "active_version_id_by_requirement",
+        }
+    )
+
+
 def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str]:
     """Discover normalized public identifier paths without inspecting private state.
 
@@ -408,28 +442,62 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
     def join(prefix: str, segment: str) -> str:
         return f"{prefix}.{segment}" if prefix else segment
 
-    def visit(annotation: object, prefix: str, active: frozenset[type[ProjectionModel]]) -> None:
+    active_aliases: set[TypeAliasType] = set()
+
+    def visit(
+        annotation: object,
+        prefix: str,
+        active: frozenset[type[ProjectionModel]],
+        map_field_name: str | None = None,
+        map_depth: int = 0,
+    ) -> None:
+        if annotation is FrozenJsonValue:
+            return
+        if isinstance(annotation, TypeAliasType):
+            if annotation in active_aliases:
+                return
+            active_aliases.add(annotation)
+            try:
+                visit(annotation.__value__, prefix, active, map_field_name, map_depth)
+            finally:
+                active_aliases.remove(annotation)
+            return
         origin = get_origin(annotation)
         arguments = get_args(annotation)
         if origin is Annotated:
-            visit(arguments[0], prefix, active)
+            visit(arguments[0], prefix, active, map_field_name, map_depth)
         elif origin in (Union, UnionType):
             for member in arguments:
                 if member is not type(None):
-                    visit(member, prefix, active)
+                    visit(member, prefix, active, map_field_name, map_depth)
         elif origin is tuple:
-            if arguments:
-                visit(arguments[0], join(prefix, "*"), active)
+            for member in arguments:
+                if member is not Ellipsis:
+                    visit(member, join(prefix, "*"), active, map_field_name, map_depth)
         elif origin is FrozenMap:
-            key_type, value_type = arguments if len(arguments) == 2 else (object, object)
+            _, value_type = arguments if len(arguments) == 2 else (object, object)
             map_prefix = join(prefix, "*")
-            # Map keys are identities even where the container's public name
-            # is not ``*_by_*`` (for example ``nodes`` and ``records.by_id``).
-            paths.add(join(map_prefix, "key"))
-            if "_by_" in prefix and _is_string_scalar(value_type):
+            field_name = map_field_name or prefix.rsplit(".", maxsplit=1)[-1]
+            if map_depth == 0 and _map_key_is_identifier(field_name, prefix):
+                paths.add(join(map_prefix, "key"))
+            if (
+                map_depth == 0
+                and _map_value_is_identifier(field_name)
+                and _is_string_scalar(value_type)
+            ):
                 paths.add(join(map_prefix, "value"))
-            visit(key_type, join(map_prefix, "key"), active)
-            visit(value_type, map_prefix, active)
+            if (
+                map_depth == 0
+                and _map_value_is_identifier(field_name)
+                and get_origin(value_type) is tuple
+            ):
+                paths.add(join(join(map_prefix, "value"), "*"))
+            elif not (
+                map_depth == 0
+                and _map_value_is_identifier(field_name)
+                and _is_string_scalar(value_type)
+            ):
+                visit(value_type, map_prefix, active, field_name, map_depth + 1)
         elif isinstance(annotation, type) and issubclass(annotation, ProjectionModel):
             if annotation in active:
                 return
@@ -438,7 +506,7 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
                 field_path = join(prefix, field_name)
                 if _identifier_field(field_name):
                     paths.add(field_path)
-                visit(hints[field_name], field_path, active | {annotation})
+                visit(hints[field_name], field_path, active | {annotation}, field_name)
 
     visit(root, "", frozenset())
     return paths
@@ -447,6 +515,10 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
 def _policy_for_path(path: str) -> RelationPolicy:
     """Classify a discovered path using the finite public identifier vocabulary."""
 
+    if path == "nodes.*.key":
+        return RelationPolicy(
+            family="derived", rationale="node map key is derived from the canonical node index"
+        )
     if path.endswith(".key"):
         return RelationPolicy(
             family="derived", rationale="canonical FrozenMap key identity is derived from its index"
@@ -467,6 +539,20 @@ def _policy_for_path(path: str) -> RelationPolicy:
         ("session", "session"),
     )
     leaf = path.rsplit(".", maxsplit=1)[-1]
+    if path in {
+        "nodes.*.spec.command_definition_id",
+        "records.by_id.*.git.ref",
+        "records.by_id.*.value.source",
+    }:
+        rationale = {
+            "nodes.*.spec.command_definition_id": "command definition belongs to an external command registry",
+            "records.by_id.*.git.ref": "git ref belongs to the external git repository",
+            "records.by_id.*.value.source": "source identifier belongs to an external provenance system",
+        }[path]
+        return RelationPolicy(
+            family="external",
+            rationale=rationale,
+        )
     if leaf in {
         "command_id",
         "execution_id",
