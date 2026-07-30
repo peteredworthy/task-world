@@ -25,7 +25,9 @@ from orchestrator.graph import (
     checkpoint_schema_is_current,
     edges_view,
     initial_projection,
+    node_states_view,
     project_record,
+    projection_from_checkpoint,
     projection_to_checkpoint,
     reduce_event,
 )
@@ -115,14 +117,16 @@ def test_full_checkpoint_metrics_cover_the_final_projection_not_snapshot_prefix(
 
     full_checkpoint = projection_to_checkpoint(full_projection)
     prefix_checkpoint = projection_to_checkpoint(prefix_projection)
+    full_decoded = projection_from_checkpoint(full_checkpoint)
+    prefix_decoded = projection_from_checkpoint(prefix_checkpoint)
     expected = metadata["projected"]
-    assert len(full_checkpoint["node_kinds"]) == expected["nodes"]
-    assert len(full_checkpoint["edges"]) == expected["edges"]
-    assert len(full_checkpoint["output_record_payloads"]) == expected["records"]
-    assert len(full_checkpoint["node_kinds"]) >= len(prefix_checkpoint["node_kinds"])
-    assert len(full_checkpoint["edges"]) >= len(prefix_checkpoint["edges"])
-    assert len(full_checkpoint["output_record_payloads"]) >= len(
-        prefix_checkpoint["output_record_payloads"]
+    assert len(node_states_view(full_decoded)) == expected["nodes"]
+    assert len(edges_view(full_decoded)) == expected["edges"]
+    assert len(accepted_record_summaries_by_id_view(full_decoded)) == expected["records"]
+    assert len(node_states_view(full_decoded)) >= len(node_states_view(prefix_decoded))
+    assert len(edges_view(full_decoded)) >= len(edges_view(prefix_decoded))
+    assert len(accepted_record_summaries_by_id_view(full_decoded)) >= len(
+        accepted_record_summaries_by_id_view(prefix_decoded)
     )
 
 
@@ -161,6 +165,7 @@ def test_smoke_measurements_report_honest_operation_boundaries_and_real_views() 
             measurements["metadata"]["operation_boundaries"]["cold_rebuild"]
         )
         assert measurements["metadata"]["stream"]["event_count"] == 100
+        assert measurements["metadata"]["scaffold"] == {"nodes": 100, "edges": 99}
         assert metrics["peak_memory_bytes"]["sample_count"] == 1
         for metric in (
             "reducer_full_replay",
@@ -223,6 +228,44 @@ def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_g
             assert metrics["checkpoint_bytes"]["unit"] == "bytes"
             assert metrics["peak_memory_bytes"]["unit"] == "bytes"
             assert metrics["reducer_full_replay"]["unit"] == "ms"
+
+
+@pytest.mark.parametrize("count", (0, 7))
+def test_cli_records_operator_max_event_count_without_network(count: int) -> None:
+    result = _run(
+        "--sizes",
+        "2",
+        "--warmups",
+        "0",
+        "--runs",
+        "1",
+        "--max-event-count",
+        str(count),
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["max_event_count"] == {
+        "kind": "available",
+        "count": count,
+        "status": "available",
+        "source": "operator",
+    }
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (("--max-event-count", "-1"), "--max-event-count must be nonnegative"),
+        (("--api-url", "http://localhost"), "unrecognized arguments: --api-url"),
+    ],
+)
+def test_cli_rejects_invalid_or_removed_count_options_before_benchmark(
+    args: tuple[str, ...], message: str
+) -> None:
+    result = _run(*args)
+
+    assert result.returncode == 2
+    assert message in result.stderr
 
 
 def _gate_document(
@@ -317,6 +360,7 @@ def _gate_document(
                     "append_index_entries": size - 1,
                 },
             },
+            "scaffold": {"nodes": size, "edges": size - 1},
             "operation_boundaries": {
                 "snapshot_tail": "decode_checkpoint_then_reduce_suffix",
                 "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
@@ -446,16 +490,29 @@ def test_gate_evaluator_rejects_missing_metric_with_sorted_compatibility_diagnos
     metrics = size_100["metrics"]
     assert isinstance(metrics, dict)
     del metrics["checkpoint_decode"]
+    violations = gate_violations(baseline, target)
+
+    assert violations == sorted(violations)
+    assert any("checkpoint_decode" in violation for violation in violations)
+
+
+def test_gate_evaluator_reports_protocol_mismatch_independently() -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
     tool = target["tool"]
     assert isinstance(tool, dict)
     tool["hash"] = "d" * 64
 
-    violations = gate_violations(baseline, target)
+    assert gate_violations(baseline, target) == ["incompatible protocol.hash"]
 
-    assert violations == sorted(violations)
-    assert any("tool.hash" in violation for violation in violations) or any(
-        "checkpoint_decode" in violation for violation in violations
-    )
+
+def test_cold_rebuild_gate_uses_baseline_replay_not_baseline_cold_rebuild() -> None:
+    baseline = _gate_document(role="baseline", replay=100.0, cold_rebuild=1000.0)
+    passing = _gate_document(role="target", checkpoint=99.0, cold_rebuild=115.0)
+    failing = _gate_document(role="target", checkpoint=99.0, cold_rebuild=115.1)
+
+    assert not any("cold-rebuild" in issue for issue in gate_violations(baseline, passing))
+    assert any("cold-rebuild" in issue for issue in gate_violations(baseline, failing))
 
 
 @pytest.mark.parametrize("scale_high", (259.9, 260.0, 260.1))
@@ -619,11 +676,74 @@ def test_scaling_probes_store_only_pair_and_startup_and_use_canonical_replay_met
     )
 
 
+def _set_sample_runs(document: dict[str, object], runs: int) -> None:
+    configuration = document["configuration"]
+    assert isinstance(configuration, dict)
+    configuration["runs"] = runs
+    scenarios = document["scenarios"]
+    assert isinstance(scenarios, dict)
+    for scenario in scenarios.values():
+        assert isinstance(scenario, dict)
+        sizes = scenario["sizes"]
+        assert isinstance(sizes, dict)
+        for result in sizes.values():
+            assert isinstance(result, dict)
+            metrics = result["metrics"]
+            assert isinstance(metrics, dict)
+            for metric in metrics.values():
+                assert isinstance(metric, dict)
+                if metric["kind"] == "sampled":
+                    metric["sample_count"] = runs
+    probes = document["scaling_probes"]
+    assert isinstance(probes, dict)
+    for scenario_probes in probes.values():
+        assert isinstance(scenario_probes, list)
+        for probe in scenario_probes:
+            probe["startup"]["sample_count"] = runs
+
+
+def _retarget_sizes(document: dict[str, object], n: int) -> None:
+    configuration = document["configuration"]
+    assert isinstance(configuration, dict)
+    configuration["requested_sizes"] = [n]
+    configuration["probe_sizes"] = [n, n * 2]
+    scenarios = document["scenarios"]
+    assert isinstance(scenarios, dict)
+    for scenario in scenarios.values():
+        assert isinstance(scenario, dict)
+        old_sizes = scenario["sizes"]
+        assert isinstance(old_sizes, dict)
+        new_sizes: dict[str, object] = {}
+        for old_key, size in (("100", n), ("200", n * 2)):
+            result = deepcopy(old_sizes[old_key])
+            result["metadata"]["event_count"] = size
+            result["metadata"]["stream"]["event_count"] = size
+            new_sizes[str(size)] = result
+        scenario["sizes"] = new_sizes
+    probes = document["scaling_probes"]
+    assert isinstance(probes, dict)
+    for scenario_probes in probes.values():
+        assert isinstance(scenario_probes, list)
+        scenario_probes[0]["pair"] = {"n": n, "two_n": n * 2}
+
+
 @pytest.mark.parametrize(
     ("family", "mutate", "expected"),
     [
         ("protocol", lambda document: document["tool"].update({"hash": "d" * 64}), "protocol.hash"),
         ("corpus", lambda document: document["corpus"].update({"hash": "d" * 64}), "corpus.hash"),
+        (
+            "roles",
+            lambda document: document["artifact"].update({"role": "baseline"}),
+            "roles: expected baseline and target",
+        ),
+        (
+            "fingerprints",
+            lambda document: document["artifact"].update(
+                {"implementation_signature": "baseline-implementation"}
+            ),
+            "fingerprints: baseline and target must differ",
+        ),
         (
             "runtime",
             lambda document: document["environment"]["comparable"].update(
@@ -632,9 +752,26 @@ def test_scaling_probes_store_only_pair_and_startup_and_use_canonical_replay_met
             "runtime architecture",
         ),
         (
+            "runtime Python",
+            lambda document: document["environment"]["comparable"].update({"python": "3.13.0"}),
+            "runtime Python",
+        ),
+        (
+            "runtime deps",
+            lambda document: document["environment"]["comparable"]["dependencies"].update(
+                {"pydantic": "3"}
+            ),
+            "runtime deps",
+        ),
+        (
             "sample accounting",
             lambda document: document["configuration"].update({"warmups": 0}),
             "sample accounting.warmups",
+        ),
+        (
+            "sample runs",
+            lambda document: _set_sample_runs(document, 3),
+            "sample accounting.runs",
         ),
         (
             "pairs",
@@ -656,6 +793,58 @@ def test_compatibility_diagnostics_isolate_each_family(
     violations = gate_violations(baseline, target)
 
     assert violations == [f"incompatible {expected}"]
+
+
+def test_compatibility_diagnostics_isolate_requested_probe_sizes_and_pairs() -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
+    _retarget_sizes(target, 300)
+
+    assert gate_violations(baseline, target) == sorted(
+        [
+            "incompatible pairs edge-heavy",
+            "incompatible pairs general",
+            "incompatible pairs record-heavy",
+            "incompatible sizes.probe",
+            "incompatible sizes.requested",
+        ]
+    )
+
+
+@pytest.mark.parametrize("section", ("scenarios", "scaling_probes"))
+def test_compatibility_rejects_missing_scenario_sections(section: str) -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
+    value = target[section]
+    assert isinstance(value, dict)
+    del value["edge-heavy"]
+
+    issues = gate_violations(baseline, target)
+
+    assert len(issues) == 1
+    assert issues[0].startswith("invalid target ")
+
+
+def test_compatibility_rejects_scenario_metadata_mismatch_independently() -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
+    scenarios = target["scenarios"]
+    assert isinstance(scenarios, dict)
+    general = scenarios["general"]
+    assert isinstance(general, dict)
+    sizes = general["sizes"]
+    assert isinstance(sizes, dict)
+    size = sizes["100"]
+    assert isinstance(size, dict)
+    metadata = size["metadata"]
+    assert isinstance(metadata, dict)
+    stream = metadata["stream"]
+    assert isinstance(stream, dict)
+    family_counts = stream["family_counts"]
+    assert isinstance(family_counts, dict)
+    family_counts["node_state_changed"] = 1
+
+    assert gate_violations(baseline, target) == ["incompatible scenario metadata general/100"]
 
 
 @pytest.mark.parametrize("scenario", ("general", "edge-heavy", "record-heavy"))

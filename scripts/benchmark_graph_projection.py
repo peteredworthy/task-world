@@ -265,6 +265,11 @@ class ProjectedCardinalities(StrictResultModel):
     append_index_entries: StrictInt = Field(ge=0)
 
 
+class ScaffoldCardinalities(StrictResultModel):
+    nodes: StrictInt = Field(ge=0)
+    edges: StrictInt = Field(ge=0)
+
+
 class StreamMetadata(StrictResultModel):
     scenario: Literal["general", "edge-heavy", "record-heavy"]
     event_count: StrictInt = Field(gt=0)
@@ -282,6 +287,7 @@ class OperationBoundaries(StrictResultModel):
 class SizeMetadata(StrictResultModel):
     event_count: StrictInt = Field(gt=0)
     stream: StreamMetadata
+    scaffold: ScaffoldCardinalities
     operation_boundaries: OperationBoundaries
 
 
@@ -537,16 +543,15 @@ def _public_view_cardinality(view: dict[str, Any]) -> int:
 
 def _persistent_typed_operation(event_count: int) -> Any:
     """Exercise Task 8's real persistent map and grouped-model replacement shape."""
-    projection_type = getattr(
-        graph, "GraphProjection", getattr(graph, "ImmutableGraphProjection", None)
-    )
+    graph_projection_type = getattr(graph, "GraphProjection", None)
+    projection_type = graph_projection_type
+    if graph_projection_type is not None and not hasattr(graph_projection_type(), "model_copy"):
+        projection_type = getattr(graph, "ImmutableGraphProjection", None)
     if projection_type is None:
         raise RuntimeError("no public grouped graph projection type is available")
     projection = projection_type()
     if not hasattr(projection, "model_copy"):
-        # Task 7 baseline uses the public legacy projection shape; Task 8's
-        # grouped model path below is selected automatically after cutover.
-        return projection
+        raise RuntimeError("public grouped graph projection type is not immutable")
     for index in range(event_count):
         node_id = f"scaffold-node-{index:06d}"
         node = NodeProjection(
@@ -639,6 +644,11 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
 
     public_view = public_operation()
     assert _public_view_cardinality(public_view) > 0
+    scaffold = _persistent_typed_operation(len(events))
+    scaffold_cardinalities = {
+        "nodes": len(scaffold.nodes),
+        "edges": len(scaffold.topology.edges),
+    }
 
     operations = {
         "reducer_full_replay": lambda: _replay(events),
@@ -675,11 +685,7 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
             "sample_count": 1,
         },
         "max_observed": {"count": len(events), "source": "synthetic_corpus", "status": "available"},
-        "checkpoint_cardinalities": {
-            "nodes": len(full_checkpoint["node_kinds"]),
-            "edges": len(full_checkpoint["edges"]),
-            "records": len(full_checkpoint["output_record_payloads"]),
-        },
+        "scaffold_cardinalities": scaffold_cardinalities,
     }
     measurements["public_view"]["result_cardinality"] = _public_view_cardinality(public_view)
     measurements["append_heavy_indexes"]["result_cardinality"] = _append_index_cardinality(
@@ -818,6 +824,7 @@ def benchmark(
                     "metadata": {
                         "event_count": int(size),
                         "stream": corpus_metadata(name, int(size)),
+                        "scaffold": measurement["scaffold_cardinalities"],
                         "operation_boundaries": measurement["operation_boundaries"],
                     },
                 }
@@ -1010,6 +1017,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("--sizes must be sorted, unique integers of at least 2")
     if args.warmups < 0 or args.runs < 1:
         parser.error("--warmups must be nonnegative and --runs must be positive")
+    if args.max_event_count is not None and args.max_event_count < 0:
+        parser.error("--max-event-count must be nonnegative")
     if args.write_baseline and args.check_gates:
         parser.error("--write-baseline and --check-gates are mutually exclusive")
     return args
