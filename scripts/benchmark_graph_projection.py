@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import platform
+import subprocess
 import sys
 import tracemalloc
 from decimal import Decimal
@@ -19,12 +19,13 @@ from typing import Any, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+import orchestrator.graph as graph
+
 from orchestrator.graph import (
     Actor,
     ActorKind,
     EdgeValue,
     EventEnvelope,
-    ImmutableGraphProjection,
     NodeProjection,
     NodeSpecProjection,
     PROJECTION_SCHEMA_VERSION,
@@ -59,6 +60,31 @@ TIME_METRICS = (
 RESULT_SCHEMA_VERSION = 2
 TOOL_IDENTITY = "graph-projection-benchmark"
 TOOL_VERSION = "2"
+BENCHMARK_PROTOCOL = {
+    "version": 1,
+    "scenarios": SCENARIO_NAMES,
+    "corpora": "canonical-event-envelope-v1",
+    "operation_boundaries": {
+        "replay": "canonical_event_fold",
+        "peak_memory": "replay_only_excluding_prebuilt_corpus",
+        "cold_rebuild": "reject_stale_schema_then_replay",
+    },
+    "units": {"time": "ms", "memory": "bytes"},
+    "gates": {
+        "replay_memory_cold": "1.15",
+        "checkpoint": "1.0",
+        "codec_view": "1.25",
+        "scale": "2.5",
+    },
+}
+
+
+def protocol_hash() -> str:
+    return hashlib.sha256(
+        json.dumps(BENCHMARK_PROTOCOL, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 GATED_METRICS = {
     "reducer_full_replay": ("ms", 1.15, "replay"),
     "peak_memory_bytes": ("bytes", 1.15, "peak-memory"),
@@ -106,6 +132,10 @@ class ToolIdentity(StrictResultModel):
     hash: str = Field(min_length=1)
 
 
+class SourceRevision(StrictResultModel):
+    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+
+
 class ArtifactIdentity(StrictResultModel):
     role: Literal["baseline", "target"]
     implementation_signature: str = Field(min_length=1)
@@ -115,7 +145,7 @@ class BenchmarkResult(StrictResultModel):
     schema_version: Literal[2]
     tool: ToolIdentity
     artifact: ArtifactIdentity
-    source: dict[str, str]
+    source: SourceRevision
     corpus: dict[str, Any]
     configuration: dict[str, Any]
     environment: dict[str, Any]
@@ -277,9 +307,18 @@ def _public_view_cardinality(view: dict[str, Any]) -> int:
     return sum(len(value) for value in view.values())
 
 
-def _persistent_typed_operation(event_count: int) -> ImmutableGraphProjection:
+def _persistent_typed_operation(event_count: int) -> Any:
     """Exercise Task 8's real persistent map and grouped-model replacement shape."""
-    projection = ImmutableGraphProjection()
+    projection_type = getattr(
+        graph, "GraphProjection", getattr(graph, "ImmutableGraphProjection", None)
+    )
+    if projection_type is None:
+        raise RuntimeError("no public grouped graph projection type is available")
+    projection = projection_type()
+    if not hasattr(projection, "model_copy"):
+        # Task 7 baseline uses the public legacy projection shape; Task 8's
+        # grouped model path below is selected automatically after cutover.
+        return projection
     for index in range(event_count):
         node_id = f"scaffold-node-{index:06d}"
         node = NodeProjection(
@@ -465,12 +504,23 @@ def _environment() -> dict[str, Any]:
     }
 
 
-def _script_hash() -> str:
-    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-
-
 def _source_revision() -> str:
-    return os.environ.get("GIT_COMMIT", "unknown")
+    completed = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=2,
+    )
+    revision = completed.stdout.strip()
+    if (
+        completed.returncode
+        or len(revision) != 40
+        or any(character not in "0123456789abcdef" for character in revision)
+    ):
+        raise RuntimeError("benchmark requires a 40-hex git source revision")
+    return revision
 
 
 def _metric_result(value: dict[str, Any], runs: int) -> dict[str, Any]:
@@ -482,16 +532,22 @@ def _metric_result(value: dict[str, Any], runs: int) -> dict[str, Any]:
     }
 
 
+def _implementation_identity() -> tuple[Literal["baseline", "target"], str]:
+    projection = initial_projection()
+    grouped = hasattr(projection, "model_copy")
+    role: Literal["baseline", "target"] = "target" if grouped else "baseline"
+    shape = type(projection).__name__ if grouped else "legacy-mapping"
+    return role, f"{shape}:projection-schema-{PROJECTION_SCHEMA_VERSION}"
+
+
 def benchmark(
     sizes: list[int],
     warmups: int,
     runs: int,
-    api_url: str,
     *,
-    artifact_role: Literal["baseline", "target"] = "target",
     operator_max_event_count: int | None = None,
 ) -> dict[str, Any]:
-    del api_url  # Retained CLI compatibility; no bounded count-only endpoint exists.
+    artifact_role, implementation_signature = _implementation_identity()
     probe_sizes = sorted({size for size in sizes for size in (size, size * 2)})
     corpora = {
         f"{name}:{size}": [event.model_dump(mode="json") for event in corpus_events(name, size)]
@@ -536,14 +592,10 @@ def benchmark(
             }
     result = BenchmarkResult(
         schema_version=RESULT_SCHEMA_VERSION,
-        tool={"identity": TOOL_IDENTITY, "version": TOOL_VERSION, "hash": _script_hash()},
+        tool={"identity": TOOL_IDENTITY, "version": TOOL_VERSION, "hash": protocol_hash()},
         artifact={
             "role": artifact_role,
-            "implementation_signature": (
-                "pre-cutover-current-reducer"
-                if artifact_role == "baseline"
-                else "post-cutover-immutable-projection"
-            ),
+            "implementation_signature": implementation_signature,
         },
         source={"revision": _source_revision()},
         corpus={
@@ -705,7 +757,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
     parser.add_argument("--write-baseline", action="store_true")
     parser.add_argument("--check-gates", action="store_true")
-    parser.add_argument("--api-url", default="http://127.0.0.1:8000/api/graph/max-event-count")
     parser.add_argument("--max-event-count", type=int)
     args = parser.parse_args()
     if any(size < 2 for size in args.sizes) or sorted(set(args.sizes)) != args.sizes:
@@ -723,10 +774,12 @@ def main() -> None:
         args.sizes,
         args.warmups,
         args.runs,
-        args.api_url,
-        artifact_role="baseline" if args.write_baseline else "target",
         operator_max_event_count=args.max_event_count,
     )
+    if args.write_baseline and result["artifact"]["role"] != "baseline":
+        raise SystemExit("--write-baseline requires the current legacy/baseline implementation")
+    if args.check_gates and result["artifact"]["role"] != "target":
+        raise SystemExit("--check-gates requires the current grouped/target implementation")
     if args.write_baseline:
         args.baseline.parent.mkdir(parents=True, exist_ok=True)
         args.baseline.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

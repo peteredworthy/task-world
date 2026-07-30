@@ -8,7 +8,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts.benchmark_graph_projection import corpus_metadata, corpus_events, gate_violations
+from scripts.benchmark_graph_projection import (
+    BENCHMARK_PROTOCOL,
+    corpus_metadata,
+    corpus_events,
+    gate_violations,
+    protocol_hash,
+)
 from orchestrator.graph import (
     OutputRecordAcceptedPayload,
     PROJECTION_SCHEMA_VERSION,
@@ -251,7 +257,7 @@ def _gate_document(
         "schema_version": 2,
         "tool": {"identity": "graph-projection-benchmark", "version": "2", "hash": "tool-hash"},
         "artifact": {"role": role, "implementation_signature": f"{role}-implementation"},
-        "source": {"revision": f"{role}-revision"},
+        "source": {"revision": "a" * 40 if role == "baseline" else "b" * 40},
         "corpus": {"hash": "corpus-hash", "scenario_hash": "scenario-hash"},
         "configuration": {
             "requested_sizes": [100],
@@ -290,6 +296,20 @@ def test_gate_evaluator_accepts_complete_strict_documents() -> None:
     )
 
     assert gate_violations(baseline, target) == []
+
+
+def test_protocol_hash_is_stable_when_implementation_fingerprints_differ() -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
+
+    assert BENCHMARK_PROTOCOL["version"] == 1
+    assert protocol_hash() == protocol_hash()
+    assert (
+        baseline["artifact"]["implementation_signature"]
+        != target["artifact"]["implementation_signature"]
+    )
+    assert baseline["tool"]["hash"] == target["tool"]["hash"]
+    assert protocol_hash() != ""
 
 
 @pytest.mark.parametrize(
