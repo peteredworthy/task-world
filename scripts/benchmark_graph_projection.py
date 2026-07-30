@@ -15,9 +15,20 @@ from importlib.metadata import version
 from pathlib import Path
 from statistics import median
 from time import perf_counter
-from typing import Any, Callable, Literal
+from math import isfinite
+from typing import Annotated, Any, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 import orchestrator.graph as graph
 
@@ -96,49 +107,214 @@ GATED_METRICS = {
 
 
 class StrictResultModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
-class MetricResult(StrictResultModel):
-    median: float
-    unit: str
-    source: str
-    sample_count: int = Field(ge=1)
-
-
-class SizeResult(StrictResultModel):
-    metrics: dict[str, MetricResult]
-    metadata: dict[str, Any]
-
-
-class ScenarioResult(StrictResultModel):
-    sizes: dict[str, SizeResult]
-
-
-class ScalingPoint(StrictResultModel):
-    median: float
-    startup_median: float
-    unit: Literal["ms"]
-
-
-class ScalingProbe(StrictResultModel):
-    n: ScalingPoint
-    two_n: ScalingPoint
+class SourceRevision(StrictResultModel):
+    revision: StrictStr = Field(pattern=r"^[0-9a-f]{40}$")
 
 
 class ToolIdentity(StrictResultModel):
     identity: Literal["graph-projection-benchmark"]
     version: Literal["2"]
-    hash: str = Field(min_length=1)
-
-
-class SourceRevision(StrictResultModel):
-    revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class ArtifactIdentity(StrictResultModel):
     role: Literal["baseline", "target"]
-    implementation_signature: str = Field(min_length=1)
+    implementation_signature: StrictStr = Field(min_length=1)
+
+
+class CorpusIdentity(StrictResultModel):
+    hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+    scenario_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class BenchmarkConfiguration(StrictResultModel):
+    requested_sizes: list[StrictInt]
+    probe_sizes: list[StrictInt]
+    warmups: StrictInt = Field(ge=0)
+    runs: StrictInt = Field(gt=0)
+
+    @field_validator("requested_sizes", "probe_sizes")
+    @classmethod
+    def sizes_are_sorted_unique_positive(cls, value: list[int]) -> list[int]:
+        if not value or any(size <= 0 for size in value) or value != sorted(set(value)):
+            raise ValueError("must be sorted, unique, positive integers")
+        return value
+
+    @model_validator(mode="after")
+    def probe_sizes_are_requested_doubles(self) -> BenchmarkConfiguration:
+        expected = sorted({size for size in self.requested_sizes for size in (size, size * 2)})
+        if self.probe_sizes != expected:
+            raise ValueError("probe_sizes must be the exact union of requested sizes and doubles")
+        return self
+
+
+class ComparableDependencies(StrictResultModel):
+    pydantic: StrictStr = Field(min_length=1)
+    sqlalchemy: StrictStr = Field(min_length=1)
+
+
+class ComparableEnvironment(StrictResultModel):
+    architecture: StrictStr = Field(min_length=1)
+    python: StrictStr = Field(min_length=1)
+    dependencies: ComparableDependencies
+
+
+class InformationalEnvironment(StrictResultModel):
+    host: StrictStr
+    processor: StrictStr
+    os: StrictStr
+    os_release: StrictStr
+
+
+class BenchmarkEnvironment(StrictResultModel):
+    comparable: ComparableEnvironment
+    informational: InformationalEnvironment
+
+
+class UnsupportedMaxEventCount(StrictResultModel):
+    kind: Literal["unsupported"]
+    count: None
+    status: Literal["unsupported"]
+    source: Literal["unsupported"]
+
+
+class OperatorMaxEventCount(StrictResultModel):
+    kind: Literal["available"]
+    count: StrictInt = Field(ge=0)
+    status: Literal["available"]
+    source: Literal["operator"]
+
+
+MaxEventCount = Annotated[
+    UnsupportedMaxEventCount | OperatorMaxEventCount,
+    Field(discriminator="kind"),
+]
+
+
+class SampledMetric(StrictResultModel):
+    kind: Literal["sampled"]
+    median: StrictFloat
+    unit: Literal["ms", "ms/event", "bytes"]
+    source: Literal["current"]
+    sample_count: StrictInt = Field(ge=1)
+
+    @field_validator("median")
+    @classmethod
+    def median_is_finite_nonnegative(cls, value: float) -> float:
+        if not isfinite(value) or value < 0:
+            raise ValueError("must be finite and nonnegative")
+        return value
+
+
+class CheckpointBytesMetric(StrictResultModel):
+    kind: Literal["deterministic"]
+    median: StrictFloat
+    unit: Literal["bytes"]
+    source: Literal["current"]
+    sample_count: Literal[1]
+
+    @field_validator("median")
+    @classmethod
+    def median_is_finite_nonnegative(cls, value: float) -> float:
+        if not isfinite(value) or value < 0:
+            raise ValueError("must be finite and nonnegative")
+        return value
+
+
+class MetricCollection(StrictResultModel):
+    reducer_full_replay: SampledMetric
+    reducer_per_event: SampledMetric
+    snapshot_tail: SampledMetric
+    cold_rebuild: SampledMetric
+    checkpoint_encode: SampledMetric
+    checkpoint_decode: SampledMetric
+    public_view: SampledMetric
+    append_heavy_indexes: SampledMetric
+    persistent_primitive_scaffold: SampledMetric
+    peak_memory_bytes: SampledMetric
+    checkpoint_bytes: CheckpointBytesMetric
+
+    @model_validator(mode="after")
+    def metrics_have_canonical_units(self) -> MetricCollection:
+        expected_units = {
+            "reducer_per_event": "ms/event",
+            "peak_memory_bytes": "bytes",
+            "checkpoint_bytes": "bytes",
+        }
+        for name in type(self).model_fields:
+            expected = expected_units.get(name, "ms")
+            if getattr(self, name).unit != expected:
+                raise ValueError(f"{name} must use {expected}")
+        return self
+
+
+class EventFamilyCardinalities(StrictResultModel):
+    node_created: StrictInt = Field(ge=0)
+    node_state_changed: StrictInt = Field(ge=0)
+    edge_created: StrictInt = Field(ge=0)
+    output_record_accepted: StrictInt = Field(ge=0)
+
+
+class ProjectedCardinalities(StrictResultModel):
+    nodes: StrictInt = Field(ge=0)
+    edges: StrictInt = Field(ge=0)
+    records: StrictInt = Field(ge=0)
+    append_index_entries: StrictInt = Field(ge=0)
+
+
+class StreamMetadata(StrictResultModel):
+    scenario: Literal["general", "edge-heavy", "record-heavy"]
+    event_count: StrictInt = Field(gt=0)
+    family_counts: EventFamilyCardinalities
+    projected: ProjectedCardinalities
+
+
+class OperationBoundaries(StrictResultModel):
+    snapshot_tail: Literal["decode_checkpoint_then_reduce_suffix"]
+    append_heavy_indexes: Literal["prebuilt_prefix_then_reduce_suffix"]
+    cold_rebuild: Literal["reject_stale_schema_then_replay"]
+    peak_memory_bytes: Literal["replay_only_excluding_prebuilt_corpus"]
+
+
+class SizeMetadata(StrictResultModel):
+    event_count: StrictInt = Field(gt=0)
+    stream: StreamMetadata
+    operation_boundaries: OperationBoundaries
+
+
+class SizeResult(StrictResultModel):
+    metrics: MetricCollection
+    metadata: SizeMetadata
+
+
+class ScenarioResult(StrictResultModel):
+    sizes: dict[StrictStr, SizeResult]
+
+
+class ScalingPair(StrictResultModel):
+    n: StrictInt = Field(gt=0)
+    two_n: StrictInt = Field(gt=0)
+
+    @model_validator(mode="after")
+    def second_size_is_double(self) -> ScalingPair:
+        if self.two_n != self.n * 2:
+            raise ValueError("two_n must equal twice n")
+        return self
+
+
+class ScalingProbe(StrictResultModel):
+    pair: ScalingPair
+    startup: SampledMetric
+
+    @field_validator("startup")
+    @classmethod
+    def startup_is_milliseconds(cls, value: SampledMetric) -> SampledMetric:
+        if value.unit != "ms":
+            raise ValueError("startup must use ms")
+        return value
 
 
 class BenchmarkResult(StrictResultModel):
@@ -146,12 +322,59 @@ class BenchmarkResult(StrictResultModel):
     tool: ToolIdentity
     artifact: ArtifactIdentity
     source: SourceRevision
-    corpus: dict[str, Any]
-    configuration: dict[str, Any]
-    environment: dict[str, Any]
-    max_event_count: dict[str, Any]
-    scenarios: dict[str, ScenarioResult]
-    scaling_probes: dict[str, dict[str, ScalingProbe]]
+    corpus: CorpusIdentity
+    configuration: BenchmarkConfiguration
+    environment: BenchmarkEnvironment
+    max_event_count: MaxEventCount
+    scenarios: dict[Literal["general", "edge-heavy", "record-heavy"], ScenarioResult]
+    scaling_probes: dict[Literal["general", "edge-heavy", "record-heavy"], list[ScalingProbe]]
+
+    @model_validator(mode="after")
+    def content_matches_configuration(self) -> BenchmarkResult:
+        expected_scenarios = set(SCENARIO_NAMES)
+        if (
+            set(self.scenarios) != expected_scenarios
+            or set(self.scaling_probes) != expected_scenarios
+        ):
+            raise ValueError(
+                "scenarios and scaling_probes must contain exactly the required scenarios"
+            )
+        expected_sizes = {str(size) for size in self.configuration.probe_sizes}
+        for scenario_name in SCENARIO_NAMES:
+            scenario = self.scenarios[scenario_name]
+            if set(scenario.sizes) != expected_sizes:
+                raise ValueError(f"scenario {scenario_name} sizes must exactly match probe_sizes")
+            for size_key, result in scenario.sizes.items():
+                size = int(size_key)
+                if (
+                    result.metadata.event_count != size
+                    or result.metadata.stream.event_count != size
+                ):
+                    raise ValueError(f"scenario {scenario_name}/{size} event_count must equal size")
+                if result.metadata.stream.scenario != scenario_name:
+                    raise ValueError(f"scenario {scenario_name}/{size} stream scenario must match")
+                for metric in type(result.metrics).model_fields:
+                    value = getattr(result.metrics, metric)
+                    if (
+                        isinstance(value, SampledMetric)
+                        and value.sample_count != self.configuration.runs
+                    ):
+                        raise ValueError(
+                            f"scenario {scenario_name}/{size}/{metric} sample_count must equal runs"
+                        )
+            pairs = {
+                (probe.pair.n, probe.pair.two_n) for probe in self.scaling_probes[scenario_name]
+            }
+            if len(pairs) != len(self.scaling_probes[scenario_name]):
+                raise ValueError(f"scaling probes for {scenario_name} must not duplicate pairs")
+            if any(
+                probe.startup.sample_count != self.configuration.runs
+                for probe in self.scaling_probes[scenario_name]
+            ):
+                raise ValueError(
+                    f"scaling startup sample_count for {scenario_name} must equal runs"
+                )
+        return self
 
 
 def _event(index: int, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
@@ -257,7 +480,12 @@ def corpus_metadata(scenario: str, size: int) -> dict[str, Any]:
     return {
         "scenario": scenario,
         "event_count": len(events),
-        "family_counts": counts,
+        "family_counts": {
+            "node_created": counts.get("node_created", 0),
+            "node_state_changed": counts.get("node_state_changed", 0),
+            "edge_created": counts.get("edge_created", 0),
+            "output_record_accepted": counts.get("output_record_accepted", 0),
+        },
         "projected": {
             "nodes": counts.get("node_created", 0),
             "edges": counts.get("edge_created", 0),
@@ -350,6 +578,7 @@ def _timed(fn: Callable[[], Any], runs: int, unit: str = "ms") -> dict[str, Any]
         fn()
         samples.append((perf_counter() - start) * 1000)
     return {
+        "kind": "sampled",
         "median": round(median(samples), 6),
         "unit": unit,
         "source": "current",
@@ -439,9 +668,11 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
         "append_heavy_indexes": _timed(operations["append_heavy_indexes"], runs),
         "persistent_primitive_scaffold": _timed(operations["persistent_primitive_scaffold"], runs),
         "checkpoint_bytes": {
-            "median": len(checkpoint_json.encode()),
+            "kind": "deterministic",
+            "median": float(len(checkpoint_json.encode())),
             "unit": "bytes",
             "source": "current",
+            "sample_count": 1,
         },
         "max_observed": {"count": len(events), "source": "synthetic_corpus", "status": "available"},
         "checkpoint_cardinalities": {
@@ -469,7 +700,8 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
         tracemalloc.stop()
         memory_samples.append(peak)
     measurements["peak_memory_bytes"] = {
-        "median": median(memory_samples),
+        "kind": "sampled",
+        "median": float(median(memory_samples)),
         "unit": "bytes",
         "source": "current",
         "sample_count": len(memory_samples),
@@ -481,10 +713,20 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
 def _max_event_count(operator_count: int | None) -> dict[str, Any]:
     """Record only a supported count source; this API has no count-only endpoint."""
     if operator_count is None:
-        return {"count": None, "status": "unsupported", "source": "unsupported"}
+        return {
+            "kind": "unsupported",
+            "count": None,
+            "status": "unsupported",
+            "source": "unsupported",
+        }
     if type(operator_count) is not int or operator_count < 0:
         raise ValueError("operator max event count must be a nonnegative exact integer")
-    return {"count": operator_count, "status": "available", "source": "operator"}
+    return {
+        "kind": "available",
+        "count": operator_count,
+        "status": "available",
+        "source": "operator",
+    }
 
 
 def _environment() -> dict[str, Any]:
@@ -525,6 +767,7 @@ def _source_revision() -> str:
 
 def _metric_result(value: dict[str, Any], runs: int) -> dict[str, Any]:
     return {
+        "kind": value.get("kind", "sampled"),
         "median": value["median"],
         "unit": value["unit"],
         "source": value["source"],
@@ -581,15 +824,21 @@ def benchmark(
                 for size, measurement in by_size.items()
             }
         }
-        scaling_probes[name] = {}
+        scaling_probes[name] = []
         for size in sizes:
-            small = by_size[str(size)]["reducer_full_replay"]["median"]
-            large = by_size[str(size * 2)]["reducer_full_replay"]["median"]
             startup = _timed(lambda: _replay([]), runs)["median"]
-            scaling_probes[name][f"{size}_to_{size * 2}"] = {
-                "n": {"median": small, "startup_median": startup, "unit": "ms"},
-                "two_n": {"median": large, "startup_median": startup, "unit": "ms"},
-            }
+            scaling_probes[name].append(
+                {
+                    "pair": {"n": size, "two_n": size * 2},
+                    "startup": {
+                        "kind": "sampled",
+                        "median": startup,
+                        "unit": "ms",
+                        "source": "current",
+                        "sample_count": runs,
+                    },
+                }
+            )
     result = BenchmarkResult(
         schema_version=RESULT_SCHEMA_VERSION,
         tool={"identity": TOOL_IDENTITY, "version": TOOL_VERSION, "hash": protocol_hash()},
@@ -627,13 +876,6 @@ def _validation_diagnostics(document: dict[str, Any], name: str) -> list[str]:
     return []
 
 
-def _configuration_values(result: BenchmarkResult, key: str) -> list[int] | None:
-    value = result.configuration.get(key)
-    if not isinstance(value, list) or any(type(item) is not int or item < 2 for item in value):
-        return None
-    return value
-
-
 def _exceeds(observed: float, baseline: float, limit: str) -> bool:
     return Decimal(str(observed)) > Decimal(str(baseline)) * Decimal(limit)
 
@@ -648,58 +890,63 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
     prior = BenchmarkResult.model_validate(baseline)
     observed = BenchmarkResult.model_validate(target)
     compatibility: list[str] = []
-    if prior.artifact.role != "baseline":
-        compatibility.append("incompatible baseline artifact.role: expected baseline")
-    if observed.artifact.role != "target":
-        compatibility.append("incompatible target artifact.role: expected target")
+    if prior.artifact.role != "baseline" or observed.artifact.role != "target":
+        compatibility.append("incompatible roles: expected baseline and target")
     if prior.artifact.implementation_signature == observed.artifact.implementation_signature:
-        compatibility.append(
-            "incompatible artifact.implementation_signature: baseline and target must differ"
-        )
+        compatibility.append("incompatible fingerprints: baseline and target must differ")
     for field in ("identity", "version", "hash"):
         if getattr(prior.tool, field) != getattr(observed.tool, field):
-            compatibility.append(f"incompatible tool.{field}")
+            compatibility.append(f"incompatible protocol.{field}")
     for field in ("hash", "scenario_hash"):
-        if prior.corpus.get(field) != observed.corpus.get(field):
+        if getattr(prior.corpus, field) != getattr(observed.corpus, field):
             compatibility.append(f"incompatible corpus.{field}")
-    if prior.environment.get("comparable") != observed.environment.get("comparable"):
-        compatibility.append("incompatible environment.comparable")
-    requested = _configuration_values(prior, "requested_sizes")
-    target_requested = _configuration_values(observed, "requested_sizes")
-    probes = _configuration_values(prior, "probe_sizes")
-    target_probes = _configuration_values(observed, "probe_sizes")
-    if requested is None or target_requested is None or requested != target_requested:
-        compatibility.append("incompatible configuration.requested_sizes")
-    if probes is None or target_probes is None or probes != target_probes:
-        compatibility.append("incompatible configuration.probe_sizes")
-    for key in ("warmups", "runs"):
-        if prior.configuration.get(key) != observed.configuration.get(key):
-            compatibility.append(f"incompatible configuration.{key}")
-    if set(prior.scenarios) != set(SCENARIO_NAMES) or set(observed.scenarios) != set(
-        SCENARIO_NAMES
-    ):
-        compatibility.append("incompatible scenarios: expected edge-heavy,general,record-heavy")
+    if prior.configuration.requested_sizes != observed.configuration.requested_sizes:
+        compatibility.append("incompatible sizes.requested")
+    if prior.configuration.probe_sizes != observed.configuration.probe_sizes:
+        compatibility.append("incompatible sizes.probe")
+    if prior.configuration.warmups != observed.configuration.warmups:
+        compatibility.append("incompatible sample accounting.warmups")
+    if prior.configuration.runs != observed.configuration.runs:
+        compatibility.append("incompatible sample accounting.runs")
+    if prior.environment.comparable.architecture != observed.environment.comparable.architecture:
+        compatibility.append("incompatible runtime architecture")
+    if prior.environment.comparable.python != observed.environment.comparable.python:
+        compatibility.append("incompatible runtime Python")
+    if prior.environment.comparable.dependencies != observed.environment.comparable.dependencies:
+        compatibility.append("incompatible runtime deps")
+    if set(prior.scenarios) != set(observed.scenarios):
+        compatibility.append("incompatible scenario set")
+    if set(prior.scaling_probes) != set(observed.scaling_probes):
+        compatibility.append("incompatible scaling scenario set")
+    expected_pairs = {(size, size * 2) for size in prior.configuration.requested_sizes}
+    for scenario in SCENARIO_NAMES:
+        baseline_pairs = {
+            (probe.pair.n, probe.pair.two_n) for probe in prior.scaling_probes[scenario]
+        }
+        target_pairs = {
+            (probe.pair.n, probe.pair.two_n) for probe in observed.scaling_probes[scenario]
+        }
+        if baseline_pairs != expected_pairs or target_pairs != expected_pairs:
+            compatibility.append(f"incompatible pairs {scenario}")
     if compatibility:
         return sorted(compatibility)
 
-    required_sizes = [*requested, *probes] if requested is not None and probes is not None else []
+    required_sizes = prior.configuration.probe_sizes
     violations: list[str] = []
     for scenario in SCENARIO_NAMES:
         baseline_sizes = prior.scenarios[scenario].sizes
         target_sizes = observed.scenarios[scenario].sizes
         for size in required_sizes:
             size_key = str(size)
-            if size_key not in baseline_sizes or size_key not in target_sizes:
-                violations.append(f"incompatible {scenario}/{size}: missing size measurement")
-                continue
+            before_metadata = baseline_sizes[size_key].metadata
+            after_metadata = target_sizes[size_key].metadata
+            if before_metadata != after_metadata:
+                violations.append(f"incompatible scenario metadata {scenario}/{size}")
             for metric, (unit, limit, label) in GATED_METRICS.items():
-                before = baseline_sizes[size_key].metrics.get(metric)
-                after = target_sizes[size_key].metrics.get(metric)
-                if before is None or after is None:
-                    violations.append(f"incompatible {scenario}/{size}/{metric}: missing metric")
-                    continue
+                before = getattr(baseline_sizes[size_key].metrics, metric)
+                after = getattr(target_sizes[size_key].metrics, metric)
                 if before.unit != unit or after.unit != unit or before.source != after.source:
-                    violations.append(f"incompatible {scenario}/{size}/{metric}: unit or source")
+                    violations.append(f"incompatible units/sources {scenario}/{size}/{metric}")
                     continue
                 if before.median <= 0:
                     violations.append(
@@ -709,11 +956,9 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
                     violations.append(
                         f"{label} {scenario}/{size}/{metric}: {after.median} exceeds {before.median} * {limit}"
                     )
-            cold_before = baseline_sizes[size_key].metrics.get("reducer_full_replay")
-            cold_after = target_sizes[size_key].metrics.get("cold_rebuild")
-            if cold_before is None or cold_after is None:
-                violations.append(f"incompatible {scenario}/{size}/cold_rebuild: missing metric")
-            elif (
+            cold_before = baseline_sizes[size_key].metrics.reducer_full_replay
+            cold_after = target_sizes[size_key].metrics.cold_rebuild
+            if (
                 cold_before.unit != "ms"
                 or cold_after.unit != "ms"
                 or cold_before.source != cold_after.source
@@ -726,20 +971,22 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
                     f"cold-rebuild {scenario}/{size}: {cold_after.median} exceeds {cold_before.median} * 1.15"
                 )
             if scenario == "record-heavy":
-                before = baseline_sizes[size_key].metrics.get("checkpoint_bytes")
-                after = target_sizes[size_key].metrics.get("checkpoint_bytes")
-                if before is not None and after is not None and after.median >= before.median:
+                before = baseline_sizes[size_key].metrics.checkpoint_bytes
+                after = target_sizes[size_key].metrics.checkpoint_bytes
+                if after.median >= before.median:
                     violations.append(
                         f"record-heavy checkpoint {scenario}/{size}: {after.median} must be strictly smaller than {before.median}"
                     )
-        for size in requested or []:
-            probe_key = f"{size}_to_{size * 2}"
-            probe = observed.scaling_probes.get(scenario, {}).get(probe_key)
-            if probe is None:
-                violations.append(f"incompatible scaling {scenario}/{probe_key}: missing probe")
+        for probe in observed.scaling_probes[scenario]:
+            n, two_n = probe.pair.n, probe.pair.two_n
+            probe_key = f"{n}_to_{two_n}"
+            n_replay = target_sizes[str(n)].metrics.reducer_full_replay
+            two_n_replay = target_sizes[str(two_n)].metrics.reducer_full_replay
+            if n_replay.unit != "ms" or two_n_replay.unit != "ms":
+                violations.append(f"incompatible units {scenario}/{probe_key}/reducer_full_replay")
                 continue
-            denominator = probe.n.median - probe.n.startup_median
-            numerator = probe.two_n.median - probe.two_n.startup_median
+            denominator = n_replay.median - probe.startup.median
+            numerator = two_n_replay.median - probe.startup.median
             if denominator <= 0:
                 violations.append(f"scaling {scenario}/{probe_key}: invalid denominator")
             elif numerator / denominator > 2.5:

@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from scripts.benchmark_graph_projection import (
     BENCHMARK_PROTOCOL,
+    BenchmarkResult,
     corpus_metadata,
     corpus_events,
     gate_violations,
@@ -206,6 +209,7 @@ def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_g
     assert baseline["configuration"]["requested_sizes"] == [100]
     assert baseline["configuration"]["probe_sizes"] == [100, 200]
     assert baseline["max_event_count"] == {
+        "kind": "unsupported",
         "count": None,
         "source": "unsupported",
         "status": "unsupported",
@@ -233,7 +237,7 @@ def _gate_document(
     scale_high: float = 210.0,
 ) -> dict[str, object]:
     """Return a complete, hand-built schema-v2 gate document."""
-    metrics = {
+    gated_metrics = {
         "reducer_full_replay": (replay, "ms"),
         "peak_memory_bytes": (memory, "bytes"),
         "checkpoint_bytes": (checkpoint, "bytes"),
@@ -244,21 +248,89 @@ def _gate_document(
     }
 
     def measurement(values: dict[str, tuple[float, str]]) -> dict[str, object]:
-        return {
-            name: {"median": value, "unit": unit, "source": "current", "sample_count": 2}
+        sampled = {
+            name: {
+                "kind": "sampled",
+                "median": float(value),
+                "unit": unit,
+                "source": "current",
+                "sample_count": 2,
+            }
             for name, (value, unit) in values.items()
+            if name != "checkpoint_bytes"
+        }
+        return {
+            **sampled,
+            "reducer_per_event": {
+                "kind": "sampled",
+                "median": 1.0,
+                "unit": "ms/event",
+                "source": "current",
+                "sample_count": 2,
+            },
+            "snapshot_tail": {
+                "kind": "sampled",
+                "median": 2.0,
+                "unit": "ms",
+                "source": "current",
+                "sample_count": 2,
+            },
+            "append_heavy_indexes": {
+                "kind": "sampled",
+                "median": 3.0,
+                "unit": "ms",
+                "source": "current",
+                "sample_count": 2,
+            },
+            "persistent_primitive_scaffold": {
+                "kind": "sampled",
+                "median": 4.0,
+                "unit": "ms",
+                "source": "current",
+                "sample_count": 2,
+            },
+            "checkpoint_bytes": {
+                "kind": "deterministic",
+                "median": float(values["checkpoint_bytes"][0]),
+                "unit": "bytes",
+                "source": "current",
+                "sample_count": 1,
+            },
         }
 
-    sizes = {
-        size: {"metrics": measurement(metrics), "metadata": {"event_count": int(size)}}
-        for size in ("100", "200")
-    }
+    def metadata(scenario: str, size: int) -> dict[str, object]:
+        return {
+            "event_count": size,
+            "stream": {
+                "scenario": scenario,
+                "event_count": size,
+                "family_counts": {
+                    "node_created": 1,
+                    "node_state_changed": 0,
+                    "edge_created": 0,
+                    "output_record_accepted": size - 1,
+                },
+                "projected": {
+                    "nodes": 1,
+                    "edges": 0,
+                    "records": size - 1,
+                    "append_index_entries": size - 1,
+                },
+            },
+            "operation_boundaries": {
+                "snapshot_tail": "decode_checkpoint_then_reduce_suffix",
+                "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+                "cold_rebuild": "reject_stale_schema_then_replay",
+                "peak_memory_bytes": "replay_only_excluding_prebuilt_corpus",
+            },
+        }
+
     return {
         "schema_version": 2,
-        "tool": {"identity": "graph-projection-benchmark", "version": "2", "hash": "tool-hash"},
+        "tool": {"identity": "graph-projection-benchmark", "version": "2", "hash": "c" * 64},
         "artifact": {"role": role, "implementation_signature": f"{role}-implementation"},
         "source": {"revision": "a" * 40 if role == "baseline" else "b" * 40},
-        "corpus": {"hash": "corpus-hash", "scenario_hash": "scenario-hash"},
+        "corpus": {"hash": "a" * 64, "scenario_hash": "b" * 64},
         "configuration": {
             "requested_sizes": [100],
             "probe_sizes": [100, 200],
@@ -271,19 +343,44 @@ def _gate_document(
                 "python": "3.12.0",
                 "dependencies": {"pydantic": "2", "sqlalchemy": "2"},
             },
-            "informational": {"host": "test-host", "os": "test-os"},
+            "informational": {
+                "host": "test-host",
+                "processor": "test-cpu",
+                "os": "test-os",
+                "os_release": "1",
+            },
         },
-        "max_event_count": {"count": None, "status": "unsupported", "source": "unsupported"},
+        "max_event_count": {
+            "kind": "unsupported",
+            "count": None,
+            "status": "unsupported",
+            "source": "unsupported",
+        },
         "scenarios": {
-            scenario: {"sizes": sizes} for scenario in ("general", "edge-heavy", "record-heavy")
-        },
-        "scaling_probes": {
             scenario: {
-                "100_to_200": {
-                    "n": {"median": scale_low, "startup_median": 10.0, "unit": "ms"},
-                    "two_n": {"median": scale_high, "startup_median": 10.0, "unit": "ms"},
+                "sizes": {
+                    size: {
+                        "metrics": measurement(gated_metrics),
+                        "metadata": metadata(scenario, int(size)),
+                    }
+                    for size in ("100", "200")
                 }
             }
+            for scenario in ("general", "edge-heavy", "record-heavy")
+        },
+        "scaling_probes": {
+            scenario: [
+                {
+                    "pair": {"n": 100, "two_n": 200},
+                    "startup": {
+                        "kind": "sampled",
+                        "median": 10.0,
+                        "unit": "ms",
+                        "source": "current",
+                        "sample_count": 2,
+                    },
+                }
+            ]
             for scenario in ("general", "edge-heavy", "record-heavy")
         },
     }
@@ -351,7 +448,7 @@ def test_gate_evaluator_rejects_missing_metric_with_sorted_compatibility_diagnos
     del metrics["checkpoint_decode"]
     tool = target["tool"]
     assert isinstance(tool, dict)
-    tool["hash"] = "stale-tool"
+    tool["hash"] = "d" * 64
 
     violations = gate_violations(baseline, target)
 
@@ -365,6 +462,20 @@ def test_gate_evaluator_rejects_missing_metric_with_sorted_compatibility_diagnos
 def test_scaling_boundary_subtracts_startup(scale_high: float) -> None:
     baseline = _gate_document(role="baseline")
     target = _gate_document(role="target", checkpoint=99.0, scale_high=scale_high)
+    scenarios = target["scenarios"]
+    assert isinstance(scenarios, dict)
+    for scenario in scenarios.values():
+        assert isinstance(scenario, dict)
+        sizes = scenario["sizes"]
+        assert isinstance(sizes, dict)
+        for size, median in (("100", 110.0), ("200", scale_high)):
+            measurement = sizes[size]
+            assert isinstance(measurement, dict)
+            metrics = measurement["metrics"]
+            assert isinstance(metrics, dict)
+            replay = metrics["reducer_full_replay"]
+            assert isinstance(replay, dict)
+            replay["median"] = median
 
     violations = gate_violations(baseline, target)
 
@@ -374,6 +485,19 @@ def test_scaling_boundary_subtracts_startup(scale_high: float) -> None:
 def test_scaling_refuses_nonpositive_startup_adjusted_denominator() -> None:
     baseline = _gate_document(role="baseline")
     target = _gate_document(role="target", checkpoint=99.0, scale_low=10.0)
+    scenarios = target["scenarios"]
+    assert isinstance(scenarios, dict)
+    for scenario in scenarios.values():
+        assert isinstance(scenario, dict)
+        sizes = scenario["sizes"]
+        assert isinstance(sizes, dict)
+        measurement = sizes["100"]
+        assert isinstance(measurement, dict)
+        metrics = measurement["metrics"]
+        assert isinstance(metrics, dict)
+        replay = metrics["reducer_full_replay"]
+        assert isinstance(replay, dict)
+        replay["median"] = 10.0
 
     assert any(
         "invalid denominator" in violation for violation in gate_violations(baseline, target)
@@ -389,4 +513,184 @@ def test_record_heavy_checkpoint_requires_strict_shrink(checkpoint: float) -> No
 
     assert (any("record-heavy checkpoint" in violation for violation in violations)) is (
         checkpoint >= 100.0
+    )
+
+
+def test_artifact_schema_rejects_nested_extra_fields_and_coerced_metric_medians() -> None:
+    document = _gate_document(role="baseline")
+    invalid = deepcopy(document)
+    corpus = invalid["corpus"]
+    assert isinstance(corpus, dict)
+    corpus["unexpected"] = "not allowed"
+    scenarios = invalid["scenarios"]
+    assert isinstance(scenarios, dict)
+    general = scenarios["general"]
+    assert isinstance(general, dict)
+    sizes = general["sizes"]
+    assert isinstance(sizes, dict)
+    size = sizes["100"]
+    assert isinstance(size, dict)
+    metrics = size["metrics"]
+    assert isinstance(metrics, dict)
+    replay = metrics["reducer_full_replay"]
+    assert isinstance(replay, dict)
+    replay["median"] = "100.0"
+
+    with pytest.raises(ValidationError) as error:
+        BenchmarkResult.model_validate(invalid)
+
+    locations = {issue["loc"] for issue in error.value.errors()}
+    assert ("corpus", "unexpected") in locations
+    assert (
+        "scenarios",
+        "general",
+        "sizes",
+        "100",
+        "metrics",
+        "reducer_full_replay",
+        "median",
+    ) in locations
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_location"),
+    [
+        (
+            lambda document: document["configuration"].update({"probe_sizes": [100]}),
+            ("configuration",),
+        ),
+        (lambda document: document["configuration"].update({"runs": 0}), ("configuration", "runs")),
+        (lambda document: document["corpus"].update({"hash": "not-a-hash"}), ("corpus", "hash")),
+        (
+            lambda document: document["scenarios"]["general"]["sizes"]["100"]["metrics"][
+                "checkpoint_bytes"
+            ].update({"sample_count": 2}),
+            ("scenarios", "general", "sizes", "100", "metrics", "checkpoint_bytes", "sample_count"),
+        ),
+        (
+            lambda document: document["scenarios"]["general"]["sizes"]["100"]["metrics"][
+                "reducer_full_replay"
+            ].update({"median": float("nan")}),
+            ("scenarios", "general", "sizes", "100", "metrics", "reducer_full_replay", "median"),
+        ),
+    ],
+)
+def test_artifact_schema_rejects_cross_field_and_metric_accounting_violations(
+    mutation: object, expected_location: tuple[str, ...]
+) -> None:
+    document = _gate_document(role="baseline")
+    assert callable(mutation)
+    mutation(document)
+
+    with pytest.raises(ValidationError) as error:
+        BenchmarkResult.model_validate(document)
+
+    assert any(
+        issue["loc"][: len(expected_location)] == expected_location
+        for issue in error.value.errors()
+    )
+
+
+def test_scaling_probes_store_only_pair_and_startup_and_use_canonical_replay_metrics() -> None:
+    document = _gate_document(role="target", checkpoint=99.0)
+    probes = document["scaling_probes"]
+    assert isinstance(probes, dict)
+    for scenario_probes in probes.values():
+        assert isinstance(scenario_probes, list)
+        assert set(scenario_probes[0]) == {"pair", "startup"}
+
+    scenarios = document["scenarios"]
+    assert isinstance(scenarios, dict)
+    for scenario in scenarios.values():
+        assert isinstance(scenario, dict)
+        sizes = scenario["sizes"]
+        assert isinstance(sizes, dict)
+        for size, median in (("100", 10.0), ("200", 250.1)):
+            measurement = sizes[size]
+            assert isinstance(measurement, dict)
+            metrics = measurement["metrics"]
+            assert isinstance(metrics, dict)
+            replay = metrics["reducer_full_replay"]
+            assert isinstance(replay, dict)
+            replay["median"] = median
+
+    assert any(
+        "scaling" in issue for issue in gate_violations(_gate_document(role="baseline"), document)
+    )
+
+
+@pytest.mark.parametrize(
+    ("family", "mutate", "expected"),
+    [
+        ("protocol", lambda document: document["tool"].update({"hash": "d" * 64}), "protocol.hash"),
+        ("corpus", lambda document: document["corpus"].update({"hash": "d" * 64}), "corpus.hash"),
+        (
+            "runtime",
+            lambda document: document["environment"]["comparable"].update(
+                {"architecture": "x86_64"}
+            ),
+            "runtime architecture",
+        ),
+        (
+            "sample accounting",
+            lambda document: document["configuration"].update({"warmups": 0}),
+            "sample accounting.warmups",
+        ),
+        (
+            "pairs",
+            lambda document: document["scaling_probes"]["general"][0].update(
+                {"pair": {"n": 50, "two_n": 100}}
+            ),
+            "pairs general",
+        ),
+    ],
+)
+def test_compatibility_diagnostics_isolate_each_family(
+    family: str, mutate: object, expected: str
+) -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
+    assert callable(mutate)
+    mutate(target)
+
+    violations = gate_violations(baseline, target)
+
+    assert violations == [f"incompatible {expected}"]
+
+
+@pytest.mark.parametrize("scenario", ("general", "edge-heavy", "record-heavy"))
+@pytest.mark.parametrize("size", ("100", "200"))
+@pytest.mark.parametrize(
+    ("metric", "outside", "label"),
+    [
+        ("reducer_full_replay", 115.1, "replay"),
+        ("peak_memory_bytes", 115.1, "peak-memory"),
+        ("checkpoint_bytes", 100.1, "checkpoint-size"),
+        ("checkpoint_encode", 125.1, "codec/view"),
+        ("checkpoint_decode", 125.1, "codec/view"),
+        ("public_view", 125.1, "codec/view"),
+        ("cold_rebuild", 115.1, "cold-rebuild"),
+    ],
+)
+def test_every_scenario_size_metric_gate_rejects_its_own_outside_value(
+    scenario: str, size: str, metric: str, outside: float, label: str
+) -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
+    scenarios = target["scenarios"]
+    assert isinstance(scenarios, dict)
+    scenario_document = scenarios[scenario]
+    assert isinstance(scenario_document, dict)
+    sizes = scenario_document["sizes"]
+    assert isinstance(sizes, dict)
+    measurement = sizes[size]
+    assert isinstance(measurement, dict)
+    metrics = measurement["metrics"]
+    assert isinstance(metrics, dict)
+    selected_metric = metrics[metric]
+    assert isinstance(selected_metric, dict)
+    selected_metric["median"] = outside
+
+    assert any(
+        f"{label} {scenario}/{size}" in violation for violation in gate_violations(baseline, target)
     )
