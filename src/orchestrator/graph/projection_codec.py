@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from math import isfinite
+from importlib.resources import files
+from importlib.resources.abc import Traversable
 from pathlib import Path
+from math import isfinite
 from re import fullmatch
 from types import UnionType
 from typing import (
@@ -166,13 +168,13 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         if value is not None and value not in values:
             fail(path, f"references missing {kind} {value!r}")
 
-    def node(value: str | None, path: str) -> None:
+    def resolve_node(value: str | None, path: str) -> None:
         reference(nodes, value, path, "node")
 
-    def task(value: str | None, path: str) -> None:
+    def resolve_task(value: str | None, path: str) -> None:
         reference(tasks, value, path, "task")
 
-    def record(value: str | None, path: str) -> None:
+    def resolve_record(value: str | None, path: str) -> None:
         reference(records, value, path, "record")
 
     candidate_paths: dict[str, list[str]] = defaultdict(list)
@@ -192,7 +194,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
                 candidate_tasks[candidate_id] = task_id
             previous_paths.append(path)
 
-    def candidate(value: str | None, path: str) -> None:
+    def resolve_candidate(value: str | None, path: str) -> None:
         if value is None:
             return
         paths = candidate_paths.get(value, [])
@@ -200,6 +202,58 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
             fail(path, f"references missing candidate {value!r}")
         elif len(paths) > 1:
             fail(path, f"references ambiguous candidate {value!r}: {', '.join(sorted(paths))}")
+
+    def resolve_requirement(value: str | None, path: str) -> None:
+        requirement_ids = {
+            revision.requirement_id for revision in projection.requirements.revisions_by_id.values()
+        }
+        reference(requirement_ids, value, path, "requirement")
+
+    def resolve_revision(value: str | None, path: str) -> None:
+        reference(projection.requirements.revisions_by_id, value, path, "requirement revision")
+
+    def resolve_support(value: str | None, path: str) -> None:
+        reference(projection.requirements.support_by_id, value, path, "support")
+
+    def resolve_lease(value: str | None, path: str) -> None:
+        reference(projection.execution.leases, value, path, "lease")
+
+    def resolve_cleanup(value: str | None, path: str) -> None:
+        reference(projection.execution.cleanup_requests_by_id, value, path, "cleanup request")
+
+    def resolve_edge(value: str | None, path: str) -> None:
+        reference(projection.topology.edges, value, path, "edge")
+
+    def resolve_session(value: str | None, path: str) -> None:
+        reference(projection.planning.sessions, value, path, "session")
+
+    dispatcher = ProjectionRelationResolverDispatcher(
+        policies={**RELATION_POLICY_CATALOG, **RECORD_RELATION_POLICY_CATALOG},
+        validation_paths=projection_relation_validation_paths(),
+        resolve_node=resolve_node,
+        resolve_task=resolve_task,
+        resolve_record=resolve_record,
+        resolve_candidate=resolve_candidate,
+        resolve_requirement=resolve_requirement,
+        resolve_revision=resolve_revision,
+        resolve_support=resolve_support,
+        resolve_lease=resolve_lease,
+        resolve_cleanup=resolve_cleanup,
+        resolve_edge=resolve_edge,
+        resolve_session=resolve_session,
+    )
+
+    def node(value: str | None, path: str) -> None:
+        dispatcher.resolve_runtime("node", path, value)
+
+    def task(value: str | None, path: str) -> None:
+        dispatcher.resolve_runtime("task", path, value)
+
+    def record(value: str | None, path: str) -> None:
+        dispatcher.resolve_runtime("record", path, value)
+
+    def candidate(value: str | None, path: str) -> None:
+        dispatcher.resolve_runtime("candidate", path, value)
 
     for node_id, item in nodes.items():
         base = f"nodes.{node_id}"
@@ -426,16 +480,117 @@ class ProjectionRelationPolicyArtifact(BaseModel):
         return self
 
 
-_RELATION_POLICY_PATH = (
-    Path(__file__).resolve().parents[3]
-    / "scripts"
-    / "codemods"
-    / "graph_projection_relation_policy.yaml"
-)
+class ProjectionRelationResolverDispatcher:
+    """Dispatch represented-state lookups only through reviewed resolver policy."""
+
+    def __init__(
+        self,
+        *,
+        policies: dict[str, RelationPolicy],
+        validation_paths: frozenset[str],
+        resolve_node: RecordResolver,
+        resolve_task: RecordResolver,
+        resolve_record: RecordResolver,
+        resolve_candidate: RecordResolver,
+        resolve_requirement: RecordResolver,
+        resolve_revision: RecordResolver,
+        resolve_support: RecordResolver,
+        resolve_lease: RecordResolver,
+        resolve_cleanup: RecordResolver,
+        resolve_edge: RecordResolver,
+        resolve_session: RecordResolver,
+    ) -> None:
+        self._policies = policies
+        self._validation_paths = validation_paths
+        self._resolvers: dict[str, RecordResolver] = {
+            "node": resolve_node,
+            "task": resolve_task,
+            "record": resolve_record,
+            "candidate": resolve_candidate,
+            "requirement": resolve_requirement,
+            "revision": resolve_revision,
+            "support": resolve_support,
+            "lease": resolve_lease,
+            "cleanup": resolve_cleanup,
+            "edge": resolve_edge,
+            "session": resolve_session,
+        }
+
+    def resolve(
+        self, policy_path: str, family: RelationFamily, diagnostic_path: str, value: str | None
+    ) -> None:
+        policy = self._policies.get(policy_path)
+        if policy is None:
+            raise ValueError(f"unknown relation policy {policy_path!r}")
+        if policy.validation != "resolver":
+            raise ValueError(f"relation policy {policy_path!r} is not a resolver policy")
+        if policy_path not in self._validation_paths:
+            raise ValueError(f"relation policy {policy_path!r} is not an explicit validation path")
+        if policy.family != family:
+            raise ValueError(
+                f"relation policy {policy_path!r} expects family {policy.family!r}, got {family!r}"
+            )
+        self._resolvers[family](value, diagnostic_path)
+
+    def resolve_runtime(
+        self, family: RelationFamily, diagnostic_path: str, value: str | None
+    ) -> None:
+        """Resolve a runtime diagnostic through its unique reviewed policy path."""
+        normalized = diagnostic_path.replace("[", ".").replace("]", "")
+        normalized = ".".join(
+            "*" if segment.isdigit() else segment for segment in normalized.split(".")
+        )
+        matches = [
+            path
+            for path, policy in self._policies.items()
+            if policy.validation == "resolver"
+            and policy.family == family
+            and _policy_path_matches_runtime(path, normalized)
+        ]
+        direct_matches = [
+            path for path in matches if ".value." not in path and not path.endswith(".value")
+        ]
+        if len(direct_matches) == 1:
+            matches = direct_matches
+        if not matches:
+            # The remaining runtime calls are derived map-key/index shape
+            # checks.  They retain their existing diagnostics but never
+            # resolve a policy-owned represented relation.
+            self._resolvers[family](value, diagnostic_path)
+            return
+        if len(matches) != 1:
+            raise ValueError(
+                f"expected one {family!r} resolver policy for {diagnostic_path!r}, found {matches!r}"
+            )
+        self.resolve(matches[0], family, diagnostic_path, value)
 
 
-def load_projection_relation_policy(path: Path) -> ProjectionRelationPolicyArtifact:
-    """Load and strictly validate checked relation-policy data from ``path``."""
+def _policy_path_matches_runtime(policy_path: str, runtime_path: str) -> bool:
+    """Match diagnostics while treating checked map key/value roles as implicit at runtime."""
+    runtime_segments = runtime_path.split(".")
+
+    def matches(policy_segments: list[str]) -> bool:
+        comparable_runtime = runtime_segments
+        if len(comparable_runtime) == len(policy_segments) + 1 and comparable_runtime[-1] == "*":
+            comparable_runtime = comparable_runtime[:-1]
+        return len(policy_segments) == len(comparable_runtime) and all(
+            policy_segment == "*" or policy_segment == runtime_segment
+            for policy_segment, runtime_segment in zip(
+                policy_segments, comparable_runtime, strict=True
+            )
+        )
+
+    segments = policy_path.split(".")
+    return matches(segments) or matches(
+        [segment for segment in segments if segment not in {"key", "value"}]
+    )
+
+
+_RELATION_POLICY_RESOURCE = "_projection_relation_policy.yaml"
+
+
+def load_projection_relation_policy(path: Path | Traversable) -> ProjectionRelationPolicyArtifact:
+    """Load and strictly validate checked relation-policy data from a resource path."""
     return ProjectionRelationPolicyArtifact.model_validate(
         yaml.safe_load(path.read_text(encoding="utf-8"))
     )
@@ -456,6 +611,9 @@ _EXPLICIT_IDENTIFIER_FIELDS = frozenset(
         "idempotency_key",
         "source_ref",
         "hash",
+        "requirements_addressed",
+        "version",
+        "supersedes",
     }
 )
 
@@ -474,6 +632,8 @@ def _is_string_scalar(annotation: object) -> bool:
 
 def _map_key_is_identifier(field_name: str, prefix: str) -> bool:
     """Return whether a declared map field uses its keys as graph identities."""
+    if field_name.startswith(("id_by_", "ids_by_")) and field_name != "ids_by_node_port":
+        return False
     if field_name in {"nodes", "tasks", "edges", "leases"}:
         return True
     if field_name == "by_id" and prefix in {
@@ -493,8 +653,9 @@ def _map_key_is_identifier(field_name: str, prefix: str) -> bool:
 
 def _map_value_is_identifier(field_name: str) -> bool:
     return (
-        field_name.endswith("_ids_by_node")
-        or field_name.endswith("_id_by_node")
+        field_name.startswith(("ids_by_", "id_by_"))
+        or "_ids_by_" in field_name
+        or "_id_by_" in field_name
         or field_name
         in {
             "successor_by_node",
@@ -554,22 +715,15 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
             field_name = map_field_name or prefix.rsplit(".", maxsplit=1)[-1]
             if map_depth == 0 and _map_key_is_identifier(field_name, prefix):
                 paths.add(join(map_prefix, "key"))
-            if (
-                map_depth == 0
-                and _map_value_is_identifier(field_name)
-                and _is_string_scalar(value_type)
-            ):
+            if _map_value_is_identifier(field_name) and _is_string_scalar(value_type):
                 paths.add(join(map_prefix, "value"))
-            if (
-                map_depth == 0
-                and _map_value_is_identifier(field_name)
-                and get_origin(value_type) is tuple
-            ):
+            if _map_value_is_identifier(field_name) and get_origin(value_type) is tuple:
                 paths.add(join(join(map_prefix, "value"), "*"))
+            elif _map_value_is_identifier(field_name) and get_origin(value_type) is FrozenMap:
+                visit(value_type, join(map_prefix, "value"), active, field_name, map_depth + 1)
             elif not (
-                map_depth == 0
-                and _map_value_is_identifier(field_name)
-                and _is_string_scalar(value_type)
+                _map_value_is_identifier(field_name)
+                and (_is_string_scalar(value_type) or get_origin(value_type) is tuple)
             ):
                 visit(value_type, map_prefix, active, field_name, map_depth + 1)
         elif isinstance(annotation, type) and issubclass(annotation, ProjectionModel):
@@ -586,7 +740,9 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
     return paths
 
 
-_RELATION_POLICY_ARTIFACT = load_projection_relation_policy(_RELATION_POLICY_PATH)
+_RELATION_POLICY_ARTIFACT = load_projection_relation_policy(
+    files("orchestrator.graph").joinpath(_RELATION_POLICY_RESOURCE)
+)
 
 # The two finite mappings are loaded from checked data. Discovery remains an
 # independent model-graph audit and never constructs runtime policy.
@@ -613,6 +769,15 @@ def projection_record_relation_policy_catalog() -> dict[str, RelationPolicy]:
 def projection_relation_validation_paths() -> frozenset[str]:
     """Return the separately authored resolver/visitor path contract."""
     return frozenset(_RELATION_POLICY_ARTIFACT.validation_paths)
+
+
+def projection_relation_resolver_call_sites() -> frozenset[str]:
+    """Return the finite static resolver contract enforced by the dispatcher.
+
+    Resolver visitors cannot register ad-hoc paths: a call is executable only
+    when its static policy path belongs to this checked artifact contract.
+    """
+    return projection_relation_validation_paths()
 
 
 def projection_relation_policy_gaps(root: type[ProjectionModel]) -> frozenset[str]:

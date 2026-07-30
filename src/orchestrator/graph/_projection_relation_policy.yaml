@@ -704,6 +704,11 @@ policies:
   family: record
   rationale: Identifier is checked against represented record state by an integrity resolver.
   validation: resolver
+- path: records.by_id.*.value.requirements_addressed
+  scope: record
+  family: requirement
+  rationale: Identifier is checked against represented requirement state by an integrity resolver.
+  validation: resolver
 - path: records.by_id.*.value.reused_verification_record_id
   scope: record
   family: record
@@ -749,6 +754,11 @@ policies:
   family: external
   rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
   validation: external
+- path: records.by_id.*.value.supersedes
+  scope: record
+  family: revision
+  rationale: Identifier is checked against represented requirement revision state by an integrity resolver.
+  validation: resolver
 - path: records.by_id.*.value.target_node_id
   scope: record
   family: node
@@ -769,6 +779,11 @@ policies:
   family: record
   rationale: Identifier is checked against represented record state by an integrity resolver.
   validation: resolver
+- path: records.by_id.*.value.version
+  scope: record
+  family: revision
+  rationale: Identifier is checked against represented requirement revision state by an integrity resolver.
+  validation: resolver
 - path: records.by_id.*.verification_report_record_ids
   scope: record
   family: record
@@ -776,9 +791,14 @@ policies:
   validation: resolver
 - path: records.ids_by_node_port.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: records.ids_by_node_port.*.value.*.value.*
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
 - path: records.summaries_by_id
   scope: grouped
   family: derived
@@ -1186,13 +1206,18 @@ validation_paths:
 - records.by_id.*.value.lease_id
 - records.by_id.*.value.proposed_by_node_id
 - records.by_id.*.value.rationale_record_id
+- records.by_id.*.value.requirements_addressed
 - records.by_id.*.value.reused_verification_record_id
 - records.by_id.*.value.source_record_ids
+- records.by_id.*.value.supersedes
 - records.by_id.*.value.target_node_id
 - records.by_id.*.value.target_region_id
 - records.by_id.*.value.task_region_id
 - records.by_id.*.value.verification_report_record_ids
+- records.by_id.*.value.version
 - records.by_id.*.verification_report_record_ids
+- records.ids_by_node_port.*.key
+- records.ids_by_node_port.*.value.*.value.*
 - records.summaries_by_id.*.producer_node_id
 - records.summaries_by_id.*.record_id
 - requirements.active_version_id_by_requirement.*.value

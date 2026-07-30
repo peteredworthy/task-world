@@ -1,6 +1,7 @@
 """Referential-integrity contracts for immutable projection checkpoints."""
 
 from copy import deepcopy
+from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, cast, get_args, get_origin
 
@@ -13,6 +14,7 @@ from orchestrator.graph import (
     ProjectionModel,
     ProjectedRecord,
     ProjectionCheckpointIntegrityError,
+    ProjectionRelationResolverDispatcher,
     discover_projection_identifier_paths,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
@@ -20,6 +22,7 @@ from orchestrator.graph import (
     projection_relation_policy_catalog,
     projection_record_relation_policy_catalog,
     projection_relation_policy_gaps,
+    projection_relation_resolver_call_sites,
     projection_relation_validation_paths,
 )
 from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
@@ -43,6 +46,10 @@ class DiscoveryFixture(ProjectionModel):
     heterogeneous: tuple[StrictStr, RecursiveDiscoveryValue, FrozenJsonValue]
     opaque: FrozenJsonValue
     recursive_alias: RecursiveDiscoveryAlias
+
+
+class NestedRecordIndexDiscoveryFixture(ProjectionModel):
+    ids_by_node_port: FrozenMap[StrictStr, FrozenMap[StrictStr, tuple[StrictStr, ...]]]
 
 
 def _checkpoint() -> dict[str, object]:
@@ -561,6 +568,82 @@ def test_identifier_discovery_observes_roles_without_treating_structural_keys_as
         "region_label_by_node.*.key",
         "heterogeneous.*.linked_node_id",
     }
+
+
+def test_identifier_discovery_includes_nested_ids_by_node_port_values_not_port_keys() -> None:
+    assert discover_projection_identifier_paths(NestedRecordIndexDiscoveryFixture) == {
+        "ids_by_node_port.*.key",
+        "ids_by_node_port.*.value.*.value.*",
+    }
+
+
+def test_relation_resolver_dispatcher_requires_a_matching_resolver_policy() -> None:
+    policy = next(
+        item
+        for item in projection_relation_policy_catalog().values()
+        if item.validation == "resolver" and item.family == "node"
+    )
+    dispatcher = ProjectionRelationResolverDispatcher(
+        policies={policy.path: policy},
+        validation_paths=frozenset({policy.path}),
+        resolve_node=lambda value, path: None,
+        resolve_task=lambda value, path: None,
+        resolve_record=lambda value, path: None,
+        resolve_candidate=lambda value, path: None,
+        resolve_requirement=lambda value, path: None,
+        resolve_revision=lambda value, path: None,
+        resolve_support=lambda value, path: None,
+        resolve_lease=lambda value, path: None,
+        resolve_cleanup=lambda value, path: None,
+        resolve_edge=lambda value, path: None,
+        resolve_session=lambda value, path: None,
+    )
+
+    dispatcher.resolve(policy.path, "node", "nodes.node-1.runtime.node_id", "node-1")
+    with pytest.raises(ValueError, match="unknown relation policy"):
+        dispatcher.resolve("unknown.path", "node", "unknown.path", "node-1")
+    with pytest.raises(ValueError, match="expects family 'node'"):
+        dispatcher.resolve(policy.path, "task", "nodes.node-1.runtime.node_id", "node-1")
+
+
+def test_relation_resolver_dispatcher_rejects_policy_outside_explicit_validation_paths() -> None:
+    policy = next(
+        item
+        for item in projection_relation_policy_catalog().values()
+        if item.validation == "resolver" and item.family == "node"
+    )
+    dispatcher = ProjectionRelationResolverDispatcher(
+        policies={policy.path: policy},
+        validation_paths=frozenset(),
+        resolve_node=lambda value, path: None,
+        resolve_task=lambda value, path: None,
+        resolve_record=lambda value, path: None,
+        resolve_candidate=lambda value, path: None,
+        resolve_requirement=lambda value, path: None,
+        resolve_revision=lambda value, path: None,
+        resolve_support=lambda value, path: None,
+        resolve_lease=lambda value, path: None,
+        resolve_cleanup=lambda value, path: None,
+        resolve_edge=lambda value, path: None,
+        resolve_session=lambda value, path: None,
+    )
+
+    with pytest.raises(ValueError, match="not an explicit validation path"):
+        dispatcher.resolve(policy.path, "node", "nodes.node-1.runtime.node_id", "node-1")
+
+
+def test_resolver_call_site_tokens_exactly_cover_static_resolver_policies() -> None:
+    catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
+    expected = {path for path, policy in catalog.items() if policy.validation == "resolver"}
+
+    assert projection_relation_resolver_call_sites() == frozenset(expected)
+
+
+def test_relation_policy_is_a_packaged_graph_resource() -> None:
+    resource = files("orchestrator.graph").joinpath("_projection_relation_policy.yaml")
+
+    assert resource.is_file()
+    assert "policies:" in resource.read_text(encoding="utf-8")
 
 
 def _write_policy(tmp_path: Path, text: str) -> Path:
