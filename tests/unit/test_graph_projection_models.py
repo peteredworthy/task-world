@@ -13,6 +13,7 @@ from orchestrator.graph import (
     CallbackEventValue,
     CleanupRequestValue,
     CommandDefinitionValue,
+    DecisionActorValue,
     EdgeValue,
     EdgeProjection,
     EnvironmentFailureValue,
@@ -231,6 +232,7 @@ def test_new_models_are_available_from_public_graph_api() -> None:
         LifecycleProjection,
         ResourceClaimValue,
         CommandDefinitionValue,
+        DecisionActorValue,
         ProjectionDecisionRequestValue,
         ProjectionAuthorityRequestValue,
         NodeSpecProjection,
@@ -271,6 +273,89 @@ def test_new_models_are_available_from_public_graph_api() -> None:
     }
 
     assert all(isinstance(model, type) for model in exported_models)
+
+
+def test_node_spec_freezes_complete_canonical_command_definition() -> None:
+    command = {
+        "id": "check-1",
+        "cmd": "pytest",
+        "argv": ["tests/unit"],
+        "source": "routine",
+        "must": True,
+        "timeout_seconds": 30,
+    }
+    spec = NodeSpecProjection.model_validate(
+        {"node_id": "node-1", "creation_position": 1, "command_definition": command}
+    )
+
+    command["argv"].append("--quiet")
+    assert spec.command_definition.value["argv"] == ("tests/unit",)
+    assert spec.model_dump(mode="json", by_alias=True)["command_definition"] == {
+        "value": {
+            "id": "check-1",
+            "cmd": "pytest",
+            "argv": ["tests/unit"],
+            "source": "routine",
+            "must": True,
+            "timeout_seconds": 30,
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("field", "payload", "message"),
+    [
+        (
+            "decision_request",
+            {"decision_type": "approval", "options": [], "consequence_summary": "deploys"},
+            "at least one",
+        ),
+        ("authority_request", {"requested_authority": ["operator"], "reason": "review"}, "target"),
+    ],
+)
+def test_node_request_values_preserve_source_invariants(
+    field: str, payload: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        NodeSpecProjection.model_validate(
+            {"node_id": "node-1", "creation_position": 1, field: payload}
+        )
+
+
+def test_node_request_values_preserve_complete_nondefault_payloads() -> None:
+    decision = {
+        "decision_type": "approval",
+        "options": ["approve", "reject"],
+        "default_option": "approve",
+        "consequence_summary": "deploys",
+        "expires_at": "2026-01-01T00:00:00Z",
+        "target_node_id": "node-2",
+        "target_region_id": "region-1",
+    }
+    authority = {
+        "requested_authority": ["operator"],
+        "target_node_id": "node-2",
+        "reason": "requires approval",
+        "expires_at": "2026-01-01T00:00:00Z",
+    }
+    spec = NodeSpecProjection.model_validate(
+        {
+            "node_id": "node-1",
+            "creation_position": 1,
+            "decision_request": decision,
+            "authority_request": authority,
+        }
+    )
+
+    decision["options"].append("defer")
+    authority["requested_authority"].append("admin")
+    dumped = spec.model_dump(mode="json")
+    assert dumped["decision_request"] == {**decision, "options": ["approve", "reject"]}
+    assert dumped["authority_request"] == {
+        **authority,
+        "requested_authority": ["operator"],
+        "target_region_id": None,
+    }
 
 
 @pytest.mark.parametrize(

@@ -33,6 +33,12 @@
 - Source list/dict payload children are accepted at the conversion boundary and
   frozen into tuples, `FrozenMap`, or `FrozenJsonValue`; no source transport
   model is stored by reference.
+- Command definitions now use a dedicated immutable JSON-object wrapper rather
+  than an invented closed command schema. Canonical command keys and nested
+  values are preserved in a frozen map.
+- Decision and authority request wrappers now retain their canonical required
+  fields and enforce option/default and target invariants. `DecisionActorValue`
+  is exported from the public graph API.
 
 ## Contract Coverage
 
@@ -56,7 +62,7 @@ Executed successfully:
 
 ```text
 uv run pytest tests/unit/test_graph_projection_models.py tests/unit/test_graph_public_exports.py -q
-16 passed in 5.70s
+20 passed in 5.65s
 
 uv run ruff check src/orchestrator/graph/projection_models.py \
   src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_models.py
