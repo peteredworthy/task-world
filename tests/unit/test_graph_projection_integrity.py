@@ -136,6 +136,182 @@ def test_node_runtime_candidate_resolves_to_candidate_entity_not_record() -> Non
     )
 
 
+def test_matching_candidate_record_is_a_reference_to_the_task_candidate() -> None:
+    raw = _checkpoint()
+    records = cast(dict[str, object], raw["records"])
+    by_id = cast(dict[str, object], records["by_id"])
+    by_id["candidate-record-1"] = {
+        "record_id": "candidate-record-1",
+        "record_type": "candidate",
+        "record_kind": "output",
+        "producer_node_id": "node-1",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "candidate_id": "candidate-1",
+        "task_region_id": "task-1",
+        "value": {"summary": "candidate"},
+    }
+    cast(dict[str, object], records["ids_by_node_port"])["node-1"]["candidate"] = [
+        "candidate-record-1"
+    ]
+    cast(dict[str, object], records["summaries_by_id"])["candidate-record-1"] = {
+        "record_id": "candidate-record-1",
+        "record_type": "candidate",
+        "record_kind": "output",
+        "schema": "ImplementationCandidate",
+        "producer_node_id": "node-1",
+        "producer_port": "candidate",
+    }
+
+    assert immutable_projection_from_checkpoint(raw).records.by_id[
+        "candidate-record-1"
+    ].record_id == ("candidate-record-1")
+
+
+def test_candidate_record_must_reference_the_canonical_candidates_task() -> None:
+    raw = _checkpoint()
+    records = cast(dict[str, object], raw["records"])
+    by_id = cast(dict[str, object], records["by_id"])
+    by_id["candidate-record-1"] = {
+        "record_id": "candidate-record-1",
+        "record_type": "candidate",
+        "record_kind": "output",
+        "producer_node_id": "node-1",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "candidate_id": "candidate-1",
+        "task_region_id": "task-2",
+        "value": {"summary": "candidate"},
+    }
+    tasks = cast(dict[str, object], raw["tasks"])
+    tasks["task-2"] = {"state": "active"}
+    cast(dict[str, object], records["ids_by_node_port"])["node-1"]["candidate"] = [
+        "candidate-record-1"
+    ]
+    cast(dict[str, object], records["summaries_by_id"])["candidate-record-1"] = {
+        "record_id": "candidate-record-1",
+        "record_type": "candidate",
+        "record_kind": "output",
+        "schema": "ImplementationCandidate",
+        "producer_node_id": "node-1",
+        "producer_port": "candidate",
+    }
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        immutable_projection_from_checkpoint(raw)
+
+    assert {item.path: item.reason for item in raised.value.diagnostics}[
+        "records.by_id.candidate-record-1.candidate_id"
+    ] == "must resolve to a candidate for task 'task-2'"
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_path", "expected_reason"),
+    [
+        (
+            lambda raw: cast(dict[str, object], raw["nodes"])["node-1"]["runtime"].update(
+                {"candidate_id": "missing-candidate"}
+            ),
+            "nodes.node-1.runtime.candidate_id",
+            "references missing candidate 'missing-candidate'",
+        ),
+        (
+            lambda raw: cast(dict[str, object], raw["tasks"])["task-2"].update(
+                {
+                    "candidates": [
+                        {"candidate_id": "candidate-1", "attempt_number": 2, "position": 2}
+                    ]
+                }
+            ),
+            "tasks.task-2.candidates[0].candidate_id",
+            "duplicates canonical candidate 'candidate-1' declared at tasks.task-1.candidates[0].candidate_id",
+        ),
+    ],
+)
+def test_candidate_relations_resolve_only_to_unique_task_candidates(
+    mutate: object, expected_path: str, expected_reason: str
+) -> None:
+    raw = _checkpoint()
+    if expected_path.startswith("tasks.task-2"):
+        cast(dict[str, object], raw["tasks"])["task-2"] = {"state": "active"}
+    cast(object, mutate)(raw)
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        immutable_projection_from_checkpoint(raw)
+
+    assert {item.path: item.reason for item in raised.value.diagnostics}[
+        expected_path
+    ] == expected_reason
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_path", "expected_reason"),
+    [
+        (
+            lambda raw: cast(dict[str, object], raw["requirements"])["revisions_by_id"].update(
+                {
+                    "revision-2": {
+                        "requirement_id": "requirement-2",
+                        "version_id": "revision-2",
+                        "previous_version_id": "revision-1",
+                        "change_classification": "revision",
+                        "requires_authority": False,
+                        "position": 2,
+                        "validation_strengthening": False,
+                    }
+                }
+            ),
+            "requirements.revisions_by_id.revision-2.previous_version_id",
+            "must reference a revision for the same requirement",
+        ),
+        (
+            lambda raw: cast(dict[str, object], raw["records"])["by_id"]["record-2"].update(
+                {
+                    "record_id": "record-2",
+                    "record_type": "verification_report",
+                    "record_kind": "verification",
+                    "producer_node_id": "node-1",
+                    "candidate_id": "candidate-1",
+                    "outcome": "passed",
+                    "value": {
+                        "outcome": "passed",
+                        "grades": [{"requirement_id": "missing", "grade": "A"}],
+                    },
+                }
+            ),
+            "records.by_id.record-2.value.grades[0].requirement_id",
+            "references missing requirement 'missing'",
+        ),
+    ],
+)
+def test_requirement_relations_enforce_parent_identity_and_grade_membership(
+    mutate: object, expected_path: str, expected_reason: str
+) -> None:
+    raw = _checkpoint()
+    if expected_path.startswith("records.by_id.record-2"):
+        records = cast(dict[str, object], raw["records"])
+        cast(dict[str, object], records["by_id"])["record-2"] = {}
+        cast(dict[str, object], records["ids_by_node_port"])["node-1"]["verification_report"] = [
+            "record-2"
+        ]
+        cast(dict[str, object], records["summaries_by_id"])["record-2"] = {
+            "record_id": "record-2",
+            "record_type": "verification_report",
+            "record_kind": "verification",
+            "schema": "VerificationReport",
+            "producer_node_id": "node-1",
+            "producer_port": "verification_report",
+        }
+    cast(object, mutate)(raw)
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        immutable_projection_from_checkpoint(raw)
+
+    assert {item.path: item.reason for item in raised.value.diagnostics}[
+        expected_path
+    ] == expected_reason
+
+
 def test_secondary_indexes_reject_extra_empty_keys() -> None:
     raw = _checkpoint()
     records = cast(dict[str, object], raw["records"])
@@ -199,6 +375,88 @@ def test_integrity_validates_record_and_node_envelope_cross_family_references(
 
     diagnostics = {item.path: item.reason for item in raised.value.diagnostics}
     assert diagnostics[expected_path] == expected_reason
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement", "expected_path", "expected_reason"),
+    [
+        (
+            "tasks.task-1.candidates",
+            [
+                {
+                    "candidate_id": "candidate-1",
+                    "attempt_number": 1,
+                    "position": 1,
+                    "file_state_record_ids": ["missing"],
+                }
+            ],
+            "tasks.task-1.candidates[0].file_state_record_ids[0]",
+            "references missing record 'missing'",
+        ),
+        (
+            "verification.verdicts_by_node.node-1.candidate_id",
+            "missing-candidate",
+            "verification.verdicts_by_node.node-1.candidate_id",
+            "references missing candidate 'missing-candidate'",
+        ),
+        (
+            "verification.check_results_by_node.node-1.evaluated_record_ids",
+            ["missing-record"],
+            "verification.check_results_by_node.node-1.evaluated_record_ids[0]",
+            "references missing record 'missing-record'",
+        ),
+        (
+            "planning.sessions.session-1.carryover_record_id",
+            "missing-record",
+            "planning.sessions.session-1.carryover_record_id",
+            "references missing record 'missing-record'",
+        ),
+        (
+            "requirements.support_by_id.support-1.evidence_id",
+            "missing-record",
+            "requirements.support_by_id.support-1.evidence_id",
+            "references missing record 'missing-record'",
+        ),
+        (
+            "execution.leases.lease-1.session_id",
+            "missing-session",
+            "execution.leases.lease-1.session_id",
+            "references missing session 'missing-session'",
+        ),
+        (
+            "execution.environment_failures_by_task.task-1.task_region_id",
+            "task-2",
+            "execution.environment_failures_by_task.task-1.task_region_id",
+            "must equal outer task key 'task-1'",
+        ),
+        (
+            "execution.callback_events_by_key.callback-1.idempotency_key",
+            "other-callback",
+            "execution.callback_events_by_key.callback-1.idempotency_key",
+            "must equal map key 'callback-1'",
+        ),
+    ],
+)
+def test_integrity_reports_exact_cross_family_relation_diagnostics(
+    path: str, replacement: object, expected_path: str, expected_reason: str
+) -> None:
+    raw = _checkpoint()
+    cursor: object = raw
+    parts = path.split(".")
+    for part in parts[:-1]:
+        assert isinstance(cursor, dict)
+        cursor = cursor[part]
+    assert isinstance(cursor, dict)
+    cursor[parts[-1]] = replacement
+    if path == "execution.environment_failures_by_task.task-1.task_region_id":
+        cast(dict[str, object], raw["tasks"])["task-2"] = {"state": "active"}
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        immutable_projection_from_checkpoint(raw)
+
+    assert {item.path: item.reason for item in raised.value.diagnostics}[
+        expected_path
+    ] == expected_reason
 
 
 def test_public_relation_catalog_covers_each_concrete_record_and_reviewed_id_family() -> None:

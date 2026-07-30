@@ -59,3 +59,19 @@ The relation catalog is intentionally explicit rather than inferred from field
 names. New identifier-bearing fields therefore require a conscious resolver or
 external-policy review; this is verbose by design and avoids silently treating
 new IDs as valid graph references.
+
+## Independent-review repair
+
+- Canonical candidate identity is now owned exclusively by
+  `tasks.*.candidates`: records that carry a candidate ID are references and no
+  longer make a candidate ambiguous. Duplicate canonical declarations are
+  rejected deterministically, and task-scoped candidate records must point to
+  a candidate for the same task.
+- Requirement revisions now reject cross-requirement predecessors. Verification
+  grade rows resolve their requirement IDs, and the requirement-record visitor
+  validates the represented requirement plus version and supersession identity.
+- The policy catalog now includes the reviewed candidate, requirement-grade,
+  request-target, verification-index, and external command-definition paths.
+  Focused malformed tests assert exact diagnostics for canonical candidates,
+  requirement relationships, candidate/task consistency, and representative
+  planning, verification, support, lease, environment, and callback families.

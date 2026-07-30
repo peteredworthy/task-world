@@ -159,14 +159,21 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         reference(records, value, path, "record")
 
     candidate_paths: dict[str, list[str]] = defaultdict(list)
-    for task_id, item in tasks.items():
+    candidate_tasks: dict[str, str] = {}
+    for task_id in sorted(tasks):
+        item = tasks[task_id]
         for index, candidate_item in enumerate(item.candidates):
-            candidate_paths[candidate_item.candidate_id].append(
-                f"tasks.{task_id}.candidates[{index}].candidate_id"
-            )
-    for record_id, item in records.items():
-        for candidate_id, suffix in _record_candidate_identities(item):
-            candidate_paths[candidate_id].append(f"records.by_id.{record_id}.{suffix}")
+            candidate_id = candidate_item.candidate_id
+            path = f"tasks.{task_id}.candidates[{index}].candidate_id"
+            previous_paths = candidate_paths[candidate_id]
+            if previous_paths:
+                fail(
+                    path,
+                    f"duplicates canonical candidate {candidate_id!r} declared at {previous_paths[0]}",
+                )
+            else:
+                candidate_tasks[candidate_id] = task_id
+            previous_paths.append(path)
 
     def candidate(value: str | None, path: str) -> None:
         if value is None:
@@ -233,7 +240,9 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         node(item.producer_node_id, f"{base}.producer_node_id")
         if item.producer_node_id is not None:
             expected_index[item.producer_node_id][item.port].append(record_id)
-        _record_relations(item, base, record, task, node, candidate, projection, fail)
+        _record_relations(
+            item, base, record, task, node, candidate, candidate_tasks, projection, fail
+        )
 
     for node_id, ports in projection.records.ids_by_node_port.items():
         node(node_id, f"records.ids_by_node_port.{node_id}")
@@ -344,6 +353,11 @@ RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
     "nodes.*.spec.authority_request_record.producer_node_id": "node",
     "nodes.*.spec.authority_request_record.value.target_node_id": "node",
     "nodes.*.spec.authority_request_record.value.target_region_id": "task",
+    "nodes.*.spec.decision_request.target_node_id": "node",
+    "nodes.*.spec.decision_request.target_region_id": "task",
+    "nodes.*.spec.authority_request.target_node_id": "node",
+    "nodes.*.spec.authority_request.target_region_id": "task",
+    "nodes.*.spec.command_definition_id": "external",
     "nodes.*.runtime.candidate_id": "candidate",
     "nodes.*.runtime.failed_candidate_id": "candidate",
     "tasks.*.candidates.*.file_state_record_ids": "record",
@@ -373,6 +387,7 @@ RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
     "verification.check_results_by_node.*.candidate_record_ids": "record",
     "verification.check_results_by_node.*.file_state_record_ids": "record",
     "verification.check_results_by_node.*.evaluated_record_ids": "record",
+    "verification.check_results_by_node.*.node_id": "node",
     "verification.invalid_test_blocks_by_task": "task",
     "governance.*_decisions_by_node.*.task_region_id": "task",
     "governance.*_decisions_by_node.*.appeal_node_id": "node",
@@ -388,7 +403,10 @@ RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
     "governance.authority_revision_blockers.*.support_ids": "support",
     "governance.authority_revision_blockers.*.proposal_id": "record",
     "requirements.revisions_by_id.*.previous_version_id": "revision",
+    "requirements.revisions_by_id.*.requirement_id": "requirement",
+    "requirements.revisions_by_id.*.version_id": "revision",
     "requirements.active_version_id_by_requirement": "revision",
+    "requirements.support_by_id.*.requirement_id": "requirement",
     "requirements.support_by_id.*.evidence_id": "record",
     "requirements.support_by_id.*.requirement_version_id": "revision",
     "execution.leases.*.node_id": "node",
@@ -410,7 +428,9 @@ RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
     "records.file_state.supersedes_record_id": "record",
     "records.file_state.superseded_by_record_id": "record",
     "records.candidate.task_region_id": "task",
+    "records.candidate.value.requirements_addressed": "requirement",
     "records.candidate.file_state_record_ids": "record",
+    "records.candidate.file_state_record_id": "record",
     "records.check_result.candidate_id": "candidate",
     "records.check_result.task_region_id": "task",
     "records.check_result.value.cited_record_id": "record",
@@ -423,6 +443,13 @@ RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
     "records.verification_report.candidate_id": "candidate",
     "records.verification_report.task_region_id": "task",
     "records.verification_report.candidate_record_ids": "record",
+    "records.verification_report.candidate_record_id": "record",
+    "records.verification_report.file_state_record_ids": "record",
+    "records.verification_report.evaluated_record_ids": "record",
+    "records.verification_report.value.grades.*.requirement_id": "requirement",
+    "records.requirement_record.value.id": "requirement",
+    "records.requirement_record.value.version": "revision",
+    "records.requirement_record.value.supersedes": "revision",
     "records.*.git.ref": "external",
     "records.*.value.command_id": "external",
     "records.*.value.execution_id": "external",
@@ -444,13 +471,16 @@ def _record_relations(
     task: RecordResolver,
     node: RecordResolver,
     candidate: RecordResolver,
+    candidate_tasks: dict[str, str],
     projection: ImmutableGraphProjection,
     fail: Callable[[str, str], None],
 ) -> None:
     policy = _RECORD_RELATION_POLICIES.get(type(item))
     if policy is None:
         raise RuntimeError(f"missing relation visitor for {type(item).__name__}")
-    _visit_projected_record(item, base, record, task, node, candidate, projection, fail)
+    _visit_projected_record(
+        item, base, record, task, node, candidate, candidate_tasks, projection, fail
+    )
 
 
 # Explicitly name both handled and relation-neutral record types.  This is an
@@ -494,6 +524,7 @@ def _visit_projected_record(
     task: RecordResolver,
     node: RecordResolver,
     candidate: RecordResolver,
+    candidate_tasks: dict[str, str],
     projection: ImmutableGraphProjection,
     fail: Callable[[str, str], None],
 ) -> None:
@@ -501,6 +532,17 @@ def _visit_projected_record(
     requirement_ids = {
         revision.requirement_id for revision in projection.requirements.revisions_by_id.values()
     }
+
+    def candidate_for_task(
+        candidate_id: str | None, candidate_path: str, task_id: str | None
+    ) -> None:
+        candidate(candidate_id, candidate_path)
+        if (
+            candidate_id is not None
+            and task_id is not None
+            and candidate_tasks.get(candidate_id) != task_id
+        ):
+            fail(candidate_path, f"must resolve to a candidate for task {task_id!r}")
 
     if isinstance(item, ProjectedAnalysisSummaryRecord):
         _record_each(item.value.source_record_ids, f"{base}.value.source_record_ids", record)
@@ -512,7 +554,7 @@ def _visit_projected_record(
         node(item.value.target_node_id, f"{base}.value.target_node_id")
         task(item.value.target_region_id, f"{base}.value.target_region_id")
     elif isinstance(item, ProjectedCandidateRecord):
-        candidate(item.candidate_id, f"{base}.candidate_id")
+        candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         task(item.task_region_id, f"{base}.task_region_id")
         record(item.file_state_record_id, f"{base}.file_state_record_id")
         _record_each(item.file_state_record_ids, f"{base}.file_state_record_ids", record)
@@ -530,7 +572,7 @@ def _visit_projected_record(
                     f"references missing requirement {value!r}",
                 )
     elif isinstance(item, ProjectedCheckResultRecord):
-        candidate(item.candidate_id, f"{base}.candidate_id")
+        candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         task(item.task_region_id, f"{base}.task_region_id")
         record(item.candidate_record_id, f"{base}.candidate_record_id")
         for field, values in (
@@ -564,13 +606,13 @@ def _visit_projected_record(
         ):
             fail(f"{base}.value.lease_id", f"references missing lease {item.value.lease_id!r}")
     elif isinstance(item, ProjectedFanOutInputsRecord):
-        candidate(item.candidate_id, f"{base}.candidate_id")
+        candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         task(item.task_region_id, f"{base}.task_region_id")
         record(item.file_state_record_id, f"{base}.file_state_record_id")
         _record_each(item.file_state_record_ids, f"{base}.file_state_record_ids", record)
     elif isinstance(item, ProjectedFileStateRecord):
         task(item.task_region_id, f"{base}.task_region_id")
-        candidate(item.candidate_id, f"{base}.candidate_id")
+        candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         record(item.supersedes_record_id, f"{base}.supersedes_record_id")
         record(item.superseded_by_record_id, f"{base}.superseded_by_record_id")
         if (
@@ -588,13 +630,39 @@ def _visit_projected_record(
     elif isinstance(item, ProjectedRecoveryPlanRecord):
         return
     elif isinstance(item, ProjectedRequirementRecord):
-        return
+        revision = (
+            projection.requirements.revisions_by_id.get(item.value.version)
+            if item.value.version is not None
+            else None
+        )
+        requirement_ids = {
+            requirement.requirement_id
+            for requirement in projection.requirements.revisions_by_id.values()
+        }
+        if item.value.id not in requirement_ids:
+            fail(f"{base}.value.id", f"references missing requirement {item.value.id!r}")
+        if item.value.version is not None and (
+            revision is None or revision.requirement_id != item.value.id
+        ):
+            fail(f"{base}.value.version", "must reference a revision for its requirement")
+        if item.value.supersedes is not None:
+            superseded = projection.requirements.revisions_by_id.get(item.value.supersedes)
+            if superseded is None:
+                fail(
+                    f"{base}.value.supersedes",
+                    f"references missing requirement revision {item.value.supersedes!r}",
+                )
+            elif superseded.requirement_id != item.value.id:
+                fail(
+                    f"{base}.value.supersedes",
+                    "must reference a revision for its requirement",
+                )
     elif isinstance(item, ProjectedRoutineSnapshotRecord):
         return
     elif isinstance(item, ProjectedRunContextRecord):
         return
     elif isinstance(item, ProjectedVerificationReportRecord):
-        candidate(item.candidate_id, f"{base}.candidate_id")
+        candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         task(item.task_region_id, f"{base}.task_region_id")
         record(item.candidate_record_id, f"{base}.candidate_record_id")
         for field, values in (
@@ -603,21 +671,14 @@ def _visit_projected_record(
             ("evaluated_record_ids", item.evaluated_record_ids),
         ):
             _record_each(values, f"{base}.{field}", record)
+        for index, grade in enumerate(item.value.grades):
+            if grade.requirement_id not in requirement_ids:
+                fail(
+                    f"{base}.value.grades[{index}].requirement_id",
+                    f"references missing requirement {grade.requirement_id!r}",
+                )
     else:  # pragma: no cover - registry equality makes this defensive only.
         raise RuntimeError(f"unhandled projected record {type(item).__name__}")
-
-
-def _record_candidate_identities(item: ProjectedRecordBase) -> tuple[tuple[str, str], ...]:
-    if isinstance(
-        item,
-        (ProjectedCandidateRecord, ProjectedCheckResultRecord, ProjectedVerificationReportRecord),
-    ):
-        return ((item.candidate_id, "candidate_id"),)
-    if isinstance(item, ProjectedFanOutInputsRecord) and item.candidate_id is not None:
-        return ((item.candidate_id, "candidate_id"),)
-    if isinstance(item, ProjectedFileStateRecord) and item.candidate_id is not None:
-        return ((item.candidate_id, "candidate_id"),)
-    return ()
 
 
 def _topology_relations(
@@ -843,14 +904,18 @@ def _requirement_relations(
                 f"requirements.revisions_by_id.{version_id}.version_id",
                 f"must equal map key {version_id!r}",
             )
-        if (
-            revision.previous_version_id is not None
-            and revision.previous_version_id not in value.revisions_by_id
-        ):
-            fail(
-                f"requirements.revisions_by_id.{version_id}.previous_version_id",
-                "references missing requirement revision",
-            )
+        if revision.previous_version_id is not None:
+            previous = value.revisions_by_id.get(revision.previous_version_id)
+            if previous is None:
+                fail(
+                    f"requirements.revisions_by_id.{version_id}.previous_version_id",
+                    "references missing requirement revision",
+                )
+            elif previous.requirement_id != revision.requirement_id:
+                fail(
+                    f"requirements.revisions_by_id.{version_id}.previous_version_id",
+                    "must reference a revision for the same requirement",
+                )
     for requirement_id, version_id in value.active_version_id_by_requirement.items():
         revision = value.revisions_by_id.get(version_id)
         if revision is None or revision.requirement_id != requirement_id:
