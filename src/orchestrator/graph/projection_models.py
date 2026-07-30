@@ -673,6 +673,23 @@ class ImmutableGraphProjection(ProjectionModel):
     execution: ExecutionProjection = Field(default_factory=ExecutionProjection)
     usage: UsageProjection = Field(default_factory=UsageProjection)
 
+    @model_validator(mode="before")
+    @classmethod
+    def freeze_checkpoint_arrays(cls, value: object) -> object:
+        """Accept canonical JSON arrays at the checkpoint boundary as tuples."""
+
+        def freeze_arrays(item: object) -> object:
+            if type(item) is list:
+                return tuple(freeze_arrays(child) for child in cast(list[object], item))
+            if type(item) is dict:
+                return {
+                    key: freeze_arrays(child)
+                    for key, child in cast(dict[object, object], item).items()
+                }
+            return item
+
+        return freeze_arrays(value)
+
 
 class ProjectedCandidateRecordValue(ProjectionModel):
     summary: StrictStr

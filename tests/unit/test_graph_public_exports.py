@@ -4,6 +4,12 @@ import ast
 from importlib import import_module
 from pathlib import Path
 
+from orchestrator.graph import (
+    ProjectionCheckpointCodecError,
+    ProjectionIntegrityDiagnostic,
+    validate_projection_integrity,
+)
+
 
 _ROOT = Path(__file__).parents[2]
 _GRAPH_INIT = _ROOT / "src/orchestrator/graph/__init__.py"
@@ -39,3 +45,9 @@ def test_graph_public_exports_equal_repository_consumers() -> None:
     graph = import_module("orchestrator.graph")
 
     assert _public_graph_consumers() == set(graph.__all__)
+
+
+def test_temporary_checkpoint_integrity_api_is_public() -> None:
+    assert issubclass(ProjectionCheckpointCodecError, ValueError)
+    assert ProjectionIntegrityDiagnostic(path="projection", reason="invalid").path == "projection"
+    assert callable(validate_projection_integrity)

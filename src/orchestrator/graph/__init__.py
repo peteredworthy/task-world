@@ -204,6 +204,14 @@ from orchestrator.graph.projection_collections import (
     map_update,
     thaw_json,
 )
+from orchestrator.graph.projection_codec import (
+    ProjectionCheckpointCodecError,
+    ProjectionCheckpointIntegrityError,
+    ProjectionIntegrityDiagnostic,
+    immutable_projection_from_checkpoint,
+    immutable_projection_to_checkpoint,
+    validate_projection_integrity,
+)
 from orchestrator.graph.projection_models import (
     AuthorityRequestRecordEnvelopeValue,
     AuthorityRequestValue as ProjectionAuthorityRequestValue,
@@ -762,6 +770,8 @@ __all__ = [
     "gate_decision",
     "generated_payload_fields",
     "initial_projection",
+    "immutable_projection_from_checkpoint",
+    "immutable_projection_to_checkpoint",
     "input_binding_for_port",
     "input_bindings_for_node",
     "input_bindings_view",
@@ -901,6 +911,7 @@ __all__ = [
     "validate_callback",
     "validate_emitted_event_type",
     "validate_event_ownership",
+    "validate_projection_integrity",
     "validate_patch",
     "resource_claim_dicts",
     "AnalysisSummaryRecord",
@@ -946,6 +957,9 @@ __all__ = [
     "VerificationReportRecord",
     "VerificationReportValue",
     "ProjectionModel",
+    "ProjectionCheckpointCodecError",
+    "ProjectionCheckpointIntegrityError",
+    "ProjectionIntegrityDiagnostic",
     "LifecycleProjection",
     "NodeSpecProjection",
     "NodeRuntimeProjection",
