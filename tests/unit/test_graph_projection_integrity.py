@@ -462,6 +462,87 @@ def test_complete_fixture_exercises_every_concrete_projected_record_visitor() ->
     assert {type(item) for item in projection.records.by_id.values()} == set(PROJECTED_RECORD_TYPES)
 
 
+def _multi_edge_projection(edge_order: tuple[str, ...]) -> ImmutableGraphProjection:
+    raw = _checkpoint()
+    topology = cast(dict[str, Any], raw["topology"])
+    edge_values = {
+        "edge-1": topology["edges"]["edge-1"],
+        "edge-2": {
+            "edge_id": "edge-2",
+            "from_node_id": "node-1",
+            "from_port": "verification",
+            "to_node_id": "node-2",
+            "to_port": "secondary",
+        },
+    }
+    topology["edges"] = {edge_id: edge_values[edge_id] for edge_id in edge_order}
+    topology["inbound_edge_ids"] = {"node-2": ["edge-2", "edge-1"]}
+    topology["outbound_edge_ids"] = {"node-1": ["edge-2", "edge-1"]}
+    return ImmutableGraphProjection.model_validate(raw)
+
+
+def test_topology_adjacency_integrity_is_independent_of_edge_map_layout() -> None:
+    first = _multi_edge_projection(("edge-1", "edge-2"))
+    second = _multi_edge_projection(("edge-2", "edge-1"))
+
+    validate_projection_integrity(first)
+    validate_projection_integrity(second)
+
+    assert first.topology.inbound_edge_ids["node-2"] == ("edge-2", "edge-1")
+    assert second.topology.inbound_edge_ids["node-2"] == ("edge-2", "edge-1")
+
+
+@pytest.mark.parametrize(
+    ("edge_ids", "expected"),
+    [
+        (
+            ["edge-2", "edge-2", "edge-1"],
+            {
+                (
+                    "topology.inbound_edge_ids.node-2",
+                    "must not contain duplicate edge IDs",
+                )
+            },
+        ),
+        (
+            ["edge-2"],
+            {
+                (
+                    "topology.inbound_edge_ids.node-2",
+                    "must exactly contain edge IDs targeting node 'node-2'",
+                )
+            },
+        ),
+        (
+            ["edge-2", "edge-1", "missing-edge"],
+            {
+                (
+                    "topology.inbound_edge_ids.missing-edge",
+                    "references missing edge 'missing-edge'",
+                ),
+                (
+                    "topology.inbound_edge_ids.node-2",
+                    "must exactly contain edge IDs targeting node 'node-2'",
+                ),
+            },
+        ),
+    ],
+)
+def test_topology_adjacency_rejects_duplicate_missing_and_extra_edge_ids(
+    edge_ids: list[str], expected: set[tuple[str, str]]
+) -> None:
+    raw = immutable_projection_to_checkpoint(_multi_edge_projection(("edge-1", "edge-2")))
+    cast(dict[str, Any], raw["topology"])["inbound_edge_ids"] = {"node-2": edge_ids}
+    malformed = ImmutableGraphProjection.model_validate(raw)
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        validate_projection_integrity(malformed)
+
+    assert expected == {
+        (diagnostic.path, diagnostic.reason) for diagnostic in raised.value.diagnostics
+    }
+
+
 def test_public_resolver_outcome_cases_exactly_cover_static_resolver_policies() -> None:
     catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
 
@@ -500,7 +581,11 @@ def test_every_static_resolver_policy_has_an_exact_public_failure_outcome(
         else:
             assert isinstance(parent, dict)
         parent[final] = missing
-        expected_path = case.concrete_path
+        expected_path = (
+            f"{case.policy_path}.{missing}"
+            if case.policy_path in {"topology.inbound_edge_ids", "topology.outbound_edge_ids"}
+            else case.concrete_path
+        )
     malformed = ImmutableGraphProjection.model_validate(raw)
     kind = {
         "revision": "requirement revision",
@@ -1197,6 +1282,25 @@ def test_runtime_dispatcher_rejects_unknown_path_without_calling_resolver() -> N
         "expected one relation policy for runtime path 'nodes.node-1.unknown_id', found []"
     )
     assert calls.values == []
+
+
+def test_runtime_dispatcher_only_falls_back_for_one_direct_map_key_segment() -> None:
+    policy = projection_relation_policy_catalog()["scheduling.ready_node_ids"]
+    calls = _ResolverCalls()
+    dispatcher = _runtime_dispatcher({policy.path: policy}, frozenset({policy.path}), calls)
+
+    dispatcher.resolve_runtime("node", "scheduling.ready_node_ids.node-1", "node-1")
+
+    assert calls.values == [("node-1", "scheduling.ready_node_ids.node-1")]
+    with pytest.raises(ProjectionRelationPolicyError) as raised:
+        dispatcher.resolve_runtime(
+            "node", "scheduling.ready_node_ids.unreviewed.deep.path", "node-2"
+        )
+    assert str(raised.value) == (
+        "expected one relation policy for runtime path "
+        "'scheduling.ready_node_ids.unreviewed.deep.path', found []"
+    )
+    assert calls.values == [("node-1", "scheduling.ready_node_ids.node-1")]
 
 
 def test_runtime_dispatcher_rejects_ambiguous_path_without_calling_resolver() -> None:

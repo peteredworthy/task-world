@@ -714,7 +714,9 @@ class ProjectionRelationResolverDispatcher:
             matches = [
                 path
                 for path in self._policies
-                if "*" not in path and normalized.startswith(f"{path}.")
+                if "*" not in path
+                and normalized.startswith(f"{path}.")
+                and normalized.count(".") == path.count(".") + 1
             ]
         if len(matches) != 1:
             raise ProjectionRelationPolicyError(
@@ -1161,8 +1163,8 @@ def _topology_relations(
     fail: Callable[[str, str], None],
 ) -> None:
     topology = projection.topology
-    inbound: dict[str, list[str]] = defaultdict(list)
-    outbound: dict[str, list[str]] = defaultdict(list)
+    inbound: dict[str, set[str]] = defaultdict(set)
+    outbound: dict[str, set[str]] = defaultdict(set)
     for edge_id, edge in topology.edges.items():
         base = f"topology.edges.{edge_id}"
         resolve_edge(edge_id, base, map_role="key")
@@ -1171,20 +1173,25 @@ def _topology_relations(
             fail(f"{base}.edge_id", f"must equal map key {edge_id!r}")
         node(edge.from_node_id, f"{base}.from_node_id")
         node(edge.to_node_id, f"{base}.to_node_id")
-        inbound[edge.to_node_id].append(edge_id)
-        outbound[edge.from_node_id].append(edge_id)
+        inbound[edge.to_node_id].add(edge_id)
+        outbound[edge.from_node_id].add(edge_id)
     for field, expected in (("inbound_edge_ids", inbound), ("outbound_edge_ids", outbound)):
         actual = getattr(topology, field)
         for node_id, edge_ids in actual.items():
-            for index, edge_id in enumerate(edge_ids):
-                resolve_edge(edge_id, f"topology.{field}.{node_id}[{index}]")
+            for edge_id in edge_ids:
+                resolve_edge(edge_id, f"topology.{field}.{edge_id}")
+            if len(edge_ids) != len(set(edge_ids)):
+                fail(f"topology.{field}.{node_id}", "must not contain duplicate edge IDs")
         for node_id in set(actual) | set(expected):
             if node_id not in expected:
                 fail(f"topology.{field}.{node_id}", "is not a canonical adjacency key")
-            if actual.get(node_id, ()) != tuple(expected.get(node_id, ())):
+            # Replay owns tuple order. Edge values carry no authoritative
+            # creation position, so integrity validates keys and membership.
+            if set(actual.get(node_id, ())) != expected.get(node_id, set()):
+                relation = "targeting" if field == "inbound_edge_ids" else "sourced from"
                 fail(
                     f"topology.{field}.{node_id}",
-                    f"must exactly derive {field.removesuffix('_edge_ids')} edge IDs",
+                    f"must exactly contain edge IDs {relation} node {node_id!r}",
                 )
     for node_id, ports in topology.input_bindings.items():
         node(node_id, f"topology.input_bindings.{node_id}")
