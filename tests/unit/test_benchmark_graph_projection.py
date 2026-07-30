@@ -276,8 +276,6 @@ def _gate_document(
     checkpoint: float = 100.0,
     codec: float = 100.0,
     cold_rebuild: float = 100.0,
-    scale_low: float = 110.0,
-    scale_high: float = 210.0,
 ) -> dict[str, object]:
     """Return a complete, hand-built schema-v2 gate document."""
     gated_metrics = {
@@ -377,7 +375,7 @@ def _gate_document(
         "corpus": {"hash": "a" * 64, "scenario_hash": "b" * 64},
         "configuration": {
             "requested_sizes": [100],
-            "probe_sizes": [100, 200],
+            "probe_sizes": [50, 100],
             "warmups": 1,
             "runs": 2,
         },
@@ -407,7 +405,7 @@ def _gate_document(
                         "metrics": measurement(gated_metrics),
                         "metadata": metadata(scenario, int(size)),
                     }
-                    for size in ("100", "200")
+                    for size in ("50", "100")
                 }
             }
             for scenario in ("general", "edge-heavy", "record-heavy")
@@ -415,7 +413,7 @@ def _gate_document(
         "scaling_probes": {
             scenario: [
                 {
-                    "pair": {"n": 100, "two_n": 200},
+                    "pair": {"n": 50, "two_n": 100},
                     "startup": {
                         "kind": "sampled",
                         "median": 10.0,
@@ -518,14 +516,14 @@ def test_cold_rebuild_gate_uses_baseline_replay_not_baseline_cold_rebuild() -> N
 @pytest.mark.parametrize("scale_high", (259.9, 260.0, 260.1))
 def test_scaling_boundary_subtracts_startup(scale_high: float) -> None:
     baseline = _gate_document(role="baseline")
-    target = _gate_document(role="target", checkpoint=99.0, scale_high=scale_high)
+    target = _gate_document(role="target", checkpoint=99.0)
     scenarios = target["scenarios"]
     assert isinstance(scenarios, dict)
     for scenario in scenarios.values():
         assert isinstance(scenario, dict)
         sizes = scenario["sizes"]
         assert isinstance(sizes, dict)
-        for size, median in (("100", 110.0), ("200", scale_high)):
+        for size, median in (("50", 110.0), ("100", scale_high)):
             measurement = sizes[size]
             assert isinstance(measurement, dict)
             metrics = measurement["metrics"]
@@ -541,14 +539,14 @@ def test_scaling_boundary_subtracts_startup(scale_high: float) -> None:
 
 def test_scaling_refuses_nonpositive_startup_adjusted_denominator() -> None:
     baseline = _gate_document(role="baseline")
-    target = _gate_document(role="target", checkpoint=99.0, scale_low=10.0)
+    target = _gate_document(role="target", checkpoint=99.0)
     scenarios = target["scenarios"]
     assert isinstance(scenarios, dict)
     for scenario in scenarios.values():
         assert isinstance(scenario, dict)
         sizes = scenario["sizes"]
         assert isinstance(sizes, dict)
-        measurement = sizes["100"]
+        measurement = sizes["50"]
         assert isinstance(measurement, dict)
         metrics = measurement["metrics"]
         assert isinstance(metrics, dict)
@@ -614,7 +612,7 @@ def test_artifact_schema_rejects_nested_extra_fields_and_coerced_metric_medians(
     [
         (
             lambda document: document["configuration"].update({"probe_sizes": [100]}),
-            (),
+            ("configuration",),
         ),
         (lambda document: document["configuration"].update({"runs": 0}), ("configuration", "runs")),
         (lambda document: document["corpus"].update({"hash": "not-a-hash"}), ("corpus", "hash")),
@@ -642,13 +640,10 @@ def test_artifact_schema_rejects_cross_field_and_metric_accounting_violations(
     with pytest.raises(ValidationError) as error:
         BenchmarkResult.model_validate(document)
 
-    if expected_location:
-        assert any(
-            issue["loc"][: len(expected_location)] == expected_location
-            for issue in error.value.errors()
-        )
-    else:
-        assert any(issue["loc"] == () for issue in error.value.errors())
+    assert any(
+        issue["loc"][: len(expected_location)] == expected_location
+        for issue in error.value.errors()
+    )
 
 
 def test_scaling_probes_store_only_pair_and_startup_and_use_canonical_replay_metrics() -> None:
@@ -665,7 +660,7 @@ def test_scaling_probes_store_only_pair_and_startup_and_use_canonical_replay_met
         assert isinstance(scenario, dict)
         sizes = scenario["sizes"]
         assert isinstance(sizes, dict)
-        for size, median in (("100", 10.0), ("200", 250.1)):
+        for size, median in (("50", 10.0), ("100", 250.1)):
             measurement = sizes[size]
             assert isinstance(measurement, dict)
             metrics = measurement["metrics"]
@@ -709,7 +704,7 @@ def _retarget_sizes(document: dict[str, object], n: int) -> None:
     configuration = document["configuration"]
     assert isinstance(configuration, dict)
     configuration["requested_sizes"] = [n]
-    configuration["probe_sizes"] = [n, n * 2]
+    configuration["probe_sizes"] = [n // 2, n]
     scenarios = document["scenarios"]
     assert isinstance(scenarios, dict)
     for scenario in scenarios.values():
@@ -717,7 +712,7 @@ def _retarget_sizes(document: dict[str, object], n: int) -> None:
         old_sizes = scenario["sizes"]
         assert isinstance(old_sizes, dict)
         new_sizes: dict[str, object] = {}
-        for old_key, size in (("100", n), ("200", n * 2)):
+        for old_key, size in (("50", n // 2), ("100", n)):
             result = deepcopy(old_sizes[old_key])
             result["metadata"]["event_count"] = size
             result["metadata"]["stream"]["event_count"] = size
@@ -727,7 +722,7 @@ def _retarget_sizes(document: dict[str, object], n: int) -> None:
     assert isinstance(probes, dict)
     for scenario_probes in probes.values():
         assert isinstance(scenario_probes, list)
-        scenario_probes[0]["pair"] = {"n": n, "two_n": n * 2}
+        scenario_probes[0]["pair"] = {"n": n // 2, "two_n": n}
 
 
 @pytest.mark.parametrize(
@@ -844,7 +839,7 @@ def test_compatibility_rejects_scenario_metadata_mismatch_independently() -> Non
 
 
 @pytest.mark.parametrize("scenario", ("general", "edge-heavy", "record-heavy"))
-@pytest.mark.parametrize("size", ("100", "200"))
+@pytest.mark.parametrize("size", ("50", "100"))
 @pytest.mark.parametrize(
     ("metric", "outside", "label"),
     [

@@ -144,10 +144,20 @@ class BenchmarkConfiguration(StrictResultModel):
             raise ValueError("must be sorted, unique, positive integers")
         return value
 
+    @field_validator("requested_sizes")
+    @classmethod
+    def requested_sizes_are_even(cls, value: list[int]) -> list[int]:
+        if any(size % 2 for size in value):
+            raise ValueError("requested sizes must be even")
+        return value
+
     @model_validator(mode="after")
     def probe_sizes_are_requested_doubles(self) -> BenchmarkConfiguration:
-        if not set(self.requested_sizes).issubset(self.probe_sizes):
-            raise ValueError("probe_sizes must include every requested size")
+        expected = sorted(
+            {endpoint for size in self.requested_sizes for endpoint in (size // 2, size)}
+        )
+        if self.probe_sizes != expected:
+            raise ValueError("probe_sizes must be the exact union of requested halves and sizes")
         return self
 
 
@@ -371,21 +381,19 @@ class BenchmarkResult(StrictResultModel):
             pairs = {
                 (probe.pair.n, probe.pair.two_n) for probe in self.scaling_probes[scenario_name]
             }
+            expected_pairs = {(size // 2, size) for size in self.configuration.requested_sizes}
             if len(pairs) != len(self.scaling_probes[scenario_name]):
                 raise ValueError(f"scaling probes for {scenario_name} must not duplicate pairs")
+            if pairs != expected_pairs:
+                raise ValueError(
+                    f"scaling probes for {scenario_name} must match requested half-to-size pairs"
+                )
             if any(
                 probe.startup.sample_count != self.configuration.runs
                 for probe in self.scaling_probes[scenario_name]
             ):
                 raise ValueError(
                     f"scaling startup sample_count for {scenario_name} must equal runs"
-                )
-            pair_sizes = {size for pair in pairs for size in pair}
-            if pair_sizes | set(self.configuration.requested_sizes) != set(
-                self.configuration.probe_sizes
-            ):
-                raise ValueError(
-                    f"scaling probes for {scenario_name} must exactly cover probe_sizes"
                 )
         return self
 
@@ -930,6 +938,7 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
         compatibility.append("incompatible scenario set")
     if set(prior.scaling_probes) != set(observed.scaling_probes):
         compatibility.append("incompatible scaling scenario set")
+    expected_pairs = {(size // 2, size) for size in prior.configuration.requested_sizes}
     for scenario in SCENARIO_NAMES:
         baseline_pairs = {
             (probe.pair.n, probe.pair.two_n) for probe in prior.scaling_probes[scenario]
@@ -937,7 +946,7 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
         target_pairs = {
             (probe.pair.n, probe.pair.two_n) for probe in observed.scaling_probes[scenario]
         }
-        if baseline_pairs != target_pairs:
+        if baseline_pairs != expected_pairs or target_pairs != expected_pairs:
             compatibility.append(f"incompatible pairs {scenario}")
     if compatibility:
         return sorted(compatibility)
