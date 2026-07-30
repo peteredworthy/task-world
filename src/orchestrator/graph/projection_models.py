@@ -14,6 +14,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StrictBool,
+    StrictFloat,
     StrictInt,
     StrictStr,
     TypeAdapter,
@@ -669,6 +670,278 @@ class ProjectedCandidateRecordValue(ProjectionModel):
     file_state_record_ids: tuple[StrictStr, ...] = ()
 
 
+class ProjectedRunContextValue(ProjectionModel):
+    routine_id: StrictStr
+    routine_name: StrictStr
+    planner_generation_budget: StrictInt | None = None
+
+
+class ProjectedRoutineSnapshotValue(ProjectionModel):
+    routine_id: StrictStr
+    name: StrictStr
+    description: StrictStr | None = None
+    content_hash: StrictStr
+    source_path: StrictStr | None = None
+    source_ref: StrictStr | None = None
+    step_count: StrictInt = Field(ge=0)
+    task_count: StrictInt = Field(ge=0)
+    builder_agent: StrictStr | None = None
+    verifier_agent: StrictStr | None = None
+    dynamic_feature: FrozenMap[StrictStr, FrozenJsonValue] | None = None
+
+
+class ProjectedArtifactReferenceValue(ProjectionModel):
+    artifact_id: StrictStr
+    artifact_type: StrictStr
+    uri: StrictStr
+    summary: StrictStr | None = None
+    source_record_ids: tuple[StrictStr, ...] = ()
+    required: StrictBool | None = None
+    section: StrictStr | None = None
+    max_tokens: StrictInt | None = None
+    summarize: StrictBool | None = None
+    summarize_model: StrictStr | None = None
+
+
+class ProjectedStoredArtifactRef(ProjectionModel):
+    artifact_id: StrictStr
+    content_hash: StrictStr = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    size_bytes: StrictInt = Field(ge=0)
+    media_type: StrictStr
+    encoding: StrictStr | None = None
+    storage_uri: StrictStr = Field(pattern=r"^artifact://sha256/[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def storage_uri_matches_content_hash(self) -> "ProjectedStoredArtifactRef":
+        if self.storage_uri.removeprefix("artifact://sha256/") != self.content_hash.removeprefix(
+            "sha256:"
+        ):
+            raise ValueError("storage_uri digest must match content_hash digest")
+        return self
+
+
+class ProjectedGradeRow(ProjectionModel):
+    requirement_id: StrictStr
+    grade: StrictStr
+    reason: StrictStr | None = None
+
+
+class ProjectedVerificationReportValue(ProjectionModel):
+    outcome: Literal["passed", "failed"]
+    grades: tuple[ProjectedGradeRow, ...] = ()
+    reason: StrictStr | None = None
+
+
+class ProjectedCompletionDecisionValue(ProjectionModel):
+    status: Literal["passed", "blocked"]
+    blockers: tuple[FrozenMap[StrictStr, FrozenJsonValue], ...] = ()
+
+
+class ProjectedJoinResultValue(ProjectionModel):
+    status: Literal["ready", "blocked"]
+    source_record_ids: tuple[StrictStr, ...] = ()
+    missing_optional_inputs: tuple[StrictStr, ...] = ()
+
+
+class ProjectedCheckResultRecordValue(ProjectionModel):
+    status: Literal["passed", "failed", "timeout"]
+    classification: Literal[
+        "passed", "failed", "timeout", "environment_error", "tool_error", "tool_unavailable"
+    ]
+    command_id: StrictStr
+    command_binding: FrozenJsonValue | None = None
+    command_text: StrictStr
+    command: FrozenMap[StrictStr, FrozenJsonValue]
+    worktree_path: StrictStr
+    source_worktree_path: StrictStr | None = None
+    execution_worktree_path: StrictStr | None = None
+    base_snapshot_id: StrictStr
+    execution_snapshot_id: StrictStr | None = None
+    execution_snapshot_ref: StrictStr | None = None
+    execution_id: StrictStr
+    exit_code: StrictInt | None = None
+    duration_ms: StrictInt = Field(ge=0)
+    stdout_tail: StrictStr
+    stdout_ref: ProjectedStoredArtifactRef | None = None
+    stderr_tail: StrictStr
+    stderr_ref: ProjectedStoredArtifactRef | None = None
+    stdout_truncated: StrictBool
+    stderr_truncated: StrictBool
+    timeout_seconds: StrictFloat = Field(gt=0)
+    environment_policy: FrozenMap[StrictStr, FrozenJsonValue]
+    source: StrictStr | None = None
+    cited_record_id: StrictStr | None = None
+    citation_mode: StrictStr | None = None
+    reused_verification_record_id: StrictStr | None = None
+    candidate_record_ids: tuple[StrictStr, ...] = ()
+    file_state_record_ids: tuple[StrictStr, ...] = ()
+    verification_report_record_ids: tuple[StrictStr, ...] = ()
+    evaluated_record_ids: tuple[StrictStr, ...] = ()
+
+    @model_validator(mode="after")
+    def truncation_matches_artifact_references(self) -> "ProjectedCheckResultRecordValue":
+        if self.stdout_truncated != (self.stdout_ref is not None):
+            raise ValueError("stdout_truncated must match stdout_ref presence")
+        if self.stderr_truncated != (self.stderr_ref is not None):
+            raise ValueError("stderr_truncated must match stderr_ref presence")
+        return self
+
+
+class ProjectedGapClassificationValue(ProjectionModel):
+    milestone_kind: StrictStr
+    classification: Literal[
+        "corrective_work_required", "no_gap", "human_decision_required", "graph_mutation_required"
+    ]
+    source: StrictStr
+    task_region_id: StrictStr
+    attempt_number: StrictInt = Field(ge=0)
+
+
+class ProjectedDecisionActor(ProjectionModel):
+    kind: StrictStr
+    id: StrictStr | None = None
+
+
+class ProjectedDecisionRecordValue(ProjectionModel):
+    decision: Literal["approved", "rejected", "deferred"]
+    decision_type: Literal["approval"]
+    decider: ProjectedDecisionActor | StrictStr
+    scope: FrozenMap[StrictStr, FrozenJsonValue] | None = None
+    expires_at: StrictStr | None = None
+    reason: StrictStr | None = None
+
+    @model_validator(mode="after")
+    def decider_is_nonempty(self) -> "ProjectedDecisionRecordValue":
+        if isinstance(self.decider, str) and not self.decider:
+            raise ValueError("decider must not be empty")
+        return self
+
+
+class ProjectedAuthorityDecisionRecordValue(ProjectionModel):
+    decision: Literal["granted", "denied", "deferred"]
+    decision_type: Literal["authority"]
+    decider: ProjectedDecisionActor | StrictStr
+    scope: FrozenMap[StrictStr, FrozenJsonValue] | None = None
+    expires_at: StrictStr | None = None
+    reason: StrictStr | None = None
+
+    @model_validator(mode="after")
+    def decider_is_nonempty(self) -> "ProjectedAuthorityDecisionRecordValue":
+        if isinstance(self.decider, str) and not self.decider:
+            raise ValueError("decider must not be empty")
+        return self
+
+
+class ProjectedAnalysisSummaryValue(ProjectionModel):
+    summary: StrictStr
+    source_record_ids: tuple[StrictStr, ...]
+    lossy: StrictBool
+    omitted_details: tuple[StrictStr, ...]
+
+
+class ProjectedGraphPatchProposalValue(ProjectionModel):
+    patch_id: StrictStr
+    proposed_by_node_id: StrictStr
+    base_graph_position: StrictInt = Field(ge=0)
+    ops: tuple[FrozenMap[StrictStr, FrozenJsonValue], ...] = ()
+    macro_invocations: tuple[FrozenMap[StrictStr, FrozenJsonValue], ...] = ()
+    rationale: StrictStr | None = None
+    rationale_record_id: StrictStr | None = None
+    expected_downstream_effects: tuple[StrictStr, ...] = ()
+
+    @model_validator(mode="after")
+    def proposal_has_mutation_plan(self) -> "ProjectedGraphPatchProposalValue":
+        if not self.ops and not self.macro_invocations:
+            raise ValueError("graph patch proposal must include ops or macro_invocations")
+        return self
+
+
+class ProjectedRequirementRecordValue(ProjectionModel):
+    id: StrictStr
+    text: StrictStr
+    desc: StrictStr | None = None
+    priority: Literal["critical", "expected", "nice"] = "critical"
+    acceptance_criteria: tuple[StrictStr, ...] = ()
+    source: StrictStr | None = None
+    version: StrictStr | None = None
+    supersedes: StrictStr | None = None
+    must: StrictBool = True
+
+
+class ProjectedDecisionRequestRecordValue(DecisionRequestValue):
+    pass
+
+
+class ProjectedAuthorityRequestRecordValue(AuthorityRequestValue):
+    pass
+
+
+class ProjectedFailureRecordValue(ProjectionModel):
+    failed_node_id: StrictStr
+    phase: StrictStr
+    error_class: StrictStr
+    retryable: StrictBool
+    lease_id: StrictStr | None = None
+    lease_generation: StrictInt | None = None
+    execution_id: StrictStr | None = None
+    reason: StrictStr | None = None
+    expires_at: StrictStr | None = None
+    attempt_number: StrictInt | None = None
+    max_attempts: StrictInt | None = None
+
+
+class ProjectedRecoveryPlanValue(ProjectionModel):
+    action: Literal["retry", "supersede", "cancel", "cleanup"]
+    responsible_actor: StrictStr
+    graph_changes: tuple[FrozenMap[StrictStr, FrozenJsonValue], ...]
+    reason: StrictStr | None = None
+    retry_after_seconds: StrictInt | None = None
+    retry_not_before: StrictStr | None = None
+
+
+class ProjectedGitRef(ProjectionModel):
+    commit_sha: StrictStr | None = None
+    tree_sha: StrictStr | None = None
+    no_commit_reason: StrictStr | None = None
+    ref: StrictStr | None = None
+    diff_summary: FrozenMap[StrictStr, FrozenJsonValue] | None = None
+
+
+class ProjectedExternalArtifactManifest(ProjectionModel):
+    path: StrictStr
+    hash: StrictStr
+    origin: StrictStr
+    retention: StrictStr
+
+
+class ProjectedFileEntry(ProjectionModel):
+    path: StrictStr
+    source: StrictStr | None = None
+    status: StrictStr | None = None
+    classification: StrictStr | None = None
+    policy: StrictStr | None = None
+    matched_rule: StrictStr | None = None
+    needs_gatekeeper: StrictBool | None = None
+    rejected: StrictBool | None = None
+    reason: StrictStr | None = None
+    size_bytes: StrictInt | None = None
+    entropy: StrictFloat | None = None
+    gatekeeper_confidence: StrictFloat | None = None
+    gatekeeper_rationale: StrictStr | None = None
+    manifest: ProjectedExternalArtifactManifest | None = None
+
+
+class ProjectedExternalFileEntry(ProjectedFileEntry):
+    @model_validator(mode="after")
+    def external_entry_requires_manifest(self) -> "ProjectedExternalFileEntry":
+        if self.manifest is None:
+            raise ValueError("external file entries require manifest")
+        return self
+
+
+ProjectedFanOutInputsValue: TypeAlias = FrozenMap[StrictStr, FrozenJsonValue]
+
+
 class ProjectedRecordBase(ProjectionModel):
     """The immutable common record envelope; concrete records own their payload fields."""
 
@@ -677,8 +950,8 @@ class ProjectedRecordBase(ProjectionModel):
     created_at: StrictStr | None = None
     graph_position: StrictInt | None = None
     run_id: StrictStr | None = None
-    payload: FrozenJsonValue | None = None
-    provenance: FrozenJsonValue | None = None
+    payload: FrozenMap[StrictStr, FrozenJsonValue] | None = None
+    provenance: FrozenMap[StrictStr, FrozenJsonValue] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -699,8 +972,13 @@ class ProjectedRecordBase(ProjectionModel):
 
     @field_validator("payload", "provenance", mode="before")
     @classmethod
-    def freeze_record_json(cls, value: object) -> FrozenJsonValue | None:
-        return None if value is None else freeze_json(value)
+    def freeze_record_json(cls, value: object) -> FrozenMap[str, FrozenJsonValue] | None:
+        if value is None:
+            return None
+        frozen = freeze_json(value)
+        if not isinstance(frozen, FrozenMap):
+            raise ValueError("record envelope JSON must be an object")
+        return frozen
 
     @model_validator(mode="after")
     def record_envelope_is_consistent(self) -> "ProjectedRecordBase":
@@ -719,7 +997,7 @@ class ProjectedAnalysisSummaryRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["analysis_summary", "planning_summary", "region_summary"]
     schema_: Literal["AnalysisSummary", "RegionSummary"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedAnalysisSummaryValue
 
 
 class ProjectedArtifactReferenceRecord(ProjectedRecordBase):
@@ -729,7 +1007,7 @@ class ProjectedArtifactReferenceRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["artifact_reference", "artifact"]
     schema_: Literal["ContextArtifact", "ArtifactReference"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedArtifactReferenceValue
 
 
 class ProjectedAuthorityDecisionRecord(ProjectedRecordBase):
@@ -739,7 +1017,7 @@ class ProjectedAuthorityDecisionRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["authority_decision"]
     schema_: Literal["AuthorityDecision"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedAuthorityDecisionRecordValue
 
 
 class ProjectedAuthorityRequestRecord(ProjectedRecordBase):
@@ -749,7 +1027,7 @@ class ProjectedAuthorityRequestRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["authority_request_record"]
     schema_: Literal["AuthorityRequest"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedAuthorityRequestRecordValue
 
 
 class ProjectedCandidateRecord(ProjectedRecordBase):
@@ -779,7 +1057,7 @@ class ProjectedCheckResultRecord(ProjectedRecordBase):
     candidate_id: StrictStr
     task_region_id: StrictStr
     attempt_number: StrictInt = Field(ge=0)
-    value: FrozenJsonValue
+    value: ProjectedCheckResultRecordValue
     candidate_record_id: StrictStr | None = None
     candidate_record_ids: tuple[StrictStr, ...] = ()
     file_state_record_ids: tuple[StrictStr, ...] = ()
@@ -794,7 +1072,7 @@ class ProjectedCompletionDecisionRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["completion_decision"]
     schema_: Literal["CompletionDecision"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedCompletionDecisionValue
 
 
 class ProjectedDecisionRecord(ProjectedRecordBase):
@@ -804,7 +1082,7 @@ class ProjectedDecisionRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["decision_record"]
     schema_: Literal["DecisionRecord"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedDecisionRecordValue
 
 
 class ProjectedDecisionRequestRecord(ProjectedRecordBase):
@@ -814,7 +1092,7 @@ class ProjectedDecisionRequestRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["decision_request"]
     schema_: Literal["DecisionRequest"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedDecisionRequestRecordValue
 
 
 class ProjectedFailureRecord(ProjectedRecordBase):
@@ -825,7 +1103,7 @@ class ProjectedFailureRecord(ProjectedRecordBase):
     port: Literal["failure_record"]
     schema_: Literal["FailureRecord"] = Field(alias="schema")
     task_region_id: StrictStr | None = None
-    value: FrozenJsonValue
+    value: ProjectedFailureRecordValue
 
 
 class ProjectedFanOutInputsRecord(ProjectedRecordBase):
@@ -833,9 +1111,9 @@ class ProjectedFanOutInputsRecord(ProjectedRecordBase):
     record_type: Literal["fan_out_inputs"]
     record_kind: Literal["output"]
     producer_node_id: StrictStr
-    port: StrictStr
-    schema_: StrictStr = Field(alias="schema")
-    value: FrozenJsonValue
+    port: Literal["candidate"]
+    schema_: Literal["ImplementationCandidate"] = Field(alias="schema")
+    value: FrozenMap[StrictStr, FrozenJsonValue]
     candidate_id: StrictStr | None = None
     task_region_id: StrictStr | None = None
     attempt_number: StrictInt | None = Field(default=None, ge=0)
@@ -850,16 +1128,16 @@ class ProjectedFileStateRecord(ProjectedRecordBase):
     producer_node_id: StrictStr | None = None
     snapshot_id: StrictStr | None = None
     base_snapshot_id: StrictStr | None = None
-    port: StrictStr = "file_state"
-    schema_: StrictStr = Field(default="FileStateRecord", alias="schema")
-    git: FrozenJsonValue | None = None
-    tracked: tuple[FrozenJsonValue, ...] = ()
-    untracked: tuple[FrozenJsonValue, ...] = ()
-    ignored: tuple[FrozenJsonValue, ...] = ()
-    external: tuple[FrozenJsonValue, ...] = ()
-    classifications: tuple[FrozenJsonValue, ...] = ()
-    residue: tuple[FrozenJsonValue, ...] = ()
-    rejected_paths: tuple[FrozenJsonValue, ...] = ()
+    port: Literal["file_state"] = "file_state"
+    schema_: Literal["FileStateRecord"] = Field(default="FileStateRecord", alias="schema")
+    git: ProjectedGitRef | None = None
+    tracked: tuple[ProjectedFileEntry, ...] = ()
+    untracked: tuple[ProjectedFileEntry, ...] = ()
+    ignored: tuple[ProjectedFileEntry, ...] = ()
+    external: tuple[ProjectedExternalFileEntry, ...] = ()
+    classifications: tuple[ProjectedFileEntry, ...] = ()
+    residue: tuple[ProjectedFileEntry, ...] = ()
+    rejected_paths: tuple[ProjectedFileEntry, ...] = ()
     verdict: Literal["captured", "rejected"] = "captured"
     patch_bundle_id: StrictStr | None = None
     tree_snapshot_id: StrictStr | None = None
@@ -885,7 +1163,7 @@ class ProjectedGapClassificationRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["classified_gap", "gap_classification", "gap_plan"]
     schema_: Literal["GapClassification"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedGapClassificationValue
 
     @model_validator(mode="after")
     def gap_port_matches_record_type(self) -> "ProjectedGapClassificationRecord":
@@ -903,7 +1181,7 @@ class ProjectedGraphPatchProposalRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["graph_patch_proposal", "graph_patch"]
     schema_: Literal["GraphPatch"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedGraphPatchProposalValue
 
 
 class ProjectedJoinResultRecord(ProjectedRecordBase):
@@ -913,7 +1191,7 @@ class ProjectedJoinResultRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["join_result"]
     schema_: Literal["JoinResult"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedJoinResultValue
 
 
 class ProjectedRecoveryPlanRecord(ProjectedRecordBase):
@@ -923,7 +1201,7 @@ class ProjectedRecoveryPlanRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["recovery_plan"]
     schema_: Literal["RecoveryPlan"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedRecoveryPlanValue
 
 
 class ProjectedRequirementRecord(ProjectedRecordBase):
@@ -933,7 +1211,7 @@ class ProjectedRequirementRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["requirement"]
     schema_: Literal["RequirementRecord"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedRequirementRecordValue
 
 
 class ProjectedRoutineSnapshotRecord(ProjectedRecordBase):
@@ -943,7 +1221,7 @@ class ProjectedRoutineSnapshotRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["routine_snapshot", "snapshot"]
     schema_: Literal["RoutineSnapshot"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedRoutineSnapshotValue
 
 
 class ProjectedRunContextRecord(ProjectedRecordBase):
@@ -953,7 +1231,7 @@ class ProjectedRunContextRecord(ProjectedRecordBase):
     producer_node_id: StrictStr
     port: Literal["run_context"]
     schema_: Literal["RunContext"] = Field(alias="schema")
-    value: FrozenJsonValue
+    value: ProjectedRunContextValue
 
 
 class ProjectedVerificationReportRecord(ProjectedRecordBase):
@@ -966,7 +1244,7 @@ class ProjectedVerificationReportRecord(ProjectedRecordBase):
     candidate_id: StrictStr
     task_region_id: StrictStr | None = None
     outcome: Literal["passed", "failed"]
-    value: FrozenJsonValue
+    value: ProjectedVerificationReportValue
     evidence: FrozenJsonValue | None = None
     candidate_record_id: StrictStr | None = None
     candidate_record_ids: tuple[StrictStr, ...] = ()
@@ -975,7 +1253,7 @@ class ProjectedVerificationReportRecord(ProjectedRecordBase):
 
     @model_validator(mode="after")
     def outcome_matches_value(self) -> "ProjectedVerificationReportRecord":
-        if isinstance(self.value, FrozenMap) and self.value.get("outcome") != self.outcome:
+        if self.value.outcome != self.outcome:
             raise ValueError("outcome must match value.outcome")
         return self
 
