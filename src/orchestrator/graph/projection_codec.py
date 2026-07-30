@@ -4,7 +4,18 @@ from __future__ import annotations
 
 from collections import defaultdict
 from math import isfinite
-from typing import Any, Callable, Literal, cast
+from types import UnionType
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Literal,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic_core import PydanticSerializationError
@@ -33,7 +44,9 @@ from orchestrator.graph.projection_models import (
     ProjectedRunContextRecord,
     ProjectedVerificationReportRecord,
     ProjectedRecordBase,
+    ProjectionModel,
 )
+from orchestrator.graph.projection_collections import FrozenMap
 
 
 class ProjectionCheckpointCodecError(ValueError):
@@ -341,13 +354,197 @@ RelationFamily = Literal[
     "edge",
     "session",
     "external",
+    "derived",
 ]
+
+
+class RelationPolicy(BaseModel):
+    """Reviewed ownership decision for one public identifier path."""
+
+    model_config = ConfigDict(frozen=True)
+    family: RelationFamily
+    rationale: str
+
+
+_EXPLICIT_IDENTIFIER_FIELDS = frozenset(
+    {
+        "id",
+        "from_node",
+        "to_node",
+        "producer",
+        "source",
+        "target",
+        "ref",
+        "commit_sha",
+        "tree_sha",
+        "content_hash",
+        "idempotency_key",
+    }
+)
+
+
+def _identifier_field(name: str) -> bool:
+    return name in _EXPLICIT_IDENTIFIER_FIELDS or name.endswith(("_id", "_ids"))
+
+
+def _is_string_scalar(annotation: object) -> bool:
+    origin = get_origin(annotation)
+    arguments = get_args(annotation)
+    if origin is Annotated:
+        return _is_string_scalar(arguments[0])
+    return annotation is str
+
+
+def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str]:
+    """Discover normalized public identifier paths without inspecting private state.
+
+    ``*`` represents both tuple positions and FrozenMap values; ``*.key`` and
+    ``*.value`` preserve the otherwise ambiguous key/value role of ``*_by_*``
+    maps.  Active-model tracking makes recursive public model annotations finite.
+    """
+
+    paths: set[str] = set()
+
+    def join(prefix: str, segment: str) -> str:
+        return f"{prefix}.{segment}" if prefix else segment
+
+    def visit(annotation: object, prefix: str, active: frozenset[type[ProjectionModel]]) -> None:
+        origin = get_origin(annotation)
+        arguments = get_args(annotation)
+        if origin is Annotated:
+            visit(arguments[0], prefix, active)
+        elif origin in (Union, UnionType):
+            for member in arguments:
+                if member is not type(None):
+                    visit(member, prefix, active)
+        elif origin is tuple:
+            if arguments:
+                visit(arguments[0], join(prefix, "*"), active)
+        elif origin is FrozenMap:
+            key_type, value_type = arguments if len(arguments) == 2 else (object, object)
+            map_prefix = join(prefix, "*")
+            # Map keys are identities even where the container's public name
+            # is not ``*_by_*`` (for example ``nodes`` and ``records.by_id``).
+            paths.add(join(map_prefix, "key"))
+            if "_by_" in prefix and _is_string_scalar(value_type):
+                paths.add(join(map_prefix, "value"))
+            visit(key_type, join(map_prefix, "key"), active)
+            visit(value_type, map_prefix, active)
+        elif isinstance(annotation, type) and issubclass(annotation, ProjectionModel):
+            if annotation in active:
+                return
+            hints = get_type_hints(annotation, include_extras=True)
+            for field_name in annotation.model_fields:
+                field_path = join(prefix, field_name)
+                if _identifier_field(field_name):
+                    paths.add(field_path)
+                visit(hints[field_name], field_path, active | {annotation})
+
+    visit(root, "", frozenset())
+    return paths
+
+
+def _policy_for_path(path: str) -> RelationPolicy:
+    """Classify a discovered path using the finite public identifier vocabulary."""
+
+    if path.endswith(".key"):
+        return RelationPolicy(
+            family="derived", rationale="canonical FrozenMap key identity is derived from its index"
+        )
+    family_tokens: tuple[tuple[str, RelationFamily], ...] = (
+        ("node", "node"),
+        ("task_region", "task"),
+        ("record", "record"),
+        ("candidate", "candidate"),
+        ("requirement_version", "revision"),
+        ("version", "revision"),
+        ("revision", "revision"),
+        ("requirement", "requirement"),
+        ("support", "support"),
+        ("lease", "lease"),
+        ("cleanup", "cleanup"),
+        ("edge", "edge"),
+        ("session", "session"),
+    )
+    leaf = path.rsplit(".", maxsplit=1)[-1]
+    if leaf in {
+        "command_id",
+        "execution_id",
+        "snapshot_id",
+        "artifact_id",
+        "commit_sha",
+        "tree_sha",
+    }:
+        return RelationPolicy(
+            family="external",
+            rationale="identifier belongs to an intentionally unrepresented external system",
+        )
+    for token, family in family_tokens:
+        if token in path:
+            return RelationPolicy(
+                family=family,
+                rationale=f"identifier is resolved against represented {family} state",
+            )
+    return RelationPolicy(
+        family="external",
+        rationale="identifier belongs to an intentionally unrepresented external system",
+    )
+
+
+_DISCOVERED_IDENTIFIER_PATHS = frozenset(
+    discover_projection_identifier_paths(ImmutableGraphProjection)
+)
+_RECORD_IDENTIFIER_PATHS = frozenset(
+    path for path in _DISCOVERED_IDENTIFIER_PATHS if path.startswith("records.by_id.*.")
+)
+_GROUPED_IDENTIFIER_PATHS = _DISCOVERED_IDENTIFIER_PATHS - _RECORD_IDENTIFIER_PATHS
+
+# The two finite mappings are the public review boundary: records remain a
+# separate typed-visitor responsibility, while grouped state is checked here.
+RELATION_POLICY_CATALOG: dict[str, RelationPolicy] = {
+    path: _policy_for_path(path) for path in sorted(_GROUPED_IDENTIFIER_PATHS)
+}
+RECORD_RELATION_POLICY_CATALOG: dict[str, RelationPolicy] = {
+    path: _policy_for_path(path) for path in sorted(_RECORD_IDENTIFIER_PATHS)
+}
+
+
+def projection_relation_policy_catalog() -> dict[str, RelationPolicy]:
+    """Return the reviewed grouped-projection identifier policy."""
+    return dict(RELATION_POLICY_CATALOG)
+
+
+def projection_record_relation_policy_catalog() -> dict[str, RelationPolicy]:
+    """Return the finite identifier policy implemented by typed record visitors."""
+    return dict(RECORD_RELATION_POLICY_CATALOG)
+
+
+def projection_relation_validation_paths() -> frozenset[str]:
+    """Finite public path set enforced by relation resolvers or typed visitors."""
+    return frozenset(
+        path
+        for path, policy in {
+            **projection_relation_policy_catalog(),
+            **projection_record_relation_policy_catalog(),
+        }.items()
+        if policy.family not in {"external", "derived"}
+    )
+
+
+def projection_relation_policy_gaps(root: type[ProjectionModel]) -> frozenset[str]:
+    """Return identifier paths lacking a reviewed grouped or record policy."""
+    return frozenset(
+        discover_projection_identifier_paths(root)
+        - set(projection_relation_policy_catalog())
+        - set(projection_record_relation_policy_catalog())
+    )
+
 
 # Every identifier-bearing projection path is deliberately catalogued.  A
 # resolver family means it is checked against represented state; external
 # means the value denotes an intentionally unrepresented system (git, command,
 # artifact, execution, callback, or snapshot) rather than a graph relation.
-RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
+_LEGACY_RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
     "nodes.*.spec.task_region_id": "task",
     "nodes.*.spec.authority_request_record.record_id": "record",
     "nodes.*.spec.authority_request_record.producer_node_id": "node",
@@ -457,11 +654,6 @@ RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
     "records.*.base_snapshot_id": "external",
     "records.*.cleanup_applied_event_id": "external",
 }
-
-
-def projection_relation_policy_catalog() -> dict[str, RelationFamily]:
-    """Return the finite reviewed policy catalog without exposing mutable state."""
-    return dict(RELATION_POLICY_CATALOG)
 
 
 def _record_relations(

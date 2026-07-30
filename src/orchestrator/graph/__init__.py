@@ -210,7 +210,11 @@ from orchestrator.graph.projection_codec import (
     ProjectionIntegrityDiagnostic,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
+    discover_projection_identifier_paths,
     projection_relation_policy_catalog,
+    projection_record_relation_policy_catalog,
+    projection_relation_policy_gaps,
+    projection_relation_validation_paths,
     validate_projection_integrity,
 )
 from orchestrator.graph.projection_models import (
@@ -916,6 +920,10 @@ __all__ = [
     "validate_event_ownership",
     "validate_projection_integrity",
     "projection_relation_policy_catalog",
+    "projection_record_relation_policy_catalog",
+    "projection_relation_policy_gaps",
+    "projection_relation_validation_paths",
+    "discover_projection_identifier_paths",
     "validate_patch",
     "resource_claim_dicts",
     "AnalysisSummaryRecord",

@@ -4,14 +4,21 @@ from copy import deepcopy
 from typing import Annotated, cast, get_args, get_origin
 
 import pytest
+from pydantic import StrictStr
 
 from orchestrator.graph import (
     PROJECTED_RECORD_TYPES,
+    ImmutableGraphProjection,
+    ProjectionModel,
     ProjectedRecord,
     ProjectionCheckpointIntegrityError,
+    discover_projection_identifier_paths,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
     projection_relation_policy_catalog,
+    projection_record_relation_policy_catalog,
+    projection_relation_policy_gaps,
+    projection_relation_validation_paths,
 )
 from tests.unit.test_graph_projection_codec import final_projection_fixture
 
@@ -459,33 +466,43 @@ def test_integrity_reports_exact_cross_family_relation_diagnostics(
     ] == expected_reason
 
 
-def test_public_relation_catalog_covers_each_concrete_record_and_reviewed_id_family() -> None:
+def test_identifier_path_discovery_exactly_matches_reviewed_grouped_and_record_policies() -> None:
     union, metadata = get_args(ProjectedRecord)
     assert get_origin(ProjectedRecord) is Annotated
     assert metadata
     assert set(get_args(union)) == set(PROJECTED_RECORD_TYPES)
 
     catalog = projection_relation_policy_catalog()
+    record_catalog = projection_record_relation_policy_catalog()
+    discovered = discover_projection_identifier_paths(ImmutableGraphProjection)
+
+    assert discovered == set(catalog) | set(record_catalog)
+    assert projection_relation_policy_gaps(ImmutableGraphProjection) == frozenset()
     assert {
-        "records.*.git.ref",
-        "records.*.value.command_id",
-        "records.*.value.execution_id",
-        "execution.callback_events_by_key.*.idempotency_key",
-        "governance.authority_revision_blockers.*.support_ids",
-        "planning.sessions.*.carryover_record_id",
-        "topology.input_bindings.*.*.record_ids",
-        "verification.*_results_by_record_id.*.record_id",
-    } <= set(catalog)
-    assert set(catalog.values()) >= {
-        "node",
-        "task",
-        "record",
-        "candidate",
-        "revision",
-        "support",
-        "lease",
-        "cleanup",
-        "edge",
-        "session",
-        "external",
-    }
+        "records.by_id.*.value.artifact_id",
+        "records.by_id.*.base_snapshot_id",
+        "records.by_id.*.patch_bundle_id",
+        "records.by_id.*.value.execution_id",
+        "records.by_id.*.value.command_id",
+        "records.by_id.*.git.commit_sha",
+    } <= set(record_catalog)
+    assert {
+        path
+        for policy_catalog in (catalog, record_catalog)
+        for path, policy in policy_catalog.items()
+        if policy.family not in {"external", "derived"}
+    } <= projection_relation_validation_paths()
+    assert all(
+        policy.rationale.strip()
+        for policy in catalog.values()
+        if policy.family in {"external", "derived"}
+    )
+
+
+def test_identifier_path_parity_reports_a_new_identifier_field_without_policy() -> None:
+    class ProjectionWithUnreviewedIdentifier(ProjectionModel):
+        new_integration_id: StrictStr
+
+    assert projection_relation_policy_gaps(ProjectionWithUnreviewedIdentifier) == frozenset(
+        {"new_integration_id"}
+    )
