@@ -7,7 +7,7 @@ from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import Path
 from math import isfinite
-from re import fullmatch
+from re import escape, fullmatch
 from types import UnionType
 from typing import (
     Annotated,
@@ -285,14 +285,16 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         path: str,
         *,
         map_role: Literal["key", "value"] | None = None,
+        map_depth: int | None = None,
     ) -> None:
-        dispatcher.resolve_runtime("node", path, value, map_role=map_role)
+        dispatcher.resolve_runtime("node", path, value, map_role=map_role, map_depth=map_depth)
 
     def task(
         value: str | None,
         path: str,
         *,
         map_role: Literal["key", "value"] | None = None,
+        map_depth: int | None = None,
     ) -> None:
         dispatcher.resolve_runtime("task", path, value, map_role=map_role)
 
@@ -311,6 +313,21 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         map_role: Literal["key", "value"] | None = None,
     ) -> None:
         dispatcher.resolve_runtime("candidate", path, value, map_role=map_role)
+
+    def candidate_for_task(
+        candidate_id: str | None,
+        path: str,
+        task_id: str | None,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> None:
+        candidate(candidate_id, path, map_role=map_role)
+        if (
+            candidate_id is not None
+            and task_id is not None
+            and candidate_tasks.get(candidate_id) != task_id
+        ):
+            fail(path, f"must resolve to a candidate for task {task_id!r}")
 
     def requirement(
         value: str | None,
@@ -413,7 +430,9 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
                 f"{base}.spec.authority_request.target_region_id",
             )
         for field in ("candidate_id", "failed_candidate_id"):
-            candidate(getattr(item.runtime, field), f"{base}.runtime.{field}")
+            candidate_for_task(
+                getattr(item.runtime, field), f"{base}.runtime.{field}", item.spec.task_region_id
+            )
 
     for task_id, item in tasks.items():
         for number, candidate_item in enumerate(item.candidates):
@@ -423,19 +442,15 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
             for index, related_task in enumerate(candidate_item.supersedes_task_region_ids):
                 task(related_task, f"{base}.supersedes_task_region_ids[{index}]")
 
-    expected_index: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
-    # FrozenMap iteration follows its persistent hash-trie layout rather than
-    # checkpoint insertion order.  Canonical secondary indexes must therefore
-    # have a stable, representation-independent record order.
-    for record_id in sorted(records):
-        item = records[record_id]
+    expected_index: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+    for record_id, item in records.items():
         base = f"records.by_id.{record_id}"
         record(item.record_id, f"{base}.record_id")
         if item.record_id != record_id:
             fail(f"{base}.record_id", f"must equal map key {record_id!r}")
         node(item.producer_node_id, f"{base}.producer_node_id")
         if item.producer_node_id is not None:
-            expected_index[item.producer_node_id][item.port].append(record_id)
+            expected_index[item.producer_node_id][item.port].add(record_id)
         _record_relations(
             item,
             base,
@@ -458,10 +473,18 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
             base = f"records.ids_by_node_port.{node_id}.{port}"
             if port not in expected_index.get(node_id, {}):
                 fail(base, "is not a canonical record index")
-            if ids != tuple(expected_index.get(node_id, {}).get(port, ())):
-                fail(base, "must exactly derive record IDs for its node and port")
+            first_path_by_record: dict[str, str] = {}
             for index, record_id in enumerate(ids):
-                record(record_id, f"{base}[{index}]")
+                path = f"{base}[{index}]"
+                record(record_id, path)
+                first_path = first_path_by_record.setdefault(record_id, path)
+                if first_path != path:
+                    fail(path, f"duplicates record ID {record_id!r} first listed at {first_path}")
+            # Record models do not contain an authoritative order for every
+            # accepted record. Replay owns the stored tuple order; integrity
+            # verifies only the complete, duplicate-free membership relation.
+            if set(ids) != expected_index.get(node_id, {}).get(port, set()):
+                fail(base, "must exactly contain record IDs for its node and port")
     for node_id, ports in expected_index.items():
         for port in ports:
             if (
@@ -521,7 +544,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
 
     _topology_relations(projection, node, record, edge, fail)
     _planning_relations(projection, node, record, session, fail)
-    _verification_relations(projection, node, task, record, candidate, fail)
+    _verification_relations(projection, node, task, record, candidate_for_task, fail)
     _governance_relations(
         projection, node, task, record, requirement, revision, support, edge, fail
     )
@@ -700,28 +723,23 @@ class ProjectionRelationResolverDispatcher:
         value: str | None,
         *,
         map_role: Literal["key", "value"] | None = None,
+        map_depth: int | None = None,
     ) -> None:
         """Resolve a runtime diagnostic through its unique reviewed policy path."""
-        normalized = diagnostic_path.replace("[", ".").replace("]", "")
-        normalized = ".".join(
-            "*" if segment.isdigit() else segment for segment in normalized.split(".")
-        )
-        if map_role is not None:
-            if map_role == "value" and diagnostic_path.endswith("]"):
-                prefix, item = normalized.rsplit(".", maxsplit=1)
-                normalized = f"{prefix}.value.{item}"
-            else:
-                normalized = f"{normalized}.{map_role}"
         matches = [
             path
             for path in self._policies
-            if _policy_path_matches_runtime(path, normalized)
+            if _policy_path_matches_runtime(path, diagnostic_path, map_role=map_role)
+            and (map_depth is None or path.count("*") == map_depth)
             and (
                 path.endswith(f".{map_role}")
                 if map_role is not None
                 else not path.endswith((".key", ".value"))
             )
         ]
+        if matches:
+            strongest = max(path.count(".") - path.count(".*") for path in matches)
+            matches = [path for path in matches if path.count(".") - path.count(".*") == strongest]
         if len(matches) != 1:
             raise ProjectionRelationPolicyError(
                 f"expected one relation policy for runtime path {diagnostic_path!r}, "
@@ -730,19 +748,33 @@ class ProjectionRelationResolverDispatcher:
         self.resolve(matches[0], family, diagnostic_path, value)
 
 
-def _policy_path_matches_runtime(policy_path: str, runtime_path: str) -> bool:
-    """Match one normalized runtime path to an explicit policy pattern."""
-    runtime_segments = runtime_path.split(".")
+def _policy_path_matches_runtime(
+    policy_path: str,
+    diagnostic_path: str,
+    *,
+    map_role: Literal["key", "value"] | None,
+) -> bool:
+    """Match a diagnostic path without parsing arbitrary identifier text.
 
-    def matches(policy_segments: list[str]) -> bool:
-        return len(policy_segments) == len(runtime_segments) and all(
-            policy_segment == runtime_segment or policy_segment == "*"
-            for policy_segment, runtime_segment in zip(
-                policy_segments, runtime_segments, strict=True
-            )
-        )
-
-    return matches(policy_path.split("."))
+    Static policy literals are escaped, while each static ``*`` consumes either
+    one list index or arbitrary concrete map-identifier text.  Map key/value
+    roles remain an explicit caller-provided dimension rather than synthetic
+    text appended to a diagnostic path.
+    """
+    segments = policy_path.split(".")
+    if segments[-1] in {"key", "value"}:
+        if map_role != segments[-1]:
+            return False
+        segments.pop()
+    elif map_role is not None:
+        return False
+    pattern = escape(segments[0])
+    for segment in segments[1:]:
+        if segment == "*":
+            pattern += r"(?:\[[0-9]+\]|\.[\s\S]+?)"
+        else:
+            pattern += rf"\.{escape(segment)}"
+    return fullmatch(pattern, diagnostic_path) is not None
 
 
 _RELATION_POLICY_RESOURCE = "_projection_relation_policy.yaml"
@@ -791,11 +823,11 @@ def _is_string_scalar(annotation: object) -> bool:
     return annotation is str
 
 
-def _map_key_is_identifier(field_name: str, prefix: str) -> bool:
+def _map_key_is_identifier(field_name: str, prefix: str, map_depth: int) -> bool:
     """Return whether a declared map field uses its keys as graph identities."""
     if field_name.startswith(("id_by_", "ids_by_")) and field_name != "ids_by_node_port":
         return False
-    if field_name in {"nodes", "tasks", "edges", "leases"}:
+    if field_name in {"nodes", "tasks", "edges", "leases", "sessions"}:
         return True
     if field_name in {
         "applied_cleanup_ids",
@@ -803,7 +835,16 @@ def _map_key_is_identifier(field_name: str, prefix: str) -> bool:
         "input_bindings",
         "node_gate_decisions",
         "recorded_keys",
+        "authority_revision_blockers",
+        "callback_events_by_key",
+        "inbound_edge_ids",
+        "outbound_edge_ids",
+        "summaries_by_id",
     }:
+        return True
+    if field_name == "record_bound_positions":
+        return True
+    if field_name in {"configured_gates_by_task", "gate_decisions_by_task"}:
         return True
     if field_name == "by_id" and prefix in {
         "records.by_id",
@@ -882,7 +923,7 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
             _, value_type = arguments if len(arguments) == 2 else (object, object)
             map_prefix = join(prefix, "*")
             field_name = map_field_name or prefix.rsplit(".", maxsplit=1)[-1]
-            if map_depth == 0 and _map_key_is_identifier(field_name, prefix):
+            if _map_key_is_identifier(field_name, prefix, map_depth):
                 paths.add(join(map_prefix, "key"))
             tuple_members = get_args(value_type) if get_origin(value_type) is tuple else ()
             string_tuple = any(
@@ -1165,7 +1206,7 @@ def _visit_projected_record(
 def _topology_relations(
     projection: ImmutableGraphProjection,
     node: RuntimeRelationResolver,
-    record: Callable[[str | None, str], None],
+    record: RuntimeRelationResolver,
     resolve_edge: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
 ) -> None:
@@ -1185,6 +1226,7 @@ def _topology_relations(
     for field, expected in (("inbound_edge_ids", inbound), ("outbound_edge_ids", outbound)):
         actual = getattr(topology, field)
         for node_id, edge_ids in actual.items():
+            node(node_id, f"topology.{field}.{node_id}", map_role="key")
             first_path_by_edge: dict[str, str] = {}
             for index, edge_id in enumerate(edge_ids):
                 path = f"topology.{field}.{node_id}[{index}]"
@@ -1226,6 +1268,9 @@ def _topology_relations(
                 binding.record_bound_positions
             ) != set(binding.record_ids):
                 fail(f"{base}.record_bound_positions", "must have exactly one entry per record ID")
+            if binding.record_bound_positions is not None:
+                for record_id in binding.record_bound_positions:
+                    record(record_id, f"{base}.record_bound_positions.{record_id}", map_role="key")
 
 
 def _planning_relations(
@@ -1285,6 +1330,8 @@ def _planning_relations(
             map_role="value",
         )
     for session_id, session_item in planning.sessions.items():
+        # Sessions have no embedded ID; their map keys are explicitly catalogued
+        # as derived identity rather than self-resolving membership.
         node(session_item.current_node_id, f"planning.sessions.{session_id}.current_node_id")
         record(
             session_item.carryover_record_id,
@@ -1297,13 +1344,15 @@ def _verification_relations(
     node: RuntimeRelationResolver,
     task: RuntimeRelationResolver,
     record: RuntimeRelationResolver,
-    candidate: RuntimeRelationResolver,
+    candidate_for_task: Callable[..., None],
     fail: Callable[[str, str], None],
 ) -> None:
     value = projection.verification
     for node_id, verdict in value.verdicts_by_node.items():
         node(node_id, f"verification.verdicts_by_node.{node_id}", map_role="key")
-        candidate(verdict.candidate_id, f"verification.verdicts_by_node.{node_id}.candidate_id")
+        candidate_for_task(
+            verdict.candidate_id, f"verification.verdicts_by_node.{node_id}.candidate_id", None
+        )
     for result_name, results in (
         ("passed", value.passed_results_by_record_id),
         ("failed", value.failed_results_by_record_id),
@@ -1316,13 +1365,14 @@ def _verification_relations(
             record(result.record_id, f"{base}.record_id")
             node(result.node_id, f"{base}.node_id")
             task(result.task_region_id, f"{base}.task_region_id")
-            candidate(result.candidate_id, f"{base}.candidate_id")
+            candidate_for_task(result.candidate_id, f"{base}.candidate_id", result.task_region_id)
     for index, candidate_id in enumerate(value.passed_candidate_ids):
-        candidate(candidate_id, f"verification.passed_candidate_ids[{index}]")
+        candidate_for_task(candidate_id, f"verification.passed_candidate_ids[{index}]", None)
     for candidate_id in value.failed_candidate_ids:
-        candidate(
+        candidate_for_task(
             candidate_id,
             f"verification.failed_candidate_ids.{candidate_id}",
+            None,
             map_role="key",
         )
     for record_id, recoveries in value.recovery_nodes_by_record_id.items():
@@ -1353,9 +1403,10 @@ def _verification_relations(
             f"verification.invalid_test_blocks_by_task.{task_id}",
             map_role="key",
         )
-        candidate(
+        candidate_for_task(
             value.invalid_test_blocks_by_task[task_id].candidate_id,
             f"verification.invalid_test_blocks_by_task.{task_id}.candidate_id",
+            task_id,
         )
 
 
@@ -1394,16 +1445,27 @@ def _governance_relations(
                 if hasattr(item, related):
                     node(getattr(item, related), f"{base}.{related}")
     for field in ("configured_gates_by_task", "gate_decisions_by_task"):
-        for task_id in getattr(value, field):
+        decisions = getattr(value, field)
+        for task_id in decisions:
             task(task_id, f"governance.{field}.{task_id}", map_role="key")
+            for gate_id in decisions[task_id]:
+                cast(Any, node)(
+                    gate_id,
+                    f"governance.{field}.{task_id}.{gate_id}",
+                    map_role="key",
+                    map_depth=2,
+                )
     for blocker_id, blocker in value.authority_revision_blockers.items():
         base = f"governance.authority_revision_blockers.{blocker_id}"
+        revision(blocker_id, base, map_role="key")
         node(blocker.node_id, f"{base}.node_id")
         task(blocker.task_region_id, f"{base}.task_region_id")
         edge(blocker.edge_id, f"{base}.edge_id")
         node(blocker.from_node_id, f"{base}.from_node_id")
         record(blocker.proposal_id, f"{base}.proposal_id")
         blocker_revision = revision(blocker.revision_id, f"{base}.revision_id")
+        if blocker.revision_id != blocker_id:
+            fail(f"{base}.revision_id", f"must equal map key {blocker_id!r}")
         requirement(blocker.requirement_id, f"{base}.requirement_id")
         if (
             blocker_revision is not None

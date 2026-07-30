@@ -29,7 +29,7 @@ from orchestrator.graph import (
     projection_relation_validation_paths,
     validate_projection_integrity,
 )
-from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
+from orchestrator.graph import FrozenJsonValue, FrozenMap
 from tests.unit.test_graph_projection_codec import final_projection_fixture
 from tests.unit.test_output_record_event_payloads import OUTPUT_RECORD_CASES
 
@@ -161,6 +161,9 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
             )
             item["value"]["grades"] = [{"requirement_id": "requirement-1", "grade": "A"}]
     node = cast(dict[str, Any], cast(dict[str, Any], raw["nodes"])["node-1"])
+    cast(dict[str, Any], raw["nodes"])["gate-1"] = {
+        "spec": {"node_id": "gate-1", "creation_position": 3, "task_region_id": "task-1"}
+    }
     node["runtime"] = {"candidate_id": "candidate-1", "failed_candidate_id": "candidate-1"}
     node["spec"].update(
         task_region_id="task-1",
@@ -202,6 +205,7 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
                 "to_node_id": "node-2",
                 "to_port": "input",
                 "record_ids": [referenced_record_id],
+                "record_bound_positions": {referenced_record_id: 1},
                 "bound_at_position": 1,
                 "supersedes_record_id": referenced_record_id,
             }
@@ -285,7 +289,7 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
             }
         },
         authority_revision_blockers={
-            "blocker-1": {
+            "revision-1": {
                 "kind": "fixture",
                 "reason": "fixture",
                 "node_id": "node-1",
@@ -477,6 +481,85 @@ def test_topology_adjacency_integrity_is_independent_of_edge_map_layout() -> Non
 
     assert first.topology.inbound_edge_ids["node-2"] == ("edge-2", "edge-1")
     assert second.topology.inbound_edge_ids["node-2"] == ("edge-2", "edge-1")
+
+
+def test_record_indexes_preserve_replay_order_independent_of_record_map_layout() -> None:
+    raw: dict[str, Any] = {
+        "nodes": {"node-1": {"spec": {"node_id": "node-1", "creation_position": 1}}},
+        "tasks": {"task-1": {"state": "active"}},
+        "records": {
+            "by_id": {
+                "z-record": {
+                    "record_id": "z-record",
+                    "record_type": "file_state",
+                    "producer_node_id": "node-1",
+                    "task_region_id": "task-1",
+                },
+                "a-record": {
+                    "record_id": "a-record",
+                    "record_type": "file_state",
+                    "producer_node_id": "node-1",
+                    "task_region_id": "task-1",
+                },
+            },
+            "ids_by_node_port": {"node-1": {"file_state": ["z-record", "a-record"]}},
+            "summaries_by_id": {
+                record_id: {
+                    "record_id": record_id,
+                    "record_type": "file_state",
+                    "record_kind": "file_state",
+                    "schema": "FileStateRecord",
+                    "producer_node_id": "node-1",
+                    "producer_port": "file_state",
+                }
+                for record_id in ("z-record", "a-record")
+            },
+        },
+    }
+
+    projection = ImmutableGraphProjection.model_validate(raw)
+
+    validate_projection_integrity(projection)
+    assert projection.records.ids_by_node_port["node-1"]["file_state"] == (
+        "z-record",
+        "a-record",
+    )
+
+
+@pytest.mark.parametrize(
+    ("record_ids", "expected_path", "expected_reason"),
+    [
+        (
+            ["record-1", "record-1"],
+            "records.ids_by_node_port.node-1.file_state[1]",
+            "duplicates record ID 'record-1' first listed at records.ids_by_node_port.node-1.file_state[0]",
+        ),
+        (
+            [],
+            "records.ids_by_node_port.node-1.file_state",
+            "must exactly contain record IDs for its node and port",
+        ),
+        (
+            ["record-1", "missing-record"],
+            "records.ids_by_node_port.node-1.file_state",
+            "must exactly contain record IDs for its node and port",
+        ),
+    ],
+)
+def test_record_indexes_reject_duplicate_missing_and_extra_record_ids(
+    record_ids: list[str], expected_path: str, expected_reason: str
+) -> None:
+    raw = _checkpoint()
+    cast(dict[str, Any], raw["records"])["ids_by_node_port"] = {
+        "node-1": {"file_state": record_ids}
+    }
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        validate_projection_integrity(ImmutableGraphProjection.model_validate(raw))
+
+    assert (expected_path, expected_reason) in {
+        (diagnostic.path, diagnostic.reason) for diagnostic in raised.value.diagnostics
+    }
 
 
 @pytest.mark.parametrize(
@@ -1197,6 +1280,7 @@ def test_identifier_discovery_observes_roles_without_treating_structural_keys_as
 def test_identifier_discovery_includes_nested_ids_by_node_port_values_not_port_keys() -> None:
     assert discover_projection_identifier_paths(NestedRecordIndexDiscoveryFixture) == {
         "ids_by_node_port.*.key",
+        "ids_by_node_port.*.*.key",
         "ids_by_node_port.*.*.*",
     }
 
@@ -1314,6 +1398,54 @@ def test_runtime_dispatcher_rejects_appended_segment_for_scalar_policy() -> None
         "expected one relation policy for runtime path 'nodes.node-1.spec.node_id.extra', found []"
     )
     assert calls.values == [("node-1", "nodes.node-1.spec.node_id")]
+
+
+@pytest.mark.parametrize(
+    ("policy_path", "family", "diagnostic_path", "map_role"),
+    [
+        ("nodes.*.spec.node_id", "node", "nodes.node.with[brackets].spec.node_id", None),
+        (
+            "verification.passed_candidate_ids.*",
+            "candidate",
+            "verification.passed_candidate_ids[0]",
+            None,
+        ),
+        (
+            "records.by_id.*.record_id",
+            "record",
+            "records.by_id.record.with[brackets].record_id",
+            None,
+        ),
+        (
+            "topology.edges.*.edge_id",
+            "edge",
+            "topology.edges.edge.with[brackets].edge_id",
+            None,
+        ),
+        (
+            "planning.sessions.*.current_node_id",
+            "node",
+            "planning.sessions.session.with[brackets].current_node_id",
+            None,
+        ),
+    ],
+)
+def test_runtime_dispatcher_preserves_dotted_and_bracketed_identifiers(
+    policy_path: str,
+    family: str,
+    diagnostic_path: str,
+    map_role: Literal["key", "value"] | None,
+) -> None:
+    catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
+    policy = catalog[policy_path]
+    calls = _ResolverCalls()
+    dispatcher = _runtime_dispatcher({policy_path: policy}, frozenset({policy_path}), calls)
+
+    dispatcher.resolve_runtime(
+        cast(Any, family), diagnostic_path, "represented-id", map_role=map_role
+    )
+
+    assert calls.values == [("represented-id", diagnostic_path)]
 
 
 def test_runtime_dispatcher_matches_explicit_collection_member_wildcard() -> None:

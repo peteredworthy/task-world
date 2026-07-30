@@ -2,18 +2,37 @@
 
 from copy import deepcopy
 from collections import UserDict
-from math import inf
+from math import inf, nan
 from types import MappingProxyType
+from typing import cast
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
+from pydantic_core import PydanticSerializationError
 
 from orchestrator.graph import (
     ImmutableGraphProjection,
     FrozenMap,
+    ProjectionCheckpointCodecError,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
 )
+
+
+class SerializationFailure(BaseModel):
+    """A real Pydantic value whose serializer cannot produce JSON."""
+
+    value: object
+
+    def model_dump(self, **kwargs: object) -> dict[str, object]:
+        raise PydanticSerializationError("real serializer failure")
+
+
+class UnrelatedSerializationFailure(BaseModel):
+    value: object
+
+    def model_dump(self, **kwargs: object) -> dict[str, object]:
+        raise RuntimeError("unrelated failure")
 
 
 def final_projection_fixture() -> ImmutableGraphProjection:
@@ -191,6 +210,37 @@ def test_checkpoint_rejects_scalar_coercion(bad: object) -> None:
 def test_checkpoint_rejects_non_dict_root_without_salvaging_it() -> None:
     with pytest.raises(ValidationError):
         immutable_projection_from_checkpoint([])
+
+
+@pytest.mark.parametrize("root", [final_projection_fixture(), UserDict({}), MappingProxyType({})])
+def test_checkpoint_rejects_model_or_non_exact_mapping_roots(root: object) -> None:
+    with pytest.raises(ValidationError, match="exact JSON object"):
+        immutable_projection_from_checkpoint(root)
+
+
+@pytest.mark.parametrize("number", [nan, inf, -inf])
+def test_checkpoint_rejects_all_nonfinite_numbers(number: float) -> None:
+    raw = immutable_projection_to_checkpoint(final_projection_fixture())
+    raw["usage"]["tokens_by_node"] = {"node-1": number}
+
+    with pytest.raises(ValidationError, match="numbers must be finite"):
+        immutable_projection_from_checkpoint(raw)
+
+
+def test_checkpoint_writer_wraps_only_pydantic_serialization_errors() -> None:
+    with pytest.raises(ProjectionCheckpointCodecError, match="serialization failed") as raised:
+        immutable_projection_to_checkpoint(
+            cast(ImmutableGraphProjection, SerializationFailure(value=object()))
+        )
+
+    assert isinstance(raised.value.__cause__, PydanticSerializationError)
+
+
+def test_checkpoint_writer_propagates_unrelated_serialization_errors() -> None:
+    with pytest.raises(RuntimeError, match="unrelated failure"):
+        immutable_projection_to_checkpoint(
+            cast(ImmutableGraphProjection, UnrelatedSerializationFailure(value=object()))
+        )
 
 
 def test_checkpoint_rejects_unknown_or_malformed_sibling_without_defaulting() -> None:

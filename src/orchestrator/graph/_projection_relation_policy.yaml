@@ -9,6 +9,11 @@ policies:
   family: external
   rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
   validation: external
+- path: execution.callback_events_by_key.*.key
+  scope: grouped
+  family: external
+  rationale: Callback idempotency identity is external but its map-key role is explicitly audited.
+  validation: external
 - path: execution.callback_events_by_key.*.node_id
   scope: grouped
   family: node
@@ -164,6 +169,11 @@ policies:
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
+- path: governance.authority_revision_blockers.*.key
+  scope: grouped
+  family: revision
+  rationale: Blocker map keys identify the represented requirement revision.
+  validation: resolver
 - path: governance.authority_revision_blockers.*.node_id
   scope: grouped
   family: node
@@ -194,6 +204,11 @@ policies:
   family: task
   rationale: Identifier is checked against represented task state by an integrity resolver.
   validation: resolver
+- path: governance.configured_gates_by_task.*.*.key
+  scope: grouped
+  family: node
+  rationale: Inner configured-gate keys identify represented gate nodes.
+  validation: resolver
 - path: governance.configured_gates_by_task.*.key
   scope: grouped
   family: task
@@ -213,6 +228,11 @@ policies:
   scope: grouped
   family: task
   rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: governance.gate_decisions_by_task.*.*.key
+  scope: grouped
+  family: node
+  rationale: Inner gate-decision keys identify represented gate nodes.
   validation: resolver
 - path: governance.gate_decisions_by_task.*.key
   scope: grouped
@@ -409,6 +429,11 @@ policies:
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
+- path: planning.sessions.*.key
+  scope: grouped
+  family: derived
+  rationale: Planner session keys have no embedded session identity and are retained as derived state.
+  validation: derived
 - path: planning.successor_by_node.*.key
   scope: grouped
   family: node
@@ -794,6 +819,11 @@ policies:
   family: record
   rationale: Identifier is checked against represented record state by an integrity resolver.
   validation: resolver
+- path: records.ids_by_node_port.*.*.key
+  scope: grouped
+  family: derived
+  rationale: Inner record-index port keys are structural rather than graph identities.
+  validation: derived
 - path: records.ids_by_node_port.*.key
   scope: grouped
   family: node
@@ -919,10 +949,25 @@ policies:
   family: edge
   rationale: Identifier is checked against represented edge state by an integrity resolver.
   validation: resolver
+- path: topology.inbound_edge_ids.*.key
+  scope: grouped
+  family: node
+  rationale: Adjacency map keys identify represented target nodes.
+  validation: resolver
 - path: topology.input_bindings.*.*.edge_id
   scope: grouped
   family: edge
   rationale: Identifier is checked against represented edge state by an integrity resolver.
+  validation: resolver
+- path: topology.input_bindings.*.*.key
+  scope: grouped
+  family: derived
+  rationale: Input-binding port keys are structural rather than graph identities.
+  validation: derived
+- path: topology.input_bindings.*.*.record_bound_positions.*.key
+  scope: grouped
+  family: record
+  rationale: Record-position map keys identify represented records.
   validation: resolver
 - path: topology.input_bindings.*.*.record_ids.*
   scope: grouped
@@ -948,6 +993,11 @@ policies:
   scope: grouped
   family: edge
   rationale: Identifier is checked against represented edge state by an integrity resolver.
+  validation: resolver
+- path: topology.outbound_edge_ids.*.key
+  scope: grouped
+  family: node
+  rationale: Adjacency map keys identify represented source nodes.
   validation: resolver
 - path: usage.action_count_by_node_kind.*.key
   scope: grouped
@@ -1133,16 +1183,19 @@ validation_paths:
 - governance.authority_decisions_by_node.*.task_region_id
 - governance.authority_revision_blockers.*.edge_id
 - governance.authority_revision_blockers.*.from_node_id
+- governance.authority_revision_blockers.*.key
 - governance.authority_revision_blockers.*.node_id
 - governance.authority_revision_blockers.*.proposal_id
 - governance.authority_revision_blockers.*.requirement_id
 - governance.authority_revision_blockers.*.revision_id
 - governance.authority_revision_blockers.*.support_ids.*
 - governance.authority_revision_blockers.*.task_region_id
+- governance.configured_gates_by_task.*.*.key
 - governance.configured_gates_by_task.*.key
 - governance.decision_requests_by_node.*.key
 - governance.decision_requests_by_node.*.target_node_id
 - governance.decision_requests_by_node.*.target_region_id
+- governance.gate_decisions_by_task.*.*.key
 - governance.gate_decisions_by_task.*.key
 - governance.node_gate_decisions.*.key
 - governance.oversight_decisions_by_node.*.appeal_node_id
@@ -1237,12 +1290,15 @@ validation_paths:
 - topology.edges.*.key
 - topology.edges.*.to_node_id
 - topology.inbound_edge_ids.*.*
+- topology.inbound_edge_ids.*.key
 - topology.input_bindings.*.*.edge_id
+- topology.input_bindings.*.*.record_bound_positions.*.key
 - topology.input_bindings.*.*.record_ids.*
 - topology.input_bindings.*.*.supersedes_record_id
 - topology.input_bindings.*.*.to_node_id
 - topology.input_bindings.*.key
 - topology.outbound_edge_ids.*.*
+- topology.outbound_edge_ids.*.key
 - usage.recorded_keys.*.key
 - usage.tokens_by_node.*.key
 - verification.check_results_by_node.*.candidate_record_ids.*

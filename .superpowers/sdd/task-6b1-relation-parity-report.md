@@ -25,21 +25,12 @@
   runtime catalogs and validation-path API now load only this artifact;
   discovery remains independent and is used only for exact parity/gap audits.
 
-## Follow-up classification repair
+## Classification note
 
-- Re-ran discovery against `ImmutableGraphProjection`: it currently exposes
-  221 normalized public identifier paths (151 grouped paths and 70 typed-record
-  paths). The role-aware traversal continues to exclude opaque JSON and
-  structural nested-map keys while retaining explicitly identity-bearing keys.
-- Reviewed the generated candidate before committing the data. External run,
-  git, artifact, snapshot, patch, command, execution, content-hash, source-ref,
-  and provenance identifiers are explicit. Canonical/index map keys and
-  container identities are derived; structural port keys and region-label
-  values remain excluded; tuple identifier-map values remain included.
-- Corrected ambiguous families including candidate-record IDs as records,
-  authority blocker edge/proposal/requirement/support identities, planning
-  patch records, lease sessions, and requirement-support evidence. The copied
-  oversight candidate is explicitly derived because no resolver branch owns it.
+Discovery and the checked artifact are always verified by exact set equality;
+this report deliberately does not preserve historical generated counts. Later
+Task 6b2 work expanded explicit nested-key roles and candidate ownership checks,
+so its evidence is authoritative for current coverage.
 
 ## TDD and verification
 
@@ -159,12 +150,6 @@ uv run pyright src/orchestrator/graph/projection_codec.py \
   src/orchestrator/graph/__init__.py
 # 0 errors, 0 warnings, 0 informations
 ```
-
-Artifact evidence (reported, not asserted as generated counts): 221 policies,
-151 grouped and 70 record; 130 explicit validation paths; dispositions are 130
-resolver, 49 external, and 42 derived. Semantic families are candidate 11,
-cleanup 3, derived 41, edge 5, external 49, lease 2, node 35, record 41,
-requirement 5, revision 5, session 2, support 2, and task 20.
 
 ## Scope and concerns
 

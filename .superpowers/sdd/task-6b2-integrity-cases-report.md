@@ -55,7 +55,19 @@ same-parent requirement/revision and candidate/task semantic cases remain.
   for duplicate, missing, and extra IDs. Adjacency policies now use explicit
   `topology.<field>.*.*` patterns, preserving diagnostics at
   `topology.<field>.<node-id>[<index>]`; repeated invalid IDs in separate tuples
-  produce separate concrete diagnostics.
+   produce separate concrete diagnostics.
+- Runtime static-policy matching now treats diagnostic strings as opaque concrete
+  paths: escaped literals and anchored wildcard patterns preserve dotted and
+  bracketed node, task, record, candidate, edge, and session identifiers.
+  Explicit map role (and nested map depth where required) remains separate from
+  identifier text; equally specific patterns still fail closed.
+- The reviewed catalog now includes planner-session, callback, blocker-revision,
+  nested gate, record-bound-position, adjacency, and structural nested-index key
+  roles. Blocker keys resolve as revisions and must equal `revision_id`; callback
+  keys retain explicit idempotency equality; represented gate keys resolve as nodes.
+- Candidate ownership is checked consistently for node runtime state, verification
+  results, invalid-test blocks, and record visitors. Record index tuples retain
+  replay order while integrity rejects duplicate, missing, and extra members.
 
 ## Visitor coverage
 
@@ -68,7 +80,7 @@ same-parent requirement/revision and candidate/task semantic cases remain.
 ```text
 uv run pytest -q tests/unit/test_graph_projection_integrity.py \
   tests/unit/test_graph_projection_codec.py
-299 passed in 7.12s (13.49s wall)
+Focused integrity, codec, model, and public-export coverage passed after the final semantic repair.
 
 uv run pyright
 0 errors, 0 warnings, 0 informations
