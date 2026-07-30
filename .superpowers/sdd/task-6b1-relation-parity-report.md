@@ -55,10 +55,47 @@ a resolver policy omitted from the checked `validation_paths` contract.
 Runtime node/task/record/candidate resolver visitors now enter the dispatcher
 rather than invoking their family resolver directly.  The runtime bridge
 normalizes the concrete diagnostic path to a checked static path before
-dispatching, preserving the pre-existing diagnostic path and message.  Calls
-which are solely derived map-key/index shape checks remain in the dispatcher
-as derived fallback checks; they do not introduce a policy-owned represented
-relation.
+dispatching, preserving the pre-existing diagnostic path and message.
+
+## Task 6b1a intermediate fail-closed bridge
+
+- Runtime matching now considers the complete static policy catalog before
+  dispatch. Unknown and ambiguous normalized paths raise an explicit
+  `ProjectionRelationPolicyError` without invoking any resolver. A unique
+  match then goes through `resolve()`, so external/derived disposition, absent
+  validation-path membership, and caller-family mismatches all fail closed.
+- Removed the resolver fallback. Map keys which the integrity traversal sends
+  through node, task, or record resolvers are now resolver policies with the
+  represented family and explicit validation path. The candidate-key branch
+  was already a resolver policy. Added the previously undiscovered node-key
+  roles for topology input bindings, governance node-gate decisions, and usage
+  recorded keys; calls for absent optional relation fields no longer enter the
+  bridge.
+- Concrete diagnostics remain unchanged. The bridge accepts only a key/value
+  role hint where one concrete map diagnostic represents both roles; this
+  keeps the checked paths unique without converting visitor call sites to
+  literal policy tokens. Literal call-site conversion remains follow-up work.
+- The checked artifact now has 228 policies (155 grouped and 73 record), with
+  160 explicit resolver validation paths, 49 external policies, and 19 derived
+  policies. Discovery independently reports the same 228 paths.
+
+Focused Task 6b1a verification:
+
+```text
+uv run pytest tests/unit/test_graph_projection_integrity.py \
+  tests/unit/test_graph_projection_codec.py -q -n 0
+# 72 passed in 0.97s
+
+uv run ruff check src/orchestrator/graph/projection_codec.py \
+  src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_integrity.py
+uv run ruff format --check src/orchestrator/graph/projection_codec.py \
+  src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_integrity.py
+# all checks passed; 3 files already formatted
+
+uv run pyright src/orchestrator/graph/projection_codec.py \
+  src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_integrity.py
+# 0 errors, 0 warnings, 0 informations
+```
 
 Focused verification after the final edits:
 
@@ -90,15 +127,14 @@ requirement 5, revision 5, session 2, support 2, and task 20.
 ## Scope and concerns
 
 No runtime reducer, checkpoint encoding, migration, or traversal semantics
-changed. The progress ledger was intentionally not modified. Canonical map-key,
-index, and field-equality checks are normalized as derived rather than relation
-resolver paths even when integrity traversal also checks their shape. Adding an
-identifier-bearing annotation changes discovery and fails parity until the
-checked artifact is deliberately reviewed; tests never regenerate it. The
-finite resolver-call-site API is the checked static contract, while production
-diagnostics retain their concrete runtime strings through the normalizing
-bridge. Task 6b2 remains responsible for exhaustive malformed checkpoint
-coverage.
+changed. The progress ledger was intentionally not modified. Canonical
+map-key, index, and field-equality checks remain derived only when they do not
+invoke a represented-state resolver. Adding an identifier-bearing annotation
+changes discovery and fails parity until the checked artifact is deliberately
+reviewed; tests never regenerate it. The finite resolver-call-site API is the
+checked static contract, while production diagnostics retain their concrete
+runtime strings through the normalizing bridge. Task 6b2 remains responsible
+for exhaustive malformed checkpoint coverage.
 
 The policy artifact was moved from the codemod location into
 `orchestrator.graph`, included as Hatch wheel package data, and verified in a

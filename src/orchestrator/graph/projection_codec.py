@@ -14,6 +14,7 @@ from typing import (
     Any,
     Callable,
     Literal,
+    Protocol,
     TypeAliasType,
     Union,
     cast,
@@ -243,14 +244,24 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         resolve_session=resolve_session,
     )
 
-    def node(value: str | None, path: str) -> None:
-        dispatcher.resolve_runtime("node", path, value)
+    def node(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> None:
+        dispatcher.resolve_runtime("node", path, value, map_role=map_role)
 
     def task(value: str | None, path: str) -> None:
         dispatcher.resolve_runtime("task", path, value)
 
-    def record(value: str | None, path: str) -> None:
-        dispatcher.resolve_runtime("record", path, value)
+    def record(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> None:
+        dispatcher.resolve_runtime("record", path, value, map_role=map_role)
 
     def candidate(value: str | None, path: str) -> None:
         dispatcher.resolve_runtime("candidate", path, value)
@@ -399,6 +410,18 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
 
 
 RecordResolver = Callable[[str | None, str], None]
+
+
+class RuntimeRelationResolver(Protocol):
+    def __call__(
+        self,
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> None: ...
+
+
 RelationFamily = Literal[
     "node",
     "task",
@@ -480,6 +503,10 @@ class ProjectionRelationPolicyArtifact(BaseModel):
         return self
 
 
+class ProjectionRelationPolicyError(ValueError):
+    """A runtime relation lookup did not satisfy its reviewed static policy."""
+
+
 class ProjectionRelationResolverDispatcher:
     """Dispatch represented-state lookups only through reviewed resolver policy."""
 
@@ -521,51 +548,55 @@ class ProjectionRelationResolverDispatcher:
     ) -> None:
         policy = self._policies.get(policy_path)
         if policy is None:
-            raise ValueError(f"unknown relation policy {policy_path!r}")
+            raise ProjectionRelationPolicyError(f"unknown relation policy {policy_path!r}")
         if policy.validation != "resolver":
-            raise ValueError(f"relation policy {policy_path!r} is not a resolver policy")
+            raise ProjectionRelationPolicyError(
+                f"relation policy {policy_path!r} is not a resolver policy"
+            )
         if policy_path not in self._validation_paths:
-            raise ValueError(f"relation policy {policy_path!r} is not an explicit validation path")
+            raise ProjectionRelationPolicyError(
+                f"relation policy {policy_path!r} is not an explicit validation path"
+            )
         if policy.family != family:
-            raise ValueError(
+            raise ProjectionRelationPolicyError(
                 f"relation policy {policy_path!r} expects family {policy.family!r}, got {family!r}"
             )
         self._resolvers[family](value, diagnostic_path)
 
     def resolve_runtime(
-        self, family: RelationFamily, diagnostic_path: str, value: str | None
+        self,
+        family: RelationFamily,
+        diagnostic_path: str,
+        value: str | None,
+        *,
+        map_role: Literal["key", "value"] | None = None,
     ) -> None:
         """Resolve a runtime diagnostic through its unique reviewed policy path."""
         normalized = diagnostic_path.replace("[", ".").replace("]", "")
         normalized = ".".join(
             "*" if segment.isdigit() else segment for segment in normalized.split(".")
         )
-        matches = [
+        if map_role is not None:
+            normalized = f"{normalized}.{map_role}"
+        exact_matches = [
             path
-            for path, policy in self._policies.items()
-            if policy.validation == "resolver"
-            and policy.family == family
-            and _policy_path_matches_runtime(path, normalized)
+            for path in self._policies
+            if _policy_path_matches_runtime(path, normalized, implicit_roles=False)
         ]
-        direct_matches = [
-            path for path in matches if ".value." not in path and not path.endswith(".value")
+        matches = exact_matches or [
+            path for path in self._policies if _policy_path_matches_runtime(path, normalized)
         ]
-        if len(direct_matches) == 1:
-            matches = direct_matches
-        if not matches:
-            # The remaining runtime calls are derived map-key/index shape
-            # checks.  They retain their existing diagnostics but never
-            # resolve a policy-owned represented relation.
-            self._resolvers[family](value, diagnostic_path)
-            return
         if len(matches) != 1:
-            raise ValueError(
-                f"expected one {family!r} resolver policy for {diagnostic_path!r}, found {matches!r}"
+            raise ProjectionRelationPolicyError(
+                f"expected one relation policy for runtime path {diagnostic_path!r}, "
+                f"found {sorted(matches)!r}"
             )
         self.resolve(matches[0], family, diagnostic_path, value)
 
 
-def _policy_path_matches_runtime(policy_path: str, runtime_path: str) -> bool:
+def _policy_path_matches_runtime(
+    policy_path: str, runtime_path: str, *, implicit_roles: bool = True
+) -> bool:
     """Match diagnostics while treating checked map key/value roles as implicit at runtime."""
     runtime_segments = runtime_path.split(".")
 
@@ -581,8 +612,9 @@ def _policy_path_matches_runtime(policy_path: str, runtime_path: str) -> bool:
         )
 
     segments = policy_path.split(".")
-    return matches(segments) or matches(
-        [segment for segment in segments if segment not in {"key", "value"}]
+    return matches(segments) or (
+        implicit_roles
+        and matches([segment for segment in segments if segment not in {"key", "value"}])
     )
 
 
@@ -619,7 +651,9 @@ _EXPLICIT_IDENTIFIER_FIELDS = frozenset(
 
 
 def _identifier_field(name: str) -> bool:
-    return name in _EXPLICIT_IDENTIFIER_FIELDS or name.endswith(("_id", "_ids"))
+    return name in _EXPLICIT_IDENTIFIER_FIELDS or (
+        name != "failed_candidate_ids" and name.endswith(("_id", "_ids"))
+    )
 
 
 def _is_string_scalar(annotation: object) -> bool:
@@ -635,6 +669,13 @@ def _map_key_is_identifier(field_name: str, prefix: str) -> bool:
     if field_name.startswith(("id_by_", "ids_by_")) and field_name != "ids_by_node_port":
         return False
     if field_name in {"nodes", "tasks", "edges", "leases"}:
+        return True
+    if field_name in {
+        "failed_candidate_ids",
+        "input_bindings",
+        "node_gate_decisions",
+        "recorded_keys",
+    }:
         return True
     if field_name == "by_id" and prefix in {
         "records",
@@ -1058,22 +1099,30 @@ def _topology_relations(
 
 def _planning_relations(
     projection: ImmutableGraphProjection,
-    node: Callable[[str | None, str], None],
-    record: Callable[[str | None, str], None],
+    node: RuntimeRelationResolver,
+    record: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
 ) -> None:
     planning = projection.planning
     for node_id, successor in planning.successor_by_node.items():
-        node(node_id, f"planning.successor_by_node.{node_id}")
-        node(successor, f"planning.successor_by_node.{node_id}")
+        node(node_id, f"planning.successor_by_node.{node_id}", map_role="key")
+        node(successor, f"planning.successor_by_node.{node_id}", map_role="value")
     for field in ("accepted_patch_ids_by_node", "no_successor_patch_ids_by_node"):
         for node_id, ids in getattr(planning, field).items():
             node(node_id, f"planning.{field}.{node_id}")
             for index, record_id in enumerate(ids):
                 record(record_id, f"planning.{field}.{node_id}[{index}]")
     for node_id, record_id in planning.latest_no_successor_patch_id_by_node.items():
-        node(node_id, f"planning.latest_no_successor_patch_id_by_node.{node_id}")
-        record(record_id, f"planning.latest_no_successor_patch_id_by_node.{node_id}")
+        node(
+            node_id,
+            f"planning.latest_no_successor_patch_id_by_node.{node_id}",
+            map_role="key",
+        )
+        record(
+            record_id,
+            f"planning.latest_no_successor_patch_id_by_node.{node_id}",
+            map_role="value",
+        )
         if record_id not in planning.no_successor_patch_ids_by_node.get(node_id, ()):
             fail(
                 f"planning.latest_no_successor_patch_id_by_node.{node_id}",
@@ -1089,7 +1138,11 @@ def _planning_relations(
         )
     for field in ("generation_by_node", "session_id_by_node", "region_label_by_node"):
         for node_id in getattr(planning, field):
-            node(node_id, f"planning.{field}.{node_id}")
+            node(
+                node_id,
+                f"planning.{field}.{node_id}",
+                map_role="key" if field == "session_id_by_node" else None,
+            )
     for node_id, session_id in planning.session_id_by_node.items():
         if session_id not in planning.sessions:
             fail(
@@ -1174,9 +1227,11 @@ def _governance_relations(
             node(node_id, base)
             if hasattr(item, "node_id") and item.node_id != node_id:
                 fail(f"{base}.node_id", f"must equal map key {node_id!r}")
-            task(getattr(item, "task_region_id", None), f"{base}.task_region_id")
+            if hasattr(item, "task_region_id"):
+                task(item.task_region_id, f"{base}.task_region_id")
             for related in ("appeal_node_id", "appealed_node_id", "target_node_id"):
-                node(getattr(item, related, None), f"{base}.{related}")
+                if hasattr(item, related):
+                    node(getattr(item, related), f"{base}.{related}")
     for field in ("configured_gates_by_task", "gate_decisions_by_task"):
         for task_id in getattr(value, field):
             task(task_id, f"governance.{field}.{task_id}")

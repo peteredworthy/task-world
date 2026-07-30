@@ -51,9 +51,9 @@ policies:
   validation: external
 - path: execution.environment_failures_by_task.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: task
+  rationale: Map key is checked against represented task state by an integrity resolver.
+  validation: resolver
 - path: execution.environment_failures_by_task.*.node_id
   scope: grouped
   family: node
@@ -121,9 +121,9 @@ policies:
   validation: external
 - path: governance.approval_decisions_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: governance.approval_decisions_by_node.*.node_id
   scope: grouped
   family: node
@@ -146,9 +146,9 @@ policies:
   validation: external
 - path: governance.authority_decisions_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: governance.authority_decisions_by_node.*.node_id
   scope: grouped
   family: node
@@ -201,14 +201,14 @@ policies:
   validation: resolver
 - path: governance.configured_gates_by_task.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: task
+  rationale: Map key is checked against represented task state by an integrity resolver.
+  validation: resolver
 - path: governance.decision_requests_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: governance.decision_requests_by_node.*.target_node_id
   scope: grouped
   family: node
@@ -221,9 +221,14 @@ policies:
   validation: resolver
 - path: governance.gate_decisions_by_task.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: task
+  rationale: Map key is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: governance.node_gate_decisions.*.key
+  scope: grouped
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: governance.oversight_decisions_by_node.*.appeal_node_id
   scope: grouped
   family: node
@@ -246,9 +251,9 @@ policies:
   validation: external
 - path: governance.oversight_decisions_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: governance.oversight_decisions_by_node.*.node_id
   scope: grouped
   family: node
@@ -261,9 +266,9 @@ policies:
   validation: resolver
 - path: governance.pending_appeals_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: nodes.*.key
   scope: grouped
   family: derived
@@ -341,9 +346,9 @@ policies:
   validation: resolver
 - path: planning.accepted_patch_ids_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: planning.accepted_patch_ids_by_node.*.value.*
   scope: grouped
   family: record
@@ -351,14 +356,14 @@ policies:
   validation: resolver
 - path: planning.generation_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: planning.latest_no_successor_patch_id_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: planning.latest_no_successor_patch_id_by_node.*.value
   scope: grouped
   family: record
@@ -376,9 +381,9 @@ policies:
   validation: resolver
 - path: planning.no_successor_patch_ids_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: planning.no_successor_patch_ids_by_node.*.value.*
   scope: grouped
   family: record
@@ -386,14 +391,14 @@ policies:
   validation: resolver
 - path: planning.region_label_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: planning.session_id_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: planning.session_id_by_node.*.value
   scope: grouped
   family: session
@@ -411,9 +416,9 @@ policies:
   validation: resolver
 - path: planning.successor_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: planning.successor_by_node.*.value
   scope: grouped
   family: node
@@ -954,6 +959,11 @@ policies:
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
+- path: topology.input_bindings.*.key
+  scope: grouped
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: topology.outbound_edge_ids
   scope: grouped
   family: edge
@@ -974,11 +984,16 @@ policies:
   family: derived
   rationale: Identity is derived from the containing canonical map or index structure.
   validation: derived
+- path: usage.recorded_keys.*.key
+  scope: grouped
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: usage.tokens_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: usage.tokens_by_node_kind.*.key
   scope: grouped
   family: derived
@@ -1001,9 +1016,9 @@ policies:
   validation: resolver
 - path: verification.check_results_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
 - path: verification.check_results_by_node.*.node_id
   scope: grouped
   family: node
@@ -1019,7 +1034,7 @@ policies:
   family: task
   rationale: Identifier is checked against represented task state by an integrity resolver.
   validation: resolver
-- path: verification.failed_candidate_ids
+- path: verification.failed_candidate_ids.*.key
   scope: grouped
   family: candidate
   rationale: Identifier is checked against represented candidate state by an integrity resolver.
@@ -1036,9 +1051,9 @@ policies:
   validation: resolver
 - path: verification.failed_results_by_record_id.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: record
+  rationale: Map key is checked against represented record state by an integrity resolver.
+  validation: resolver
 - path: verification.failed_results_by_record_id.*.node_id
   scope: grouped
   family: node
@@ -1061,9 +1076,9 @@ policies:
   validation: resolver
 - path: verification.invalid_test_blocks_by_task.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: task
+  rationale: Map key is checked against represented task state by an integrity resolver.
+  validation: resolver
 - path: verification.passed_candidate_ids
   scope: grouped
   family: candidate
@@ -1081,9 +1096,9 @@ policies:
   validation: resolver
 - path: verification.passed_results_by_record_id.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: record
+  rationale: Map key is checked against represented record state by an integrity resolver.
+  validation: resolver
 - path: verification.passed_results_by_record_id.*.node_id
   scope: grouped
   family: node
@@ -1111,9 +1126,9 @@ policies:
   validation: resolver
 - path: verification.recovery_nodes_by_record_id.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
+  family: record
+  rationale: Map key is checked against represented record state by an integrity resolver.
+  validation: resolver
 - path: verification.verdicts_by_node.*.candidate_id
   scope: grouped
   family: candidate
@@ -1121,18 +1136,19 @@ policies:
   validation: resolver
 - path: verification.verdicts_by_node.*.key
   scope: grouped
-  family: derived
-  rationale: Identity is derived from the containing canonical map or index structure.
-  validation: derived
-# This separately authored list mirrors resolver/visitor branches. Canonical
-# map-key, index, and field-equality checks remain derived policies rather than
-# relation-resolver paths, even when integrity traversal also checks their shape.
+  family: node
+  rationale: Map key is checked against represented node state by an integrity resolver.
+  validation: resolver
+# This separately authored list mirrors represented-state resolver branches.
+# Map-key paths are included exactly when traversal invokes a resolver; shape-only
+# map-key, index, and field-equality checks remain derived policies.
 validation_paths:
 - execution.applied_cleanup_ids
 - execution.callback_events_by_key.*.node_id
 - execution.cleanup_requests_by_id.*.cleanup_id
 - execution.cleanup_requests_by_id.*.file_state_record_id
 - execution.cleanup_requests_by_id.*.producer_node_id
+- execution.environment_failures_by_task.*.key
 - execution.environment_failures_by_task.*.node_id
 - execution.environment_failures_by_task.*.record_id
 - execution.environment_failures_by_task.*.task_region_id
@@ -1141,9 +1157,11 @@ validation_paths:
 - execution.leases.*.session_id
 - execution.leases.*.task_region_id
 - governance.approval_decisions_by_node.*.appeal_node_id
+- governance.approval_decisions_by_node.*.key
 - governance.approval_decisions_by_node.*.node_id
 - governance.approval_decisions_by_node.*.task_region_id
 - governance.authority_decisions_by_node.*.appeal_node_id
+- governance.authority_decisions_by_node.*.key
 - governance.authority_decisions_by_node.*.node_id
 - governance.authority_decisions_by_node.*.task_region_id
 - governance.authority_revision_blockers.*.edge_id
@@ -1154,12 +1172,18 @@ validation_paths:
 - governance.authority_revision_blockers.*.revision_id
 - governance.authority_revision_blockers.*.support_ids
 - governance.authority_revision_blockers.*.task_region_id
+- governance.configured_gates_by_task.*.key
+- governance.decision_requests_by_node.*.key
 - governance.decision_requests_by_node.*.target_node_id
 - governance.decision_requests_by_node.*.target_region_id
+- governance.gate_decisions_by_task.*.key
+- governance.node_gate_decisions.*.key
 - governance.oversight_decisions_by_node.*.appeal_node_id
 - governance.oversight_decisions_by_node.*.appealed_node_id
+- governance.oversight_decisions_by_node.*.key
 - governance.oversight_decisions_by_node.*.node_id
 - governance.oversight_decisions_by_node.*.task_region_id
+- governance.pending_appeals_by_node.*.key
 - nodes.*.runtime.candidate_id
 - nodes.*.runtime.failed_candidate_id
 - nodes.*.spec.authority_request.target_node_id
@@ -1172,14 +1196,21 @@ validation_paths:
 - nodes.*.spec.decision_request.target_region_id
 - nodes.*.spec.node_id
 - nodes.*.spec.task_region_id
+- planning.accepted_patch_ids_by_node.*.key
 - planning.accepted_patch_ids_by_node.*.value.*
+- planning.generation_by_node.*.key
+- planning.latest_no_successor_patch_id_by_node.*.key
 - planning.latest_no_successor_patch_id_by_node.*.value
 - planning.latest_routine_snapshot.producer_node_id
 - planning.latest_routine_snapshot.record_id
+- planning.no_successor_patch_ids_by_node.*.key
 - planning.no_successor_patch_ids_by_node.*.value.*
+- planning.region_label_by_node.*.key
+- planning.session_id_by_node.*.key
 - planning.session_id_by_node.*.value
 - planning.sessions.*.carryover_record_id
 - planning.sessions.*.current_node_id
+- planning.successor_by_node.*.key
 - planning.successor_by_node.*.value
 - records.by_id.*.candidate_id
 - records.by_id.*.candidate_record_id
@@ -1240,26 +1271,35 @@ validation_paths:
 - topology.input_bindings.*.*.record_ids
 - topology.input_bindings.*.*.supersedes_record_id
 - topology.input_bindings.*.*.to_node_id
+- topology.input_bindings.*.key
 - topology.outbound_edge_ids
+- usage.recorded_keys.*.key
+- usage.tokens_by_node.*.key
 - verification.check_results_by_node.*.candidate_record_ids
 - verification.check_results_by_node.*.evaluated_record_ids
 - verification.check_results_by_node.*.file_state_record_ids
+- verification.check_results_by_node.*.key
 - verification.check_results_by_node.*.node_id
 - verification.check_results_by_node.*.record_id
 - verification.check_results_by_node.*.task_region_id
-- verification.failed_candidate_ids
+- verification.failed_candidate_ids.*.key
 - verification.failed_results_by_record_id
 - verification.failed_results_by_record_id.*.candidate_id
+- verification.failed_results_by_record_id.*.key
 - verification.failed_results_by_record_id.*.node_id
 - verification.failed_results_by_record_id.*.record_id
 - verification.failed_results_by_record_id.*.task_region_id
 - verification.invalid_test_blocks_by_task.*.candidate_id
+- verification.invalid_test_blocks_by_task.*.key
 - verification.passed_candidate_ids
 - verification.passed_results_by_record_id
 - verification.passed_results_by_record_id.*.candidate_id
+- verification.passed_results_by_record_id.*.key
 - verification.passed_results_by_record_id.*.node_id
 - verification.passed_results_by_record_id.*.record_id
 - verification.passed_results_by_record_id.*.task_region_id
 - verification.recovery_nodes_by_record_id
 - verification.recovery_nodes_by_record_id.*.*.node_id
+- verification.recovery_nodes_by_record_id.*.key
 - verification.verdicts_by_node.*.candidate_id
+- verification.verdicts_by_node.*.key

@@ -3,7 +3,7 @@
 from copy import deepcopy
 from importlib.resources import files
 from pathlib import Path
-from typing import Annotated, cast, get_args, get_origin
+from typing import Annotated, Literal, cast, get_args, get_origin
 
 import pytest
 from pydantic import StrictStr
@@ -14,7 +14,9 @@ from orchestrator.graph import (
     ProjectionModel,
     ProjectedRecord,
     ProjectionCheckpointIntegrityError,
+    ProjectionRelationPolicyError,
     ProjectionRelationResolverDispatcher,
+    RelationPolicy,
     discover_projection_identifier_paths,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
@@ -131,6 +133,65 @@ def test_checkpoint_reports_each_independent_invalid_reference(
         immutable_projection_from_checkpoint(raw)
 
     assert expected_path in {diagnostic.path for diagnostic in raised.value.diagnostics}
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "replacement", "expected_path", "expected_reason"),
+    [
+        (
+            "topology",
+            "input_bindings",
+            {"missing-node": {}},
+            "topology.input_bindings.missing-node",
+            "references missing node 'missing-node'",
+        ),
+        (
+            "usage",
+            "tokens_by_node",
+            {"missing-node": 1},
+            "usage.tokens_by_node.missing-node",
+            "references missing node 'missing-node'",
+        ),
+        (
+            "verification",
+            "passed_results_by_record_id",
+            {
+                "missing-record": {
+                    "record_id": "missing-record",
+                    "node_id": "node-1",
+                    "candidate_id": "candidate-1",
+                    "task_region_id": "task-1",
+                }
+            },
+            "verification.passed_results_by_record_id.missing-record",
+            "references missing record 'missing-record'",
+        ),
+        (
+            "verification",
+            "failed_candidate_ids",
+            {"missing-candidate": True},
+            "verification.failed_candidate_ids.missing-candidate",
+            "references missing candidate 'missing-candidate'",
+        ),
+    ],
+)
+def test_represented_map_keys_preserve_concrete_reference_diagnostics(
+    section: str,
+    field: str,
+    replacement: object,
+    expected_path: str,
+    expected_reason: str,
+) -> None:
+    raw = _checkpoint()
+    container = cast(dict[str, object], raw[section])
+    container[field] = replacement
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        immutable_projection_from_checkpoint(raw)
+
+    assert {item.path: item.reason for item in raised.value.diagnostics}[expected_path] == (
+        expected_reason
+    )
 
 
 def test_integrity_reports_sorted_complete_diagnostics_without_repairing_input() -> None:
@@ -630,6 +691,154 @@ def test_relation_resolver_dispatcher_rejects_policy_outside_explicit_validation
 
     with pytest.raises(ValueError, match="not an explicit validation path"):
         dispatcher.resolve(policy.path, "node", "nodes.node-1.runtime.node_id", "node-1")
+
+
+class _ResolverCalls:
+    def __init__(self) -> None:
+        self.values: list[tuple[str | None, str]] = []
+
+    def __call__(self, value: str | None, path: str) -> None:
+        self.values.append((value, path))
+
+
+def _runtime_dispatcher(
+    policies: dict[str, RelationPolicy],
+    validation_paths: frozenset[str],
+    calls: _ResolverCalls,
+) -> ProjectionRelationResolverDispatcher:
+    return ProjectionRelationResolverDispatcher(
+        policies=policies,
+        validation_paths=validation_paths,
+        resolve_node=calls,
+        resolve_task=calls,
+        resolve_record=calls,
+        resolve_candidate=calls,
+        resolve_requirement=calls,
+        resolve_revision=calls,
+        resolve_support=calls,
+        resolve_lease=calls,
+        resolve_cleanup=calls,
+        resolve_edge=calls,
+        resolve_session=calls,
+    )
+
+
+def test_runtime_dispatcher_rejects_unknown_path_without_calling_resolver() -> None:
+    policy = projection_relation_policy_catalog()["nodes.*.spec.node_id"]
+    calls = _ResolverCalls()
+    dispatcher = _runtime_dispatcher({policy.path: policy}, frozenset({policy.path}), calls)
+
+    with pytest.raises(ProjectionRelationPolicyError) as raised:
+        dispatcher.resolve_runtime("node", "nodes.node-1.unknown_id", "node-1")
+
+    assert str(raised.value) == (
+        "expected one relation policy for runtime path 'nodes.node-1.unknown_id', found []"
+    )
+    assert calls.values == []
+
+
+def test_runtime_dispatcher_rejects_ambiguous_path_without_calling_resolver() -> None:
+    catalog = projection_relation_policy_catalog()
+    paths = (
+        "planning.successor_by_node.*.key",
+        "planning.successor_by_node.*.value",
+    )
+    policies = {path: catalog[path] for path in paths}
+    calls = _ResolverCalls()
+    dispatcher = _runtime_dispatcher(policies, frozenset(paths), calls)
+
+    with pytest.raises(ProjectionRelationPolicyError) as raised:
+        dispatcher.resolve_runtime("node", "planning.successor_by_node.node-1", "node-2")
+
+    assert str(raised.value) == (
+        "expected one relation policy for runtime path "
+        "'planning.successor_by_node.node-1', found "
+        "['planning.successor_by_node.*.key', 'planning.successor_by_node.*.value']"
+    )
+    assert calls.values == []
+
+
+@pytest.mark.parametrize(
+    ("policy_path", "family", "validation_paths", "message"),
+    [
+        (
+            "nodes.*.spec.node_id",
+            "task",
+            frozenset({"nodes.*.spec.node_id"}),
+            "relation policy 'nodes.*.spec.node_id' expects family 'node', got 'task'",
+        ),
+        (
+            "nodes.*.spec.command_definition_id",
+            "node",
+            frozenset(),
+            "relation policy 'nodes.*.spec.command_definition_id' is not a resolver policy",
+        ),
+        (
+            "nodes.*.key",
+            "node",
+            frozenset(),
+            "relation policy 'nodes.*.key' is not a resolver policy",
+        ),
+        (
+            "nodes.*.spec.node_id",
+            "node",
+            frozenset(),
+            "relation policy 'nodes.*.spec.node_id' is not an explicit validation path",
+        ),
+    ],
+)
+def test_runtime_dispatcher_enforces_matched_policy_before_calling_resolver(
+    policy_path: str,
+    family: Literal["node", "task"],
+    validation_paths: frozenset[str],
+    message: str,
+) -> None:
+    policy = projection_relation_policy_catalog()[policy_path]
+    calls = _ResolverCalls()
+    dispatcher = _runtime_dispatcher({policy.path: policy}, validation_paths, calls)
+    diagnostic_path = policy_path.replace("*", "node-1").removesuffix(".key")
+
+    with pytest.raises(ProjectionRelationPolicyError) as raised:
+        dispatcher.resolve_runtime(family, diagnostic_path, "node-1")
+
+    assert str(raised.value) == message
+    assert calls.values == []
+
+
+def test_represented_map_keys_are_resolver_policies() -> None:
+    catalog = projection_relation_policy_catalog()
+    expected = {
+        "execution.environment_failures_by_task.*.key": "task",
+        "governance.approval_decisions_by_node.*.key": "node",
+        "governance.authority_decisions_by_node.*.key": "node",
+        "governance.configured_gates_by_task.*.key": "task",
+        "governance.decision_requests_by_node.*.key": "node",
+        "governance.gate_decisions_by_task.*.key": "task",
+        "governance.node_gate_decisions.*.key": "node",
+        "governance.oversight_decisions_by_node.*.key": "node",
+        "governance.pending_appeals_by_node.*.key": "node",
+        "planning.accepted_patch_ids_by_node.*.key": "node",
+        "planning.generation_by_node.*.key": "node",
+        "planning.latest_no_successor_patch_id_by_node.*.key": "node",
+        "planning.no_successor_patch_ids_by_node.*.key": "node",
+        "planning.region_label_by_node.*.key": "node",
+        "planning.session_id_by_node.*.key": "node",
+        "planning.successor_by_node.*.key": "node",
+        "topology.input_bindings.*.key": "node",
+        "usage.recorded_keys.*.key": "node",
+        "usage.tokens_by_node.*.key": "node",
+        "verification.check_results_by_node.*.key": "node",
+        "verification.failed_candidate_ids.*.key": "candidate",
+        "verification.failed_results_by_record_id.*.key": "record",
+        "verification.invalid_test_blocks_by_task.*.key": "task",
+        "verification.passed_results_by_record_id.*.key": "record",
+        "verification.recovery_nodes_by_record_id.*.key": "record",
+        "verification.verdicts_by_node.*.key": "node",
+    }
+
+    assert {path: policy.family for path, policy in catalog.items() if path in expected} == expected
+    assert all(catalog[path].validation == "resolver" for path in expected)
+    assert expected.keys() <= projection_relation_validation_paths()
 
 
 def test_resolver_call_site_tokens_exactly_cover_static_resolver_policies() -> None:
