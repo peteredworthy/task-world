@@ -37,12 +37,14 @@ same-parent requirement/revision and candidate/task semantic cases remain.
 
 ## Final Important findings
 
-- Non-wildcard dispatcher fallback now accepts only the reviewed direct-map-key
-  shape: exactly one concrete segment below the static policy path. A public
-  dispatcher test proves that shape dispatches and that deeper unreviewed
-  descendants fail without invoking a resolver. Existing ambiguous,
-  wrong-family, nonresolver, and missing-validation-path behavior remains
-  covered.
+- Dispatcher prefix fallback is removed. Runtime dispatch now requires one
+  exact normalized policy pattern; wildcards and map roles must be explicit.
+  Scalar policies reject appended segments, collection members dispatch through
+  trailing `.*`, map identities use `.*.key`, and scalar map values retain
+  `.*.value`. Container aliases were removed where an explicit key/member policy
+  now owns the identity. The exhaustive matrix proves exact static resolver
+  parity after materializing tuple members, nested map/tuple members, scheduling
+  members, cleanup keys, and adjacency members.
 - `EdgeValue` has no creation position or other authoritative ordering fact.
   The event reducer owns edge insertion order, while `FrozenMap` iteration is a
   persistent-map layout detail. Integrity therefore checks exact adjacency key
@@ -50,7 +52,10 @@ same-parent requirement/revision and candidate/task semantic cases remain.
   without changing the stored tuple order. Replay and golden tests remain the
   authority for adjacency ordering. Multi-edge tests prove validation is stable
   across different edge-map construction orders and assert exact diagnostics
-  for duplicate, missing, and extra IDs.
+  for duplicate, missing, and extra IDs. Adjacency policies now use explicit
+  `topology.<field>.*.*` patterns, preserving diagnostics at
+  `topology.<field>.<node-id>[<index>]`; repeated invalid IDs in separate tuples
+  produce separate concrete diagnostics.
 
 ## Visitor coverage
 
@@ -63,7 +68,7 @@ same-parent requirement/revision and candidate/task semantic cases remain.
 ```text
 uv run pytest -q tests/unit/test_graph_projection_integrity.py \
   tests/unit/test_graph_projection_codec.py
-300 passed in 8.42s (11.13s wall)
+299 passed in 7.41s (10.07s wall)
 
 uv run pyright
 0 errors, 0 warnings, 0 informations

@@ -408,24 +408,11 @@ def _consistency_reason(policy_path: str, location: tuple[str | int, ...]) -> st
 def _resolver_outcome_cases() -> tuple[ResolverOutcomeCase, ...]:
     raw = immutable_projection_to_checkpoint(complete_projection_fixture())
     catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
-    direct_map_keys = {
-        "execution.applied_cleanup_ids",
-        "verification.failed_results_by_record_id",
-        "verification.passed_results_by_record_id",
-        "verification.recovery_nodes_by_record_id",
-    }
     cases: list[ResolverOutcomeCase] = []
     for policy_path, policy in catalog.items():
         if policy.validation != "resolver":
             continue
         locations = _resolver_locations(raw, tuple(policy_path.split(".")))
-        if policy_path in direct_map_keys:
-            container: object = raw
-            for segment in policy_path.split("."):
-                assert isinstance(container, dict)
-                container = container[segment]
-            assert isinstance(container, dict)
-            locations = [((*policy_path.split("."), key), True) for key in sorted(container)]
         assert locations, f"resolver policy has no populated fixture location: {policy_path}"
         locations.sort(key=lambda item: _concrete_path(item[0]))
         if policy.scope == "record":
@@ -499,8 +486,9 @@ def test_topology_adjacency_integrity_is_independent_of_edge_map_layout() -> Non
             ["edge-2", "edge-2", "edge-1"],
             {
                 (
-                    "topology.inbound_edge_ids.node-2",
-                    "must not contain duplicate edge IDs",
+                    "topology.inbound_edge_ids.node-2[1]",
+                    "duplicates edge ID 'edge-2' first listed at "
+                    "topology.inbound_edge_ids.node-2[0]",
                 )
             },
         ),
@@ -517,7 +505,7 @@ def test_topology_adjacency_integrity_is_independent_of_edge_map_layout() -> Non
             ["edge-2", "edge-1", "missing-edge"],
             {
                 (
-                    "topology.inbound_edge_ids.missing-edge",
+                    "topology.inbound_edge_ids.node-2[2]",
                     "references missing edge 'missing-edge'",
                 ),
                 (
@@ -540,6 +528,34 @@ def test_topology_adjacency_rejects_duplicate_missing_and_extra_edge_ids(
 
     assert expected == {
         (diagnostic.path, diagnostic.reason) for diagnostic in raised.value.diagnostics
+    }
+
+
+def test_topology_adjacency_reports_the_same_invalid_id_at_each_tuple_location() -> None:
+    raw = immutable_projection_to_checkpoint(_multi_edge_projection(("edge-1", "edge-2")))
+    cast(dict[str, Any], raw["topology"])["inbound_edge_ids"] = {
+        "node-1": ["missing-edge"],
+        "node-2": ["edge-2", "edge-1", "missing-edge"],
+    }
+    malformed = ImmutableGraphProjection.model_validate(raw)
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        validate_projection_integrity(malformed)
+
+    missing = {
+        (diagnostic.path, diagnostic.reason)
+        for diagnostic in raised.value.diagnostics
+        if diagnostic.reason == "references missing edge 'missing-edge'"
+    }
+    assert missing == {
+        (
+            "topology.inbound_edge_ids.node-1[0]",
+            "references missing edge 'missing-edge'",
+        ),
+        (
+            "topology.inbound_edge_ids.node-2[2]",
+            "references missing edge 'missing-edge'",
+        ),
     }
 
 
@@ -1170,7 +1186,7 @@ def test_identifier_discovery_observes_roles_without_treating_structural_keys_as
     assert discover_projection_identifier_paths(DiscoveryFixture) == {
         "nested.*.*.linked_node_id",
         "record_ids_by_node.*.key",
-        "record_ids_by_node.*.value.*",
+        "record_ids_by_node.*.*",
         "session_id_by_node.*.key",
         "session_id_by_node.*.value",
         "region_label_by_node.*.key",
@@ -1181,7 +1197,7 @@ def test_identifier_discovery_observes_roles_without_treating_structural_keys_as
 def test_identifier_discovery_includes_nested_ids_by_node_port_values_not_port_keys() -> None:
     assert discover_projection_identifier_paths(NestedRecordIndexDiscoveryFixture) == {
         "ids_by_node_port.*.key",
-        "ids_by_node_port.*.value.*.value.*",
+        "ids_by_node_port.*.*.*",
     }
 
 
@@ -1284,26 +1300,33 @@ def test_runtime_dispatcher_rejects_unknown_path_without_calling_resolver() -> N
     assert calls.values == []
 
 
-def test_runtime_dispatcher_only_falls_back_for_one_direct_map_key_segment() -> None:
-    policy = projection_relation_policy_catalog()["scheduling.ready_node_ids"]
+def test_runtime_dispatcher_rejects_appended_segment_for_scalar_policy() -> None:
+    policy = projection_relation_policy_catalog()["nodes.*.spec.node_id"]
     calls = _ResolverCalls()
     dispatcher = _runtime_dispatcher({policy.path: policy}, frozenset({policy.path}), calls)
 
-    dispatcher.resolve_runtime("node", "scheduling.ready_node_ids.node-1", "node-1")
+    dispatcher.resolve_runtime("node", "nodes.node-1.spec.node_id", "node-1")
 
-    assert calls.values == [("node-1", "scheduling.ready_node_ids.node-1")]
+    assert calls.values == [("node-1", "nodes.node-1.spec.node_id")]
     with pytest.raises(ProjectionRelationPolicyError) as raised:
-        dispatcher.resolve_runtime(
-            "node", "scheduling.ready_node_ids.unreviewed.deep.path", "node-2"
-        )
+        dispatcher.resolve_runtime("node", "nodes.node-1.spec.node_id.extra", "node-2")
     assert str(raised.value) == (
-        "expected one relation policy for runtime path "
-        "'scheduling.ready_node_ids.unreviewed.deep.path', found []"
+        "expected one relation policy for runtime path 'nodes.node-1.spec.node_id.extra', found []"
     )
-    assert calls.values == [("node-1", "scheduling.ready_node_ids.node-1")]
+    assert calls.values == [("node-1", "nodes.node-1.spec.node_id")]
 
 
-def test_runtime_dispatcher_rejects_ambiguous_path_without_calling_resolver() -> None:
+def test_runtime_dispatcher_matches_explicit_collection_member_wildcard() -> None:
+    policy = projection_relation_policy_catalog()["scheduling.ready_node_ids.*"]
+    calls = _ResolverCalls()
+    dispatcher = _runtime_dispatcher({policy.path: policy}, frozenset({policy.path}), calls)
+
+    dispatcher.resolve_runtime("node", "scheduling.ready_node_ids[0]", "node-1")
+
+    assert calls.values == [("node-1", "scheduling.ready_node_ids[0]")]
+
+
+def test_runtime_dispatcher_rejects_map_path_without_explicit_role() -> None:
     catalog = projection_relation_policy_catalog()
     paths = (
         "planning.successor_by_node.*.key",
@@ -1318,8 +1341,7 @@ def test_runtime_dispatcher_rejects_ambiguous_path_without_calling_resolver() ->
 
     assert str(raised.value) == (
         "expected one relation policy for runtime path "
-        "'planning.successor_by_node.node-1', found "
-        "['planning.successor_by_node.*.key', 'planning.successor_by_node.*.value']"
+        "'planning.successor_by_node.node-1', found []"
     )
     assert calls.values == []
 
@@ -1365,7 +1387,12 @@ def test_runtime_dispatcher_enforces_matched_policy_before_calling_resolver(
     diagnostic_path = policy_path.replace("*", "node-1").removesuffix(".key")
 
     with pytest.raises(ProjectionRelationPolicyError) as raised:
-        dispatcher.resolve_runtime(family, diagnostic_path, "node-1")
+        dispatcher.resolve_runtime(
+            family,
+            diagnostic_path,
+            "node-1",
+            map_role="key" if policy_path.endswith(".key") else None,
+        )
 
     assert str(raised.value) == message
     assert calls.values == []
@@ -1375,7 +1402,7 @@ def test_runtime_dispatcher_enforces_matched_policy_before_calling_resolver(
     ("policy_path", "family", "diagnostic_path"),
     [
         (
-            "records.by_id.*.value.requirements_addressed",
+            "records.by_id.*.value.requirements_addressed.*",
             "requirement",
             "records.by_id.record-1.value.requirements_addressed[0]",
         ),
@@ -1385,7 +1412,7 @@ def test_runtime_dispatcher_enforces_matched_policy_before_calling_resolver(
             "records.by_id.record-1.value.version",
         ),
         (
-            "governance.authority_revision_blockers.*.support_ids",
+            "governance.authority_revision_blockers.*.support_ids.*",
             "support",
             "governance.authority_revision_blockers.blocker-1.support_ids[0]",
         ),

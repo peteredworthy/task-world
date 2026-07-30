@@ -288,8 +288,13 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     ) -> None:
         dispatcher.resolve_runtime("node", path, value, map_role=map_role)
 
-    def task(value: str | None, path: str) -> None:
-        dispatcher.resolve_runtime("task", path, value)
+    def task(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> None:
+        dispatcher.resolve_runtime("task", path, value, map_role=map_role)
 
     def record(
         value: str | None,
@@ -299,8 +304,13 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     ) -> None:
         dispatcher.resolve_runtime("record", path, value, map_role=map_role)
 
-    def candidate(value: str | None, path: str) -> None:
-        dispatcher.resolve_runtime("candidate", path, value)
+    def candidate(
+        value: str | None,
+        path: str,
+        *,
+        map_role: Literal["key", "value"] | None = None,
+    ) -> None:
+        dispatcher.resolve_runtime("candidate", path, value, map_role=map_role)
 
     def requirement(
         value: str | None,
@@ -443,7 +453,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         )
 
     for node_id, ports in projection.records.ids_by_node_port.items():
-        node(node_id, f"records.ids_by_node_port.{node_id}")
+        node(node_id, f"records.ids_by_node_port.{node_id}", map_role="key")
         for port, ids in ports.items():
             base = f"records.ids_by_node_port.{node_id}.{port}"
             if port not in expected_index.get(node_id, {}):
@@ -521,7 +531,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         node(node_id, f"scheduling.ready_node_ids[{index}]")
     for field in ("tokens_by_node", "recorded_keys"):
         for node_id in getattr(projection.usage, field):
-            node(node_id, f"usage.{field}.{node_id}")
+            node(node_id, f"usage.{field}.{node_id}", map_role="key")
 
     if diagnostics:
         raise ProjectionCheckpointIntegrityError(
@@ -702,22 +712,9 @@ class ProjectionRelationResolverDispatcher:
                 normalized = f"{prefix}.value.{item}"
             else:
                 normalized = f"{normalized}.{map_role}"
-        exact_matches = [
-            path
-            for path in self._policies
-            if _policy_path_matches_runtime(path, normalized, implicit_roles=False)
-        ]
-        matches = exact_matches or [
+        matches = [
             path for path in self._policies if _policy_path_matches_runtime(path, normalized)
         ]
-        if not matches:
-            matches = [
-                path
-                for path in self._policies
-                if "*" not in path
-                and normalized.startswith(f"{path}.")
-                and normalized.count(".") == path.count(".") + 1
-            ]
         if len(matches) != 1:
             raise ProjectionRelationPolicyError(
                 f"expected one relation policy for runtime path {diagnostic_path!r}, "
@@ -726,28 +723,20 @@ class ProjectionRelationResolverDispatcher:
         self.resolve(matches[0], family, diagnostic_path, value)
 
 
-def _policy_path_matches_runtime(
-    policy_path: str, runtime_path: str, *, implicit_roles: bool = True
-) -> bool:
-    """Match diagnostics while treating checked map key/value roles as implicit at runtime."""
+def _policy_path_matches_runtime(policy_path: str, runtime_path: str) -> bool:
+    """Match one normalized runtime path to an explicit policy pattern."""
     runtime_segments = runtime_path.split(".")
 
     def matches(policy_segments: list[str]) -> bool:
-        comparable_runtime = runtime_segments
-        if len(comparable_runtime) == len(policy_segments) + 1 and comparable_runtime[-1] == "*":
-            comparable_runtime = comparable_runtime[:-1]
-        return len(policy_segments) == len(comparable_runtime) and all(
-            policy_segment == "*" or policy_segment == runtime_segment
+        return len(policy_segments) == len(runtime_segments) and all(
+            policy_segment == runtime_segment
+            or (policy_segment == "*" and runtime_segment not in {"key", "value"})
             for policy_segment, runtime_segment in zip(
-                policy_segments, comparable_runtime, strict=True
+                policy_segments, runtime_segments, strict=True
             )
         )
 
-    segments = policy_path.split(".")
-    return matches(segments) or (
-        implicit_roles
-        and matches([segment for segment in segments if segment not in {"key", "value"}])
-    )
+    return matches(policy_path.split("."))
 
 
 _RELATION_POLICY_RESOURCE = "_projection_relation_policy.yaml"
@@ -803,6 +792,7 @@ def _map_key_is_identifier(field_name: str, prefix: str) -> bool:
     if field_name in {"nodes", "tasks", "edges", "leases"}:
         return True
     if field_name in {
+        "applied_cleanup_ids",
         "failed_candidate_ids",
         "input_bindings",
         "node_gate_decisions",
@@ -810,7 +800,7 @@ def _map_key_is_identifier(field_name: str, prefix: str) -> bool:
     }:
         return True
     if field_name == "by_id" and prefix in {
-        "records",
+        "records.by_id",
         "requirements.revisions_by_id",
         "requirements.support_by_id",
     }:
@@ -888,14 +878,21 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
             field_name = map_field_name or prefix.rsplit(".", maxsplit=1)[-1]
             if map_depth == 0 and _map_key_is_identifier(field_name, prefix):
                 paths.add(join(map_prefix, "key"))
-            if _map_value_is_identifier(field_name) and _is_string_scalar(value_type):
+            tuple_members = get_args(value_type) if get_origin(value_type) is tuple else ()
+            string_tuple = any(
+                member is not Ellipsis and _is_string_scalar(member) for member in tuple_members
+            )
+            map_value_is_identifier = _map_value_is_identifier(field_name) or (
+                _identifier_field(field_name) and string_tuple
+            )
+            if map_value_is_identifier and _is_string_scalar(value_type):
                 paths.add(join(map_prefix, "value"))
-            if _map_value_is_identifier(field_name) and get_origin(value_type) is tuple:
-                paths.add(join(join(map_prefix, "value"), "*"))
-            elif _map_value_is_identifier(field_name) and get_origin(value_type) is FrozenMap:
-                visit(value_type, join(map_prefix, "value"), active, field_name, map_depth + 1)
+            if map_value_is_identifier and get_origin(value_type) is tuple:
+                paths.add(join(map_prefix, "*"))
+            elif map_value_is_identifier and get_origin(value_type) is FrozenMap:
+                visit(value_type, map_prefix, active, field_name, map_depth + 1)
             elif not (
-                _map_value_is_identifier(field_name)
+                map_value_is_identifier
                 and (_is_string_scalar(value_type) or get_origin(value_type) is tuple)
             ):
                 visit(value_type, map_prefix, active, field_name, map_depth + 1)
@@ -906,7 +903,11 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
             for field_name in annotation.model_fields:
                 field_path = join(prefix, field_name)
                 if _identifier_field(field_name):
-                    paths.add(field_path)
+                    origin = get_origin(hints[field_name])
+                    if origin is tuple:
+                        paths.add(join(field_path, "*"))
+                    elif origin is not FrozenMap:
+                        paths.add(field_path)
                 visit(hints[field_name], field_path, active | {annotation}, field_name)
 
     visit(root, "", frozenset())
@@ -1157,7 +1158,7 @@ def _visit_projected_record(
 
 def _topology_relations(
     projection: ImmutableGraphProjection,
-    node: Callable[[str | None, str], None],
+    node: RuntimeRelationResolver,
     record: Callable[[str | None, str], None],
     resolve_edge: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
@@ -1178,10 +1179,13 @@ def _topology_relations(
     for field, expected in (("inbound_edge_ids", inbound), ("outbound_edge_ids", outbound)):
         actual = getattr(topology, field)
         for node_id, edge_ids in actual.items():
-            for edge_id in edge_ids:
-                resolve_edge(edge_id, f"topology.{field}.{edge_id}")
-            if len(edge_ids) != len(set(edge_ids)):
-                fail(f"topology.{field}.{node_id}", "must not contain duplicate edge IDs")
+            first_path_by_edge: dict[str, str] = {}
+            for index, edge_id in enumerate(edge_ids):
+                path = f"topology.{field}.{node_id}[{index}]"
+                resolve_edge(edge_id, path)
+                first_path = first_path_by_edge.setdefault(edge_id, path)
+                if first_path != path:
+                    fail(path, f"duplicates edge ID {edge_id!r} first listed at {first_path}")
         for node_id in set(actual) | set(expected):
             if node_id not in expected:
                 fail(f"topology.{field}.{node_id}", "is not a canonical adjacency key")
@@ -1194,7 +1198,7 @@ def _topology_relations(
                     f"must exactly contain edge IDs {relation} node {node_id!r}",
                 )
     for node_id, ports in topology.input_bindings.items():
-        node(node_id, f"topology.input_bindings.{node_id}")
+        node(node_id, f"topology.input_bindings.{node_id}", map_role="key")
         for port, binding in ports.items():
             base = f"topology.input_bindings.{node_id}.{port}"
             node(binding.to_node_id, f"{base}.to_node_id")
@@ -1236,7 +1240,6 @@ def _planning_relations(
                 record(
                     record_id,
                     f"planning.{field}.{node_id}[{index}]",
-                    map_role="value",
                 )
     for node_id, record_id in planning.latest_no_successor_patch_id_by_node.items():
         node(
@@ -1267,7 +1270,7 @@ def _planning_relations(
             node(
                 node_id,
                 f"planning.{field}.{node_id}",
-                map_role="key" if field == "session_id_by_node" else None,
+                map_role="key",
             )
     for node_id, session_id in planning.session_id_by_node.items():
         session(
@@ -1285,15 +1288,15 @@ def _planning_relations(
 
 def _verification_relations(
     projection: ImmutableGraphProjection,
-    node: Callable[[str | None, str], None],
-    task: Callable[[str | None, str], None],
-    record: Callable[[str | None, str], None],
-    candidate: Callable[[str | None, str], None],
+    node: RuntimeRelationResolver,
+    task: RuntimeRelationResolver,
+    record: RuntimeRelationResolver,
+    candidate: RuntimeRelationResolver,
     fail: Callable[[str, str], None],
 ) -> None:
     value = projection.verification
     for node_id, verdict in value.verdicts_by_node.items():
-        node(node_id, f"verification.verdicts_by_node.{node_id}")
+        node(node_id, f"verification.verdicts_by_node.{node_id}", map_role="key")
         candidate(verdict.candidate_id, f"verification.verdicts_by_node.{node_id}.candidate_id")
     for result_name, results in (
         ("passed", value.passed_results_by_record_id),
@@ -1303,7 +1306,7 @@ def _verification_relations(
             base = f"verification.{result_name}_results_by_record_id.{record_id}"
             if result.record_id != record_id:
                 fail(f"{base}.record_id", f"must equal map key {record_id!r}")
-            record(record_id, base)
+            record(record_id, base, map_role="key")
             record(result.record_id, f"{base}.record_id")
             node(result.node_id, f"{base}.node_id")
             task(result.task_region_id, f"{base}.task_region_id")
@@ -1311,9 +1314,17 @@ def _verification_relations(
     for index, candidate_id in enumerate(value.passed_candidate_ids):
         candidate(candidate_id, f"verification.passed_candidate_ids[{index}]")
     for candidate_id in value.failed_candidate_ids:
-        candidate(candidate_id, f"verification.failed_candidate_ids.{candidate_id}")
+        candidate(
+            candidate_id,
+            f"verification.failed_candidate_ids.{candidate_id}",
+            map_role="key",
+        )
     for record_id, recoveries in value.recovery_nodes_by_record_id.items():
-        record(record_id, f"verification.recovery_nodes_by_record_id.{record_id}")
+        record(
+            record_id,
+            f"verification.recovery_nodes_by_record_id.{record_id}",
+            map_role="key",
+        )
         for index, recovery in enumerate(recoveries):
             node(
                 recovery.node_id,
@@ -1323,7 +1334,7 @@ def _verification_relations(
         base = f"verification.check_results_by_node.{node_id}"
         if result.node_id != node_id:
             fail(f"{base}.node_id", f"must equal map key {node_id!r}")
-        node(node_id, base)
+        node(node_id, base, map_role="key")
         node(result.node_id, f"{base}.node_id")
         task(result.task_region_id, f"{base}.task_region_id")
         record(result.record_id, f"{base}.record_id")
@@ -1331,7 +1342,11 @@ def _verification_relations(
             for index, record_id in enumerate(getattr(result, field)):
                 record(record_id, f"{base}.{field}[{index}]")
     for task_id in value.invalid_test_blocks_by_task:
-        task(task_id, f"verification.invalid_test_blocks_by_task.{task_id}")
+        task(
+            task_id,
+            f"verification.invalid_test_blocks_by_task.{task_id}",
+            map_role="key",
+        )
         candidate(
             value.invalid_test_blocks_by_task[task_id].candidate_id,
             f"verification.invalid_test_blocks_by_task.{task_id}.candidate_id",
@@ -1340,8 +1355,8 @@ def _verification_relations(
 
 def _governance_relations(
     projection: ImmutableGraphProjection,
-    node: Callable[[str | None, str], None],
-    task: Callable[[str | None, str], None],
+    node: RuntimeRelationResolver,
+    task: RuntimeRelationResolver,
     record: RuntimeRelationResolver,
     requirement: RuntimeRelationResolver,
     revision: RuntimeRelationResolver,
@@ -1360,7 +1375,7 @@ def _governance_relations(
     ):
         for node_id, item in getattr(value, field).items():
             base = f"governance.{field}.{node_id}"
-            node(node_id, base)
+            node(node_id, base, map_role="key")
             if hasattr(item, "node_id"):
                 node(item.node_id, f"{base}.node_id")
                 if item.node_id != node_id:
@@ -1374,7 +1389,7 @@ def _governance_relations(
                     node(getattr(item, related), f"{base}.{related}")
     for field in ("configured_gates_by_task", "gate_decisions_by_task"):
         for task_id in getattr(value, field):
-            task(task_id, f"governance.{field}.{task_id}")
+            task(task_id, f"governance.{field}.{task_id}", map_role="key")
     for blocker_id, blocker in value.authority_revision_blockers.items():
         base = f"governance.authority_revision_blockers.{blocker_id}"
         node(blocker.node_id, f"{base}.node_id")
@@ -1458,7 +1473,7 @@ def _requirement_relations(
 def _execution_relations(
     projection: ImmutableGraphProjection,
     node: Callable[[str | None, str], None],
-    task: Callable[[str | None, str], None],
+    task: RuntimeRelationResolver,
     record: Callable[[str | None, str], None],
     resolve_lease: RuntimeRelationResolver,
     cleanup_resolver: RuntimeRelationResolver,
@@ -1477,7 +1492,7 @@ def _execution_relations(
         session(lease.session_id, f"{base}.session_id")
     for task_id, failure in value.environment_failures_by_task.items():
         base = f"execution.environment_failures_by_task.{task_id}"
-        task(task_id, base)
+        task(task_id, base, map_role="key")
         if failure.task_region_id is not None and failure.task_region_id != task_id:
             fail(f"{base}.task_region_id", f"must equal outer task key {task_id!r}")
         task(failure.task_region_id, f"{base}.task_region_id")
@@ -1497,4 +1512,8 @@ def _execution_relations(
         record(cleanup.file_state_record_id, f"{base}.file_state_record_id")
         node(cleanup.producer_node_id, f"{base}.producer_node_id")
     for cleanup_id in value.applied_cleanup_ids:
-        cleanup_resolver(cleanup_id, f"execution.applied_cleanup_ids.{cleanup_id}")
+        cleanup_resolver(
+            cleanup_id,
+            f"execution.applied_cleanup_ids.{cleanup_id}",
+            map_role="key",
+        )
