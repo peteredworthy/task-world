@@ -1,13 +1,16 @@
 """Public checkpoint contracts for the immutable projection scaffold."""
 
 from copy import deepcopy
+from collections import UserDict
 from math import inf
+from types import MappingProxyType
 
 import pytest
 from pydantic import ValidationError
 
 from orchestrator.graph import (
     ImmutableGraphProjection,
+    FrozenMap,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
 )
@@ -97,3 +100,37 @@ def test_checkpoint_rejects_unknown_or_malformed_sibling_without_defaulting() ->
         immutable_projection_from_checkpoint(raw)
 
     assert raw != before
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        ("node-1",),
+        FrozenMap({"node-1": 1}),
+        UserDict({"node-1": 1}),
+        MappingProxyType({"node-1": 1}),
+        {1: "node-1"},
+        inf,
+    ],
+)
+def test_checkpoint_rejects_noncanonical_nested_json_values_without_mutating_input(
+    replacement: object,
+) -> None:
+    raw = immutable_projection_to_checkpoint(final_projection_fixture())
+    raw["scheduling"]["ready_node_ids"] = replacement
+    before = deepcopy(raw) if type(replacement) is not MappingProxyType else raw.copy()
+
+    with pytest.raises(ValidationError):
+        immutable_projection_from_checkpoint(raw)
+
+    assert raw == before
+
+
+def test_checkpoint_rejects_cyclic_json_before_model_validation() -> None:
+    raw = immutable_projection_to_checkpoint(final_projection_fixture())
+    cycle: list[object] = []
+    cycle.append(cycle)
+    raw["scheduling"]["ready_node_ids"] = cycle
+
+    with pytest.raises(ValidationError, match="cycle"):
+        immutable_projection_from_checkpoint(raw)

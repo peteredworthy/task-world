@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Any, Callable
+from math import isfinite
+from typing import Any, Callable, cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic_core import PydanticSerializationError
 
 from orchestrator.graph.projection_models import ImmutableGraphProjection
@@ -41,9 +42,74 @@ def immutable_projection_to_checkpoint(projection: ImmutableGraphProjection) -> 
 
 def immutable_projection_from_checkpoint(raw: object) -> ImmutableGraphProjection:
     """Strictly validate a canonical checkpoint and its cross-group references."""
+    _validate_canonical_checkpoint(raw)
     projection = ImmutableGraphProjection.model_validate(raw)
     validate_projection_integrity(projection)
     return projection
+
+
+def _validate_canonical_checkpoint(raw: object) -> None:
+    """Reject non-JSON transport values before immutable model conversion."""
+
+    def reject(path: tuple[str | int, ...], value: object, message: str) -> None:
+        raise ValidationError.from_exception_data(
+            "ImmutableGraphProjection",
+            [
+                {
+                    "type": "value_error",
+                    "loc": path,
+                    "input": value,
+                    "ctx": {"error": ValueError(message)},
+                }
+            ],
+        )
+
+    if type(raw) is not dict:
+        reject((), raw, "checkpoint root must be an exact JSON object")
+
+    active_ids: set[int] = set()
+
+    def visit(value: object, path: tuple[str | int, ...], depth: int) -> None:
+        if depth > 100:
+            reject(path, value, "checkpoint JSON depth must not exceed 100")
+        value_type = type(value)
+        if value is None or value_type in {bool, int, str}:
+            return
+        if value_type is float:
+            if not isfinite(cast(float, value)):
+                reject(path, value, "checkpoint JSON numbers must be finite")
+            return
+        if value_type is list:
+            value_id = id(value)
+            if value_id in active_ids:
+                reject(path, value, "checkpoint JSON cannot contain a cycle")
+            active_ids.add(value_id)
+            try:
+                for index, child in enumerate(cast(list[object], value)):
+                    visit(child, (*path, index), depth + 1)
+            finally:
+                active_ids.remove(value_id)
+            return
+        if value_type is dict:
+            value_id = id(value)
+            if value_id in active_ids:
+                reject(path, value, "checkpoint JSON cannot contain a cycle")
+            dictionary = cast(dict[object, object], value)
+            if any(type(key) is not str for key in dictionary):
+                reject(path, value, "checkpoint JSON objects must have string keys")
+            active_ids.add(value_id)
+            try:
+                for key, child in dictionary.items():
+                    visit(child, (*path, cast(str, key)), depth + 1)
+            finally:
+                active_ids.remove(value_id)
+            return
+        reject(
+            path, value, f"checkpoint must contain canonical JSON values, not {value_type.__name__}"
+        )
+
+    root = cast(dict[object, object], raw)
+    visit(cast(object, root), (), 0)
 
 
 def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
@@ -68,20 +134,40 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     def record(value: str | None, path: str) -> None:
         reference(records, value, path, "record")
 
+    candidate_paths: dict[str, list[str]] = defaultdict(list)
+    for task_id, item in tasks.items():
+        for index, candidate_item in enumerate(item.candidates):
+            candidate_paths[candidate_item.candidate_id].append(
+                f"tasks.{task_id}.candidates[{index}].candidate_id"
+            )
+    for record_id, item in records.items():
+        candidate_id = getattr(item, "candidate_id", None)
+        if candidate_id is not None:
+            candidate_paths[candidate_id].append(f"records.by_id.{record_id}.candidate_id")
+
+    def candidate(value: str | None, path: str) -> None:
+        if value is None:
+            return
+        paths = candidate_paths.get(value, [])
+        if not paths:
+            fail(path, f"references missing candidate {value!r}")
+        elif len(paths) > 1:
+            fail(path, f"references ambiguous candidate {value!r}: {', '.join(sorted(paths))}")
+
     for node_id, item in nodes.items():
         base = f"nodes.{node_id}"
         if item.spec.node_id != node_id:
             fail(f"{base}.spec.node_id", f"must equal map key {node_id!r}")
         task(item.spec.task_region_id, f"{base}.spec.task_region_id")
         for field in ("candidate_id", "failed_candidate_id"):
-            record(getattr(item.runtime, field), f"{base}.runtime.{field}")
+            candidate(getattr(item.runtime, field), f"{base}.runtime.{field}")
 
     for task_id, item in tasks.items():
-        for number, candidate in enumerate(item.candidates):
+        for number, candidate_item in enumerate(item.candidates):
             base = f"tasks.{task_id}.candidates[{number}]"
-            for index, record_id in enumerate(candidate.file_state_record_ids):
+            for index, record_id in enumerate(candidate_item.file_state_record_ids):
                 record(record_id, f"{base}.file_state_record_ids[{index}]")
-            for index, related_task in enumerate(candidate.supersedes_task_region_ids):
+            for index, related_task in enumerate(candidate_item.supersedes_task_region_ids):
                 task(related_task, f"{base}.supersedes_task_region_ids[{index}]")
 
     expected_index: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
@@ -98,6 +184,8 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         node(node_id, f"records.ids_by_node_port.{node_id}")
         for port, ids in ports.items():
             base = f"records.ids_by_node_port.{node_id}.{port}"
+            if port not in expected_index.get(node_id, {}):
+                fail(base, "is not a canonical record index")
             if ids != tuple(expected_index.get(node_id, {}).get(port, ())):
                 fail(base, "must exactly derive record IDs for its node and port")
             for index, record_id in enumerate(ids):
@@ -159,7 +247,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
 
     _topology_relations(projection, node, record, fail)
     _planning_relations(projection, node, record, fail)
-    _verification_relations(projection, node, task, record, fail)
+    _verification_relations(projection, node, task, record, candidate, fail)
     _governance_relations(projection, node, task, fail)
     _requirement_relations(projection, record, fail)
     _execution_relations(projection, node, task, record, fail)
@@ -224,6 +312,8 @@ def _topology_relations(
     for field, expected in (("inbound_edge_ids", inbound), ("outbound_edge_ids", outbound)):
         actual = getattr(topology, field)
         for node_id in set(actual) | set(expected):
+            if node_id not in expected:
+                fail(f"topology.{field}.{node_id}", "is not a canonical adjacency key")
             if actual.get(node_id, ()) != tuple(expected.get(node_id, ())):
                 fail(
                     f"topology.{field}.{node_id}",
@@ -302,21 +392,13 @@ def _verification_relations(
     node: Callable[[str | None, str], None],
     task: Callable[[str | None, str], None],
     record: Callable[[str | None, str], None],
+    candidate: Callable[[str | None, str], None],
     fail: Callable[[str, str], None],
 ) -> None:
     value = projection.verification
-    candidates = {
-        candidate.candidate_id
-        for item in projection.tasks.values()
-        for candidate in item.candidates
-    }
     for node_id, verdict in value.verdicts_by_node.items():
         node(node_id, f"verification.verdicts_by_node.{node_id}")
-        if verdict.candidate_id not in candidates:
-            fail(
-                f"verification.verdicts_by_node.{node_id}.candidate_id",
-                "references missing task candidate",
-            )
+        candidate(verdict.candidate_id, f"verification.verdicts_by_node.{node_id}.candidate_id")
     for result_name, results in (
         ("passed", value.passed_results_by_record_id),
         ("failed", value.failed_results_by_record_id),
@@ -328,6 +410,7 @@ def _verification_relations(
             record(record_id, base)
             node(result.node_id, f"{base}.node_id")
             task(result.task_region_id, f"{base}.task_region_id")
+            candidate(result.candidate_id, f"{base}.candidate_id")
     for record_id, recoveries in value.recovery_nodes_by_record_id.items():
         record(record_id, f"verification.recovery_nodes_by_record_id.{record_id}")
         for index, recovery in enumerate(recoveries):

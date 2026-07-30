@@ -116,3 +116,35 @@ def test_integrity_reports_sorted_complete_diagnostics_without_repairing_input()
         "topology.edges.edge-1.to_node_id",
     }
     assert raw == before
+
+
+def test_node_runtime_candidate_resolves_to_candidate_entity_not_record() -> None:
+    raw = _checkpoint()
+    tasks = cast(dict[str, object], raw["tasks"])
+    task = cast(dict[str, object], tasks["task-1"])
+    task["candidates"] = [{"candidate_id": "candidate-1", "attempt_number": 1, "position": 1}]
+    nodes = cast(dict[str, object], raw["nodes"])
+    node = cast(dict[str, object], nodes["node-1"])
+    cast(dict[str, object], node["runtime"])["candidate_id"] = "candidate-1"
+
+    assert (
+        immutable_projection_from_checkpoint(raw).nodes["node-1"].runtime.candidate_id
+        == "candidate-1"
+    )
+
+
+def test_secondary_indexes_reject_extra_empty_keys() -> None:
+    raw = _checkpoint()
+    records = cast(dict[str, object], raw["records"])
+    indexes = cast(dict[str, object], records["ids_by_node_port"])
+    cast(dict[str, object], indexes["node-1"])["unused"] = []
+    topology = cast(dict[str, object], raw["topology"])
+    cast(dict[str, object], topology["inbound_edge_ids"])["node-1"] = []
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        immutable_projection_from_checkpoint(raw)
+
+    assert {diagnostic.path for diagnostic in raised.value.diagnostics} >= {
+        "records.ids_by_node_port.node-1.unused",
+        "topology.inbound_edge_ids.node-1",
+    }
