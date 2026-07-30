@@ -38,6 +38,12 @@ class ProjectionModel(BaseModel):
     )
 
 
+def _freeze_json_input(value: object) -> FrozenJsonValue:
+    if type(value) is FrozenMap:
+        return cast(FrozenMap[str, FrozenJsonValue], value)
+    return freeze_json(value)
+
+
 def _freeze_sequence(value: object, message: str) -> tuple[object, ...]:
     if not isinstance(value, (list, tuple)):
         raise ValueError(message)
@@ -71,10 +77,10 @@ class CommandDefinitionValue(ProjectionModel):
     @field_validator("value", mode="before")
     @classmethod
     def freeze_command(cls, value: object) -> FrozenMap[str, FrozenJsonValue]:
-        frozen = freeze_json(value)
-        if not isinstance(frozen, FrozenMap):
+        frozen = _freeze_json_input(value)
+        if type(frozen) is not FrozenMap:
             raise ValueError("command definition must be a JSON object")
-        return frozen
+        return cast(FrozenMap[str, FrozenJsonValue], frozen)
 
 
 class DecisionRequestValue(ProjectionModel):
@@ -164,10 +170,10 @@ class AuthorityRequestRecordEnvelopeValue(ProjectionModel):
     def freeze_envelope_json(cls, value: object) -> FrozenMap[str, FrozenJsonValue] | None:
         if value is None:
             return None
-        frozen = freeze_json(value)
-        if not isinstance(frozen, FrozenMap):
+        frozen = _freeze_json_input(value)
+        if type(frozen) is not FrozenMap:
             raise ValueError("record envelope JSON must be an object")
-        return frozen
+        return cast(FrozenMap[str, FrozenJsonValue], frozen)
 
     @model_validator(mode="after")
     def envelope_fields_are_consistent(self) -> "AuthorityRequestRecordEnvelopeValue":
@@ -290,7 +296,7 @@ class EdgeValue(ProjectionModel):
     )
     @classmethod
     def freeze_edge_json(cls, value: object) -> FrozenJsonValue | None:
-        return None if value is None else freeze_json(value)
+        return None if value is None else _freeze_json_input(value)
 
 
 class InputBindingValue(ProjectionModel):
@@ -981,12 +987,10 @@ class ProjectedRecordBase(ProjectionModel):
     def freeze_record_json(cls, value: object) -> FrozenMap[str, FrozenJsonValue] | None:
         if value is None:
             return None
-        if type(value) is FrozenMap:
-            return cast(FrozenMap[str, FrozenJsonValue], value)
-        frozen = freeze_json(value)
-        if not isinstance(frozen, FrozenMap):
+        frozen = _freeze_json_input(value)
+        if type(frozen) is not FrozenMap:
             raise ValueError("record envelope JSON must be an object")
-        return frozen
+        return cast(FrozenMap[str, FrozenJsonValue], frozen)
 
     @model_validator(mode="after")
     def record_envelope_is_consistent(self) -> "ProjectedRecordBase":
@@ -1355,5 +1359,4 @@ def project_record(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
     record_type = payload.get("record_type")
     if not isinstance(record_type, str) or record_type not in _PROJECTED_RECORD_MODELS:
         raise ValueError("unknown projected record discriminator")
-    model = _PROJECTED_RECORD_MODELS[record_type]
-    return _PROJECTED_RECORD_ADAPTER.validate_python(model.model_validate(payload))
+    return _PROJECTED_RECORD_ADAPTER.validate_python(payload)

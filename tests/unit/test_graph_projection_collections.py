@@ -32,6 +32,10 @@ class CustomMapping(Mapping[str, int]):
         return 1
 
 
+class FrozenMapSubclass(FrozenMap[str, int]):
+    pass
+
+
 def test_map_set_returns_a_new_map_without_changing_old_map() -> None:
     old = FrozenMap({"a": 1})
 
@@ -96,6 +100,15 @@ def test_frozen_map_constructor_accepts_exact_dict_and_existing_frozen_map() -> 
 
     assert FrozenMap({"one": 1}) == {"one": 1}
     assert FrozenMap(original) == {"one": 1}
+
+
+def test_frozen_map_subclasses_are_rejected_at_public_boundaries() -> None:
+    subclass = FrozenMapSubclass({"one": 1})
+
+    with pytest.raises(TypeError, match="exact dict or FrozenMap"):
+        FrozenMap(subclass)
+    with pytest.raises(ValidationError, match="exact dict or FrozenMap"):
+        TypeAdapter(FrozenMap[str, int]).validate_python(subclass)
 
 
 def test_frozen_map_pydantic_validates_declared_key_and_value_types() -> None:

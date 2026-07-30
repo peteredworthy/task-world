@@ -309,6 +309,106 @@ def test_projection_map_rejects_invalid_existing_model_children() -> None:
         ImmutableGraphProjection(nodes=FrozenMap({"node-1": invalid_node}))
 
 
+def test_populated_frozen_json_models_revalidate_exact_instances() -> None:
+    command = CommandDefinitionValue.model_validate(
+        {"value": {"argv": ["uv", "run", "pytest"], "options": {"quiet": True}}}
+    )
+    authority = AuthorityRequestRecordEnvelopeValue.model_validate(
+        {
+            "record_id": "authority-request-1",
+            "record_kind": "graph_record",
+            "record_type": "authority_request_record",
+            "producer_node_id": "gate-1",
+            "port": "authority_request_record",
+            "schema": "AuthorityRequest",
+            "payload": {"requirements": ["R-1"]},
+            "provenance": {"event_ids": ["event-1"]},
+            "value": {
+                "requested_authority": ["graph_write"],
+                "target_node_id": "worker-1",
+                "reason": "required",
+            },
+        }
+    )
+    edge = EdgeValue.model_validate(
+        {
+            "edge_id": "edge-1",
+            "from_node_id": "planner-1",
+            "from_port": "candidate",
+            "to_node_id": "worker-1",
+            "to_port": "input",
+            "accepted_record_selector": {"record_types": ["candidate"]},
+            "metadata": {"labels": ["required"]},
+        }
+    )
+
+    for value in (command, authority, edge):
+        restored = type(value).model_validate(value)
+        assert restored == value
+        assert restored.model_dump(mode="json", by_alias=True) == value.model_dump(
+            mode="json", by_alias=True
+        )
+
+
+def test_frozen_json_models_reject_frozen_map_subclasses() -> None:
+    class UntrustedFrozenMap(FrozenMap[str, object]):
+        pass
+
+    value = UntrustedFrozenMap({"nested": ("value",)})
+    cases = (
+        (CommandDefinitionValue, {"value": value}),
+        (
+            AuthorityRequestRecordEnvelopeValue,
+            {
+                "record_id": "authority-request-1",
+                "record_kind": "graph_record",
+                "record_type": "authority_request_record",
+                "producer_node_id": "gate-1",
+                "port": "authority_request_record",
+                "schema": "AuthorityRequest",
+                "payload": value,
+                "value": {
+                    "requested_authority": ["graph_write"],
+                    "target_node_id": "worker-1",
+                    "reason": "required",
+                },
+            },
+        ),
+        (
+            EdgeValue,
+            {
+                "edge_id": "edge-1",
+                "from_node_id": "planner-1",
+                "from_port": "candidate",
+                "to_node_id": "worker-1",
+                "to_port": "input",
+                "metadata": value,
+            },
+        ),
+    )
+
+    for model, payload in cases:
+        with pytest.raises(ValidationError):
+            model.model_validate(payload)
+
+
+def test_model_copy_shares_unchanged_immutable_fields() -> None:
+    spec = NodeSpecProjection.model_validate(
+        {
+            "node_id": "node-1",
+            "creation_position": 1,
+            "command_definition": {"argv": ["uv", "run", "pytest"]},
+            "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["src/**"]}],
+        }
+    )
+
+    updated = spec.model_copy(update={"reason": "retry"})
+
+    assert updated.command_definition is spec.command_definition
+    assert updated.resource_claims is spec.resource_claims
+    assert updated.reason == "retry"
+
+
 def test_record_store_is_the_only_recursive_full_payload_owner() -> None:
     assert set(RecordStore.model_fields) == {
         "by_id",

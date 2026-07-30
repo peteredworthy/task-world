@@ -87,7 +87,7 @@ def _serialize_frozen_map(
 
 def _mapping_to_dict(value: object) -> object:
     """Accept only external dictionaries and persistent-map revalidation."""
-    if isinstance(value, FrozenMap):
+    if type(value) is FrozenMap:
         return dict(cast(Mapping[object, object], value))
     if type(value) is dict:
         return cast(dict[object, object], value)

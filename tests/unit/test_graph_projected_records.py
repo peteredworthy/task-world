@@ -490,6 +490,10 @@ def test_project_record_has_explicit_canonical_contract(
         assert type(getattr(projected, "value")) is value_type
     assert projected.model_dump(mode="json", by_alias=True, exclude_unset=True) == expected
     assert TypeAdapter(ProjectedRecord).validate_python(expected) == projected
+    projected_json = projected.model_dump_json(by_alias=True, exclude_unset=True)
+    restored = TypeAdapter(ProjectedRecord).validate_json(projected_json)
+    assert restored == projected
+    assert restored.model_dump_json(by_alias=True, exclude_unset=True) == projected_json
     _assert_deeply_immutable(projected)
 
     _mutate_source_children(source)
@@ -502,18 +506,6 @@ def test_project_record_has_explicit_canonical_contract(
     assert "data" not in type(projected).model_fields
 
 
-@pytest.mark.parametrize("record_type", sorted(OUTPUT_RECORD_MODELS_BY_TYPE))
-def test_projected_record_round_trips_public_json(record_type: str) -> None:
-    source = OUTPUT_RECORD_MODELS_BY_TYPE[record_type].model_validate(
-        OUTPUT_RECORD_CASES[record_type]
-    )
-    projected = project_record(source)
-
-    restored = TypeAdapter(ProjectedRecord).validate_json(projected.model_dump_json())
-
-    assert restored == projected
-
-
 def test_project_record_isolated_from_source_event_mutation() -> None:
     raw: dict[str, Any] = dict(OUTPUT_RECORD_CASES["candidate"])
     source = OUTPUT_RECORD_MODELS_BY_TYPE["candidate"].model_validate(raw)
@@ -522,6 +514,31 @@ def test_project_record_isolated_from_source_event_mutation() -> None:
     raw["value"]["summary"] = "mutated after projection"
 
     assert projected.value.summary == "Implemented the requested change"
+
+
+def test_projected_record_revalidates_exact_instance_and_rejects_map_subclass() -> None:
+    source = OUTPUT_RECORD_MODELS_BY_TYPE["candidate"].model_validate(
+        _isolation_record_payload("candidate")
+    )
+    projected = project_record(source)
+
+    restored = type(projected).model_validate(projected)
+
+    assert restored == projected
+    assert restored.model_dump(mode="json", by_alias=True) == projected.model_dump(
+        mode="json", by_alias=True
+    )
+
+    class UntrustedFrozenMap(FrozenMap[str, object]):
+        pass
+
+    with pytest.raises(ValidationError):
+        type(projected).model_validate(
+            {
+                **projected.model_dump(mode="json", by_alias=True),
+                "payload": UntrustedFrozenMap({"nested": ("value",)}),
+            }
+        )
 
 
 def test_project_record_rejects_unknown_discriminator() -> None:
