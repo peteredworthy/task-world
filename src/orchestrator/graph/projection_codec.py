@@ -7,7 +7,7 @@ from importlib.resources import files
 from importlib.resources.abc import Traversable
 from pathlib import Path
 from math import isfinite
-from re import escape, fullmatch
+from re import Pattern, compile as compile_regex, escape, fullmatch
 from types import UnionType
 from typing import (
     Annotated,
@@ -52,6 +52,7 @@ from orchestrator.graph.projection_models import (
     ProjectedVerificationReportRecord,
     ProjectedRecordBase,
     ProjectionModel,
+    OversightDecisionValue,
 )
 from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
 
@@ -469,6 +470,11 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
 
     for node_id, ports in projection.records.ids_by_node_port.items():
         node(node_id, f"records.ids_by_node_port.{node_id}", map_role="key")
+        if node_id not in expected_index:
+            fail(
+                f"records.ids_by_node_port.{node_id}",
+                "is not a canonical record index node key",
+            )
         for port, ids in ports.items():
             base = f"records.ids_by_node_port.{node_id}.{port}"
             if port not in expected_index.get(node_id, {}):
@@ -546,7 +552,16 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     _planning_relations(projection, node, record, session, fail)
     _verification_relations(projection, node, task, record, candidate_for_task, fail)
     _governance_relations(
-        projection, node, task, record, requirement, revision, support, edge, fail
+        projection,
+        node,
+        task,
+        record,
+        candidate_for_task,
+        requirement,
+        revision,
+        support,
+        edge,
+        fail,
     )
     _requirement_relations(projection, record, requirement, revision, support, fail)
     _execution_relations(projection, node, task, record, lease, cleanup, session, fail)
@@ -682,6 +697,10 @@ class ProjectionRelationResolverDispatcher:
     ) -> None:
         self._policies = policies
         self._validation_paths = validation_paths
+        self._runtime_patterns = {path: _compile_runtime_policy_path(path) for path in policies}
+        self._runtime_paths_by_root: dict[str, list[str]] = defaultdict(list)
+        for path in policies:
+            self._runtime_paths_by_root[path.partition(".")[0]].append(path)
         self._resolvers: dict[str, RecordResolver] = {
             "node": resolve_node,
             "task": resolve_task,
@@ -728,8 +747,8 @@ class ProjectionRelationResolverDispatcher:
         """Resolve a runtime diagnostic through its unique reviewed policy path."""
         matches = [
             path
-            for path in self._policies
-            if _policy_path_matches_runtime(path, diagnostic_path, map_role=map_role)
+            for path in self._runtime_paths_by_root.get(diagnostic_path.partition(".")[0], ())
+            if self._runtime_patterns[path].fullmatch(diagnostic_path) is not None
             and (map_depth is None or path.count("*") == map_depth)
             and (
                 path.endswith(f".{map_role}")
@@ -748,13 +767,8 @@ class ProjectionRelationResolverDispatcher:
         self.resolve(matches[0], family, diagnostic_path, value)
 
 
-def _policy_path_matches_runtime(
-    policy_path: str,
-    diagnostic_path: str,
-    *,
-    map_role: Literal["key", "value"] | None,
-) -> bool:
-    """Match a diagnostic path without parsing arbitrary identifier text.
+def _compile_runtime_policy_path(policy_path: str) -> Pattern[str]:
+    """Compile a policy without parsing arbitrary runtime identifier text.
 
     Static policy literals are escaped, while each static ``*`` consumes either
     one list index or arbitrary concrete map-identifier text.  Map key/value
@@ -763,18 +777,14 @@ def _policy_path_matches_runtime(
     """
     segments = policy_path.split(".")
     if segments[-1] in {"key", "value"}:
-        if map_role != segments[-1]:
-            return False
         segments.pop()
-    elif map_role is not None:
-        return False
     pattern = escape(segments[0])
     for segment in segments[1:]:
         if segment == "*":
             pattern += r"(?:\[[0-9]+\]|\.[\s\S]+?)"
         else:
             pattern += rf"\.{escape(segment)}"
-    return fullmatch(pattern, diagnostic_path) is not None
+    return compile_regex(pattern)
 
 
 _RELATION_POLICY_RESOURCE = "_projection_relation_policy.yaml"
@@ -1415,6 +1425,7 @@ def _governance_relations(
     node: RuntimeRelationResolver,
     task: RuntimeRelationResolver,
     record: RuntimeRelationResolver,
+    candidate_for_task: Callable[..., None],
     requirement: RuntimeRelationResolver,
     revision: RuntimeRelationResolver,
     support: RuntimeRelationResolver,
@@ -1441,6 +1452,8 @@ def _governance_relations(
                 task(item.task_region_id, f"{base}.task_region_id")
             if hasattr(item, "target_region_id"):
                 task(item.target_region_id, f"{base}.target_region_id")
+            if isinstance(item, OversightDecisionValue):
+                candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
             for related in ("appeal_node_id", "appealed_node_id", "target_node_id"):
                 if hasattr(item, related):
                     node(getattr(item, related), f"{base}.{related}")

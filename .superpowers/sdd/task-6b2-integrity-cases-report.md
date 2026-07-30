@@ -7,8 +7,8 @@
   path, including optional grouped state and every relation-bearing projected
   record visitor field.
 - The parameterized matrix expands normalized wildcard and map-role policies to
-  deterministic concrete fixture locations. Each case mutates a real public
-  checkpoint, validates a model-valid malformed projection through
+  deterministic concrete fixture locations. Each case persistently updates a
+  real public immutable projection, validates the malformed projection through
   `validate_projection_integrity`, and asserts the exact concrete path and
   family reason. Key/embedded consistency cases also assert their exact
   structural reason.
@@ -66,8 +66,23 @@ same-parent requirement/revision and candidate/task semantic cases remain.
   roles. Blocker keys resolve as revisions and must equal `revision_id`; callback
   keys retain explicit idempotency equality; represented gate keys resolve as nodes.
 - Candidate ownership is checked consistently for node runtime state, verification
-  results, invalid-test blocks, and record visitors. Record index tuples retain
-  replay order while integrity rejects duplicate, missing, and extra members.
+  results, invalid-test blocks, oversight decisions, and record visitors. Missing,
+  ambiguous, and cross-task oversight candidates have exact diagnostics. Record
+  index tuples retain replay order while integrity rejects duplicate, missing,
+  and extra members; outer node keys must exactly match nodes with canonical indexes.
+
+## Focused performance repair
+
+- Before optimization, integrity plus codec took 33.87s. Profiling ten complete
+  validations took 2.671s and attributed 2.514s cumulative to 681,450 runtime
+  policy matcher calls, dominated by rebuilding and escaping every static regex.
+- Runtime policy regexes are now compiled once per injected dispatcher and candidate
+  policies are limited by the literal path root before matching. Ten profiled complete
+  validations fell to 0.133s. The matrix also reuses one module-scoped immutable
+  complete projection and creates malformed cases with persistent model/map updates,
+  retaining every resolver-policy outcome and original-value unchanged assertion.
+- After optimization, integrity plus codec took 2.11s. The exact requested four-file
+  command completed 358 tests in 5.03s pytest time and 8.02s measured wall time.
 
 ## Visitor coverage
 
@@ -78,9 +93,11 @@ same-parent requirement/revision and candidate/task semantic cases remain.
 ## Focused verification
 
 ```text
-uv run pytest -q tests/unit/test_graph_projection_integrity.py \
-  tests/unit/test_graph_projection_codec.py
-Focused integrity, codec, model, and public-export coverage passed after the final semantic repair.
+uv run pytest tests/unit/test_graph_projection_integrity.py \
+  tests/unit/test_graph_projection_codec.py \
+  tests/unit/test_graph_projection_models.py \
+  tests/unit/test_graph_public_exports.py -q -n 0
+# 358 passed in 5.03s; 8.02s measured wall time
 
 uv run pyright
 0 errors, 0 warnings, 0 informations
@@ -94,5 +111,5 @@ uv run ruff format --check tests/unit/test_graph_projection_integrity.py \
 2 files already formatted
 ```
 
-The requested focused suite remains below 15 seconds wall time. No broad or
-full suite was run.
+The requested focused suite remains below 15 seconds wall time. No broad or full
+suite was run manually.

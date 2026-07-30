@@ -257,8 +257,8 @@ policies:
 - path: governance.oversight_decisions_by_node.*.candidate_id
   scope: grouped
   family: candidate
-  rationale: Candidate identity is copied into the denormalized oversight decision projection.
-  validation: derived
+  rationale: Candidate identity is checked against the decision task by an integrity resolver.
+  validation: resolver
 - path: governance.oversight_decisions_by_node.*.gate_id
   scope: grouped
   family: external
@@ -1200,6 +1200,7 @@ validation_paths:
 - governance.node_gate_decisions.*.key
 - governance.oversight_decisions_by_node.*.appeal_node_id
 - governance.oversight_decisions_by_node.*.appealed_node_id
+- governance.oversight_decisions_by_node.*.candidate_id
 - governance.oversight_decisions_by_node.*.key
 - governance.oversight_decisions_by_node.*.node_id
 - governance.oversight_decisions_by_node.*.task_region_id

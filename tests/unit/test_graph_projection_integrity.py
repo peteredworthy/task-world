@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 import pytest
-from pydantic import StrictStr
+from pydantic import BaseModel, StrictStr
 
 import orchestrator.graph as graph
 from orchestrator.graph import (
@@ -28,6 +28,8 @@ from orchestrator.graph import (
     projection_relation_policy_gaps,
     projection_relation_validation_paths,
     validate_projection_integrity,
+    map_delete,
+    map_set,
 )
 from orchestrator.graph import FrozenJsonValue, FrozenMap
 from tests.unit.test_graph_projection_codec import final_projection_fixture
@@ -275,6 +277,7 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
                 "decision": "accepted",
                 "position": 1,
                 "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
                 "appeal_node_id": "node-1",
                 "appealed_node_id": "node-1",
             }
@@ -319,6 +322,10 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
     return ImmutableGraphProjection.model_validate(replace_record_one(raw))
 
 
+COMPLETE_PROJECTION_FIXTURE = complete_projection_fixture()
+COMPLETE_PROJECTION_CHECKPOINT = immutable_projection_to_checkpoint(COMPLETE_PROJECTION_FIXTURE)
+
+
 @dataclass(frozen=True)
 class ResolverOutcomeCase:
     policy_path: str
@@ -327,6 +334,56 @@ class ResolverOutcomeCase:
     location: tuple[str | int, ...]
     map_key: bool = False
     consistency_reason: str | None = None
+
+
+def _projection_child(value: object, part: str | int) -> object:
+    if isinstance(value, BaseModel):
+        assert isinstance(part, str)
+        return getattr(value, part)
+    if isinstance(value, FrozenMap):
+        assert isinstance(part, str)
+        return value[part]
+    assert isinstance(value, tuple)
+    assert isinstance(part, int)
+    return value[part]
+
+
+def _projection_value_at(value: object, location: tuple[str | int, ...]) -> object:
+    for part in location:
+        value = _projection_child(value, part)
+    return value
+
+
+def _projection_replace_child(value: object, part: str | int, child: object) -> object:
+    if isinstance(value, BaseModel):
+        assert isinstance(part, str)
+        return value.model_copy(update={part: child})
+    if isinstance(value, FrozenMap):
+        assert isinstance(part, str)
+        return map_set(value, part, child)
+    assert isinstance(value, tuple)
+    assert isinstance(part, int)
+    return (*value[:part], child, *value[part + 1 :])
+
+
+def _projection_replace(
+    value: object,
+    location: tuple[str | int, ...],
+    replacement: str,
+    *,
+    rename_key: bool,
+) -> object:
+    part = location[0]
+    if len(location) == 1:
+        if rename_key:
+            assert isinstance(value, FrozenMap)
+            assert isinstance(part, str)
+            return map_set(map_delete(value, part), replacement, value[part])
+        return _projection_replace_child(value, part, replacement)
+    child = _projection_replace(
+        _projection_child(value, part), location[1:], replacement, rename_key=rename_key
+    )
+    return _projection_replace_child(value, part, child)
 
 
 def _resolver_locations(
@@ -410,7 +467,7 @@ def _consistency_reason(policy_path: str, location: tuple[str | int, ...]) -> st
 
 
 def _resolver_outcome_cases() -> tuple[ResolverOutcomeCase, ...]:
-    raw = immutable_projection_to_checkpoint(complete_projection_fixture())
+    raw = COMPLETE_PROJECTION_CHECKPOINT
     catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
     cases: list[ResolverOutcomeCase] = []
     for policy_path, policy in catalog.items():
@@ -446,7 +503,7 @@ RESOLVER_OUTCOME_CASES = _resolver_outcome_cases()
 
 
 def test_complete_fixture_exercises_every_concrete_projected_record_visitor() -> None:
-    projection = complete_projection_fixture()
+    projection = COMPLETE_PROJECTION_FIXTURE
 
     validate_projection_integrity(projection)
 
@@ -562,6 +619,19 @@ def test_record_indexes_reject_duplicate_missing_and_extra_record_ids(
     }
 
 
+def test_record_indexes_reject_existing_node_without_canonical_indexes() -> None:
+    raw = _checkpoint()
+    cast(dict[str, Any], raw["records"])["ids_by_node_port"]["node-2"] = {}
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        validate_projection_integrity(ImmutableGraphProjection.model_validate(raw))
+
+    assert (
+        "records.ids_by_node_port.node-2",
+        "is not a canonical record index node key",
+    ) in {(item.path, item.reason) for item in raised.value.diagnostics}
+
+
 @pytest.mark.parametrize(
     ("edge_ids", "expected"),
     [
@@ -658,34 +728,21 @@ def test_public_resolver_outcome_cases_exactly_cover_static_resolver_policies() 
 def test_every_static_resolver_policy_has_an_exact_public_failure_outcome(
     case: ResolverOutcomeCase,
 ) -> None:
-    original = complete_projection_fixture()
-    original_checkpoint = immutable_projection_to_checkpoint(original)
-    raw = deepcopy(original_checkpoint)
+    original = COMPLETE_PROJECTION_FIXTURE
+    original_value = _projection_value_at(original, case.location)
     missing = f"missing-{case.family}-6b2"
-    parent: object = raw
-    for part in case.location[:-1]:
-        if isinstance(part, int):
-            assert isinstance(parent, list)
-        else:
-            assert isinstance(parent, dict)
-        parent = parent[part]
-    final = case.location[-1]
     if case.map_key:
-        assert isinstance(parent, dict)
-        parent[missing] = parent.pop(final)
         expected_path = _concrete_path((*case.location[:-1], missing))
     else:
-        if isinstance(final, int):
-            assert isinstance(parent, list)
-        else:
-            assert isinstance(parent, dict)
-        parent[final] = missing
         expected_path = (
             f"{case.policy_path}.{missing}"
             if case.policy_path in {"topology.inbound_edge_ids", "topology.outbound_edge_ids"}
             else case.concrete_path
         )
-    malformed = ImmutableGraphProjection.model_validate(raw)
+    malformed = cast(
+        ImmutableGraphProjection,
+        _projection_replace(original, case.location, missing, rename_key=case.map_key),
+    )
     kind = {
         "revision": "requirement revision",
         "cleanup": "cleanup request",
@@ -701,7 +758,7 @@ def test_every_static_resolver_policy_has_an_exact_public_failure_outcome(
         assert (expected_path, case.consistency_reason) in {
             (diagnostic.path, diagnostic.reason) for diagnostic in raised.value.diagnostics
         }
-    assert immutable_projection_to_checkpoint(original) == original_checkpoint
+    assert _projection_value_at(original, case.location) == original_value
 
 
 @pytest.mark.parametrize(
@@ -985,6 +1042,69 @@ def test_candidate_relations_resolve_only_to_unique_task_candidates(
     assert {item.path: item.reason for item in raised.value.diagnostics}[
         expected_path
     ] == expected_reason
+
+
+def test_oversight_candidate_may_reference_candidate_for_its_task() -> None:
+    raw = _checkpoint()
+    cast(dict[str, Any], raw["governance"])["oversight_decisions_by_node"] = {
+        "node-1": {
+            "node_id": "node-1",
+            "decision": "accepted",
+            "position": 1,
+            "task_region_id": "task-1",
+            "candidate_id": "candidate-1",
+        }
+    }
+
+    validate_projection_integrity(ImmutableGraphProjection.model_validate(raw))
+
+
+@pytest.mark.parametrize(
+    ("candidate_id", "duplicate", "expected_reason"),
+    [
+        ("missing-candidate", False, "references missing candidate 'missing-candidate'"),
+        (
+            "candidate-1",
+            True,
+            "references ambiguous candidate 'candidate-1': "
+            "tasks.task-1.candidates[0].candidate_id, "
+            "tasks.task-2.candidates[0].candidate_id",
+        ),
+        ("candidate-1", False, "must resolve to a candidate for task 'task-2'"),
+    ],
+)
+def test_oversight_candidate_rejects_missing_ambiguous_or_cross_task_candidate(
+    candidate_id: str, duplicate: bool, expected_reason: str
+) -> None:
+    raw = _checkpoint()
+    tasks = cast(dict[str, Any], raw["tasks"])
+    tasks["task-2"] = {
+        "state": "active",
+        "candidates": (
+            [{"candidate_id": "candidate-1", "attempt_number": 2, "position": 2}]
+            if duplicate
+            else []
+        ),
+    }
+    cast(dict[str, Any], raw["governance"])["oversight_decisions_by_node"] = {
+        "node-1": {
+            "node_id": "node-1",
+            "decision": "accepted",
+            "position": 1,
+            "task_region_id": "task-1"
+            if duplicate or candidate_id.startswith("missing")
+            else "task-2",
+            "candidate_id": candidate_id,
+        }
+    }
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        validate_projection_integrity(ImmutableGraphProjection.model_validate(raw))
+
+    reason = {item.path: item.reason for item in raised.value.diagnostics}[
+        "governance.oversight_decisions_by_node.node-1.candidate_id"
+    ]
+    assert reason == expected_reason
 
 
 @pytest.mark.parametrize(
