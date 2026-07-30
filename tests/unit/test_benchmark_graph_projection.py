@@ -10,9 +10,14 @@ import pytest
 
 from scripts.benchmark_graph_projection import corpus_metadata, corpus_events
 from orchestrator.graph import (
+    OutputRecordAcceptedPayload,
+    PROJECTION_SCHEMA_VERSION,
     accepted_record_summaries_by_id_view,
+    checkpoint_schema_is_current,
     edges_view,
     initial_projection,
+    project_record,
+    projection_to_checkpoint,
     reduce_event,
 )
 
@@ -67,16 +72,54 @@ def test_corpus_events_are_valid_unique_canonical_streams_with_declared_growth(
                 for prior in events[: event.position]
                 if prior.event_type == "output_record_accepted"
             }
+            accepted_record = OutputRecordAcceptedPayload.model_validate(payload).root
+            projected_record = project_record(accepted_record)
+            assert projected_record.record_id == payload["record_id"]
+            assert projected_record.port == "candidate"
+            assert projected_record.schema_ == "ImplementationCandidate"
             assert payload["record_kind"] == "output"
-            assert payload["port"] == "output"
-            assert payload["schema"] == "BenchmarkRecord"
-            assert "value" in payload
+            assert payload["port"] == "candidate"
+            assert payload["schema"] == "ImplementationCandidate"
+            assert isinstance(payload["value"], dict)
+            assert isinstance(payload["payload"], dict)
+            assert isinstance(payload["provenance"], dict)
         projection = reduce_event(projection, event)
 
     assert len(projection["node_kinds"]) == metadata["projected"]["nodes"]
     assert len(edges_view(projection)) == metadata["projected"]["edges"]
     assert len(accepted_record_summaries_by_id_view(projection)) == metadata["projected"]["records"]
     assert metadata["projected"]["append_index_entries"] == metadata["projected"]["records"]
+
+
+@pytest.mark.parametrize("scenario", ("general", "edge-heavy", "record-heavy"))
+def test_full_checkpoint_metrics_cover_the_final_projection_not_snapshot_prefix(
+    scenario: str,
+) -> None:
+    events = corpus_events(scenario, 100)
+    metadata = corpus_metadata(scenario, 100)
+    full_projection = initial_projection()
+    prefix_projection = initial_projection()
+    for event in events:
+        full_projection = reduce_event(full_projection, event)
+    for event in events[: len(events) // 2]:
+        prefix_projection = reduce_event(prefix_projection, event)
+
+    full_checkpoint = projection_to_checkpoint(full_projection)
+    prefix_checkpoint = projection_to_checkpoint(prefix_projection)
+    expected = metadata["projected"]
+    assert len(full_checkpoint["node_kinds"]) == expected["nodes"]
+    assert len(full_checkpoint["edges"]) == expected["edges"]
+    assert len(full_checkpoint["output_record_payloads"]) == expected["records"]
+    assert len(full_checkpoint["node_kinds"]) >= len(prefix_checkpoint["node_kinds"])
+    assert len(full_checkpoint["edges"]) >= len(prefix_checkpoint["edges"])
+    assert len(full_checkpoint["output_record_payloads"]) >= len(
+        prefix_checkpoint["output_record_payloads"]
+    )
+
+
+def test_checkpoint_schema_decision_is_public_and_rejects_stale_versions() -> None:
+    assert checkpoint_schema_is_current(PROJECTION_SCHEMA_VERSION)
+    assert not checkpoint_schema_is_current(PROJECTION_SCHEMA_VERSION - 1)
 
 
 def test_smoke_measurements_report_honest_operation_boundaries_and_real_views() -> None:
@@ -103,7 +146,15 @@ def test_smoke_measurements_report_honest_operation_boundaries_and_real_views() 
             measurements["operation_boundaries"]["cold_rebuild"]
             == "reject_stale_schema_then_replay"
         )
-        assert measurements["cold_rebuild"]["rejected_schema_version"] < 12
+        assert not checkpoint_schema_is_current(
+            measurements["cold_rebuild"]["rejected_schema_version"]
+        )
+        expected_checkpoint = measurements["stream_metadata"]["projected"]
+        assert measurements["checkpoint_cardinalities"] == {
+            "nodes": expected_checkpoint["nodes"],
+            "edges": expected_checkpoint["edges"],
+            "records": expected_checkpoint["records"],
+        }
         assert measurements["peak_memory_bytes"]["sample_count"] == 1
         assert (
             measurements["peak_memory_bytes"]["allocation_boundary"]

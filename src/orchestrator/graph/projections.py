@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 from datetime import UTC, datetime
-from typing import Any, Iterable, Literal, TypedDict, cast
+from typing import Any, Iterable, Literal, TypeGuard, TypedDict, cast
 
 from pydantic import ConfigDict, field_validator
 
@@ -124,6 +124,11 @@ _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
 PROJECTION_SCHEMA_VERSION = 12
 GRAPH_PROJECTION_PAYLOAD_FIELDS = _GENERATED_GRAPH_PROJECTION_PAYLOAD_FIELDS
+
+
+def checkpoint_schema_is_current(schema_version: int | None) -> TypeGuard[int]:
+    """Return whether a persisted checkpoint can be read by this projection schema."""
+    return type(schema_version) is int and schema_version == PROJECTION_SCHEMA_VERSION
 
 
 class GraphRecordSummary(TypedDict, total=False):

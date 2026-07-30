@@ -27,6 +27,7 @@ from orchestrator.graph import (
     NodeSpecProjection,
     PROJECTION_SCHEMA_VERSION,
     accepted_record_summaries_by_id_view,
+    checkpoint_schema_is_current,
     edges_view,
     initial_projection,
     map_set,
@@ -100,10 +101,12 @@ def _record_event(index: int, node_id: str, scenario: str) -> EventEnvelope:
             "record_type": "fan_out_inputs",
             "record_kind": "output",
             "producer_node_id": node_id,
-            "producer_port": "output",
-            "port": "output",
-            "schema": "BenchmarkRecord",
-            "value": {"index": index, "body": body},
+            "producer_port": "candidate",
+            "port": "candidate",
+            "schema": "ImplementationCandidate",
+            "value": {"index": index, "summary": body, "changed_paths": [f"src/{index:06d}.py"]},
+            "payload": {"corpus": scenario, "sequence": index},
+            "provenance": {"producer": node_id, "source": "benchmark"},
         },
     )
 
@@ -252,8 +255,8 @@ def _warm(fn: Callable[[], Any], warmups: int) -> None:
         fn()
 
 
-def _require_current_checkpoint_schema(schema_version: int) -> None:
-    if schema_version != PROJECTION_SCHEMA_VERSION:
+def _require_current_checkpoint_schema(schema_version: int | None) -> None:
+    if not checkpoint_schema_is_current(schema_version):
         raise ValueError(
             f"checkpoint schema {schema_version} is incompatible with {PROJECTION_SCHEMA_VERSION}"
         )
@@ -263,14 +266,16 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
     projection = _replay(events)
     snapshot_split = len(events) // 2
     snapshot_prefix = _replay(events[:snapshot_split])
-    checkpoint = projection_to_checkpoint(snapshot_prefix)
-    checkpoint_json = json.dumps(checkpoint, sort_keys=True, separators=(",", ":"))
+    snapshot_checkpoint = projection_to_checkpoint(snapshot_prefix)
+    full_checkpoint = projection_to_checkpoint(projection)
+    checkpoint_json = json.dumps(full_checkpoint, sort_keys=True, separators=(",", ":"))
     snapshot_tail = events[snapshot_split:]
 
     def snapshot_operation() -> Any:
-        return _reduce_tail(projection_from_checkpoint(checkpoint), snapshot_tail)
+        return _reduce_tail(projection_from_checkpoint(snapshot_checkpoint), snapshot_tail)
 
     assert snapshot_operation() == projection
+    assert projection_from_checkpoint(full_checkpoint) == projection
 
     append_split = max(1, len(events) * 9 // 10)
     append_prefix = _replay(events[:append_split])
@@ -303,8 +308,8 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
         "reducer_full_replay": lambda: _replay(events),
         "snapshot_tail": snapshot_operation,
         "cold_rebuild": cold_rebuild_operation,
-        "checkpoint_encode": lambda: projection_to_checkpoint(snapshot_prefix),
-        "checkpoint_decode": lambda: projection_from_checkpoint(checkpoint),
+        "checkpoint_encode": lambda: projection_to_checkpoint(projection),
+        "checkpoint_decode": lambda: projection_from_checkpoint(full_checkpoint),
         "public_view": public_operation,
         "append_heavy_indexes": append_operation,
         "persistent_primitive_scaffold": lambda: _persistent_typed_operation(len(events)),
@@ -332,6 +337,11 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
             "source": "current",
         },
         "max_observed": {"count": len(events), "source": "synthetic_corpus", "status": "available"},
+        "checkpoint_cardinalities": {
+            "nodes": len(full_checkpoint["node_kinds"]),
+            "edges": len(full_checkpoint["edges"]),
+            "records": len(full_checkpoint["output_record_payloads"]),
+        },
     }
     measurements["public_view"]["result_cardinality"] = _public_view_cardinality(public_view)
     measurements["append_heavy_indexes"]["result_cardinality"] = _append_index_cardinality(

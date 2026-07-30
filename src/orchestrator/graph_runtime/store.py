@@ -30,6 +30,7 @@ from orchestrator.graph import (
     run_state as query_run_state,
     Actor,
     ActorKind,
+    checkpoint_schema_is_current,
     EventEnvelope,
     GraphProjection,
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
@@ -677,7 +678,7 @@ class GraphEventStore:
         """Read a valid full-projection checkpoint without forcing a rebuild."""
         row = await self._session.get(GraphProjectionSnapshotModel, run_id)
         schema_version = _projection_schema_version_from_snapshot_row(row)
-        if row is None or schema_version != PROJECTION_SCHEMA_VERSION:
+        if row is None or not checkpoint_schema_is_current(schema_version):
             return None
         projection = _projection_from_snapshot_row(row)
         if projection is None:
@@ -752,7 +753,9 @@ class GraphEventStore:
         if (
             snapshot is None
             or snapshot.position != current
-            or _projection_schema_version_from_snapshot_row(snapshot) != PROJECTION_SCHEMA_VERSION
+            or not checkpoint_schema_is_current(
+                _projection_schema_version_from_snapshot_row(snapshot)
+            )
             or _projection_from_snapshot_row(snapshot) is None
         ):
             await self.rebuild_read_models(run_id)
@@ -863,7 +866,7 @@ class GraphEventStore:
         elif (
             row is None
             or row.position != expected_position
-            or _projection_schema_version_from_snapshot_row(row) != PROJECTION_SCHEMA_VERSION
+            or not checkpoint_schema_is_current(_projection_schema_version_from_snapshot_row(row))
             or projection is None
         ):
             await self._session.execute(
