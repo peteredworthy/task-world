@@ -20,11 +20,18 @@ from typing import Any, Callable
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    EdgeValue,
     EventEnvelope,
+    ImmutableGraphProjection,
+    NodeProjection,
+    NodeSpecProjection,
+    PROJECTION_SCHEMA_VERSION,
+    accepted_record_summaries_by_id_view,
     edges_view,
-    empty_frozen_map,
     initial_projection,
     map_set,
+    node_states_view,
+    output_records_by_node_port_view,
     projection_from_checkpoint,
     projection_to_checkpoint,
     reduce_event,
@@ -61,78 +68,102 @@ def _event(index: int, event_type: str, payload: dict[str, Any]) -> EventEnvelop
     )
 
 
+def _node_event(index: int, node_id: str) -> EventEnvelope:
+    return _event(index, "node_created", {"node_id": node_id, "kind": "worker", "state": "planned"})
+
+
+def _edge_event(index: int, previous_node_id: str, node_id: str) -> EventEnvelope:
+    return _event(
+        index,
+        "edge_created",
+        {
+            "edge_id": f"benchmark-edge-{index:06d}",
+            "from_node_id": previous_node_id,
+            "from_port": "output",
+            "to_node_id": node_id,
+            "to_port": "input",
+            "dependency_type": "input_binding",
+        },
+    )
+
+
+def _record_event(index: int, node_id: str, scenario: str) -> EventEnvelope:
+    body = f"{scenario}-record-value-{index:06d}"
+    if scenario == "general":
+        # The mixed corpus retains fewer records but representative richer output payloads.
+        body *= 100
+    return _event(
+        index,
+        "output_record_accepted",
+        {
+            "record_id": f"benchmark-{scenario}-record-{index:06d}",
+            "record_type": "fan_out_inputs",
+            "record_kind": "output",
+            "producer_node_id": node_id,
+            "producer_port": "output",
+            "port": "output",
+            "schema": "BenchmarkRecord",
+            "value": {"index": index, "body": body},
+        },
+    )
+
+
 def corpus_events(scenario: str, size: int) -> list[EventEnvelope]:
-    """Build a valid, deterministic corpus of exactly *size* graph events."""
-    events: list[EventEnvelope] = []
-    for index in range(size):
+    """Build exactly *size* valid canonical events with deterministic dependencies."""
+    if scenario not in SCENARIO_NAMES:
+        raise ValueError(f"unknown benchmark scenario: {scenario}")
+
+    events = [_node_event(0, "benchmark-node-000000")]
+    for index in range(1, size):
         if scenario == "record-heavy":
-            if index == 0:
+            events.append(_record_event(index, "benchmark-node-000000", scenario))
+        elif scenario == "edge-heavy":
+            node_number = (index + 1) // 2
+            node_id = f"benchmark-node-{node_number:06d}"
+            if index % 2:
+                events.append(_node_event(index, node_id))
+            else:
+                events.append(_edge_event(index, f"benchmark-node-{node_number - 1:06d}", node_id))
+        else:
+            node_number = (index + 3) // 4
+            node_id = f"benchmark-node-{node_number:06d}"
+            phase = (index - 1) % 4
+            if phase == 0:
+                events.append(_node_event(index, node_id))
+            elif phase == 1:
+                events.append(_edge_event(index, f"benchmark-node-{node_number - 1:06d}", node_id))
+            elif phase == 2:
                 events.append(
                     _event(
                         index,
-                        "node_created",
-                        {"node_id": "record-writer", "kind": "worker", "state": "planned"},
+                        "node_state_changed",
+                        {"node_id": node_id, "new_state": "ready", "reason": "benchmark"},
                     )
                 )
             else:
-                events.append(
-                    _event(
-                        index,
-                        "output_record_accepted",
-                        {
-                            "record_id": "rolling-record",
-                            "record_kind": "output",
-                            "producer_node_id": "record-writer",
-                            "port": "output",
-                            "schema": "BenchmarkRecord",
-                            "value": {"index": index, "body": f"record-value-{index:06d}"},
-                        },
-                    )
-                )
-            continue
-        node_id = f"node-{index // 2}"
-        if scenario == "edge-heavy" and index % 2:
-            previous = f"node-{max(0, index // 2 - 1)}"
-            payload = {
-                "edge_id": f"edge-{index}",
-                "from_node_id": previous,
-                "from_port": "output",
-                "to_node_id": node_id,
-                "to_port": "input",
-            }
-            events.append(_event(index, "edge_created", payload))
-        elif scenario == "general" and index % 3 == 2:
-            events.append(
-                _event(
-                    index,
-                    "output_record_accepted",
-                    {
-                        "record_id": f"record-{index}",
-                        "record_kind": "output",
-                        "producer_node_id": node_id,
-                        "port": "output",
-                        "schema": "BenchmarkRecord",
-                        "value": {"index": index, "body": f"general-value-{index:06d}" * 4},
-                    },
-                )
-            )
-        elif scenario == "general" and index % 3 == 1:
-            events.append(
-                _event(
-                    index,
-                    "node_state_changed",
-                    {"node_id": node_id, "new_state": "ready", "reason": "benchmark"},
-                )
-            )
-        else:
-            events.append(
-                _event(
-                    index,
-                    "node_created",
-                    {"node_id": node_id, "kind": "worker", "state": "planned"},
-                )
-            )
+                events.append(_record_event(index, node_id, scenario))
     return events
+
+
+def corpus_metadata(scenario: str, size: int) -> dict[str, Any]:
+    """Derive cardinality expectations from the emitted stream, not fixed totals."""
+    events = corpus_events(scenario, size)
+    counts = {
+        event_type: sum(event.event_type == event_type for event in events)
+        for event_type in {event.event_type for event in events}
+    }
+    records = counts.get("output_record_accepted", 0)
+    return {
+        "scenario": scenario,
+        "event_count": len(events),
+        "family_counts": counts,
+        "projected": {
+            "nodes": counts.get("node_created", 0),
+            "edges": counts.get("edge_created", 0),
+            "records": records,
+            "append_index_entries": records,
+        },
+    }
 
 
 def _replay(events: list[EventEnvelope]):
@@ -142,27 +173,64 @@ def _replay(events: list[EventEnvelope]):
     return projection
 
 
-def _snapshot_then_apply_tail(events: list[EventEnvelope]):
-    split = len(events) // 2
-    projection = _replay(events[:split])
-    for event in events[split:]:
+def _reduce_tail(projection: Any, tail: list[EventEnvelope]) -> Any:
+    for event in tail:
         projection = reduce_event(projection, event)
     return projection
 
 
-def _append_heavy_indexes(events: list[EventEnvelope]):
-    split = max(1, len(events) * 9 // 10)
-    projection = _replay(events[:split])
-    for event in events[split:]:
-        projection = reduce_event(projection, event)
-    return projection
+def _append_index_cardinality(projection: Any) -> int:
+    return sum(
+        len(records)
+        for ports in output_records_by_node_port_view(projection).values()
+        for records in ports.values()
+    )
 
 
-def _persistent_primitive_operation(event_count: int):
-    values = empty_frozen_map()
+def _public_view(scenario: str, projection: Any) -> dict[str, Any]:
+    if scenario == "record-heavy":
+        return {
+            "records": accepted_record_summaries_by_id_view(projection),
+            "by_port": output_records_by_node_port_view(projection),
+        }
+    if scenario == "edge-heavy":
+        return {"edges": edges_view(projection), "node_states": node_states_view(projection)}
+    return {
+        "edges": edges_view(projection),
+        "records": accepted_record_summaries_by_id_view(projection),
+        "node_states": node_states_view(projection),
+    }
+
+
+def _public_view_cardinality(view: dict[str, Any]) -> int:
+    return sum(len(value) for value in view.values())
+
+
+def _persistent_typed_operation(event_count: int) -> ImmutableGraphProjection:
+    """Exercise Task 8's real persistent map and grouped-model replacement shape."""
+    projection = ImmutableGraphProjection()
     for index in range(event_count):
-        values = map_set(values, str(index), index)
-    return values
+        node_id = f"scaffold-node-{index:06d}"
+        node = NodeProjection(
+            spec=NodeSpecProjection(node_id=node_id, creation_position=index, kind="worker")
+        )
+        projection = projection.model_copy(
+            update={"nodes": map_set(projection.nodes, node_id, node)}
+        )
+        if index:
+            edge_id = f"scaffold-edge-{index:06d}"
+            edge = EdgeValue(
+                edge_id=edge_id,
+                from_node_id=f"scaffold-node-{index - 1:06d}",
+                from_port="output",
+                to_node_id=node_id,
+                to_port="input",
+            )
+            topology = projection.topology.model_copy(
+                update={"edges": map_set(projection.topology.edges, edge_id, edge)}
+            )
+            projection = projection.model_copy(update={"topology": topology})
+    return projection
 
 
 def _timed(fn: Callable[[], Any], runs: int, unit: str = "ms") -> dict[str, Any]:
@@ -171,31 +239,93 @@ def _timed(fn: Callable[[], Any], runs: int, unit: str = "ms") -> dict[str, Any]
         start = perf_counter()
         fn()
         samples.append((perf_counter() - start) * 1000)
-    return {"median": round(median(samples), 6), "unit": unit, "source": "current"}
+    return {
+        "median": round(median(samples), 6),
+        "unit": unit,
+        "source": "current",
+        "sample_count": len(samples),
+    }
 
 
-def _measure(events: list[EventEnvelope], warmups: int, runs: int) -> dict[str, Any]:
+def _warm(fn: Callable[[], Any], warmups: int) -> None:
     for _ in range(warmups):
-        _replay(events)
+        fn()
+
+
+def _require_current_checkpoint_schema(schema_version: int) -> None:
+    if schema_version != PROJECTION_SCHEMA_VERSION:
+        raise ValueError(
+            f"checkpoint schema {schema_version} is incompatible with {PROJECTION_SCHEMA_VERSION}"
+        )
+
+
+def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int) -> dict[str, Any]:
     projection = _replay(events)
-    checkpoint = projection_to_checkpoint(projection)
+    snapshot_split = len(events) // 2
+    snapshot_prefix = _replay(events[:snapshot_split])
+    checkpoint = projection_to_checkpoint(snapshot_prefix)
     checkpoint_json = json.dumps(checkpoint, sort_keys=True, separators=(",", ":"))
-    replay = _timed(lambda: _replay(events), runs)
+    snapshot_tail = events[snapshot_split:]
+
+    def snapshot_operation() -> Any:
+        return _reduce_tail(projection_from_checkpoint(checkpoint), snapshot_tail)
+
+    assert snapshot_operation() == projection
+
+    append_split = max(1, len(events) * 9 // 10)
+    append_prefix = _replay(events[:append_split])
+    append_tail = events[append_split:]
+
+    def append_operation() -> Any:
+        return _reduce_tail(append_prefix, append_tail)
+
+    append_result = append_operation()
+    assert append_result == projection
+
+    stale_schema_version = PROJECTION_SCHEMA_VERSION - 1
+
+    def cold_rebuild_operation() -> Any:
+        try:
+            _require_current_checkpoint_schema(stale_schema_version)
+        except ValueError:
+            return _replay(events)
+        raise RuntimeError("stale checkpoint schema was accepted")
+
+    assert cold_rebuild_operation() == projection
+
+    def public_operation() -> dict[str, Any]:
+        return _public_view(scenario, projection)
+
+    public_view = public_operation()
+    assert _public_view_cardinality(public_view) > 0
+
+    operations = {
+        "reducer_full_replay": lambda: _replay(events),
+        "snapshot_tail": snapshot_operation,
+        "cold_rebuild": cold_rebuild_operation,
+        "checkpoint_encode": lambda: projection_to_checkpoint(snapshot_prefix),
+        "checkpoint_decode": lambda: projection_from_checkpoint(checkpoint),
+        "public_view": public_operation,
+        "append_heavy_indexes": append_operation,
+        "persistent_primitive_scaffold": lambda: _persistent_typed_operation(len(events)),
+    }
+    for operation in operations.values():
+        _warm(operation, warmups)
+
+    replay = _timed(operations["reducer_full_replay"], runs)
     per_event = dict(replay)
     per_event["median"] = round(replay["median"] / len(events), 9)
     per_event["unit"] = "ms/event"
     measurements = {
         "reducer_full_replay": replay,
         "reducer_per_event": per_event,
-        "snapshot_tail": _timed(lambda: _snapshot_then_apply_tail(events), runs),
-        "cold_rebuild": _timed(lambda: _replay(events), runs),
-        "checkpoint_encode": _timed(lambda: projection_to_checkpoint(projection), runs),
-        "checkpoint_decode": _timed(lambda: projection_from_checkpoint(checkpoint), runs),
-        "public_view": _timed(lambda: edges_view(projection), runs),
-        "append_heavy_indexes": _timed(lambda: _append_heavy_indexes(events), runs),
-        "persistent_primitive_scaffold": _timed(
-            lambda: _persistent_primitive_operation(len(events)), runs
-        ),
+        "snapshot_tail": _timed(operations["snapshot_tail"], runs),
+        "cold_rebuild": _timed(operations["cold_rebuild"], runs),
+        "checkpoint_encode": _timed(operations["checkpoint_encode"], runs),
+        "checkpoint_decode": _timed(operations["checkpoint_decode"], runs),
+        "public_view": _timed(operations["public_view"], runs),
+        "append_heavy_indexes": _timed(operations["append_heavy_indexes"], runs),
+        "persistent_primitive_scaffold": _timed(operations["persistent_primitive_scaffold"], runs),
         "checkpoint_bytes": {
             "median": len(checkpoint_json.encode()),
             "unit": "bytes",
@@ -203,11 +333,31 @@ def _measure(events: list[EventEnvelope], warmups: int, runs: int) -> dict[str, 
         },
         "max_observed": {"count": len(events), "source": "synthetic_corpus", "status": "available"},
     }
-    tracemalloc.start()
-    _replay(events)
-    _, peak = tracemalloc.get_traced_memory()
-    tracemalloc.stop()
-    measurements["peak_memory_bytes"] = {"median": peak, "unit": "bytes", "source": "current"}
+    measurements["public_view"]["result_cardinality"] = _public_view_cardinality(public_view)
+    measurements["append_heavy_indexes"]["result_cardinality"] = _append_index_cardinality(
+        append_result
+    )
+    measurements["cold_rebuild"]["rejected_schema_version"] = stale_schema_version
+    measurements["operation_boundaries"] = {
+        "snapshot_tail": "decode_checkpoint_then_reduce_suffix",
+        "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+        "cold_rebuild": "reject_stale_schema_then_replay",
+        "peak_memory_bytes": "replay_only_excluding_prebuilt_corpus",
+    }
+    memory_samples: list[int] = []
+    for _ in range(runs):
+        tracemalloc.start()
+        _replay(events)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        memory_samples.append(peak)
+    measurements["peak_memory_bytes"] = {
+        "median": median(memory_samples),
+        "unit": "bytes",
+        "source": "current",
+        "sample_count": len(memory_samples),
+        "allocation_boundary": "replay_only_excluding_prebuilt_corpus",
+    }
     return measurements
 
 
@@ -246,9 +396,13 @@ def benchmark(sizes: list[int], warmups: int, runs: int, api_url: str) -> dict[s
     scenarios: dict[str, Any] = {}
     for name in SCENARIO_NAMES:
         # The largest requested corpus is the gate corpus; smaller sizes establish scaling data.
-        by_size = {str(size): _measure(corpus_events(name, size), warmups, runs) for size in sizes}
+        by_size = {
+            str(size): _measure(name, corpus_events(name, size), warmups, runs) for size in sizes
+        }
         selected = dict(by_size[str(max(sizes))])
         selected["event_count"] = max(sizes)
+        selected["scenario"] = name
+        selected["stream_metadata"] = corpus_metadata(name, max(sizes))
         selected["by_size"] = by_size
         scenarios[name] = selected
     return {

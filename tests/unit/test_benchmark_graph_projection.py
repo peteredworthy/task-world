@@ -8,6 +8,14 @@ from pathlib import Path
 
 import pytest
 
+from scripts.benchmark_graph_projection import corpus_metadata, corpus_events
+from orchestrator.graph import (
+    accepted_record_summaries_by_id_view,
+    edges_view,
+    initial_projection,
+    reduce_event,
+)
+
 
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts" / "benchmark_graph_projection.py"
@@ -37,6 +45,105 @@ def _write_minimal_baseline(path: Path, sizes: tuple[int, ...] = (100,)) -> dict
     )
     assert result.returncode == 0, result.stderr
     return json.loads(path.read_text())
+
+
+@pytest.mark.parametrize("scenario", ("general", "edge-heavy", "record-heavy"))
+def test_corpus_events_are_valid_unique_canonical_streams_with_declared_growth(
+    scenario: str,
+) -> None:
+    events = corpus_events(scenario, 100)
+    metadata = corpus_metadata(scenario, 100)
+
+    assert len(events) == metadata["event_count"] == 100
+    assert len({event.event_id for event in events}) == 100
+    assert len({event.position for event in events}) == 100
+
+    projection = initial_projection()
+    for event in events:
+        if event.event_type == "output_record_accepted":
+            payload = event.payload
+            assert payload["record_id"] not in {
+                prior.payload["record_id"]
+                for prior in events[: event.position]
+                if prior.event_type == "output_record_accepted"
+            }
+            assert payload["record_kind"] == "output"
+            assert payload["port"] == "output"
+            assert payload["schema"] == "BenchmarkRecord"
+            assert "value" in payload
+        projection = reduce_event(projection, event)
+
+    assert len(projection["node_kinds"]) == metadata["projected"]["nodes"]
+    assert len(edges_view(projection)) == metadata["projected"]["edges"]
+    assert len(accepted_record_summaries_by_id_view(projection)) == metadata["projected"]["records"]
+    assert metadata["projected"]["append_index_entries"] == metadata["projected"]["records"]
+
+
+def test_smoke_measurements_report_honest_operation_boundaries_and_real_views() -> None:
+    baseline_path = ROOT / "tmp" / "benchmark-smoke-unused.json"
+    result = json.loads(
+        _run(
+            "--sizes",
+            "100",
+            "--warmups",
+            "1",
+            "--runs",
+            "1",
+            "--baseline",
+            str(baseline_path),
+        ).stdout
+    )
+
+    for scenario, measurements in result["scenarios"].items():
+        assert (
+            measurements["operation_boundaries"]["snapshot_tail"]
+            == "decode_checkpoint_then_reduce_suffix"
+        )
+        assert (
+            measurements["operation_boundaries"]["cold_rebuild"]
+            == "reject_stale_schema_then_replay"
+        )
+        assert measurements["cold_rebuild"]["rejected_schema_version"] < 12
+        assert measurements["peak_memory_bytes"]["sample_count"] == 1
+        assert (
+            measurements["peak_memory_bytes"]["allocation_boundary"]
+            == "replay_only_excluding_prebuilt_corpus"
+        )
+        for metric in (
+            "reducer_full_replay",
+            "snapshot_tail",
+            "cold_rebuild",
+            "append_heavy_indexes",
+        ):
+            assert measurements[metric]["sample_count"] == 1
+            assert measurements[metric]["median"] >= 0
+        assert measurements["public_view"]["result_cardinality"] > 0
+        if scenario != "edge-heavy":
+            assert measurements["append_heavy_indexes"]["result_cardinality"] > 0
+        assert measurements["scenario"] == scenario
+
+
+def test_corpus_metadata_expresses_scenario_dominance_without_generated_total_snapshots() -> None:
+    metadata = {
+        scenario: corpus_metadata(scenario, 100)
+        for scenario in ("general", "edge-heavy", "record-heavy")
+    }
+
+    assert metadata["general"]["family_counts"].keys() >= {
+        "node_created",
+        "node_state_changed",
+        "edge_created",
+        "output_record_accepted",
+    }
+    assert metadata["edge-heavy"]["projected"]["edges"] > metadata["general"]["projected"]["edges"]
+    assert (
+        metadata["record-heavy"]["projected"]["records"]
+        > metadata["general"]["projected"]["records"]
+    )
+    assert (
+        metadata["record-heavy"]["projected"]["records"]
+        > metadata["edge-heavy"]["projected"]["records"]
+    )
 
 
 def test_writes_deterministic_canonical_100_event_baseline_and_checks_it(tmp_path: Path) -> None:
