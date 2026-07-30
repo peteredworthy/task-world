@@ -218,7 +218,6 @@ from orchestrator.graph.projection_codec import (
     projection_relation_policy_catalog,
     projection_record_relation_policy_catalog,
     projection_relation_policy_gaps,
-    projection_relation_resolver_call_sites,
     projection_relation_validation_paths,
     validate_projection_integrity,
 )
@@ -928,7 +927,6 @@ __all__ = [
     "load_projection_relation_policy",
     "projection_record_relation_policy_catalog",
     "projection_relation_policy_gaps",
-    "projection_relation_resolver_call_sites",
     "projection_relation_validation_paths",
     "discover_projection_identifier_paths",
     "validate_patch",

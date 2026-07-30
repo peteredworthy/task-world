@@ -1,15 +1,14 @@
 """Referential-integrity contracts for immutable projection checkpoints."""
 
-import ast
 from copy import deepcopy
 from importlib.resources import files
-import inspect
 from pathlib import Path
-from typing import Annotated, Literal, cast, get_args, get_origin
+from typing import Annotated, Any, Literal, cast, get_args, get_origin
 
 import pytest
 from pydantic import StrictStr
 
+import orchestrator.graph as graph
 from orchestrator.graph import (
     PROJECTED_RECORD_TYPES,
     ImmutableGraphProjection,
@@ -26,12 +25,12 @@ from orchestrator.graph import (
     projection_relation_policy_catalog,
     projection_record_relation_policy_catalog,
     projection_relation_policy_gaps,
-    projection_relation_resolver_call_sites,
     projection_relation_validation_paths,
     validate_projection_integrity,
 )
 from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
 from tests.unit.test_graph_projection_codec import final_projection_fixture
+from tests.unit.test_output_record_event_payloads import OUTPUT_RECORD_CASES
 
 
 type RecursiveDiscoveryAlias = RecursiveDiscoveryAlias | FrozenJsonValue
@@ -59,6 +58,121 @@ class NestedRecordIndexDiscoveryFixture(ProjectionModel):
 
 def _checkpoint() -> dict[str, object]:
     return immutable_projection_to_checkpoint(final_projection_fixture())
+
+
+def test_relation_call_site_alias_is_not_public_integrity_evidence() -> None:
+    assert not hasattr(graph, "projection_relation_resolver_call_sites")
+
+
+def complete_projection_fixture() -> ImmutableGraphProjection:
+    """A valid checkpoint containing every concrete projected-record visitor type."""
+    raw = _checkpoint()
+    records = cast(dict[str, Any], raw["records"])
+    by_id: dict[str, dict[str, Any]] = {}
+    for record_type, source in OUTPUT_RECORD_CASES.items():
+        if record_type in {"gap_classification", "gap_plan"}:
+            continue
+        item = deepcopy(source)
+        item["producer_node_id"] = "node-1"
+        if item["record_type"] == "authority_request_record":
+            item["value"]["target_region_id"] = "task-1"
+            item["value"]["target_node_id"] = "node-1"
+        if item["record_type"] == "requirement_record":
+            item["value"].update(id="requirement-1", version="revision-1")
+        if item["record_type"] == "classified_gap":
+            item["value"]["task_region_id"] = "task-1"
+        by_id[item["record_id"]] = item
+    by_id = dict(sorted(by_id.items()))
+    records["by_id"] = by_id
+    ids_by_port: dict[str, list[str]] = {}
+    for record_id, item in by_id.items():
+        ids_by_port.setdefault(item["port"], []).append(record_id)
+    records["ids_by_node_port"] = {
+        "node-1": {port: sorted(ids) for port, ids in ids_by_port.items()}
+    }
+    records["summaries_by_id"] = {
+        record_id: {
+            "record_id": record_id,
+            "record_type": item["record_type"],
+            "record_kind": item["record_kind"],
+            "schema": item["schema"],
+            "producer_node_id": "node-1",
+            "producer_port": item["port"],
+        }
+        for record_id, item in by_id.items()
+    }
+
+    def replace_record_one(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                replace_record_one(key): replace_record_one(item) for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [replace_record_one(item) for item in value]
+        return "file-state-1" if value == "record-1" else value
+
+    return ImmutableGraphProjection.model_validate(replace_record_one(raw))
+
+
+def test_complete_fixture_exercises_every_concrete_projected_record_visitor() -> None:
+    projection = complete_projection_fixture()
+
+    validate_projection_integrity(projection)
+
+    assert {type(item) for item in projection.records.by_id.values()} == set(PROJECTED_RECORD_TYPES)
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement", "expected_path", "expected_reason"),
+    [
+        (
+            "records.by_id.file-state-1.cleanup_id",
+            "missing-cleanup",
+            "records.by_id.file-state-1.cleanup_id",
+            "references missing cleanup request 'missing-cleanup'",
+        ),
+        (
+            "records.by_id.failure-1.value.failed_node_id",
+            "missing-node",
+            "records.by_id.failure-1.value.failed_node_id",
+            "references missing node 'missing-node'",
+        ),
+        (
+            "records.by_id.requirement-1.value.version",
+            "missing-version",
+            "records.by_id.requirement-1.value.version",
+            "references missing requirement revision 'missing-version'",
+        ),
+        (
+            "records.by_id.candidate-record-1.candidate_id",
+            "missing-candidate",
+            "records.by_id.candidate-record-1.candidate_id",
+            "references missing candidate 'missing-candidate'",
+        ),
+        (
+            "topology.edges.edge-1.to_node_id",
+            "missing-node",
+            "topology.edges.edge-1.to_node_id",
+            "references missing node 'missing-node'",
+        ),
+    ],
+)
+def test_public_integrity_reports_exact_relation_diagnostics_from_valid_projection(
+    path: str, replacement: str, expected_path: str, expected_reason: str
+) -> None:
+    raw = immutable_projection_to_checkpoint(complete_projection_fixture())
+    cursor: Any = raw
+    for part in path.split(".")[:-1]:
+        cursor = cursor[part]
+    cursor[path.rsplit(".", maxsplit=1)[-1]] = replacement
+    projection = ImmutableGraphProjection.model_validate(raw)
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        validate_projection_integrity(projection)
+
+    assert {item.path: item.reason for item in raised.value.diagnostics}[expected_path] == (
+        expected_reason
+    )
 
 
 @pytest.mark.parametrize(
@@ -866,77 +980,6 @@ def test_remaining_represented_families_dispatch_and_fail_closed_on_wrong_family
     assert calls.values == [("represented-id", diagnostic_path)]
 
 
-def test_integrity_has_no_direct_represented_lookup_outside_dispatcher_wrappers() -> None:
-    module = inspect.getmodule(validate_projection_integrity)
-    assert module is not None
-    tree = ast.parse(inspect.getsource(module))
-    target_attributes = {
-        "revisions_by_id",
-        "support_by_id",
-        "leases",
-        "cleanup_requests_by_id",
-        "edges",
-        "sessions",
-    }
-    allowed_functions = {
-        "resolve_requirement",
-        "resolve_revision",
-        "resolve_support",
-        "resolve_lease",
-        "resolve_cleanup",
-        "resolve_edge",
-        "resolve_session",
-        "requirement",
-        "revision",
-        "support",
-        "lease",
-        "cleanup",
-        "edge",
-        "session",
-    }
-    violations: list[str] = []
-
-    class DirectLookupVisitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.function = ""
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            previous = self.function
-            self.function = node.name
-            self.generic_visit(node)
-            self.function = previous
-
-        def visit_Compare(self, node: ast.Compare) -> None:
-            if self.function not in allowed_functions and any(
-                isinstance(operator, (ast.In, ast.NotIn))
-                and (
-                    isinstance(comparator, ast.Name)
-                    and comparator.id == "requirement_ids"
-                    or isinstance(comparator, ast.Attribute)
-                    and comparator.attr in target_attributes
-                )
-                for operator, comparator in zip(node.ops, node.comparators, strict=True)
-            ):
-                violations.append(ast.unparse(node))
-            self.generic_visit(node)
-
-        def visit_Call(self, node: ast.Call) -> None:
-            function = node.func
-            if (
-                self.function not in allowed_functions
-                and isinstance(function, ast.Attribute)
-                and function.attr == "get"
-                and isinstance(function.value, ast.Attribute)
-                and function.value.attr in target_attributes
-            ):
-                violations.append(ast.unparse(node))
-            self.generic_visit(node)
-
-    DirectLookupVisitor().visit(tree)
-
-    assert violations == []
-
-
 def test_represented_map_keys_are_resolver_policies() -> None:
     catalog = projection_relation_policy_catalog()
     expected = {
@@ -977,13 +1020,6 @@ def test_represented_map_keys_are_resolver_policies() -> None:
     assert {path: policy.family for path, policy in catalog.items() if path in expected} == expected
     assert all(catalog[path].validation == "resolver" for path in expected)
     assert expected.keys() <= projection_relation_validation_paths()
-
-
-def test_resolver_call_site_tokens_exactly_cover_static_resolver_policies() -> None:
-    catalog = projection_relation_policy_catalog() | projection_record_relation_policy_catalog()
-    expected = {path for path, policy in catalog.items() if policy.validation == "resolver"}
-
-    assert projection_relation_resolver_call_sites() == frozenset(expected)
 
 
 def test_relation_policy_is_a_packaged_graph_resource() -> None:

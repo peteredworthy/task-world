@@ -377,7 +377,11 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
                 task(related_task, f"{base}.supersedes_task_region_ids[{index}]")
 
     expected_index: dict[str, dict[str, list[str]]] = defaultdict(lambda: defaultdict(list))
-    for record_id, item in records.items():
+    # FrozenMap iteration follows its persistent hash-trie layout rather than
+    # checkpoint insertion order.  Canonical secondary indexes must therefore
+    # have a stable, representation-independent record order.
+    for record_id in sorted(records):
+        item = records[record_id]
         base = f"records.by_id.{record_id}"
         if item.record_id != record_id:
             fail(f"{base}.record_id", f"must equal map key {record_id!r}")
@@ -894,15 +898,6 @@ def projection_record_relation_policy_catalog() -> dict[str, RelationPolicy]:
 def projection_relation_validation_paths() -> frozenset[str]:
     """Return the separately authored resolver/visitor path contract."""
     return frozenset(_RELATION_POLICY_ARTIFACT.validation_paths)
-
-
-def projection_relation_resolver_call_sites() -> frozenset[str]:
-    """Return the finite static resolver contract enforced by the dispatcher.
-
-    Resolver visitors cannot register ad-hoc paths: a call is executable only
-    when its static policy path belongs to this checked artifact contract.
-    """
-    return projection_relation_validation_paths()
 
 
 def projection_relation_policy_gaps(root: type[ProjectionModel]) -> frozenset[str]:
