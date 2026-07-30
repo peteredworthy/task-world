@@ -713,7 +713,14 @@ class ProjectionRelationResolverDispatcher:
             else:
                 normalized = f"{normalized}.{map_role}"
         matches = [
-            path for path in self._policies if _policy_path_matches_runtime(path, normalized)
+            path
+            for path in self._policies
+            if _policy_path_matches_runtime(path, normalized)
+            and (
+                path.endswith(f".{map_role}")
+                if map_role is not None
+                else not path.endswith((".key", ".value"))
+            )
         ]
         if len(matches) != 1:
             raise ProjectionRelationPolicyError(
@@ -729,8 +736,7 @@ def _policy_path_matches_runtime(policy_path: str, runtime_path: str) -> bool:
 
     def matches(policy_segments: list[str]) -> bool:
         return len(policy_segments) == len(runtime_segments) and all(
-            policy_segment == runtime_segment
-            or (policy_segment == "*" and runtime_segment not in {"key", "value"})
+            policy_segment == runtime_segment or policy_segment == "*"
             for policy_segment, runtime_segment in zip(
                 policy_segments, runtime_segments, strict=True
             )

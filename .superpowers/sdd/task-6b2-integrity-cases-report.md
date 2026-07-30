@@ -68,7 +68,7 @@ same-parent requirement/revision and candidate/task semantic cases remain.
 ```text
 uv run pytest -q tests/unit/test_graph_projection_integrity.py \
   tests/unit/test_graph_projection_codec.py
-299 passed in 7.41s (10.07s wall)
+299 passed in 7.12s (13.49s wall)
 
 uv run pyright
 0 errors, 0 warnings, 0 informations

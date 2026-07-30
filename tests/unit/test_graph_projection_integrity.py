@@ -1317,13 +1317,24 @@ def test_runtime_dispatcher_rejects_appended_segment_for_scalar_policy() -> None
 
 
 def test_runtime_dispatcher_matches_explicit_collection_member_wildcard() -> None:
-    policy = projection_relation_policy_catalog()["scheduling.ready_node_ids.*"]
+    catalog = projection_relation_policy_catalog()
+    policies = {
+        path: catalog[path]
+        for path in (
+            "planning.accepted_patch_ids_by_node.*.*",
+            "scheduling.ready_node_ids.*",
+        )
+    }
     calls = _ResolverCalls()
-    dispatcher = _runtime_dispatcher({policy.path: policy}, frozenset({policy.path}), calls)
+    dispatcher = _runtime_dispatcher(policies, frozenset(policies), calls)
 
     dispatcher.resolve_runtime("node", "scheduling.ready_node_ids[0]", "node-1")
+    dispatcher.resolve_runtime("record", "planning.accepted_patch_ids_by_node.key[0]", "record-1")
 
-    assert calls.values == [("node-1", "scheduling.ready_node_ids[0]")]
+    assert calls.values == [
+        ("node-1", "scheduling.ready_node_ids[0]"),
+        ("record-1", "planning.accepted_patch_ids_by_node.key[0]"),
+    ]
 
 
 def test_runtime_dispatcher_rejects_map_path_without_explicit_role() -> None:
