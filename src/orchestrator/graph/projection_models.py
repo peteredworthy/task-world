@@ -18,6 +18,7 @@ from pydantic import (
     StrictStr,
     TypeAdapter,
     field_validator,
+    model_validator,
 )
 
 from orchestrator.graph.models import AcceptedOutputRecordPayload, OUTPUT_RECORD_MODELS_BY_TYPE
@@ -56,36 +57,59 @@ class ResourceClaimValue(ProjectionModel):
 
 
 class CommandDefinitionValue(ProjectionModel):
-    command_id: StrictStr | None = None
-    command_text: StrictStr | None = None
-    working_directory: StrictStr | None = None
-    environment: FrozenMap[StrictStr, FrozenJsonValue] = Field(default_factory=FrozenMap)
+    """Frozen wrapper for the deliberately open command-definition JSON object."""
+
+    value: FrozenMap[StrictStr, FrozenJsonValue]
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def freeze_command(cls, value: object) -> FrozenMap[str, FrozenJsonValue]:
+        frozen = freeze_json(value)
+        if not isinstance(frozen, FrozenMap):
+            raise ValueError("command definition must be a JSON object")
+        return frozen
 
 
 class DecisionRequestValue(ProjectionModel):
-    node_id: StrictStr | None = None
-    gate_type: StrictStr | None = None
-    prompt: StrictStr | None = None
-    options: tuple[StrictStr, ...] | None = None
+    decision_type: StrictStr
+    options: tuple[StrictStr, ...]
     default_option: StrictStr | None = None
-    consequence_summary: StrictStr | None = None
+    consequence_summary: StrictStr
     expires_at: StrictStr | None = None
-    requested_authority: tuple[StrictStr, ...] | None = None
     target_node_id: StrictStr | None = None
     target_region_id: StrictStr | None = None
 
-    @field_validator("options", "requested_authority", mode="before")
+    @field_validator("options", mode="before")
     @classmethod
     def freeze_request_ids(cls, value: object) -> tuple[object, ...] | None:
-        if value is None:
-            return None
         return _freeze_sequence(value, "request values must be a sequence")
+
+    @model_validator(mode="after")
+    def options_are_consistent(self) -> "DecisionRequestValue":
+        if not self.options:
+            raise ValueError("decision request requires at least one option")
+        if self.default_option is not None and self.default_option not in self.options:
+            raise ValueError("decision request default_option must be one of options")
+        return self
 
 
 class AuthorityRequestValue(ProjectionModel):
-    authority_type: StrictStr | None = None
-    reason: StrictStr | None = None
-    metadata: FrozenMap[StrictStr, FrozenJsonValue] = Field(default_factory=FrozenMap)
+    requested_authority: tuple[StrictStr, ...]
+    target_node_id: StrictStr | None = None
+    target_region_id: StrictStr | None = None
+    reason: StrictStr
+    expires_at: StrictStr | None = None
+
+    @field_validator("requested_authority", mode="before")
+    @classmethod
+    def freeze_requested_authority(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "requested_authority must be a sequence")
+
+    @model_validator(mode="after")
+    def target_is_present(self) -> "AuthorityRequestValue":
+        if self.target_node_id is None and self.target_region_id is None:
+            raise ValueError("authority request requires target_node_id or target_region_id")
+        return self
 
 
 class NodeSpecProjection(ProjectionModel):
@@ -120,6 +144,15 @@ class NodeSpecProjection(ProjectionModel):
     @classmethod
     def freeze_node_sequences(cls, value: object) -> tuple[object, ...]:
         return _freeze_sequence(value, "node sequences must be sequences")
+
+    @field_validator("command_definition", mode="before")
+    @classmethod
+    def wrap_command_definition(cls, value: object) -> object:
+        if value is None or isinstance(value, CommandDefinitionValue):
+            return value
+        if isinstance(value, FrozenMap) or isinstance(value, dict):
+            return {"value": cast(object, value)}
+        raise ValueError("command_definition must be a JSON object")
 
 
 class NodeRuntimeProjection(ProjectionModel):
