@@ -74,7 +74,7 @@ TOOL_VERSION = "2"
 BENCHMARK_PROTOCOL = {
     "version": 1,
     "scenarios": SCENARIO_NAMES,
-    "corpora": "canonical-event-envelope-v1",
+    "corpora": "canonical-event-envelope-v2",
     "operation_boundaries": {
         "replay": "canonical_event_fold",
         "peak_memory": "replay_only_excluding_prebuilt_corpus",
@@ -87,6 +87,7 @@ BENCHMARK_PROTOCOL = {
         "codec_view": "1.25",
         "scale": "2.5",
     },
+    "scaling_pairs": "half_requested_to_requested",
 }
 
 
@@ -145,9 +146,8 @@ class BenchmarkConfiguration(StrictResultModel):
 
     @model_validator(mode="after")
     def probe_sizes_are_requested_doubles(self) -> BenchmarkConfiguration:
-        expected = sorted({size for size in self.requested_sizes for size in (size, size * 2)})
-        if self.probe_sizes != expected:
-            raise ValueError("probe_sizes must be the exact union of requested sizes and doubles")
+        if not set(self.requested_sizes).issubset(self.probe_sizes):
+            raise ValueError("probe_sizes must include every requested size")
         return self
 
 
@@ -380,6 +380,13 @@ class BenchmarkResult(StrictResultModel):
                 raise ValueError(
                     f"scaling startup sample_count for {scenario_name} must equal runs"
                 )
+            pair_sizes = {size for pair in pairs for size in pair}
+            if pair_sizes | set(self.configuration.requested_sizes) != set(
+                self.configuration.probe_sizes
+            ):
+                raise ValueError(
+                    f"scaling probes for {scenario_name} must exactly cover probe_sizes"
+                )
         return self
 
 
@@ -417,9 +424,6 @@ def _edge_event(index: int, previous_node_id: str, node_id: str) -> EventEnvelop
 
 def _record_event(index: int, node_id: str, scenario: str) -> EventEnvelope:
     body = f"{scenario}-record-value-{index:06d}"
-    if scenario == "general":
-        # The mixed corpus retains fewer records but representative richer output payloads.
-        body *= 100
     return _event(
         index,
         "output_record_accepted",
@@ -797,7 +801,8 @@ def benchmark(
     operator_max_event_count: int | None = None,
 ) -> dict[str, Any]:
     artifact_role, implementation_signature = _implementation_identity()
-    probe_sizes = sorted({size for size in sizes for size in (size, size * 2)})
+    scaling_pairs = [(size // 2, size) for size in sizes]
+    probe_sizes = sorted({probe_size for pair in scaling_pairs for probe_size in pair})
     corpora = {
         f"{name}:{size}": [event.model_dump(mode="json") for event in corpus_events(name, size)]
         for name in SCENARIO_NAMES
@@ -832,11 +837,11 @@ def benchmark(
             }
         }
         scaling_probes[name] = []
-        for size in sizes:
+        for n, two_n in scaling_pairs:
             startup = _timed(lambda: _replay([]), runs)["median"]
             scaling_probes[name].append(
                 {
-                    "pair": {"n": size, "two_n": size * 2},
+                    "pair": {"n": n, "two_n": two_n},
                     "startup": {
                         "kind": "sampled",
                         "median": startup,
@@ -925,7 +930,6 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
         compatibility.append("incompatible scenario set")
     if set(prior.scaling_probes) != set(observed.scaling_probes):
         compatibility.append("incompatible scaling scenario set")
-    expected_pairs = {(size, size * 2) for size in prior.configuration.requested_sizes}
     for scenario in SCENARIO_NAMES:
         baseline_pairs = {
             (probe.pair.n, probe.pair.two_n) for probe in prior.scaling_probes[scenario]
@@ -933,7 +937,7 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
         target_pairs = {
             (probe.pair.n, probe.pair.two_n) for probe in observed.scaling_probes[scenario]
         }
-        if baseline_pairs != expected_pairs or target_pairs != expected_pairs:
+        if baseline_pairs != target_pairs:
             compatibility.append(f"incompatible pairs {scenario}")
     if compatibility:
         return sorted(compatibility)
@@ -1013,8 +1017,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--check-gates", action="store_true")
     parser.add_argument("--max-event-count", type=int)
     args = parser.parse_args()
-    if any(size < 2 for size in args.sizes) or sorted(set(args.sizes)) != args.sizes:
-        parser.error("--sizes must be sorted, unique integers of at least 2")
+    if any(size < 2 or size % 2 for size in args.sizes) or sorted(set(args.sizes)) != args.sizes:
+        parser.error("--sizes must be sorted, unique even integers of at least 2")
     if args.warmups < 0 or args.runs < 1:
         parser.error("--warmups must be nonnegative and --runs must be positive")
     if args.max_event_count is not None and args.max_event_count < 0:

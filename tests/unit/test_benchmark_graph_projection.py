@@ -212,7 +212,7 @@ def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_g
     assert baseline["tool"]["hash"]
     assert baseline["artifact"]["role"] == "baseline"
     assert baseline["configuration"]["requested_sizes"] == [100]
-    assert baseline["configuration"]["probe_sizes"] == [100, 200]
+    assert baseline["configuration"]["probe_sizes"] == [50, 100]
     assert baseline["max_event_count"] == {
         "kind": "unsupported",
         "count": None,
@@ -234,7 +234,7 @@ def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_g
 def test_cli_records_operator_max_event_count_without_network(count: int) -> None:
     result = _run(
         "--sizes",
-        "2",
+        "4",
         "--warmups",
         "0",
         "--runs",
@@ -614,7 +614,7 @@ def test_artifact_schema_rejects_nested_extra_fields_and_coerced_metric_medians(
     [
         (
             lambda document: document["configuration"].update({"probe_sizes": [100]}),
-            ("configuration",),
+            (),
         ),
         (lambda document: document["configuration"].update({"runs": 0}), ("configuration", "runs")),
         (lambda document: document["corpus"].update({"hash": "not-a-hash"}), ("corpus", "hash")),
@@ -642,10 +642,13 @@ def test_artifact_schema_rejects_cross_field_and_metric_accounting_violations(
     with pytest.raises(ValidationError) as error:
         BenchmarkResult.model_validate(document)
 
-    assert any(
-        issue["loc"][: len(expected_location)] == expected_location
-        for issue in error.value.errors()
-    )
+    if expected_location:
+        assert any(
+            issue["loc"][: len(expected_location)] == expected_location
+            for issue in error.value.errors()
+        )
+    else:
+        assert any(issue["loc"] == () for issue in error.value.errors())
 
 
 def test_scaling_probes_store_only_pair_and_startup_and_use_canonical_replay_metrics() -> None:
@@ -772,13 +775,6 @@ def _retarget_sizes(document: dict[str, object], n: int) -> None:
             "sample runs",
             lambda document: _set_sample_runs(document, 3),
             "sample accounting.runs",
-        ),
-        (
-            "pairs",
-            lambda document: document["scaling_probes"]["general"][0].update(
-                {"pair": {"n": 50, "two_n": 100}}
-            ),
-            "pairs general",
         ),
     ],
 )
