@@ -393,6 +393,43 @@ def test_public_projected_record_union_rejects_invalid_contracts(payload: dict[s
 
 
 @pytest.mark.parametrize(
+    "payload",
+    [
+        {**OUTPUT_RECORD_CASES["artifact_reference"], "port": "artifact_reference"},
+        {**OUTPUT_RECORD_CASES["artifact_reference"], "schema": "ArtifactReference"},
+    ],
+)
+def test_public_projected_record_union_rejects_crossed_artifact_reference_pairs(
+    payload: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(ProjectedRecord).validate_python(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {**OUTPUT_RECORD_CASES["analysis_summary"], "schema": "RegionSummary"},
+        {
+            **OUTPUT_RECORD_CASES["analysis_summary"],
+            "port": "planning_summary",
+            "schema": "AnalysisSummary",
+        },
+        {
+            **OUTPUT_RECORD_CASES["analysis_summary"],
+            "port": "region_summary",
+            "schema": "AnalysisSummary",
+        },
+    ],
+)
+def test_public_projected_record_union_rejects_crossed_analysis_summary_pairs(
+    payload: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(ProjectedRecord).validate_python(payload)
+
+
+@pytest.mark.parametrize(
     "record_type, mutation",
     [
         ("fan_out_inputs", {"port": "check_result"}),
@@ -442,3 +479,184 @@ def test_projected_record_envelope_payloads_are_object_only() -> None:
     assert "FrozenMap" in str(hints["provenance"])
     assert FrozenJsonValue not in (hints["payload"], hints["provenance"])
     assert FrozenMap is not None
+
+
+def test_project_record_preserves_nondefault_verification_check_and_decision_nested_values() -> (
+    None
+):
+    verification_source = OUTPUT_RECORD_MODELS_BY_TYPE["verification_report"].model_validate(
+        {
+            "record_id": "verification-nested-1",
+            "record_kind": "verification",
+            "record_type": "verification_report",
+            "producer_node_id": "verifier-1",
+            "port": "verification_report",
+            "schema": "VerificationReport",
+            "candidate_id": "candidate-1",
+            "task_region_id": "region-1",
+            "outcome": "passed",
+            "value": {
+                "outcome": "passed",
+                "grades": [{"requirement_id": "R-1", "grade": "A", "reason": "met"}],
+                "reason": "all requirements met",
+            },
+            "evidence": {"checks": ["check-1"], "confidence": 0.9},
+            "candidate_record_ids": ["candidate-record-1"],
+        }
+    )
+    check_source = OUTPUT_RECORD_MODELS_BY_TYPE["check_result"].model_validate(
+        {
+            "record_id": "check-nested-1",
+            "record_kind": "output",
+            "record_type": "check_result",
+            "producer_node_id": "check-1",
+            "port": "check_result",
+            "schema": "CheckResult",
+            "candidate_id": "candidate-1",
+            "task_region_id": "region-1",
+            "attempt_number": 2,
+            "value": {
+                "status": "failed",
+                "classification": "failed",
+                "command_id": "pytest",
+                "command_binding": {"kind": "known", "tags": ["unit"]},
+                "command_text": "uv run pytest tests/unit",
+                "command": {"argv": ["uv", "run", "pytest"], "shell": False},
+                "worktree_path": "/tmp/worktree",
+                "source_worktree_path": "/tmp/source",
+                "execution_worktree_path": "/tmp/execution",
+                "base_snapshot_id": "S0",
+                "execution_snapshot_id": "S1",
+                "execution_snapshot_ref": "refs/snapshots/S1",
+                "execution_id": "execution-1",
+                "exit_code": 1,
+                "duration_ms": 42,
+                "stdout_tail": "partial",
+                "stdout_ref": {
+                    "artifact_id": "stdout-1",
+                    "content_hash": "sha256:" + "a" * 64,
+                    "size_bytes": 42,
+                    "media_type": "text/plain",
+                    "encoding": "utf-8",
+                    "storage_uri": "artifact://sha256/" + "a" * 64,
+                },
+                "stderr_tail": "failure",
+                "stderr_truncated": False,
+                "stdout_truncated": True,
+                "timeout_seconds": 30.5,
+                "environment_policy": {"cwd": "/tmp/worktree", "env": {"CI": "1"}},
+                "candidate_record_ids": ["candidate-record-1"],
+                "file_state_record_ids": ["file-state-1"],
+                "verification_report_record_ids": ["verification-nested-1"],
+                "evaluated_record_ids": ["requirement-1"],
+            },
+        }
+    )
+    decision_source = OUTPUT_RECORD_MODELS_BY_TYPE["decision_record"].model_validate(
+        {
+            "record_id": "decision-nested-1",
+            "record_kind": "output",
+            "record_type": "decision_record",
+            "producer_node_id": "gate-1",
+            "port": "decision_record",
+            "schema": "DecisionRecord",
+            "value": {
+                "decision": "approved",
+                "decision_type": "approval",
+                "decider": {"kind": "human", "id": "alice"},
+                "scope": {"regions": ["region-1"]},
+                "expires_at": "2026-07-30T00:00:00Z",
+                "reason": "reviewed",
+            },
+        }
+    )
+
+    verification = project_record(verification_source)
+    check = project_record(check_source)
+    decision = project_record(decision_source)
+
+    assert type(verification.value) is ProjectedVerificationReportValue
+    assert type(verification.value.grades[0]) is ProjectedGradeRow
+    assert verification.evidence == FrozenMap({"checks": ("check-1",), "confidence": 0.9})
+    assert type(check.value) is ProjectedCheckResultRecordValue
+    assert type(check.value.stdout_ref) is ProjectedStoredArtifactRef
+    assert check.value.command == FrozenMap({"argv": ("uv", "run", "pytest"), "shell": False})
+    assert type(decision.value) is ProjectedDecisionRecordValue
+    assert type(decision.value.decider) is ProjectedDecisionActor
+    assert decision.value.scope == FrozenMap({"regions": ("region-1",)})
+    for source, projected in (
+        (verification_source, verification),
+        (check_source, check),
+        (decision_source, decision),
+    ):
+        assert projected.model_dump(
+            mode="json", by_alias=True, exclude_unset=True
+        ) == source.model_dump(mode="json", by_alias=True, exclude_unset=True)
+        assert TypeAdapter(ProjectedRecord).validate_json(projected.model_dump_json()) == projected
+
+
+def test_project_record_preserves_nondefault_file_state_and_fan_out_nested_values() -> None:
+    file_state_source = OUTPUT_RECORD_MODELS_BY_TYPE["file_state"].model_validate(
+        {
+            "record_id": "file-state-nested-1",
+            "record_kind": "file_state",
+            "record_type": "file_state",
+            "producer_node_id": "worker-1",
+            "port": "file_state",
+            "schema": "FileStateRecord",
+            "snapshot_id": "S1",
+            "base_snapshot_id": "S0",
+            "git": {"commit_sha": "abc", "tree_sha": "tree", "diff_summary": {"changed": 2}},
+            "tracked": [{"path": "src/a.py", "status": "modified", "size_bytes": 12}],
+            "external": [
+                {
+                    "path": "vendor/tool",
+                    "source": "external",
+                    "manifest": {
+                        "path": "vendor/tool",
+                        "hash": "sha256:tool",
+                        "origin": "registry",
+                        "retention": "keep",
+                    },
+                }
+            ],
+            "classifications": [
+                {"path": "secret.txt", "classification": "secret", "rejected": True}
+            ],
+            "verdict": "rejected",
+            "patch_bundle_id": "bundle-1",
+            "cleanup_excluded_paths": ["secret.txt"],
+            "compromised": True,
+        }
+    )
+    fan_out_source = OUTPUT_RECORD_MODELS_BY_TYPE["fan_out_inputs"].model_validate(
+        {
+            "record_id": "fan-out-nested-1",
+            "record_kind": "output",
+            "record_type": "fan_out_inputs",
+            "producer_node_id": "planner-1",
+            "port": "candidate",
+            "schema": "ImplementationCandidate",
+            "candidate_id": "candidate-1",
+            "task_region_id": "region-1",
+            "attempt_number": 3,
+            "file_state_record_ids": ["file-state-nested-1"],
+            "value": {"inputs": [{"requirement": "R-1"}], "options": {"retry": True}},
+        }
+    )
+
+    file_state = project_record(file_state_source)
+    fan_out = project_record(fan_out_source)
+
+    assert type(file_state.git) is ProjectedGitRef
+    assert type(file_state.tracked[0]) is ProjectedFileEntry
+    assert type(file_state.external[0]) is ProjectedExternalFileEntry
+    assert type(file_state.external[0].manifest) is ProjectedExternalArtifactManifest
+    assert fan_out.value == FrozenMap(
+        {"inputs": (FrozenMap({"requirement": "R-1"}),), "options": FrozenMap({"retry": True})}
+    )
+    for source, projected in ((file_state_source, file_state), (fan_out_source, fan_out)):
+        assert projected.model_dump(
+            mode="json", by_alias=True, exclude_unset=True
+        ) == source.model_dump(mode="json", by_alias=True, exclude_unset=True)
+        assert TypeAdapter(ProjectedRecord).validate_json(projected.model_dump_json()) == projected

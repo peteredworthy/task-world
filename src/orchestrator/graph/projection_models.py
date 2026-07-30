@@ -999,6 +999,17 @@ class ProjectedAnalysisSummaryRecord(ProjectedRecordBase):
     schema_: Literal["AnalysisSummary", "RegionSummary"] = Field(alias="schema")
     value: ProjectedAnalysisSummaryValue
 
+    @model_validator(mode="after")
+    def port_schema_are_paired(self) -> "ProjectedAnalysisSummaryRecord":
+        valid_pairs = {
+            ("analysis_summary", "AnalysisSummary"),
+            ("planning_summary", "RegionSummary"),
+            ("region_summary", "RegionSummary"),
+        }
+        if (self.port, self.schema_) not in valid_pairs:
+            raise ValueError("analysis summary port and schema must be paired")
+        return self
+
 
 class ProjectedArtifactReferenceRecord(ProjectedRecordBase):
     record_id: StrictStr
@@ -1008,6 +1019,15 @@ class ProjectedArtifactReferenceRecord(ProjectedRecordBase):
     port: Literal["artifact_reference", "artifact"]
     schema_: Literal["ContextArtifact", "ArtifactReference"] = Field(alias="schema")
     value: ProjectedArtifactReferenceValue
+
+    @model_validator(mode="after")
+    def port_schema_are_paired(self) -> "ProjectedArtifactReferenceRecord":
+        if (self.port, self.schema_) not in {
+            ("artifact", "ContextArtifact"),
+            ("artifact_reference", "ArtifactReference"),
+        }:
+            raise ValueError("artifact reference port and schema must be paired")
+        return self
 
 
 class ProjectedAuthorityDecisionRecord(ProjectedRecordBase):
