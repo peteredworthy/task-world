@@ -18,6 +18,22 @@
 - Exported the new scaffold groups and supporting projection values from
   `orchestrator.graph`.
 
+## Review-Finding Corrections
+
+- Replaced abbreviated support values with immutable counterparts that retain
+  source projection fields, requiredness, literals, and defaults for resource
+  claims, candidates, edges, bindings, leases, verification values, requirement
+  revisions/support evidence, decisions, callbacks, cleanup requests, planner
+  snapshots, and environment failures.
+- Edge projections now retain selector, dependency, node-kind/role, purpose,
+  selection, binding, freshness, hydration, and metadata facts; `required`
+  preserves its canonical `True` default.
+- `latest_routine_snapshot` now uses `LatestRoutineSnapshotProjection` with its
+  required `record_id`, `producer_node_id`, and `port` identity fields.
+- Source list/dict payload children are accepted at the conversion boundary and
+  frozen into tuples, `FrozenMap`, or `FrozenJsonValue`; no source transport
+  model is stored by reference.
+
 ## Contract Coverage
 
 `tests/unit/test_graph_projection_models.py` now verifies:
@@ -30,14 +46,17 @@
   non-frozen or extra-permitting Pydantic models;
 - record-store sole payload ownership and ID-only index shape; and
 - public graph-module exports.
+- exact legacy-field/manifest ownership coverage, root groups derived from the
+  manifest, and source-model compatibility examples for edge, binding,
+  candidate, and support-evidence projection values.
 
 ## Verification
 
 Executed successfully:
 
 ```text
-uv run pytest tests/unit/test_graph_projection_models.py -q
-10 passed in 3.56s
+uv run pytest tests/unit/test_graph_projection_models.py tests/unit/test_graph_public_exports.py -q
+16 passed in 5.70s
 
 uv run ruff check src/orchestrator/graph/projection_models.py \
   src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_models.py

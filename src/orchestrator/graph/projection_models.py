@@ -7,7 +7,7 @@ boundary, preventing mutable event payloads from becoming projected state.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, TypeAlias
+from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import (
     BaseModel,
@@ -30,15 +30,29 @@ class ProjectionModel(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True, populate_by_name=True)
 
 
+def _freeze_sequence(value: object, message: str) -> tuple[object, ...]:
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(message)
+    return tuple(cast(list[object] | tuple[object, ...], value))
+
+
 class LifecycleProjection(ProjectionModel):
     run_state: StrictStr | None = None
     completion_decision_passed: StrictBool = False
 
 
 class ResourceClaimValue(ProjectionModel):
-    claim_type: StrictStr
-    resource_id: StrictStr
-    mode: StrictStr | None = None
+    mode: StrictStr
+    scope: StrictStr
+    paths: tuple[StrictStr, ...] | None = None
+    external_resource_key: StrictStr | None = None
+
+    @field_validator("paths", mode="before")
+    @classmethod
+    def freeze_paths(cls, value: object) -> tuple[object, ...] | None:
+        if value is None:
+            return None
+        return _freeze_sequence(value, "paths must be a sequence")
 
 
 class CommandDefinitionValue(ProjectionModel):
@@ -49,10 +63,23 @@ class CommandDefinitionValue(ProjectionModel):
 
 
 class DecisionRequestValue(ProjectionModel):
+    node_id: StrictStr | None = None
     gate_type: StrictStr | None = None
     prompt: StrictStr | None = None
-    options: tuple[StrictStr, ...] = ()
+    options: tuple[StrictStr, ...] | None = None
     default_option: StrictStr | None = None
+    consequence_summary: StrictStr | None = None
+    expires_at: StrictStr | None = None
+    requested_authority: tuple[StrictStr, ...] | None = None
+    target_node_id: StrictStr | None = None
+    target_region_id: StrictStr | None = None
+
+    @field_validator("options", "requested_authority", mode="before")
+    @classmethod
+    def freeze_request_ids(cls, value: object) -> tuple[object, ...] | None:
+        if value is None:
+            return None
+        return _freeze_sequence(value, "request values must be a sequence")
 
 
 class AuthorityRequestValue(ProjectionModel):
@@ -89,6 +116,11 @@ class NodeSpecProjection(ProjectionModel):
     command_binding: StrictStr | None = None
     max_attempts: StrictInt | None = None
 
+    @field_validator("resource_claims", "allowed_actions", "preconditions", mode="before")
+    @classmethod
+    def freeze_node_sequences(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "node sequences must be sequences")
+
 
 class NodeRuntimeProjection(ProjectionModel):
     state: StrictStr | None = None
@@ -111,9 +143,15 @@ class NodeProjection(ProjectionModel):
 
 class CandidateValue(ProjectionModel):
     candidate_id: StrictStr
-    record_id: StrictStr | None = None
-    task_region_id: StrictStr | None = None
-    attempt_number: StrictInt | None = None
+    attempt_number: StrictInt
+    position: StrictInt
+    file_state_record_ids: tuple[StrictStr, ...] = ()
+    supersedes_task_region_ids: tuple[StrictStr, ...] = ()
+
+    @field_validator("file_state_record_ids", "supersedes_task_region_ids", mode="before")
+    @classmethod
+    def freeze_candidate_ids(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "candidate IDs must be a sequence")
 
 
 class TaskProjection(ProjectionModel):
@@ -127,8 +165,33 @@ class EdgeValue(ProjectionModel):
     from_port: StrictStr
     to_node_id: StrictStr
     to_port: StrictStr
-    required: StrictBool = False
+    required: StrictBool = True
+    dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
+    from_node_kind: StrictStr | None = None
+    from_node_role: StrictStr | None = None
+    accepted_record_selector: FrozenJsonValue | None = None
+    purpose: FrozenJsonValue | None = None
+    description: FrozenJsonValue | None = None
+    selection: FrozenJsonValue | None = None
+    binding_policy: FrozenJsonValue | None = None
+    freshness_policy: FrozenJsonValue | None = None
+    prompt_hydration_policy: FrozenJsonValue | None = None
     metadata: FrozenMap[StrictStr, FrozenJsonValue] = Field(default_factory=FrozenMap)
+
+    @field_validator(
+        "accepted_record_selector",
+        "purpose",
+        "description",
+        "selection",
+        "binding_policy",
+        "freshness_policy",
+        "prompt_hydration_policy",
+        "metadata",
+        mode="before",
+    )
+    @classmethod
+    def freeze_edge_json(cls, value: object) -> FrozenJsonValue | None:
+        return None if value is None else freeze_json(value)
 
 
 class InputBindingValue(ProjectionModel):
@@ -136,6 +199,16 @@ class InputBindingValue(ProjectionModel):
     to_node_id: StrictStr
     to_port: StrictStr
     record_ids: tuple[StrictStr, ...] = ()
+    bound_at_position: StrictInt
+    record_bound_positions: FrozenMap[StrictStr, StrictInt] | None = None
+    binding_policy: StrictStr | None = None
+    trigger: StrictStr | None = None
+    supersedes_record_id: StrictStr | None = None
+
+    @field_validator("record_ids", mode="before")
+    @classmethod
+    def freeze_record_ids(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "record IDs must be a sequence")
 
 
 class TopologyProjection(ProjectionModel):
@@ -200,6 +273,12 @@ class PlannerSessionProjection(ProjectionModel):
     carryover_record_id: StrictStr | None = None
 
 
+class LatestRoutineSnapshotProjection(ProjectionModel):
+    record_id: StrictStr
+    producer_node_id: StrictStr
+    port: StrictStr
+
+
 class PlanningProjection(ProjectionModel):
     generation_budget: StrictInt = 8
     successor_by_node: FrozenMap[StrictStr, StrictStr] = Field(default_factory=FrozenMap)
@@ -212,7 +291,7 @@ class PlanningProjection(ProjectionModel):
     latest_no_successor_patch_id_by_node: FrozenMap[StrictStr, StrictStr] = Field(
         default_factory=FrozenMap
     )
-    latest_routine_snapshot: GraphRecordSummaryProjection | None = None
+    latest_routine_snapshot: LatestRoutineSnapshotProjection | None = None
     generation_by_node: FrozenMap[StrictStr, StrictInt] = Field(default_factory=FrozenMap)
     session_id_by_node: FrozenMap[StrictStr, StrictStr] = Field(default_factory=FrozenMap)
     sessions: FrozenMap[StrictStr, PlannerSessionProjection] = Field(default_factory=FrozenMap)
@@ -225,58 +304,132 @@ class RecoveryNodeIndexValue(ProjectionModel):
 
 
 class VerificationResultValue(ProjectionModel):
+    node_id: StrictStr
     record_id: StrictStr
     candidate_id: StrictStr | None = None
-    status: StrictStr | None = None
+    task_region_id: StrictStr | None = None
 
 
 class CheckResultValue(ProjectionModel):
     node_id: StrictStr
     status: StrictStr
     position: StrictInt
-    record_ids: tuple[StrictStr, ...] = ()
+    task_region_id: StrictStr | None = None
+    record_id: StrictStr | None = None
+    classification: StrictStr | None = None
+    command_text: StrictStr | None = None
+    stderr_tail: StrictStr | None = None
+    stdout_tail: StrictStr | None = None
+    exit_code: StrictInt | None = None
+    candidate_record_ids: tuple[StrictStr, ...] = ()
+    file_state_record_ids: tuple[StrictStr, ...] = ()
+    evaluated_record_ids: tuple[StrictStr, ...] = ()
+
+    @field_validator(
+        "candidate_record_ids", "file_state_record_ids", "evaluated_record_ids", mode="before"
+    )
+    @classmethod
+    def freeze_check_ids(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "check record IDs must be a sequence")
 
 
 class InvalidTestBlockValue(ProjectionModel):
-    task_region_id: StrictStr
-    reason: StrictStr | None = None
+    position: StrictInt
+    accepted: StrictBool | None = None
+    appeal_open: StrictBool | None = None
+    candidate_id: StrictStr | None = None
 
 
 class VerifierVerdictValue(ProjectionModel):
+    candidate_id: StrictStr
+    verdict: Literal["passed", "failed"]
+    position: StrictInt
+
+
+class DecisionActorValue(ProjectionModel):
+    kind: StrictStr
+    id: StrictStr | None = None
+
+
+class ApprovalDecisionValue(ProjectionModel):
     node_id: StrictStr
+    decision: Literal["approved", "rejected", "deferred"]
+    task_region_id: StrictStr | None = None
+    gate_id: StrictStr | None = None
+    appeal_node_id: StrictStr | None = None
+    decider: DecisionActorValue | StrictStr | None = None
+    scope: FrozenJsonValue | None = None
+    expires_at: StrictStr | None = None
+    reason: StrictStr | None = None
+
+
+class AuthorityDecisionValue(ProjectionModel):
+    node_id: StrictStr
+    decision: Literal["granted", "denied", "deferred"]
+    task_region_id: StrictStr | None = None
+    appeal_node_id: StrictStr | None = None
+    decider: DecisionActorValue | StrictStr | None = None
+    scope: FrozenJsonValue | None = None
+    expires_at: StrictStr | None = None
+    reason: StrictStr | None = None
+
+
+class OversightDecisionValue(ProjectionModel):
+    node_id: StrictStr
+    decision: Literal["accepted", "rejected", "invalid_test_accepted"]
+    position: StrictInt
+    task_region_id: StrictStr | None = None
     candidate_id: StrictStr | None = None
-    verdict: StrictStr | None = None
-    position: StrictInt | None = None
-
-
-class DecisionValue(ProjectionModel):
-    node_id: StrictStr
-    decision: StrictStr | None = None
-    position: StrictInt | None = None
-    metadata: FrozenMap[StrictStr, FrozenJsonValue] = Field(default_factory=FrozenMap)
+    gate_id: StrictStr | None = None
+    appeal_node_id: StrictStr | None = None
+    appealed_node_id: StrictStr | None = None
+    appeal_type: StrictStr | None = None
+    decider: FrozenJsonValue | StrictStr | None = None
+    scope: FrozenJsonValue | None = None
+    expires_at: StrictStr | None = None
+    reason: StrictStr | None = None
 
 
 class RequirementRevisionValue(ProjectionModel):
-    revision_id: StrictStr
-    requirement_id: StrictStr | None = None
-    position: StrictInt | None = None
-    metadata: FrozenMap[StrictStr, FrozenJsonValue] = Field(default_factory=FrozenMap)
+    requirement_id: StrictStr
+    version_id: StrictStr
+    change_classification: StrictStr
+    requires_authority: StrictBool
+    position: StrictInt
+    previous_version_id: StrictStr | None = None
+    revision_index: StrictInt | None = None
+    authority_required_reason: StrictStr | None = None
+    validation_strengthening: StrictBool
 
 
 class SupportEvidenceValue(ProjectionModel):
     support_id: StrictStr
-    requirement_id: StrictStr | None = None
-    evidence_id: StrictStr | None = None
-    metadata: FrozenMap[StrictStr, FrozenJsonValue] = Field(default_factory=FrozenMap)
+    evidence_id: StrictStr
+    requirement_id: StrictStr
+    requirement_version_id: StrictStr
+    status: StrictStr
+    position: StrictInt
+    stale_reason: StrictStr | None = None
+    confidence: StrictStr | None = None
 
 
 class LeaseValue(ProjectionModel):
     lease_id: StrictStr
-    node_id: StrictStr
-    state: StrictStr
+    state: Literal["active", "suspended", "revoked", "expired", "released"]
+    node_id: StrictStr | None = None
     generation: StrictInt | None = None
     execution_id: StrictStr | None = None
     expires_at: StrictStr | None = None
+    session_id: StrictStr | None = None
+    base_snapshot_id: StrictStr | None = None
+    task_region_id: StrictStr | None = None
+    kind: StrictStr | None = None
+    resource_claims: tuple[ResourceClaimValue, ...] = ()
+
+    @field_validator("resource_claims", mode="before")
+    @classmethod
+    def freeze_lease_claims(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "resource_claims must be a sequence")
 
 
 class EnvironmentFailureValue(ProjectionModel):
@@ -285,18 +438,40 @@ class EnvironmentFailureValue(ProjectionModel):
     classification: StrictStr | None = None
     reason: StrictStr | None = None
     task_region_id: StrictStr | None = None
+    record_id: StrictStr | None = None
+    command_text: StrictStr | None = None
+    stderr_tail: StrictStr | None = None
+    exit_code: StrictInt | None = None
 
 
 class CallbackEventValue(ProjectionModel):
-    callback_id: StrictStr
-    event_type: StrictStr
-    position: StrictInt | None = None
+    event_type: Literal[
+        "callback_accepted",
+        "callback_rejected_stale",
+        "callback_rejected_conflict",
+        "callback_duplicate_returned",
+    ]
+    node_id: StrictStr
+    idempotency_key: StrictStr
+    outcome: StrictStr
+    payload: FrozenJsonValue | None = None
 
 
 class CleanupRequestValue(ProjectionModel):
     cleanup_id: StrictStr
-    node_id: StrictStr | None = None
-    position: StrictInt | None = None
+    position: StrictInt
+    file_state_record_id: StrictStr | None = None
+    snapshot_id: StrictStr | None = None
+    paths: tuple[StrictStr, ...] = ()
+    authority: StrictStr | None = None
+    reason: StrictStr | None = None
+    execution_id: StrictStr | None = None
+    producer_node_id: StrictStr | None = None
+
+    @field_validator("paths", mode="before")
+    @classmethod
+    def freeze_cleanup_paths(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "paths must be a sequence")
 
 
 class VerificationProjection(ProjectionModel):
@@ -327,13 +502,13 @@ class GovernanceProjection(ProjectionModel):
     gate_decisions_by_task: FrozenMap[StrictStr, FrozenMap[StrictStr, StrictBool]] = Field(
         default_factory=FrozenMap
     )
-    approval_decisions_by_node: FrozenMap[StrictStr, DecisionValue] = Field(
+    approval_decisions_by_node: FrozenMap[StrictStr, ApprovalDecisionValue] = Field(
         default_factory=FrozenMap
     )
-    authority_decisions_by_node: FrozenMap[StrictStr, DecisionValue] = Field(
+    authority_decisions_by_node: FrozenMap[StrictStr, AuthorityDecisionValue] = Field(
         default_factory=FrozenMap
     )
-    oversight_decisions_by_node: FrozenMap[StrictStr, DecisionValue] = Field(
+    oversight_decisions_by_node: FrozenMap[StrictStr, OversightDecisionValue] = Field(
         default_factory=FrozenMap
     )
     decision_requests_by_node: FrozenMap[StrictStr, DecisionRequestValue] = Field(
