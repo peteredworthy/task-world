@@ -2,6 +2,7 @@
 
 from collections import UserDict
 from math import inf, nan
+from types import MappingProxyType
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
@@ -71,6 +72,17 @@ def test_frozen_map_pydantic_validates_declared_key_and_value_types() -> None:
     assert value == {"one": 1, "two": 2}
     with pytest.raises(ValidationError):
         adapter.validate_python({1: "1"})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [UserDict({"one": 1}), MappingProxyType({"one": 1})],
+)
+def test_frozen_map_pydantic_rejects_non_dict_external_mappings(value: object) -> None:
+    adapter = TypeAdapter(FrozenMap[str, int])
+
+    with pytest.raises(ValidationError):
+        adapter.validate_python(value)
 
 
 def test_frozen_map_pydantic_serializes_as_an_ordinary_dictionary() -> None:

@@ -661,109 +661,323 @@ class ImmutableGraphProjection(ProjectionModel):
     usage: UsageProjection = Field(default_factory=UsageProjection)
 
 
-class ProjectedRecordBase(ProjectionModel):
-    record_id: StrictStr
-    record_kind: StrictStr
-    producer_node_id: StrictStr | None = None
-    port: StrictStr
-    schema_: StrictStr = Field(alias="schema")
-    data: FrozenMap[StrictStr, FrozenJsonValue]
+class ProjectedCandidateRecordValue(ProjectionModel):
+    summary: StrictStr
+    changed_paths: tuple[StrictStr, ...] = ()
+    requirements_addressed: tuple[StrictStr, ...] = ()
+    file_state_record_id: StrictStr | None = None
+    file_state_record_ids: tuple[StrictStr, ...] = ()
 
-    @field_validator("data", mode="before")
+
+class ProjectedRecordBase(ProjectionModel):
+    """The immutable common record envelope; concrete records own their payload fields."""
+
+    schema_version: StrictInt | None = None
+    producer_port: StrictStr | None = None
+    created_at: StrictStr | None = None
+    graph_position: StrictInt | None = None
+    run_id: StrictStr | None = None
+    payload: FrozenJsonValue | None = None
+    provenance: FrozenJsonValue | None = None
+
+    @model_validator(mode="before")
     @classmethod
-    def freeze_data(cls, value: object) -> FrozenMap[str, FrozenJsonValue]:
-        frozen = freeze_json(value)
-        if not isinstance(frozen, FrozenMap):
-            raise ValueError("projected record data must be an object")
-        return frozen
+    def freeze_record_sequences(cls, value: object) -> object:
+        """Make every declared tuple independent before strict nested validation."""
+
+        def freeze_sequences(item: object) -> object:
+            if isinstance(item, list):
+                return tuple(freeze_sequences(child) for child in cast(list[object], item))
+            if isinstance(item, dict):
+                return {
+                    key: freeze_sequences(child)
+                    for key, child in cast(dict[object, object], item).items()
+                }
+            return item
+
+        return freeze_sequences(value)
+
+    @field_validator("payload", "provenance", mode="before")
+    @classmethod
+    def freeze_record_json(cls, value: object) -> FrozenJsonValue | None:
+        return None if value is None else freeze_json(value)
+
+    @model_validator(mode="after")
+    def record_envelope_is_consistent(self) -> "ProjectedRecordBase":
+        if self.schema_version is not None and self.schema_version <= 0:
+            raise ValueError("schema_version must be positive")
+        port = getattr(self, "port", None)
+        if self.producer_port is not None and self.producer_port != port:
+            raise ValueError("producer_port must match port")
+        return self
 
 
 class ProjectedAnalysisSummaryRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["analysis_summary"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["analysis_summary", "planning_summary", "region_summary"]
+    schema_: Literal["AnalysisSummary", "RegionSummary"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedArtifactReferenceRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["artifact_reference"]
+    record_kind: Literal["graph_record"]
+    producer_node_id: StrictStr
+    port: Literal["artifact_reference", "artifact"]
+    schema_: Literal["ContextArtifact", "ArtifactReference"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedAuthorityDecisionRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["authority_decision"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["authority_decision"]
+    schema_: Literal["AuthorityDecision"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedAuthorityRequestRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["authority_request_record"]
+    record_kind: Literal["graph_record"]
+    producer_node_id: StrictStr
+    port: Literal["authority_request_record"]
+    schema_: Literal["AuthorityRequest"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedCandidateRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["candidate"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["candidate"]
+    schema_: Literal["ImplementationCandidate"] = Field(alias="schema")
+    candidate_id: StrictStr
+    task_region_id: StrictStr | None = None
+    attempt_number: StrictInt | None = Field(default=None, ge=0)
+    value: ProjectedCandidateRecordValue
+    file_state_record_id: StrictStr | None = None
+    file_state_record_ids: tuple[StrictStr, ...] = ()
+    supersedes_task_region_id: StrictStr | None = None
+    supersedes_task_region_ids: tuple[StrictStr, ...] = ()
 
 
 class ProjectedCheckResultRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["check_result"]
-
-
-class ProjectedClassifiedGapRecord(ProjectedRecordBase):
-    record_type: Literal["classified_gap"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["check_result"]
+    schema_: Literal["CheckResult"] = Field(alias="schema")
+    candidate_id: StrictStr
+    task_region_id: StrictStr
+    attempt_number: StrictInt = Field(ge=0)
+    value: FrozenJsonValue
+    candidate_record_id: StrictStr | None = None
+    candidate_record_ids: tuple[StrictStr, ...] = ()
+    file_state_record_ids: tuple[StrictStr, ...] = ()
+    verification_report_record_ids: tuple[StrictStr, ...] = ()
+    evaluated_record_ids: tuple[StrictStr, ...] = ()
 
 
 class ProjectedCompletionDecisionRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["completion_decision"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["completion_decision"]
+    schema_: Literal["CompletionDecision"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedDecisionRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["decision_record"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["decision_record"]
+    schema_: Literal["DecisionRecord"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedDecisionRequestRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["decision_request"]
+    record_kind: Literal["graph_record"]
+    producer_node_id: StrictStr
+    port: Literal["decision_request"]
+    schema_: Literal["DecisionRequest"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedFailureRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["failure_record"]
+    record_kind: Literal["graph_record"]
+    producer_node_id: StrictStr
+    port: Literal["failure_record"]
+    schema_: Literal["FailureRecord"] = Field(alias="schema")
+    task_region_id: StrictStr | None = None
+    value: FrozenJsonValue
 
 
 class ProjectedFanOutInputsRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["fan_out_inputs"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: StrictStr
+    schema_: StrictStr = Field(alias="schema")
+    value: FrozenJsonValue
+    candidate_id: StrictStr | None = None
+    task_region_id: StrictStr | None = None
+    attempt_number: StrictInt | None = Field(default=None, ge=0)
+    file_state_record_id: StrictStr | None = None
+    file_state_record_ids: tuple[StrictStr, ...] = ()
 
 
 class ProjectedFileStateRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["file_state"]
+    record_kind: Literal["file_state"] = "file_state"
+    producer_node_id: StrictStr | None = None
+    snapshot_id: StrictStr | None = None
+    base_snapshot_id: StrictStr | None = None
+    port: StrictStr = "file_state"
+    schema_: StrictStr = Field(default="FileStateRecord", alias="schema")
+    git: FrozenJsonValue | None = None
+    tracked: tuple[FrozenJsonValue, ...] = ()
+    untracked: tuple[FrozenJsonValue, ...] = ()
+    ignored: tuple[FrozenJsonValue, ...] = ()
+    external: tuple[FrozenJsonValue, ...] = ()
+    classifications: tuple[FrozenJsonValue, ...] = ()
+    residue: tuple[FrozenJsonValue, ...] = ()
+    rejected_paths: tuple[FrozenJsonValue, ...] = ()
+    verdict: Literal["captured", "rejected"] = "captured"
+    patch_bundle_id: StrictStr | None = None
+    tree_snapshot_id: StrictStr | None = None
+    position: StrictInt | None = None
+    task_region_id: StrictStr | None = None
+    candidate_id: StrictStr | None = None
+    compromised: StrictBool | None = None
+    superseded_pending: StrictBool | None = None
+    supersedes_record_id: StrictStr | None = None
+    superseded_by_record_id: StrictStr | None = None
+    cleanup_id: StrictStr | None = None
+    cleanup_excluded_paths: tuple[StrictStr, ...] = ()
+    cleanup_reason: StrictStr | None = None
+    cleanup_applied_event_id: StrictStr | None = None
+    compromised_snapshot_deleted: StrictBool | None = None
+    compromised_paths: tuple[StrictStr, ...] | None = None
 
 
 class ProjectedGapClassificationRecord(ProjectedRecordBase):
-    record_type: Literal["gap_classification"]
+    record_id: StrictStr
+    record_type: Literal["classified_gap", "gap_classification", "gap_plan"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["classified_gap", "gap_classification", "gap_plan"]
+    schema_: Literal["GapClassification"] = Field(alias="schema")
+    value: FrozenJsonValue
 
-
-class ProjectedGapPlanRecord(ProjectedRecordBase):
-    record_type: Literal["gap_plan"]
+    @model_validator(mode="after")
+    def gap_port_matches_record_type(self) -> "ProjectedGapClassificationRecord":
+        if self.record_type != self.port and not (
+            self.record_type == "classified_gap" and self.port == "gap_classification"
+        ):
+            raise ValueError("record_type must match port")
+        return self
 
 
 class ProjectedGraphPatchProposalRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["graph_patch_proposal"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["graph_patch_proposal", "graph_patch"]
+    schema_: Literal["GraphPatch"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedJoinResultRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["join_result"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["join_result"]
+    schema_: Literal["JoinResult"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedRecoveryPlanRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["recovery_plan"]
+    record_kind: Literal["output"]
+    producer_node_id: StrictStr
+    port: Literal["recovery_plan"]
+    schema_: Literal["RecoveryPlan"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedRequirementRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["requirement_record"]
+    record_kind: Literal["graph_record"]
+    producer_node_id: StrictStr
+    port: Literal["requirement"]
+    schema_: Literal["RequirementRecord"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedRoutineSnapshotRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["routine_snapshot"]
+    record_kind: Literal["graph_record"]
+    producer_node_id: StrictStr
+    port: Literal["routine_snapshot", "snapshot"]
+    schema_: Literal["RoutineSnapshot"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedRunContextRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["run_context"]
+    record_kind: Literal["graph_record"]
+    producer_node_id: StrictStr
+    port: Literal["run_context"]
+    schema_: Literal["RunContext"] = Field(alias="schema")
+    value: FrozenJsonValue
 
 
 class ProjectedVerificationReportRecord(ProjectedRecordBase):
+    record_id: StrictStr
     record_type: Literal["verification_report"]
+    record_kind: Literal["verification"]
+    producer_node_id: StrictStr
+    port: Literal["verification_report"] = "verification_report"
+    schema_: Literal["VerificationReport"] = Field(default="VerificationReport", alias="schema")
+    candidate_id: StrictStr
+    task_region_id: StrictStr | None = None
+    outcome: Literal["passed", "failed"]
+    value: FrozenJsonValue
+    evidence: FrozenJsonValue | None = None
+    candidate_record_id: StrictStr | None = None
+    candidate_record_ids: tuple[StrictStr, ...] = ()
+    file_state_record_ids: tuple[StrictStr, ...] = ()
+    evaluated_record_ids: tuple[StrictStr, ...] = ()
+
+    @model_validator(mode="after")
+    def outcome_matches_value(self) -> "ProjectedVerificationReportRecord":
+        if isinstance(self.value, FrozenMap) and self.value.get("outcome") != self.outcome:
+            raise ValueError("outcome must match value.outcome")
+        return self
 
 
 ProjectedRecord: TypeAlias = Annotated[
@@ -773,7 +987,6 @@ ProjectedRecord: TypeAlias = Annotated[
     | ProjectedAuthorityRequestRecord
     | ProjectedCandidateRecord
     | ProjectedCheckResultRecord
-    | ProjectedClassifiedGapRecord
     | ProjectedCompletionDecisionRecord
     | ProjectedDecisionRecord
     | ProjectedDecisionRequestRecord
@@ -781,7 +994,6 @@ ProjectedRecord: TypeAlias = Annotated[
     | ProjectedFanOutInputsRecord
     | ProjectedFileStateRecord
     | ProjectedGapClassificationRecord
-    | ProjectedGapPlanRecord
     | ProjectedGraphPatchProposalRecord
     | ProjectedJoinResultRecord
     | ProjectedRecoveryPlanRecord
@@ -800,7 +1012,7 @@ _PROJECTED_RECORD_MODELS: FrozenMap[str, type[ProjectedRecordBase]] = FrozenMap(
         "authority_request_record": ProjectedAuthorityRequestRecord,
         "candidate": ProjectedCandidateRecord,
         "check_result": ProjectedCheckResultRecord,
-        "classified_gap": ProjectedClassifiedGapRecord,
+        "classified_gap": ProjectedGapClassificationRecord,
         "completion_decision": ProjectedCompletionDecisionRecord,
         "decision_record": ProjectedDecisionRecord,
         "decision_request": ProjectedDecisionRequestRecord,
@@ -808,7 +1020,7 @@ _PROJECTED_RECORD_MODELS: FrozenMap[str, type[ProjectedRecordBase]] = FrozenMap(
         "fan_out_inputs": ProjectedFanOutInputsRecord,
         "file_state": ProjectedFileStateRecord,
         "gap_classification": ProjectedGapClassificationRecord,
-        "gap_plan": ProjectedGapPlanRecord,
+        "gap_plan": ProjectedGapClassificationRecord,
         "graph_patch_proposal": ProjectedGraphPatchProposalRecord,
         "join_result": ProjectedJoinResultRecord,
         "recovery_plan": ProjectedRecoveryPlanRecord,
@@ -823,6 +1035,9 @@ if set(_PROJECTED_RECORD_MODELS) != set(OUTPUT_RECORD_MODELS_BY_TYPE):
     raise RuntimeError("projected record registry must cover every accepted output record type")
 
 
+_PROJECTED_RECORD_ADAPTER: TypeAdapter[ProjectedRecord] = TypeAdapter(ProjectedRecord)
+
+
 def project_record(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
     """Copy a validated accepted record into its immutable projection counterpart."""
     if not hasattr(record, "model_dump"):
@@ -832,17 +1047,4 @@ def project_record(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
     if not isinstance(record_type, str) or record_type not in _PROJECTED_RECORD_MODELS:
         raise ValueError("unknown projected record discriminator")
     model = _PROJECTED_RECORD_MODELS[record_type]
-    adapter: TypeAdapter[ProjectedRecord] = TypeAdapter(ProjectedRecord)
-    return adapter.validate_python(
-        model.model_validate(
-            {
-                "record_id": payload["record_id"],
-                "record_kind": payload["record_kind"],
-                "producer_node_id": payload.get("producer_node_id"),
-                "port": payload["port"],
-                "schema": payload["schema"],
-                "record_type": record_type,
-                "data": payload,
-            }
-        )
-    )
+    return _PROJECTED_RECORD_ADAPTER.validate_python(model.model_validate(payload))

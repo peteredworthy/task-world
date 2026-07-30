@@ -78,10 +78,12 @@ def _serialize_frozen_map(
 
 
 def _mapping_to_dict(value: object) -> object:
-    """Permit persistent mappings to be revalidated by nested Pydantic fields."""
-    if isinstance(value, Mapping):
+    """Accept only external dictionaries and persistent-map revalidation."""
+    if isinstance(value, FrozenMap):
         return dict(cast(Mapping[object, object], value))
-    return value
+    if type(value) is dict:
+        return cast(dict[object, object], value)
+    raise ValueError("FrozenMap input must be an exact dict or FrozenMap")
 
 
 type JsonScalar = None | bool | int | float | str
