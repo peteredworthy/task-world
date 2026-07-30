@@ -29,7 +29,13 @@ from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
 class ProjectionModel(BaseModel):
     """Strict, immutable base for every model reachable from the scaffold."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid", strict=True, populate_by_name=True)
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        strict=True,
+        populate_by_name=True,
+        revalidate_instances="always",
+    )
 
 
 def _freeze_sequence(value: object, message: str) -> tuple[object, ...]:
@@ -975,6 +981,8 @@ class ProjectedRecordBase(ProjectionModel):
     def freeze_record_json(cls, value: object) -> FrozenMap[str, FrozenJsonValue] | None:
         if value is None:
             return None
+        if type(value) is FrozenMap:
+            return cast(FrozenMap[str, FrozenJsonValue], value)
         frozen = freeze_json(value)
         if not isinstance(frozen, FrozenMap):
             raise ValueError("record envelope JSON must be an object")

@@ -16,8 +16,16 @@ class FrozenMap[K, V](Mapping[K, V]):
 
     __slots__ = ("__map",)
 
-    def __init__(self, values: Mapping[K, V] | None = None) -> None:
-        self.__map: Map[K, V] = Map() if values is None else Map(values)
+    def __init__(self, values: dict[K, V] | FrozenMap[K, V] | None = None) -> None:
+        self.__map: Map[K, V]
+        if values is None:
+            self.__map = cast(Map[K, V], Map())
+        elif type(values) is dict:
+            self.__map = Map(values)
+        elif type(values) is FrozenMap:
+            self.__map = cast(Map[K, V], object.__getattribute__(values, "_FrozenMap__map"))
+        else:
+            raise TypeError("FrozenMap input must be an exact dict or FrozenMap")
 
     def __getitem__(self, key: K) -> V:
         return self.__map[key]
@@ -100,16 +108,22 @@ def empty_frozen_map() -> FrozenMap[Any, Any]:
     return FrozenMap()
 
 
+def _frozen_map_from_backend[K, V](backend: Map[K, V]) -> FrozenMap[K, V]:
+    mapping = cast(FrozenMap[K, V], object.__new__(FrozenMap))
+    object.__setattr__(mapping, "_FrozenMap__map", backend)
+    return mapping
+
+
 def map_set[K, V](mapping: FrozenMap[K, V], key: K, value: V) -> FrozenMap[K, V]:
     """Return ``mapping`` with ``key`` set without changing the original."""
     backend = cast(Map[K, V], object.__getattribute__(mapping, "_FrozenMap__map"))
-    return FrozenMap(backend.set(key, value))
+    return _frozen_map_from_backend(backend.set(key, value))
 
 
 def map_delete[K, V](mapping: FrozenMap[K, V], key: K) -> FrozenMap[K, V]:
     """Return ``mapping`` without ``key`` without changing the original."""
     backend = cast(Map[K, V], object.__getattribute__(mapping, "_FrozenMap__map"))
-    return FrozenMap(backend.delete(key))
+    return _frozen_map_from_backend(backend.delete(key))
 
 
 def map_update[K, V](
@@ -120,7 +134,7 @@ def map_update[K, V](
     updated = cast(Map[K, V], object.__getattribute__(mapping, "_FrozenMap__map"))
     for key, value in values.items():
         updated = updated.set(key, value)
-    return FrozenMap(updated)
+    return _frozen_map_from_backend(updated)
 
 
 def freeze_json(value: object) -> FrozenJsonValue:

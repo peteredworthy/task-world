@@ -1,6 +1,7 @@
 """Tests for immutable graph projection collection primitives."""
 
 from collections import UserDict
+from collections.abc import Iterator, Mapping
 from math import inf, nan
 from types import MappingProxyType
 import pytest
@@ -18,6 +19,17 @@ from orchestrator.graph import (
     map_update,
     thaw_json,
 )
+
+
+class CustomMapping(Mapping[str, int]):
+    def __getitem__(self, key: str) -> int:
+        return {"one": 1}[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(("one",))
+
+    def __len__(self) -> int:
+        return 1
 
 
 def test_map_set_returns_a_new_map_without_changing_old_map() -> None:
@@ -64,6 +76,28 @@ def test_frozen_map_has_mapping_equality_and_readable_repr() -> None:
     assert repr(value) == "FrozenMap({'a': 1})"
 
 
+@pytest.mark.parametrize(
+    "value",
+    [
+        UserDict({"one": 1}),
+        MappingProxyType({"one": 1}),
+        CustomMapping(),
+    ],
+)
+def test_frozen_map_constructor_rejects_non_dict_external_mappings(
+    value: Mapping[str, int],
+) -> None:
+    with pytest.raises(TypeError, match="exact dict or FrozenMap"):
+        FrozenMap(value)
+
+
+def test_frozen_map_constructor_accepts_exact_dict_and_existing_frozen_map() -> None:
+    original = FrozenMap({"one": 1})
+
+    assert FrozenMap({"one": 1}) == {"one": 1}
+    assert FrozenMap(original) == {"one": 1}
+
+
 def test_frozen_map_pydantic_validates_declared_key_and_value_types() -> None:
     adapter = TypeAdapter(FrozenMap[str, int])
 
@@ -75,8 +109,56 @@ def test_frozen_map_pydantic_validates_declared_key_and_value_types() -> None:
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        {"one": "not-an-integer"},
+        FrozenMap({"one": "not-an-integer"}),
+        {1: 1},
+        FrozenMap({1: 1}),
+    ],
+)
+def test_frozen_map_pydantic_validates_dict_and_existing_map_children(
+    source: object,
+) -> None:
+    adapter = TypeAdapter(FrozenMap[str, int])
+
+    with pytest.raises(ValidationError):
+        adapter.validate_python(source)
+
+
+def test_frozen_map_pydantic_reconstructs_model_children() -> None:
+    class Child(BaseModel):
+        model_config = {"frozen": True, "revalidate_instances": "always"}
+        names: tuple[str, ...]
+
+    class UntrustedChild(Child):
+        pass
+
+    source_names = ["one"]
+    source_child = UntrustedChild(names=source_names)
+    value = TypeAdapter(FrozenMap[str, Child]).validate_python(FrozenMap({"child": source_child}))
+
+    source_names.append("mutated")
+    assert type(value["child"]) is Child
+    assert value["child"] is not source_child
+    assert value["child"].names == ("one",)
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_frozen_map_validation_isolates_mutable_input(frozen: bool) -> None:
+    source_names = ["one"]
+    source: object = {"names": source_names}
+    if frozen:
+        source = FrozenMap({"names": source_names})
+    value = TypeAdapter(FrozenMap[str, tuple[str, ...]]).validate_python(source)
+
+    source_names.append("mutated")
+    assert value == {"names": ("one",)}
+
+
+@pytest.mark.parametrize(
     "value",
-    [UserDict({"one": 1}), MappingProxyType({"one": 1})],
+    [UserDict({"one": 1}), MappingProxyType({"one": 1}), CustomMapping()],
 )
 def test_frozen_map_pydantic_rejects_non_dict_external_mappings(value: object) -> None:
     adapter = TypeAdapter(FrozenMap[str, int])
@@ -93,6 +175,9 @@ def test_frozen_map_pydantic_serializes_as_an_ordinary_dictionary() -> None:
 
     assert model.model_dump() == {"values": {"one": 1}}
     assert model.model_dump_json() == '{"values":{"one":1}}'
+
+    revalidated = Model(values=FrozenMap({"one": 1}))
+    assert revalidated.model_dump_json() == '{"values":{"one":1}}'
 
 
 def test_frozen_json_rejects_cycles_and_non_string_keys() -> None:
@@ -175,3 +260,18 @@ def test_public_json_aliases_describe_input_and_frozen_values() -> None:
     frozen_value: FrozenJsonValue = freeze_json(input_value)
 
     assert thaw_json(frozen_value) == input_value
+
+
+def test_thaw_json_returns_fresh_mutable_results() -> None:
+    frozen = freeze_json({"nested": [1]})
+
+    first = thaw_json(frozen)
+    second = thaw_json(frozen)
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+    first_nested = first["nested"]
+    assert isinstance(first_nested, list)
+    first_nested.append(2)
+
+    assert second == {"nested": [1]}
+    assert thaw_json(frozen) == {"nested": [1]}

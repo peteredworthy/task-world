@@ -282,6 +282,33 @@ def test_node_values_and_maps_cannot_be_mutated() -> None:
         node.scheduling = NodeSchedulingProjection(last_deferred_reason="later")
 
 
+def test_projection_map_revalidates_and_reconstructs_model_children() -> None:
+    class UntrustedNode(NodeProjection):
+        pass
+
+    source = UntrustedNode(spec=NodeSpecProjection(node_id="node-1", creation_position=1))
+
+    projection = ImmutableGraphProjection(nodes=FrozenMap({"node-1": source}))
+
+    assert type(projection.nodes["node-1"]) is NodeProjection
+    assert projection.nodes["node-1"] is not source
+    assert projection.nodes["node-1"].spec is not source.spec
+
+
+def test_projection_map_rejects_invalid_existing_model_children() -> None:
+    invalid_spec = NodeSpecProjection.model_construct(
+        node_id="node-1", creation_position=["not-an-integer"]
+    )
+    invalid_node = NodeProjection.model_construct(
+        spec=invalid_spec,
+        runtime=NodeRuntimeProjection(),
+        scheduling=NodeSchedulingProjection(),
+    )
+
+    with pytest.raises(ValidationError):
+        ImmutableGraphProjection(nodes=FrozenMap({"node-1": invalid_node}))
+
+
 def test_record_store_is_the_only_recursive_full_payload_owner() -> None:
     assert set(RecordStore.model_fields) == {
         "by_id",

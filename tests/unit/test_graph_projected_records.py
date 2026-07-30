@@ -1,9 +1,10 @@
 """Boundary conversion contracts for immutable projected records."""
 
+from copy import deepcopy
 from typing import Any, cast, get_type_hints
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from orchestrator.graph import (
     OUTPUT_RECORD_MODELS_BY_TYPE,
@@ -29,6 +30,7 @@ from orchestrator.graph import (
     ProjectedRunContextRecord,
     ProjectedRecord,
     ProjectedRecordBase,
+    ProjectionModel,
     ProjectedVerificationReportRecord,
     ProjectedAnalysisSummaryValue,
     ProjectedArtifactReferenceValue,
@@ -60,6 +62,147 @@ from orchestrator.graph import (
     project_record,
 )
 from tests.unit.test_output_record_event_payloads import OUTPUT_RECORD_CASES
+
+
+def _isolation_record_payload(record_type: str) -> dict[str, Any]:
+    payload = deepcopy(OUTPUT_RECORD_CASES[record_type])
+    payload["payload"] = {"mutable": {"items": ["payload-item"]}}
+    payload["provenance"] = {"event_ids": ["event-1"]}
+
+    value = payload.get("value")
+    if isinstance(value, dict):
+        if record_type == "analysis_summary":
+            value.update(source_record_ids=["record-1"], omitted_details=["detail"])
+        elif record_type == "artifact_reference":
+            value["source_record_ids"] = ["record-1"]
+        elif record_type in {"authority_decision", "decision_record"}:
+            value["decider"] = {"kind": "human", "id": "alice"}
+            value["scope"] = {"regions": ["region-1"]}
+        elif record_type == "authority_request_record":
+            value["requested_authority"] = ["graph_write", "repo_write"]
+        elif record_type == "candidate":
+            value.update(
+                changed_paths=["src/a.py"],
+                requirements_addressed=["R-1"],
+                file_state_record_ids=["file-state-1"],
+            )
+            payload["file_state_record_ids"] = ["file-state-1"]
+            payload["supersedes_task_region_ids"] = ["region-0"]
+        elif record_type == "check_result":
+            value["command"] = {"argv": ["uv", "run", "pytest"], "shell": False}
+            value["command_binding"] = {"kind": "known", "tags": ["unit"]}
+            value["environment_policy"] = {"env": {"CI": "1"}}
+            value["candidate_record_ids"] = ["candidate-record-1"]
+            payload["candidate_record_ids"] = ["candidate-record-1"]
+        elif record_type == "completion_decision":
+            value["status"] = "blocked"
+            value["blockers"] = [{"requirement_id": "R-1", "evidence": ["check-1"]}]
+        elif record_type == "decision_request":
+            value["options"] = ["approved", "rejected", "deferred"]
+        elif record_type == "fan_out_inputs":
+            value.update(inputs=[{"requirement": "R-1"}], options={"retry": True})
+            payload["file_state_record_ids"] = ["file-state-1"]
+        elif record_type == "graph_patch_proposal":
+            value["ops"] = [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "requirements": ["R-1"],
+                    },
+                }
+            ]
+            value["expected_downstream_effects"] = ["worker scheduled"]
+        elif record_type == "join_result":
+            value.update(
+                source_record_ids=["candidate-record-1"],
+                missing_optional_inputs=["context"],
+            )
+        elif record_type == "recovery_plan":
+            value["graph_changes"] = [
+                {"op": "retry_node", "steps": ["release lease", "schedule node"]}
+            ]
+        elif record_type == "requirement_record":
+            value["acceptance_criteria"] = ["focused tests pass"]
+        elif record_type == "routine_snapshot":
+            value["dynamic_feature"] = {"requirements": ["R-1"], "options": {"retry": True}}
+        elif record_type == "verification_report":
+            value["grades"] = [{"requirement_id": "R-1", "grade": "A", "reason": "met"}]
+            payload["evidence"] = {
+                "checks": ["check-1"],
+                "artifact_references": [{"artifact_id": "log-1"}],
+            }
+            payload["candidate_record_ids"] = ["candidate-record-1"]
+
+    if record_type == "file_state":
+        payload.update(
+            git={"commit_sha": "abc", "diff_summary": {"changed_paths": ["src/a.py"]}},
+            tracked=[{"path": "src/a.py", "status": "modified"}],
+            external=[
+                {
+                    "path": "vendor/tool",
+                    "source": "external",
+                    "manifest": {
+                        "path": "vendor/tool",
+                        "hash": "sha256:tool",
+                        "origin": "registry",
+                        "retention": "keep",
+                    },
+                }
+            ],
+            classifications=[{"path": "secret.txt", "classification": "secret"}],
+            cleanup_excluded_paths=["secret.txt"],
+        )
+    return payload
+
+
+def _mutate_source_children(value: object) -> None:
+    if isinstance(value, BaseModel):
+        for name in type(value).model_fields:
+            _mutate_source_children(getattr(value, name))
+        return
+    if isinstance(value, dict):
+        for child in tuple(value.values()):
+            _mutate_source_children(child)
+        value["source_mutation"] = True
+        return
+    if isinstance(value, list):
+        for child in tuple(value):
+            _mutate_source_children(child)
+        value.append("source mutation")
+        return
+    if isinstance(value, set):
+        value.add("source mutation")
+
+
+def _assert_deeply_immutable(value: object) -> None:
+    assert not isinstance(value, (dict, list, set))
+    if isinstance(value, BaseModel):
+        assert isinstance(value, ProjectionModel)
+        field_name = next(iter(type(value).model_fields))
+        with pytest.raises(ValidationError, match="frozen_instance"):
+            setattr(value, field_name, getattr(value, field_name))
+        for name in type(value).model_fields:
+            _assert_deeply_immutable(getattr(value, name))
+        return
+    if isinstance(value, FrozenMap):
+        with pytest.raises(TypeError):
+            cast(Any, value)["mutation"] = True
+        if value:
+            key = next(iter(value))
+            with pytest.raises(TypeError):
+                del cast(Any, value)[key]
+        for child in value.values():
+            _assert_deeply_immutable(child)
+        return
+    if isinstance(value, tuple):
+        if value:
+            with pytest.raises(TypeError):
+                cast(Any, value)[0] = value[0]
+        for child in value:
+            _assert_deeply_immutable(child)
 
 
 def test_projected_record_contracts_are_public_graph_interfaces() -> None:
@@ -332,9 +475,11 @@ def test_project_record_has_explicit_canonical_contract(
     port: str,
     schema: str,
 ) -> None:
-    source = source_type.model_validate(OUTPUT_RECORD_CASES[record_type])
+    source = source_type.model_validate(_isolation_record_payload(record_type))
+    expected = source.model_dump(mode="json", by_alias=True, exclude_unset=True)
 
     projected = project_record(source)
+    projected_type_before_mutation = type(projected)
 
     assert projected.record_type == record_type
     assert projected.record_kind == record_kind
@@ -343,9 +488,17 @@ def test_project_record_has_explicit_canonical_contract(
     assert type(projected) is projected_type
     if value_type is not object:
         assert type(getattr(projected, "value")) is value_type
-    assert projected.model_dump(
-        mode="json", by_alias=True, exclude_unset=True
-    ) == source.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    assert projected.model_dump(mode="json", by_alias=True, exclude_unset=True) == expected
+    assert TypeAdapter(ProjectedRecord).validate_python(expected) == projected
+    _assert_deeply_immutable(projected)
+
+    _mutate_source_children(source)
+    after_source_mutation = projected.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    assert type(projected) is projected_type_before_mutation
+    assert after_source_mutation == expected
+    if "value" in expected:
+        assert after_source_mutation["value"] == expected["value"]
+    _assert_deeply_immutable(projected)
     assert "data" not in type(projected).model_fields
 
 
