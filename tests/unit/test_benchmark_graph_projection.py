@@ -18,6 +18,7 @@ from scripts.benchmark_graph_projection import (
     gate_violations,
     max_event_count_metadata,
     protocol_hash,
+    sample_schedule,
 )
 from orchestrator.graph import (
     OutputRecordAcceptedPayload,
@@ -208,6 +209,10 @@ def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_g
     assert baseline["artifact"]["role"] == "baseline"
     assert baseline["configuration"]["requested_sizes"] == [100]
     assert baseline["configuration"]["probe_sizes"] == [50, 100]
+    assert baseline["configuration"]["samples_by_size"] == {
+        "50": {"warmups": 1, "runs": 1},
+        "100": {"warmups": 1, "runs": 1},
+    }
     assert baseline["max_event_count"] == {
         "kind": "unsupported",
         "count": None,
@@ -361,6 +366,10 @@ def _gate_document(
             "probe_sizes": [50, 100],
             "warmups": 1,
             "runs": 2,
+            "samples_by_size": {
+                "50": {"warmups": 1, "runs": 2},
+                "100": {"warmups": 1, "runs": 2},
+            },
         },
         "environment": {
             "comparable": {
@@ -432,6 +441,12 @@ def test_protocol_hash_is_stable_when_implementation_fingerprints_differ() -> No
     )
     assert baseline["tool"]["hash"] == target["tool"]["hash"]
     assert protocol_hash() != ""
+
+
+def test_sampling_schedule_bounds_quadratic_large_corpora() -> None:
+    assert sample_schedule(1000, 2, 7).model_dump() == {"warmups": 2, "runs": 7}
+    assert sample_schedule(5000, 2, 7).model_dump() == {"warmups": 1, "runs": 3}
+    assert sample_schedule(10000, 2, 7).model_dump() == {"warmups": 0, "runs": 1}
 
 
 @pytest.mark.parametrize(
@@ -597,6 +612,12 @@ def test_artifact_schema_rejects_nested_extra_fields_and_coerced_metric_medians(
             lambda document: document["configuration"].update({"probe_sizes": [100]}),
             ("configuration",),
         ),
+        (
+            lambda document: document["configuration"]["samples_by_size"]["100"].update(
+                {"runs": 1}
+            ),
+            ("configuration",),
+        ),
         (lambda document: document["configuration"].update({"runs": 0}), ("configuration", "runs")),
         (lambda document: document["corpus"].update({"hash": "not-a-hash"}), ("corpus", "hash")),
         (
@@ -661,6 +682,11 @@ def _set_sample_runs(document: dict[str, object], runs: int) -> None:
     configuration = document["configuration"]
     assert isinstance(configuration, dict)
     configuration["runs"] = runs
+    schedules = configuration["samples_by_size"]
+    assert isinstance(schedules, dict)
+    for schedule in schedules.values():
+        assert isinstance(schedule, dict)
+        schedule["runs"] = runs
     scenarios = document["scenarios"]
     assert isinstance(scenarios, dict)
     for scenario in scenarios.values():
@@ -683,11 +709,26 @@ def _set_sample_runs(document: dict[str, object], runs: int) -> None:
             probe["startup"]["sample_count"] = runs
 
 
+def _set_sample_warmups(document: dict[str, object], warmups: int) -> None:
+    configuration = document["configuration"]
+    assert isinstance(configuration, dict)
+    configuration["warmups"] = warmups
+    schedules = configuration["samples_by_size"]
+    assert isinstance(schedules, dict)
+    for schedule in schedules.values():
+        assert isinstance(schedule, dict)
+        schedule["warmups"] = warmups
+
+
 def _retarget_sizes(document: dict[str, object], n: int) -> None:
     configuration = document["configuration"]
     assert isinstance(configuration, dict)
     configuration["requested_sizes"] = [n]
     configuration["probe_sizes"] = [n // 2, n]
+    configuration["samples_by_size"] = {
+        str(n // 2): {"warmups": 1, "runs": 2},
+        str(n): {"warmups": 1, "runs": 2},
+    }
     scenarios = document["scenarios"]
     assert isinstance(scenarios, dict)
     for scenario in scenarios.values():
@@ -746,7 +787,7 @@ def _retarget_sizes(document: dict[str, object], n: int) -> None:
         ),
         (
             "sample accounting",
-            lambda document: document["configuration"].update({"warmups": 0}),
+            lambda document: _set_sample_warmups(document, 0),
             "sample accounting.warmups",
         ),
         (

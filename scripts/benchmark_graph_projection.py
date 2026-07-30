@@ -88,6 +88,11 @@ BENCHMARK_PROTOCOL = {
         "scale": "2.5",
     },
     "scaling_pairs": "half_requested_to_requested",
+    "sampling_schedule": {
+        "through_1000": "configured_warmups_and_runs",
+        "through_5000": "at_most_1_warmup_and_3_runs",
+        "above_5000": "0_warmups_and_1_run",
+    },
 }
 
 
@@ -131,11 +136,25 @@ class CorpusIdentity(StrictResultModel):
     scenario_hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+class SampleSchedule(StrictResultModel):
+    warmups: StrictInt = Field(ge=0)
+    runs: StrictInt = Field(gt=0)
+
+
+def sample_schedule(size: int, warmups: int, runs: int) -> SampleSchedule:
+    if size > 5000:
+        return SampleSchedule(warmups=0, runs=1)
+    if size > 1000:
+        return SampleSchedule(warmups=min(warmups, 1), runs=min(runs, 3))
+    return SampleSchedule(warmups=warmups, runs=runs)
+
+
 class BenchmarkConfiguration(StrictResultModel):
     requested_sizes: list[StrictInt]
     probe_sizes: list[StrictInt]
     warmups: StrictInt = Field(ge=0)
     runs: StrictInt = Field(gt=0)
+    samples_by_size: dict[StrictStr, SampleSchedule]
 
     @field_validator("requested_sizes", "probe_sizes")
     @classmethod
@@ -158,6 +177,11 @@ class BenchmarkConfiguration(StrictResultModel):
         )
         if self.probe_sizes != expected:
             raise ValueError("probe_sizes must be the exact union of requested halves and sizes")
+        expected_schedule = {
+            str(size): sample_schedule(size, self.warmups, self.runs) for size in self.probe_sizes
+        }
+        if self.samples_by_size != expected_schedule:
+            raise ValueError("samples_by_size must match the benchmark sampling schedule")
         return self
 
 
@@ -373,10 +397,10 @@ class BenchmarkResult(StrictResultModel):
                     value = getattr(result.metrics, metric)
                     if (
                         isinstance(value, SampledMetric)
-                        and value.sample_count != self.configuration.runs
+                        and value.sample_count != self.configuration.samples_by_size[size_key].runs
                     ):
                         raise ValueError(
-                            f"scenario {scenario_name}/{size}/{metric} sample_count must equal runs"
+                            f"scenario {scenario_name}/{size}/{metric} sample_count must equal size schedule"
                         )
             pairs = {
                 (probe.pair.n, probe.pair.two_n) for probe in self.scaling_probes[scenario_name]
@@ -389,11 +413,12 @@ class BenchmarkResult(StrictResultModel):
                     f"scaling probes for {scenario_name} must match requested half-to-size pairs"
                 )
             if any(
-                probe.startup.sample_count != self.configuration.runs
+                probe.startup.sample_count
+                != self.configuration.samples_by_size[str(probe.pair.two_n)].runs
                 for probe in self.scaling_probes[scenario_name]
             ):
                 raise ValueError(
-                    f"scaling startup sample_count for {scenario_name} must equal runs"
+                    f"scaling startup sample_count for {scenario_name} must equal size schedule"
                 )
         return self
 
@@ -833,6 +858,7 @@ def benchmark(
     artifact_role, implementation_signature = _implementation_identity()
     scaling_pairs = [(size // 2, size) for size in sizes]
     probe_sizes = sorted({probe_size for pair in scaling_pairs for probe_size in pair})
+    samples_by_size = {str(size): sample_schedule(size, warmups, runs) for size in probe_sizes}
     corpora = {
         f"{name}:{size}": [event.model_dump(mode="json") for event in corpus_events(name, size)]
         for name in SCENARIO_NAMES
@@ -845,7 +871,12 @@ def benchmark(
     scaling_probes: dict[str, dict[str, Any]] = {}
     for name in SCENARIO_NAMES:
         by_size = {
-            str(size): _measure(name, corpus_events(name, size), warmups, runs)
+            str(size): _measure(
+                name,
+                corpus_events(name, size),
+                samples_by_size[str(size)].warmups,
+                samples_by_size[str(size)].runs,
+            )
             for size in probe_sizes
         }
         scenarios[name] = {
@@ -868,7 +899,8 @@ def benchmark(
         }
         scaling_probes[name] = []
         for n, two_n in scaling_pairs:
-            startup = _timed(lambda: _replay([]), runs)["median"]
+            probe_runs = samples_by_size[str(two_n)].runs
+            startup = _timed(lambda: _replay([]), probe_runs)["median"]
             scaling_probes[name].append(
                 {
                     "pair": {"n": n, "two_n": two_n},
@@ -877,7 +909,7 @@ def benchmark(
                         "median": startup,
                         "unit": "ms",
                         "source": "current",
-                        "sample_count": runs,
+                        "sample_count": probe_runs,
                     },
                 }
             )
@@ -898,6 +930,9 @@ def benchmark(
             "probe_sizes": probe_sizes,
             "warmups": warmups,
             "runs": runs,
+            "samples_by_size": {
+                size: schedule.model_dump(mode="json") for size, schedule in samples_by_size.items()
+            },
         },
         environment=_environment(),
         max_event_count=max_event_count_metadata(operator_max_event_count),
