@@ -1,6 +1,7 @@
 """Referential-integrity contracts for immutable projection checkpoints."""
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Annotated, cast, get_args, get_origin
 
 import pytest
@@ -15,6 +16,7 @@ from orchestrator.graph import (
     discover_projection_identifier_paths,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
+    load_projection_relation_policy,
     projection_relation_policy_catalog,
     projection_record_relation_policy_catalog,
     projection_relation_policy_gaps,
@@ -506,12 +508,19 @@ def test_identifier_path_discovery_exactly_matches_reviewed_grouped_and_record_p
         "records.by_id.*.value.command_id",
         "records.by_id.*.git.commit_sha",
     } <= set(record_catalog)
-    assert {
+    resolver_paths = {
         path
         for policy_catalog in (catalog, record_catalog)
         for path, policy in policy_catalog.items()
-        if policy.family not in {"external", "derived"}
-    } <= projection_relation_validation_paths()
+        if policy.validation == "resolver"
+    }
+    assert resolver_paths == projection_relation_validation_paths()
+    assert all(
+        policy.validation == policy.family
+        for policy_catalog in (catalog, record_catalog)
+        for policy in policy_catalog.values()
+        if policy.family in {"external", "derived"}
+    )
     assert all(
         policy.rationale.strip()
         for policy in catalog.values()
@@ -552,3 +561,74 @@ def test_identifier_discovery_observes_roles_without_treating_structural_keys_as
         "region_label_by_node.*.key",
         "heterogeneous.*.linked_node_id",
     }
+
+
+def _write_policy(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "policy.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        (
+            """policies:
+  - {path: nodes.*.spec.node_id, scope: grouped, family: node, rationale: canonical node, validation: resolver}
+  - {path: nodes.*.spec.node_id, scope: grouped, family: node, rationale: duplicate node, validation: resolver}
+validation_paths: [nodes.*.spec.node_id]
+""",
+            "duplicate policy path",
+        ),
+        (
+            """policies:
+  - {path: tasks.*.key, scope: grouped, family: derived, rationale: task map key, validation: derived}
+  - {path: nodes.*.key, scope: grouped, family: derived, rationale: node map key, validation: derived}
+validation_paths: []
+""",
+            "policies must be sorted",
+        ),
+        (
+            """policies:
+  - {path: nodes.*.key, scope: grouped, family: derived, rationale: node map key, validation: derived, surprise: true}
+validation_paths: []
+""",
+            "Extra inputs are not permitted",
+        ),
+        (
+            """policies:
+  - {path: nodes.*.spec.node_id, scope: grouped, family: node, rationale: unknown external classification, validation: external}
+validation_paths: []
+""",
+            "external validation must use external family",
+        ),
+        (
+            """policies:
+  - {path: "nodes.[bad]", scope: grouped, family: node, rationale: malformed path, validation: resolver}
+validation_paths: ["nodes.[bad]"]
+""",
+            "String should match pattern",
+        ),
+        (
+            """policies:
+  - {path: nodes.*.spec.node_id, scope: grouped, family: node, rationale: canonical node, validation: resolver}
+  - {path: tasks.*.key, scope: grouped, family: derived, rationale: task map key, validation: derived}
+validation_paths: [nodes.*.spec.node_id, nodes.*.spec.node_id]
+""",
+            "duplicate validation path",
+        ),
+        (
+            """policies:
+  - {path: nodes.*.spec.node_id, scope: grouped, family: node, rationale: canonical node, validation: resolver}
+  - {path: tasks.*.key, scope: grouped, family: derived, rationale: task map key, validation: derived}
+validation_paths: [tasks.*.key, nodes.*.spec.node_id]
+""",
+            "validation paths must be sorted",
+        ),
+    ],
+)
+def test_static_relation_policy_loader_rejects_invalid_checked_data(
+    tmp_path: Path, body: str, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        load_projection_relation_policy(_write_policy(tmp_path, body))

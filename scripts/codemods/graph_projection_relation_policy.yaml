@@ -1,0 +1,1240 @@
+policies:
+- path: execution.applied_cleanup_ids
+  scope: grouped
+  family: cleanup
+  rationale: Identifier is checked against represented cleanup state by an integrity resolver.
+  validation: resolver
+- path: execution.callback_events_by_key.*.idempotency_key
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: execution.callback_events_by_key.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: execution.cleanup_requests_by_id
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: execution.cleanup_requests_by_id.*.cleanup_id
+  scope: grouped
+  family: cleanup
+  rationale: Identifier is checked against represented cleanup state by an integrity resolver.
+  validation: resolver
+- path: execution.cleanup_requests_by_id.*.execution_id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: execution.cleanup_requests_by_id.*.file_state_record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: execution.cleanup_requests_by_id.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: execution.cleanup_requests_by_id.*.producer_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: execution.cleanup_requests_by_id.*.snapshot_id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: execution.environment_failures_by_task.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: execution.environment_failures_by_task.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: execution.environment_failures_by_task.*.record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: execution.environment_failures_by_task.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: execution.leases.*.base_snapshot_id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: execution.leases.*.execution_id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: execution.leases.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: execution.leases.*.lease_id
+  scope: grouped
+  family: lease
+  rationale: Identifier is checked against represented lease state by an integrity resolver.
+  validation: resolver
+- path: execution.leases.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: execution.leases.*.session_id
+  scope: grouped
+  family: session
+  rationale: Identifier is checked against represented session state by an integrity resolver.
+  validation: resolver
+- path: execution.leases.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: governance.approval_decisions_by_node.*.appeal_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.approval_decisions_by_node.*.decider.id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: governance.approval_decisions_by_node.*.gate_id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: governance.approval_decisions_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: governance.approval_decisions_by_node.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.approval_decisions_by_node.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_decisions_by_node.*.appeal_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_decisions_by_node.*.decider.id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: governance.authority_decisions_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: governance.authority_decisions_by_node.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_decisions_by_node.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_revision_blockers.*.edge_id
+  scope: grouped
+  family: edge
+  rationale: Identifier is checked against represented edge state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_revision_blockers.*.from_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_revision_blockers.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_revision_blockers.*.proposal_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_revision_blockers.*.requirement_id
+  scope: grouped
+  family: requirement
+  rationale: Identifier is checked against represented requirement state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_revision_blockers.*.revision_id
+  scope: grouped
+  family: revision
+  rationale: Identifier is checked against represented revision state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_revision_blockers.*.support_ids
+  scope: grouped
+  family: support
+  rationale: Identifier is checked against represented support state by an integrity resolver.
+  validation: resolver
+- path: governance.authority_revision_blockers.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: governance.configured_gates_by_task.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: governance.decision_requests_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: governance.decision_requests_by_node.*.target_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.decision_requests_by_node.*.target_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: governance.gate_decisions_by_task.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: governance.oversight_decisions_by_node.*.appeal_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.oversight_decisions_by_node.*.appealed_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.oversight_decisions_by_node.*.candidate_id
+  scope: grouped
+  family: candidate
+  rationale: Candidate identity is copied into the denormalized oversight decision projection.
+  validation: derived
+- path: governance.oversight_decisions_by_node.*.gate_id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: governance.oversight_decisions_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: governance.oversight_decisions_by_node.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: governance.oversight_decisions_by_node.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: governance.pending_appeals_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: nodes.*.key
+  scope: grouped
+  family: derived
+  rationale: node map key is derived from the canonical node index.
+  validation: derived
+- path: nodes.*.runtime.candidate_id
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.runtime.failed_candidate_id
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.authority_request.target_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.authority_request.target_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.authority_request_record.producer_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.authority_request_record.record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.authority_request_record.run_id
+  scope: grouped
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: nodes.*.spec.authority_request_record.value.target_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.authority_request_record.value.target_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.command_definition_id
+  scope: grouped
+  family: external
+  rationale: command definition belongs to the external command registry.
+  validation: external
+- path: nodes.*.spec.decision_request.target_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.decision_request.target_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: nodes.*.spec.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: planning.accepted_patch_ids_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: planning.accepted_patch_ids_by_node.*.value.*
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: planning.generation_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: planning.latest_no_successor_patch_id_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: planning.latest_no_successor_patch_id_by_node.*.value
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: planning.latest_routine_snapshot.producer_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: planning.latest_routine_snapshot.record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: planning.no_successor_patch_ids_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: planning.no_successor_patch_ids_by_node.*.value.*
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: planning.region_label_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: planning.session_id_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: planning.session_id_by_node.*.value
+  scope: grouped
+  family: session
+  rationale: Identifier is checked against represented session state by an integrity resolver.
+  validation: resolver
+- path: planning.sessions.*.carryover_record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: planning.sessions.*.current_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: planning.successor_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: planning.successor_by_node.*.value
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: records.by_id
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: records.by_id.*.base_snapshot_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.candidate_id
+  scope: record
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.candidate_record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.candidate_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.classifications.*.manifest.hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.classifications.*.source
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.cleanup_applied_event_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.cleanup_id
+  scope: record
+  family: cleanup
+  rationale: Identifier is checked against represented cleanup state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.evaluated_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.external.*.manifest.hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.external.*.source
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.file_state_record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.file_state_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.git.commit_sha
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.git.ref
+  scope: record
+  family: external
+  rationale: git ref belongs to the external git repository.
+  validation: external
+- path: records.by_id.*.git.tree_sha
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.ignored.*.manifest.hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.ignored.*.source
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.patch_bundle_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.producer_node_id
+  scope: record
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.rejected_paths.*.manifest.hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.rejected_paths.*.source
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.residue.*.manifest.hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.residue.*.source
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.run_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.snapshot_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.superseded_by_record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.supersedes_record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.supersedes_task_region_id
+  scope: record
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.supersedes_task_region_ids
+  scope: record
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.task_region_id
+  scope: record
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.tracked.*.manifest.hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.tracked.*.source
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.tree_snapshot_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.untracked.*.manifest.hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.untracked.*.source
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.artifact_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.base_snapshot_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.candidate_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.cited_record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.command_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.content_hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.decider.id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.evaluated_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.execution_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.execution_snapshot_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.failed_node_id
+  scope: record
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.file_state_record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.file_state_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.grades.*.requirement_id
+  scope: record
+  family: requirement
+  rationale: Identifier is checked against represented requirement state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.id
+  scope: record
+  family: requirement
+  rationale: Identifier is checked against represented requirement state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.lease_id
+  scope: record
+  family: lease
+  rationale: Identifier is checked against represented lease state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.patch_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.proposed_by_node_id
+  scope: record
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.rationale_record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.reused_verification_record_id
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.routine_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.source
+  scope: record
+  family: external
+  rationale: source identifier belongs to an external provenance system.
+  validation: external
+- path: records.by_id.*.value.source_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.source_ref
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.stderr_ref.artifact_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.stderr_ref.content_hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.stdout_ref.artifact_id
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.stdout_ref.content_hash
+  scope: record
+  family: external
+  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: records.by_id.*.value.target_node_id
+  scope: record
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.target_region_id
+  scope: record
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.task_region_id
+  scope: record
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.value.verification_report_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.by_id.*.verification_report_record_ids
+  scope: record
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: records.ids_by_node_port.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: records.summaries_by_id
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: records.summaries_by_id.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: records.summaries_by_id.*.producer_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: records.summaries_by_id.*.record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: requirements.active_version_id_by_requirement.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: requirements.active_version_id_by_requirement.*.value
+  scope: grouped
+  family: revision
+  rationale: Identifier is checked against represented revision state by an integrity resolver.
+  validation: resolver
+- path: requirements.revisions_by_id
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: requirements.revisions_by_id.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: requirements.revisions_by_id.*.previous_version_id
+  scope: grouped
+  family: revision
+  rationale: Identifier is checked against represented revision state by an integrity resolver.
+  validation: resolver
+- path: requirements.revisions_by_id.*.requirement_id
+  scope: grouped
+  family: requirement
+  rationale: Identifier is checked against represented requirement state by an integrity resolver.
+  validation: resolver
+- path: requirements.revisions_by_id.*.version_id
+  scope: grouped
+  family: revision
+  rationale: Identifier is checked against represented revision state by an integrity resolver.
+  validation: resolver
+- path: requirements.support_by_id
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: requirements.support_by_id.*.evidence_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: requirements.support_by_id.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: requirements.support_by_id.*.requirement_id
+  scope: grouped
+  family: requirement
+  rationale: Identifier is checked against represented requirement state by an integrity resolver.
+  validation: resolver
+- path: requirements.support_by_id.*.requirement_version_id
+  scope: grouped
+  family: revision
+  rationale: Identifier is checked against represented revision state by an integrity resolver.
+  validation: resolver
+- path: requirements.support_by_id.*.support_id
+  scope: grouped
+  family: support
+  rationale: Identifier is checked against represented support state by an integrity resolver.
+  validation: resolver
+- path: scheduling.ready_node_ids
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: tasks.*.candidates.*.candidate_id
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: tasks.*.candidates.*.file_state_record_ids
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: tasks.*.candidates.*.supersedes_task_region_ids
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: tasks.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: topology.edges.*.edge_id
+  scope: grouped
+  family: edge
+  rationale: Identifier is checked against represented edge state by an integrity resolver.
+  validation: resolver
+- path: topology.edges.*.from_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: topology.edges.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: topology.edges.*.to_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: topology.inbound_edge_ids
+  scope: grouped
+  family: edge
+  rationale: Identifier is checked against represented edge state by an integrity resolver.
+  validation: resolver
+- path: topology.input_bindings.*.*.edge_id
+  scope: grouped
+  family: edge
+  rationale: Identifier is checked against represented edge state by an integrity resolver.
+  validation: resolver
+- path: topology.input_bindings.*.*.record_ids
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: topology.input_bindings.*.*.supersedes_record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: topology.input_bindings.*.*.to_node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: topology.outbound_edge_ids
+  scope: grouped
+  family: edge
+  rationale: Identifier is checked against represented edge state by an integrity resolver.
+  validation: resolver
+- path: usage.action_count_by_node_kind.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: usage.execution_count_by_node_kind.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: usage.latency_ms_by_node_kind.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: usage.tokens_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: usage.tokens_by_node_kind.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: verification.check_results_by_node.*.candidate_record_ids
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.check_results_by_node.*.evaluated_record_ids
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.check_results_by_node.*.file_state_record_ids
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.check_results_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: verification.check_results_by_node.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: verification.check_results_by_node.*.record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.check_results_by_node.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: verification.failed_candidate_ids
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: verification.failed_results_by_record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.failed_results_by_record_id.*.candidate_id
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: verification.failed_results_by_record_id.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: verification.failed_results_by_record_id.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: verification.failed_results_by_record_id.*.record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.failed_results_by_record_id.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: verification.invalid_test_blocks_by_task.*.candidate_id
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: verification.invalid_test_blocks_by_task.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: verification.passed_candidate_ids
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: verification.passed_results_by_record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.passed_results_by_record_id.*.candidate_id
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: verification.passed_results_by_record_id.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: verification.passed_results_by_record_id.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: verification.passed_results_by_record_id.*.record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.passed_results_by_record_id.*.task_region_id
+  scope: grouped
+  family: task
+  rationale: Identifier is checked against represented task state by an integrity resolver.
+  validation: resolver
+- path: verification.recovery_nodes_by_record_id
+  scope: grouped
+  family: record
+  rationale: Identifier is checked against represented record state by an integrity resolver.
+  validation: resolver
+- path: verification.recovery_nodes_by_record_id.*.*.node_id
+  scope: grouped
+  family: node
+  rationale: Identifier is checked against represented node state by an integrity resolver.
+  validation: resolver
+- path: verification.recovery_nodes_by_record_id.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+- path: verification.verdicts_by_node.*.candidate_id
+  scope: grouped
+  family: candidate
+  rationale: Identifier is checked against represented candidate state by an integrity resolver.
+  validation: resolver
+- path: verification.verdicts_by_node.*.key
+  scope: grouped
+  family: derived
+  rationale: Identity is derived from the containing canonical map or index structure.
+  validation: derived
+# This separately authored list mirrors resolver/visitor branches. Canonical
+# map-key, index, and field-equality checks remain derived policies rather than
+# relation-resolver paths, even when integrity traversal also checks their shape.
+validation_paths:
+- execution.applied_cleanup_ids
+- execution.callback_events_by_key.*.node_id
+- execution.cleanup_requests_by_id.*.cleanup_id
+- execution.cleanup_requests_by_id.*.file_state_record_id
+- execution.cleanup_requests_by_id.*.producer_node_id
+- execution.environment_failures_by_task.*.node_id
+- execution.environment_failures_by_task.*.record_id
+- execution.environment_failures_by_task.*.task_region_id
+- execution.leases.*.lease_id
+- execution.leases.*.node_id
+- execution.leases.*.session_id
+- execution.leases.*.task_region_id
+- governance.approval_decisions_by_node.*.appeal_node_id
+- governance.approval_decisions_by_node.*.node_id
+- governance.approval_decisions_by_node.*.task_region_id
+- governance.authority_decisions_by_node.*.appeal_node_id
+- governance.authority_decisions_by_node.*.node_id
+- governance.authority_decisions_by_node.*.task_region_id
+- governance.authority_revision_blockers.*.edge_id
+- governance.authority_revision_blockers.*.from_node_id
+- governance.authority_revision_blockers.*.node_id
+- governance.authority_revision_blockers.*.proposal_id
+- governance.authority_revision_blockers.*.requirement_id
+- governance.authority_revision_blockers.*.revision_id
+- governance.authority_revision_blockers.*.support_ids
+- governance.authority_revision_blockers.*.task_region_id
+- governance.decision_requests_by_node.*.target_node_id
+- governance.decision_requests_by_node.*.target_region_id
+- governance.oversight_decisions_by_node.*.appeal_node_id
+- governance.oversight_decisions_by_node.*.appealed_node_id
+- governance.oversight_decisions_by_node.*.node_id
+- governance.oversight_decisions_by_node.*.task_region_id
+- nodes.*.runtime.candidate_id
+- nodes.*.runtime.failed_candidate_id
+- nodes.*.spec.authority_request.target_node_id
+- nodes.*.spec.authority_request.target_region_id
+- nodes.*.spec.authority_request_record.producer_node_id
+- nodes.*.spec.authority_request_record.record_id
+- nodes.*.spec.authority_request_record.value.target_node_id
+- nodes.*.spec.authority_request_record.value.target_region_id
+- nodes.*.spec.decision_request.target_node_id
+- nodes.*.spec.decision_request.target_region_id
+- nodes.*.spec.node_id
+- nodes.*.spec.task_region_id
+- planning.accepted_patch_ids_by_node.*.value.*
+- planning.latest_no_successor_patch_id_by_node.*.value
+- planning.latest_routine_snapshot.producer_node_id
+- planning.latest_routine_snapshot.record_id
+- planning.no_successor_patch_ids_by_node.*.value.*
+- planning.session_id_by_node.*.value
+- planning.sessions.*.carryover_record_id
+- planning.sessions.*.current_node_id
+- planning.successor_by_node.*.value
+- records.by_id.*.candidate_id
+- records.by_id.*.candidate_record_id
+- records.by_id.*.candidate_record_ids
+- records.by_id.*.cleanup_id
+- records.by_id.*.evaluated_record_ids
+- records.by_id.*.file_state_record_id
+- records.by_id.*.file_state_record_ids
+- records.by_id.*.producer_node_id
+- records.by_id.*.record_id
+- records.by_id.*.superseded_by_record_id
+- records.by_id.*.supersedes_record_id
+- records.by_id.*.supersedes_task_region_id
+- records.by_id.*.supersedes_task_region_ids
+- records.by_id.*.task_region_id
+- records.by_id.*.value.candidate_record_ids
+- records.by_id.*.value.cited_record_id
+- records.by_id.*.value.evaluated_record_ids
+- records.by_id.*.value.failed_node_id
+- records.by_id.*.value.file_state_record_id
+- records.by_id.*.value.file_state_record_ids
+- records.by_id.*.value.grades.*.requirement_id
+- records.by_id.*.value.id
+- records.by_id.*.value.lease_id
+- records.by_id.*.value.proposed_by_node_id
+- records.by_id.*.value.rationale_record_id
+- records.by_id.*.value.reused_verification_record_id
+- records.by_id.*.value.source_record_ids
+- records.by_id.*.value.target_node_id
+- records.by_id.*.value.target_region_id
+- records.by_id.*.value.task_region_id
+- records.by_id.*.value.verification_report_record_ids
+- records.by_id.*.verification_report_record_ids
+- records.summaries_by_id.*.producer_node_id
+- records.summaries_by_id.*.record_id
+- requirements.active_version_id_by_requirement.*.value
+- requirements.revisions_by_id.*.previous_version_id
+- requirements.revisions_by_id.*.requirement_id
+- requirements.revisions_by_id.*.version_id
+- requirements.support_by_id.*.evidence_id
+- requirements.support_by_id.*.requirement_id
+- requirements.support_by_id.*.requirement_version_id
+- requirements.support_by_id.*.support_id
+- scheduling.ready_node_ids
+- tasks.*.candidates.*.candidate_id
+- tasks.*.candidates.*.file_state_record_ids
+- tasks.*.candidates.*.supersedes_task_region_ids
+- topology.edges.*.edge_id
+- topology.edges.*.from_node_id
+- topology.edges.*.to_node_id
+- topology.inbound_edge_ids
+- topology.input_bindings.*.*.edge_id
+- topology.input_bindings.*.*.record_ids
+- topology.input_bindings.*.*.supersedes_record_id
+- topology.input_bindings.*.*.to_node_id
+- topology.outbound_edge_ids
+- verification.check_results_by_node.*.candidate_record_ids
+- verification.check_results_by_node.*.evaluated_record_ids
+- verification.check_results_by_node.*.file_state_record_ids
+- verification.check_results_by_node.*.node_id
+- verification.check_results_by_node.*.record_id
+- verification.check_results_by_node.*.task_region_id
+- verification.failed_candidate_ids
+- verification.failed_results_by_record_id
+- verification.failed_results_by_record_id.*.candidate_id
+- verification.failed_results_by_record_id.*.node_id
+- verification.failed_results_by_record_id.*.record_id
+- verification.failed_results_by_record_id.*.task_region_id
+- verification.invalid_test_blocks_by_task.*.candidate_id
+- verification.passed_candidate_ids
+- verification.passed_results_by_record_id
+- verification.passed_results_by_record_id.*.candidate_id
+- verification.passed_results_by_record_id.*.node_id
+- verification.passed_results_by_record_id.*.record_id
+- verification.passed_results_by_record_id.*.task_region_id
+- verification.recovery_nodes_by_record_id
+- verification.recovery_nodes_by_record_id.*.*.node_id
+- verification.verdicts_by_node.*.candidate_id

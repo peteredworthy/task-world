@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 from math import isfinite
+from pathlib import Path
+from re import fullmatch
 from types import UnionType
 from typing import (
     Annotated,
@@ -18,7 +20,8 @@ from typing import (
     get_type_hints,
 )
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from pydantic_core import PydanticSerializationError
 
 from orchestrator.graph.projection_models import (
@@ -357,14 +360,85 @@ RelationFamily = Literal[
     "external",
     "derived",
 ]
+RelationScope = Literal["grouped", "record"]
+RelationValidation = Literal["resolver", "external", "derived"]
+_RELATION_PATH_PATTERN = r"^[a-z][a-z0-9_]*(?:\.(?:[a-z][a-z0-9_]*|\*))*$"
 
 
 class RelationPolicy(BaseModel):
     """Reviewed ownership decision for one public identifier path."""
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    path: str = Field(pattern=_RELATION_PATH_PATTERN)
+    scope: RelationScope
     family: RelationFamily
-    rationale: str
+    rationale: str = Field(min_length=1)
+    validation: RelationValidation
+
+    @model_validator(mode="after")
+    def coherent_classification(self) -> "RelationPolicy":
+        expected_scope = "record" if self.path.startswith("records.by_id.*.") else "grouped"
+        if self.scope != expected_scope:
+            raise ValueError(f"scope must be {expected_scope!r} for {self.path!r}")
+        if self.family in {"external", "derived"} and self.validation != self.family:
+            raise ValueError(f"{self.family} family must use {self.family} validation")
+        if self.validation == "external" and self.family != "external":
+            raise ValueError("external validation must use external family")
+        return self
+
+
+class ProjectionRelationPolicyArtifact(BaseModel):
+    """Strict immutable representation of the checked relation-policy YAML."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+    policies: tuple[RelationPolicy, ...] = Field(min_length=1)
+    validation_paths: tuple[str, ...]
+
+    @field_validator("policies", "validation_paths", mode="before")
+    @classmethod
+    def freeze_yaml_sequences(cls, value: object) -> object:
+        return tuple(cast(list[object], value)) if type(value) is list else value
+
+    @field_validator("validation_paths")
+    @classmethod
+    def valid_validation_paths(cls, paths: tuple[str, ...]) -> tuple[str, ...]:
+        for path in paths:
+            if not fullmatch(_RELATION_PATH_PATTERN, path):
+                raise ValueError(f"malformed validation path {path!r}")
+        if len(paths) != len(set(paths)):
+            raise ValueError("duplicate validation path")
+        if paths != tuple(sorted(paths)):
+            raise ValueError("validation paths must be sorted")
+        return paths
+
+    @model_validator(mode="after")
+    def exact_policy_contract(self) -> "ProjectionRelationPolicyArtifact":
+        paths = tuple(policy.path for policy in self.policies)
+        if len(paths) != len(set(paths)):
+            raise ValueError("duplicate policy path")
+        if paths != tuple(sorted(paths)):
+            raise ValueError("policies must be sorted by path")
+        resolver_paths = tuple(
+            policy.path for policy in self.policies if policy.validation == "resolver"
+        )
+        if resolver_paths != self.validation_paths:
+            raise ValueError("validation paths must exactly match resolver policies")
+        return self
+
+
+_RELATION_POLICY_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "scripts"
+    / "codemods"
+    / "graph_projection_relation_policy.yaml"
+)
+
+
+def load_projection_relation_policy(path: Path) -> ProjectionRelationPolicyArtifact:
+    """Load and strictly validate checked relation-policy data from ``path``."""
+    return ProjectionRelationPolicyArtifact.model_validate(
+        yaml.safe_load(path.read_text(encoding="utf-8"))
+    )
 
 
 _EXPLICIT_IDENTIFIER_FIELDS = frozenset(
@@ -512,86 +586,17 @@ def discover_projection_identifier_paths(root: type[ProjectionModel]) -> set[str
     return paths
 
 
-def _policy_for_path(path: str) -> RelationPolicy:
-    """Classify a discovered path using the finite public identifier vocabulary."""
+_RELATION_POLICY_ARTIFACT = load_projection_relation_policy(_RELATION_POLICY_PATH)
 
-    if path == "nodes.*.key":
-        return RelationPolicy(
-            family="derived", rationale="node map key is derived from the canonical node index"
-        )
-    if path.endswith(".key"):
-        return RelationPolicy(
-            family="derived", rationale="canonical FrozenMap key identity is derived from its index"
-        )
-    family_tokens: tuple[tuple[str, RelationFamily], ...] = (
-        ("node", "node"),
-        ("task_region", "task"),
-        ("record", "record"),
-        ("candidate", "candidate"),
-        ("requirement_version", "revision"),
-        ("version", "revision"),
-        ("revision", "revision"),
-        ("requirement", "requirement"),
-        ("support", "support"),
-        ("lease", "lease"),
-        ("cleanup", "cleanup"),
-        ("edge", "edge"),
-        ("session", "session"),
-    )
-    leaf = path.rsplit(".", maxsplit=1)[-1]
-    if path in {
-        "nodes.*.spec.command_definition_id",
-        "records.by_id.*.git.ref",
-        "records.by_id.*.value.source",
-    }:
-        rationale = {
-            "nodes.*.spec.command_definition_id": "command definition belongs to an external command registry",
-            "records.by_id.*.git.ref": "git ref belongs to the external git repository",
-            "records.by_id.*.value.source": "source identifier belongs to an external provenance system",
-        }[path]
-        return RelationPolicy(
-            family="external",
-            rationale=rationale,
-        )
-    if leaf in {
-        "command_id",
-        "execution_id",
-        "snapshot_id",
-        "artifact_id",
-        "commit_sha",
-        "tree_sha",
-    }:
-        return RelationPolicy(
-            family="external",
-            rationale="identifier belongs to an intentionally unrepresented external system",
-        )
-    for token, family in family_tokens:
-        if token in path:
-            return RelationPolicy(
-                family=family,
-                rationale=f"identifier is resolved against represented {family} state",
-            )
-    return RelationPolicy(
-        family="external",
-        rationale="identifier belongs to an intentionally unrepresented external system",
-    )
-
-
-_DISCOVERED_IDENTIFIER_PATHS = frozenset(
-    discover_projection_identifier_paths(ImmutableGraphProjection)
-)
-_RECORD_IDENTIFIER_PATHS = frozenset(
-    path for path in _DISCOVERED_IDENTIFIER_PATHS if path.startswith("records.by_id.*.")
-)
-_GROUPED_IDENTIFIER_PATHS = _DISCOVERED_IDENTIFIER_PATHS - _RECORD_IDENTIFIER_PATHS
-
-# The two finite mappings are the public review boundary: records remain a
-# separate typed-visitor responsibility, while grouped state is checked here.
+# The two finite mappings are loaded from checked data. Discovery remains an
+# independent model-graph audit and never constructs runtime policy.
 RELATION_POLICY_CATALOG: dict[str, RelationPolicy] = {
-    path: _policy_for_path(path) for path in sorted(_GROUPED_IDENTIFIER_PATHS)
+    policy.path: policy
+    for policy in _RELATION_POLICY_ARTIFACT.policies
+    if policy.scope == "grouped"
 }
 RECORD_RELATION_POLICY_CATALOG: dict[str, RelationPolicy] = {
-    path: _policy_for_path(path) for path in sorted(_RECORD_IDENTIFIER_PATHS)
+    policy.path: policy for policy in _RELATION_POLICY_ARTIFACT.policies if policy.scope == "record"
 }
 
 
@@ -606,15 +611,8 @@ def projection_record_relation_policy_catalog() -> dict[str, RelationPolicy]:
 
 
 def projection_relation_validation_paths() -> frozenset[str]:
-    """Finite public path set enforced by relation resolvers or typed visitors."""
-    return frozenset(
-        path
-        for path, policy in {
-            **projection_relation_policy_catalog(),
-            **projection_record_relation_policy_catalog(),
-        }.items()
-        if policy.family not in {"external", "derived"}
-    )
+    """Return the separately authored resolver/visitor path contract."""
+    return frozenset(_RELATION_POLICY_ARTIFACT.validation_paths)
 
 
 def projection_relation_policy_gaps(root: type[ProjectionModel]) -> frozenset[str]:
@@ -624,122 +622,6 @@ def projection_relation_policy_gaps(root: type[ProjectionModel]) -> frozenset[st
         - set(projection_relation_policy_catalog())
         - set(projection_record_relation_policy_catalog())
     )
-
-
-# Every identifier-bearing projection path is deliberately catalogued.  A
-# resolver family means it is checked against represented state; external
-# means the value denotes an intentionally unrepresented system (git, command,
-# artifact, execution, callback, or snapshot) rather than a graph relation.
-_LEGACY_RELATION_POLICY_CATALOG: dict[str, RelationFamily] = {
-    "nodes.*.spec.task_region_id": "task",
-    "nodes.*.spec.authority_request_record.record_id": "record",
-    "nodes.*.spec.authority_request_record.producer_node_id": "node",
-    "nodes.*.spec.authority_request_record.value.target_node_id": "node",
-    "nodes.*.spec.authority_request_record.value.target_region_id": "task",
-    "nodes.*.spec.decision_request.target_node_id": "node",
-    "nodes.*.spec.decision_request.target_region_id": "task",
-    "nodes.*.spec.authority_request.target_node_id": "node",
-    "nodes.*.spec.authority_request.target_region_id": "task",
-    "nodes.*.spec.command_definition_id": "external",
-    "nodes.*.runtime.candidate_id": "candidate",
-    "nodes.*.runtime.failed_candidate_id": "candidate",
-    "tasks.*.candidates.*.file_state_record_ids": "record",
-    "tasks.*.candidates.*.supersedes_task_region_ids": "task",
-    "topology.edges.*.from_node_id": "node",
-    "topology.edges.*.to_node_id": "node",
-    "topology.input_bindings.*.*.edge_id": "edge",
-    "topology.input_bindings.*.*.to_node_id": "node",
-    "topology.input_bindings.*.*.record_ids": "record",
-    "topology.input_bindings.*.*.supersedes_record_id": "record",
-    "planning.successor_by_node": "node",
-    "planning.accepted_patch_ids_by_node": "record",
-    "planning.no_successor_patch_ids_by_node": "record",
-    "planning.latest_no_successor_patch_id_by_node": "record",
-    "planning.latest_routine_snapshot.record_id": "record",
-    "planning.latest_routine_snapshot.producer_node_id": "node",
-    "planning.session_id_by_node": "session",
-    "planning.sessions.*.current_node_id": "node",
-    "planning.sessions.*.carryover_record_id": "record",
-    "verification.verdicts_by_node.*.candidate_id": "candidate",
-    "verification.*_results_by_record_id.*.record_id": "record",
-    "verification.*_results_by_record_id.*.node_id": "node",
-    "verification.*_results_by_record_id.*.candidate_id": "candidate",
-    "verification.*_results_by_record_id.*.task_region_id": "task",
-    "verification.recovery_nodes_by_record_id": "record",
-    "verification.check_results_by_node.*.record_id": "record",
-    "verification.check_results_by_node.*.candidate_record_ids": "record",
-    "verification.check_results_by_node.*.file_state_record_ids": "record",
-    "verification.check_results_by_node.*.evaluated_record_ids": "record",
-    "verification.check_results_by_node.*.node_id": "node",
-    "verification.invalid_test_blocks_by_task": "task",
-    "governance.*_decisions_by_node.*.task_region_id": "task",
-    "governance.*_decisions_by_node.*.appeal_node_id": "node",
-    "governance.oversight_decisions_by_node.*.appealed_node_id": "node",
-    "governance.decision_requests_by_node.*.target_node_id": "node",
-    "governance.decision_requests_by_node.*.target_region_id": "task",
-    "governance.authority_revision_blockers.*.node_id": "node",
-    "governance.authority_revision_blockers.*.edge_id": "edge",
-    "governance.authority_revision_blockers.*.from_node_id": "node",
-    "governance.authority_revision_blockers.*.task_region_id": "task",
-    "governance.authority_revision_blockers.*.requirement_id": "requirement",
-    "governance.authority_revision_blockers.*.revision_id": "revision",
-    "governance.authority_revision_blockers.*.support_ids": "support",
-    "governance.authority_revision_blockers.*.proposal_id": "record",
-    "requirements.revisions_by_id.*.previous_version_id": "revision",
-    "requirements.revisions_by_id.*.requirement_id": "requirement",
-    "requirements.revisions_by_id.*.version_id": "revision",
-    "requirements.active_version_id_by_requirement": "revision",
-    "requirements.support_by_id.*.requirement_id": "requirement",
-    "requirements.support_by_id.*.evidence_id": "record",
-    "requirements.support_by_id.*.requirement_version_id": "revision",
-    "execution.leases.*.node_id": "node",
-    "execution.leases.*.task_region_id": "task",
-    "execution.leases.*.session_id": "session",
-    "execution.environment_failures_by_task.*.node_id": "node",
-    "execution.environment_failures_by_task.*.task_region_id": "task",
-    "execution.environment_failures_by_task.*.record_id": "record",
-    "execution.callback_events_by_key.*.node_id": "node",
-    "execution.callback_events_by_key.*.idempotency_key": "external",
-    "execution.cleanup_requests_by_id.*.file_state_record_id": "record",
-    "execution.cleanup_requests_by_id.*.producer_node_id": "node",
-    "execution.applied_cleanup_ids": "cleanup",
-    "usage.tokens_by_node": "node",
-    "usage.recorded_keys": "node",
-    "records.failure_record.value.failed_node_id": "node",
-    "records.failure_record.value.lease_id": "lease",
-    "records.file_state.cleanup_id": "cleanup",
-    "records.file_state.supersedes_record_id": "record",
-    "records.file_state.superseded_by_record_id": "record",
-    "records.candidate.task_region_id": "task",
-    "records.candidate.value.requirements_addressed": "requirement",
-    "records.candidate.file_state_record_ids": "record",
-    "records.candidate.file_state_record_id": "record",
-    "records.check_result.candidate_id": "candidate",
-    "records.check_result.task_region_id": "task",
-    "records.check_result.value.cited_record_id": "record",
-    "records.check_result.value.reused_verification_record_id": "record",
-    "records.graph_patch_proposal.value.proposed_by_node_id": "node",
-    "records.graph_patch_proposal.value.rationale_record_id": "record",
-    "records.analysis_summary.value.source_record_ids": "record",
-    "records.artifact_reference.value.source_record_ids": "record",
-    "records.join_result.value.source_record_ids": "record",
-    "records.verification_report.candidate_id": "candidate",
-    "records.verification_report.task_region_id": "task",
-    "records.verification_report.candidate_record_ids": "record",
-    "records.verification_report.candidate_record_id": "record",
-    "records.verification_report.file_state_record_ids": "record",
-    "records.verification_report.evaluated_record_ids": "record",
-    "records.verification_report.value.grades.*.requirement_id": "requirement",
-    "records.requirement_record.value.id": "requirement",
-    "records.requirement_record.value.version": "revision",
-    "records.requirement_record.value.supersedes": "revision",
-    "records.*.git.ref": "external",
-    "records.*.value.command_id": "external",
-    "records.*.value.execution_id": "external",
-    "records.*.snapshot_id": "external",
-    "records.*.base_snapshot_id": "external",
-    "records.*.cleanup_applied_event_id": "external",
-}
 
 
 def _record_relations(
