@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from scripts.benchmark_graph_projection import (
     BENCHMARK_PROTOCOL,
     BenchmarkResult,
+    SCENARIOS_PATH,
     corpus_metadata,
     corpus_events,
     gate_violations,
@@ -196,6 +197,13 @@ def test_corpus_metadata_expresses_scenario_dominance_without_generated_total_sn
         metadata["record-heavy"]["projected"]["records"]
         > metadata["edge-heavy"]["projected"]["records"]
     )
+
+
+def test_scenario_metadata_declares_each_emitted_event_family() -> None:
+    declared = json.loads(SCENARIOS_PATH.read_text())["scenarios"]
+    for scenario in ("general", "edge-heavy", "record-heavy"):
+        emitted = {event.event_type for event in corpus_events(scenario, 100)}
+        assert set(declared[scenario]["event_mix"].split(",")) == emitted
 
 
 def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_gating(

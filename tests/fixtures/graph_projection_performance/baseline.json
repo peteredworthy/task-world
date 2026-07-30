@@ -1,0 +1,2203 @@
+{
+  "artifact": {
+    "implementation_signature": "legacy-mapping:projection-schema-12",
+    "role": "baseline"
+  },
+  "configuration": {
+    "probe_sizes": [
+      50,
+      100,
+      500,
+      1000,
+      5000,
+      10000
+    ],
+    "requested_sizes": [
+      100,
+      1000,
+      10000
+    ],
+    "runs": 7,
+    "samples_by_size": {
+      "100": {
+        "runs": 7,
+        "warmups": 2
+      },
+      "1000": {
+        "runs": 7,
+        "warmups": 2
+      },
+      "10000": {
+        "runs": 1,
+        "warmups": 0
+      },
+      "50": {
+        "runs": 7,
+        "warmups": 2
+      },
+      "500": {
+        "runs": 7,
+        "warmups": 2
+      },
+      "5000": {
+        "runs": 3,
+        "warmups": 1
+      }
+    },
+    "warmups": 2
+  },
+  "corpus": {
+    "hash": "f5c474543716235857d9a140ab2c62d965fe41929309648dbd4ffa1a3cb856e7",
+    "scenario_hash": "e33e5cdd1cb28419d41811083bbc976bc9cbe6299ca09a9da568937c97917b20"
+  },
+  "environment": {
+    "comparable": {
+      "architecture": "arm64",
+      "dependencies": {
+        "pydantic": "2.12.5",
+        "sqlalchemy": "2.0.46"
+      },
+      "python": "3.12.12"
+    },
+    "informational": {
+      "host": "Peters-MacBook-Pro.local",
+      "os": "Darwin",
+      "os_release": "25.5.0",
+      "processor": "arm"
+    }
+  },
+  "max_event_count": {
+    "count": null,
+    "kind": "unsupported",
+    "source": "unsupported",
+    "status": "unsupported"
+  },
+  "scaling_probes": {
+    "edge-heavy": [
+      {
+        "pair": {
+          "n": 50,
+          "two_n": 100
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002541,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      },
+      {
+        "pair": {
+          "n": 500,
+          "two_n": 1000
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002416,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      },
+      {
+        "pair": {
+          "n": 5000,
+          "two_n": 10000
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002584,
+          "sample_count": 1,
+          "source": "current",
+          "unit": "ms"
+        }
+      }
+    ],
+    "general": [
+      {
+        "pair": {
+          "n": 50,
+          "two_n": 100
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002625,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      },
+      {
+        "pair": {
+          "n": 500,
+          "two_n": 1000
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002375,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      },
+      {
+        "pair": {
+          "n": 5000,
+          "two_n": 10000
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002417,
+          "sample_count": 1,
+          "source": "current",
+          "unit": "ms"
+        }
+      }
+    ],
+    "record-heavy": [
+      {
+        "pair": {
+          "n": 50,
+          "two_n": 100
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002542,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      },
+      {
+        "pair": {
+          "n": 500,
+          "two_n": 1000
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002458,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      },
+      {
+        "pair": {
+          "n": 5000,
+          "two_n": 10000
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002542,
+          "sample_count": 1,
+          "source": "current",
+          "unit": "ms"
+        }
+      }
+    ]
+  },
+  "scenarios": {
+    "edge-heavy": {
+      "sizes": {
+        "100": {
+          "metadata": {
+            "event_count": 100,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 99,
+              "nodes": 100
+            },
+            "stream": {
+              "event_count": 100,
+              "family_counts": {
+                "edge_created": 49,
+                "node_created": 51,
+                "node_state_changed": 0,
+                "output_record_accepted": 0
+              },
+              "projected": {
+                "append_index_entries": 0,
+                "edges": 49,
+                "nodes": 51,
+                "records": 0
+              },
+              "scenario": "edge-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 0.232792,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 23311.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 0.2335,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 0.174667,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 1.953583,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 69304320.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 1.564667,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 0.343208,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 2.025458,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.02025458,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 1.214125,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "1000": {
+          "metadata": {
+            "event_count": 1000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 999,
+              "nodes": 1000
+            },
+            "stream": {
+              "event_count": 1000,
+              "family_counts": {
+                "edge_created": 499,
+                "node_created": 501,
+                "node_state_changed": 0,
+                "output_record_accepted": 0
+              },
+              "projected": {
+                "append_index_entries": 0,
+                "edges": 499,
+                "nodes": 501,
+                "records": 0
+              },
+              "scenario": "edge-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 6.4475,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 216361.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 2.346041,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 1.758,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 42.798416,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 72220672.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 18.024291,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 3.5015,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 42.059292,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.042059292,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 28.7245,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "10000": {
+          "metadata": {
+            "event_count": 10000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 9999,
+              "nodes": 10000
+            },
+            "stream": {
+              "event_count": 10000,
+              "family_counts": {
+                "edge_created": 4999,
+                "node_created": 5001,
+                "node_state_changed": 0,
+                "output_record_accepted": 0
+              },
+              "projected": {
+                "append_index_entries": 0,
+                "edges": 4999,
+                "nodes": 5001,
+                "records": 0
+              },
+              "scenario": "edge-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 533.650375,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 2155861.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 27.692125,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 19.438666,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 3112.797917,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 107282432.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 416.324334,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 39.162584,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 2958.408833,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.295840883,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 2339.277167,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "50": {
+          "metadata": {
+            "event_count": 50,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 49,
+              "nodes": 50
+            },
+            "stream": {
+              "event_count": 50,
+              "family_counts": {
+                "edge_created": 24,
+                "node_created": 26,
+                "node_state_changed": 0,
+                "output_record_accepted": 0
+              },
+              "projected": {
+                "append_index_entries": 0,
+                "edges": 24,
+                "nodes": 26,
+                "records": 0
+              },
+              "scenario": "edge-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 0.102959,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 12636.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 0.125292,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 0.089875,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 0.933625,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 69287936.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 0.780375,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 0.164833,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 0.936083,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.01872166,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 0.556833,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "500": {
+          "metadata": {
+            "event_count": 500,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 499,
+              "nodes": 500
+            },
+            "stream": {
+              "event_count": 500,
+              "family_counts": {
+                "edge_created": 249,
+                "node_created": 251,
+                "node_state_changed": 0,
+                "output_record_accepted": 0
+              },
+              "projected": {
+                "append_index_entries": 0,
+                "edges": 249,
+                "nodes": 251,
+                "records": 0
+              },
+              "scenario": "edge-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 1.970792,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 109111.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 1.122208,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 0.815542,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 15.112875,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 70500352.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 8.830792,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 1.7,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 15.265666,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.030531332,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 9.629958,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "5000": {
+          "metadata": {
+            "event_count": 5000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 4999,
+              "nodes": 5000
+            },
+            "stream": {
+              "event_count": 5000,
+              "family_counts": {
+                "edge_created": 2499,
+                "node_created": 2501,
+                "node_state_changed": 0,
+                "output_record_accepted": 0
+              },
+              "projected": {
+                "append_index_entries": 0,
+                "edges": 2499,
+                "nodes": 2501,
+                "records": 0
+              },
+              "scenario": "edge-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 130.260584,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 1078361.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 12.84175,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 9.201041,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 737.475875,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 87457792.0,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 212.414708,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 18.836833,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 739.57675,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.14791535,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 535.032791,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        }
+      }
+    },
+    "general": {
+      "sizes": {
+        "100": {
+          "metadata": {
+            "event_count": 100,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 99,
+              "nodes": 100
+            },
+            "stream": {
+              "event_count": 100,
+              "family_counts": {
+                "edge_created": 25,
+                "node_created": 26,
+                "node_state_changed": 25,
+                "output_record_accepted": 24
+              },
+              "projected": {
+                "append_index_entries": 24,
+                "edges": 25,
+                "nodes": 26,
+                "records": 24
+              },
+              "scenario": "general"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 0.528416,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 56645.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 4.500291,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 0.326708,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 4.60325,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 69451776.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 1.5675,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 0.230083,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 4.03675,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.0403675,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 4.7525,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "1000": {
+          "metadata": {
+            "event_count": 1000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 999,
+              "nodes": 1000
+            },
+            "stream": {
+              "event_count": 1000,
+              "family_counts": {
+                "edge_created": 250,
+                "node_created": 251,
+                "node_state_changed": 250,
+                "output_record_accepted": 249
+              },
+              "projected": {
+                "append_index_entries": 249,
+                "edges": 250,
+                "nodes": 251,
+                "records": 249
+              },
+              "scenario": "general"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 93.922333,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 564920.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 57.017208,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 3.578958,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 363.316292,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 72876032.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 19.38625,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 2.455917,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 312.656917,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.312656917,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 299.808708,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "10000": {
+          "metadata": {
+            "event_count": 10000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 9999,
+              "nodes": 10000
+            },
+            "stream": {
+              "event_count": 10000,
+              "family_counts": {
+                "edge_created": 2500,
+                "node_created": 2501,
+                "node_state_changed": 2500,
+                "output_record_accepted": 2499
+              },
+              "projected": {
+                "append_index_entries": 2499,
+                "edges": 2500,
+                "nodes": 2501,
+                "records": 2499
+              },
+              "scenario": "general"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 24011.075167,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 5665670.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 490.459084,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 37.818541,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 117321.859209,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 105480192.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 494.775666,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 30.555833,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 118190.244041,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 11.819024404,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 94000.497042,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "50": {
+          "metadata": {
+            "event_count": 50,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 49,
+              "nodes": 50
+            },
+            "stream": {
+              "event_count": 50,
+              "family_counts": {
+                "edge_created": 12,
+                "node_created": 14,
+                "node_state_changed": 12,
+                "output_record_accepted": 12
+              },
+              "projected": {
+                "append_index_entries": 12,
+                "edges": 12,
+                "nodes": 14,
+                "records": 12
+              },
+              "scenario": "general"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 0.191834,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 29386.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 2.367916,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 0.15075,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 1.778583,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 69369856.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 0.825583,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 0.117,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 1.808125,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.0361625,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 2.299333,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "500": {
+          "metadata": {
+            "event_count": 500,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 499,
+              "nodes": 500
+            },
+            "stream": {
+              "event_count": 500,
+              "family_counts": {
+                "edge_created": 125,
+                "node_created": 126,
+                "node_state_changed": 125,
+                "output_record_accepted": 124
+              },
+              "projected": {
+                "append_index_entries": 124,
+                "edges": 125,
+                "nodes": 126,
+                "records": 124
+              },
+              "scenario": "general"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 8.247833,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 282545.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 24.035208,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 1.574958,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 52.555625,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 70893568.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 9.391917,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 1.133583,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 52.99425,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.1059885,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 48.903625,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "5000": {
+          "metadata": {
+            "event_count": 5000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 4999,
+              "nodes": 5000
+            },
+            "stream": {
+              "event_count": 5000,
+              "family_counts": {
+                "edge_created": 1250,
+                "node_created": 1251,
+                "node_state_changed": 1250,
+                "output_record_accepted": 1249
+              },
+              "projected": {
+                "append_index_entries": 1249,
+                "edges": 1250,
+                "nodes": 1251,
+                "records": 1249
+              },
+              "scenario": "general"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 4597.736417,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 2831920.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 235.117333,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 19.002125,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 23495.907667,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 90636288.0,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 225.916625,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 13.134458,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 23286.864875,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 4.657372975,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 19755.3665,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        }
+      }
+    },
+    "record-heavy": {
+      "sizes": {
+        "100": {
+          "metadata": {
+            "event_count": 100,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 99,
+              "nodes": 100
+            },
+            "stream": {
+              "event_count": 100,
+              "family_counts": {
+                "edge_created": 0,
+                "node_created": 1,
+                "node_state_changed": 0,
+                "output_record_accepted": 99
+              },
+              "projected": {
+                "append_index_entries": 99,
+                "edges": 0,
+                "nodes": 1,
+                "records": 99
+              },
+              "scenario": "record-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 0.86175,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 175706.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 17.620958,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 0.794958,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 7.845125,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 69369856.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 1.565417,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 1.490875,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 7.961542,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.07961542,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 13.292834,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "1000": {
+          "metadata": {
+            "event_count": 1000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 999,
+              "nodes": 1000
+            },
+            "stream": {
+              "event_count": 1000,
+              "family_counts": {
+                "edge_created": 0,
+                "node_created": 1,
+                "node_state_changed": 0,
+                "output_record_accepted": 999
+              },
+              "projected": {
+                "append_index_entries": 999,
+                "edges": 0,
+                "nodes": 1,
+                "records": 999
+              },
+              "scenario": "record-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 24.048375,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 1757906.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 181.688667,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 8.917333,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 162.044583,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 74711040.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 19.120625,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 15.178416,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 162.757041,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.162757041,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 195.369417,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "10000": {
+          "metadata": {
+            "event_count": 10000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 9999,
+              "nodes": 10000
+            },
+            "stream": {
+              "event_count": 10000,
+              "family_counts": {
+                "edge_created": 0,
+                "node_created": 1,
+                "node_state_changed": 0,
+                "output_record_accepted": 9999
+              },
+              "projected": {
+                "append_index_entries": 9999,
+                "edges": 0,
+                "nodes": 1,
+                "records": 9999
+              },
+              "scenario": "record-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 2544.560291,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 17633906.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 1827.33925,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 395.18575,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 13541.281375,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 131301376.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 209.857916,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 161.685125,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 13650.376708,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 1.365037671,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 10450.205625,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "50": {
+          "metadata": {
+            "event_count": 50,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 49,
+              "nodes": 50
+            },
+            "stream": {
+              "event_count": 50,
+              "family_counts": {
+                "edge_created": 0,
+                "node_created": 1,
+                "node_state_changed": 0,
+                "output_record_accepted": 49
+              },
+              "projected": {
+                "append_index_entries": 49,
+                "edges": 0,
+                "nodes": 1,
+                "records": 49
+              },
+              "scenario": "record-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 0.3905,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 88106.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 8.845792,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 0.375459,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 3.725291,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 69353472.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 0.800584,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 0.675709,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 3.706541,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.07413082,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 6.396041,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "500": {
+          "metadata": {
+            "event_count": 500,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 499,
+              "nodes": 500
+            },
+            "stream": {
+              "event_count": 500,
+              "family_counts": {
+                "edge_created": 0,
+                "node_created": 1,
+                "node_state_changed": 0,
+                "output_record_accepted": 499
+              },
+              "projected": {
+                "append_index_entries": 499,
+                "edges": 0,
+                "nodes": 1,
+                "records": 499
+              },
+              "scenario": "record-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 7.321125,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 878906.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 88.728208,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 4.333,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 55.696083,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 71745536.0,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 8.559084,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 7.627792,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 55.877875,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.11175575,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 77.419541,
+              "sample_count": 7,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        },
+        "5000": {
+          "metadata": {
+            "event_count": 5000,
+            "operation_boundaries": {
+              "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
+              "cold_rebuild": "reject_stale_schema_then_replay",
+              "peak_memory_bytes": "fresh_process_replay_peak_rss",
+              "snapshot_tail": "decode_checkpoint_then_reduce_suffix"
+            },
+            "scaffold": {
+              "edges": 4999,
+              "nodes": 5000
+            },
+            "stream": {
+              "event_count": 5000,
+              "family_counts": {
+                "edge_created": 0,
+                "node_created": 1,
+                "node_state_changed": 0,
+                "output_record_accepted": 4999
+              },
+              "projected": {
+                "append_index_entries": 4999,
+                "edges": 0,
+                "nodes": 1,
+                "records": 4999
+              },
+              "scenario": "record-heavy"
+            }
+          },
+          "metrics": {
+            "append_heavy_indexes": {
+              "kind": "sampled",
+              "median": 537.609,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_bytes": {
+              "kind": "deterministic",
+              "median": 8813906.0,
+              "sample_count": 1,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "checkpoint_decode": {
+              "kind": "sampled",
+              "median": 1082.621833,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "checkpoint_encode": {
+              "kind": "sampled",
+              "median": 52.909375,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "cold_rebuild": {
+              "kind": "sampled",
+              "median": 3399.815917,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "peak_memory_bytes": {
+              "kind": "sampled",
+              "median": 100024320.0,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "bytes"
+            },
+            "persistent_primitive_scaffold": {
+              "kind": "sampled",
+              "median": 102.34075,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "public_view": {
+              "kind": "sampled",
+              "median": 79.670625,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_full_replay": {
+              "kind": "sampled",
+              "median": 3376.621708,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            },
+            "reducer_per_event": {
+              "kind": "sampled",
+              "median": 0.675324342,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms/event"
+            },
+            "snapshot_tail": {
+              "kind": "sampled",
+              "median": 2639.0535,
+              "sample_count": 3,
+              "source": "current",
+              "unit": "ms"
+            }
+          }
+        }
+      }
+    }
+  },
+  "schema_version": 2,
+  "source": {
+    "revision": "d2c401cb83db059db46b1caefa590ecdb81846c3"
+  },
+  "tool": {
+    "hash": "0b6c2d671c31e8c17d84aaaf796cb9f34cf68b38519058b2a4a2b98c22dec21f",
+    "identity": "graph-projection-benchmark",
+    "version": "2"
+  }
+}
