@@ -23,7 +23,19 @@ def final_projection_fixture() -> ImmutableGraphProjection:
                 "node-1": {"spec": {"node_id": "node-1", "creation_position": 1}},
                 "node-2": {"spec": {"node_id": "node-2", "creation_position": 2}},
             },
-            "tasks": {"task-1": {"state": "active"}},
+            "tasks": {
+                "task-1": {
+                    "state": "active",
+                    "candidates": [
+                        {
+                            "candidate_id": "candidate-1",
+                            "attempt_number": 1,
+                            "position": 1,
+                            "file_state_record_ids": ["record-1"],
+                        }
+                    ],
+                }
+            },
             "topology": {
                 "edges": {
                     "edge-1": {
@@ -43,6 +55,8 @@ def final_projection_fixture() -> ImmutableGraphProjection:
                         "record_id": "record-1",
                         "record_type": "file_state",
                         "producer_node_id": "node-1",
+                        "task_region_id": "task-1",
+                        "cleanup_id": "cleanup-1",
                     }
                 },
                 "ids_by_node_port": {"node-1": {"file_state": ("record-1",)}},
@@ -63,6 +77,94 @@ def final_projection_fixture() -> ImmutableGraphProjection:
                 "sessions": {
                     "session-1": {"current_node_id": "node-1", "carryover_record_id": "record-1"}
                 },
+            },
+            "verification": {
+                "verdicts_by_node": {
+                    "node-1": {"candidate_id": "candidate-1", "verdict": "passed", "position": 1}
+                },
+                "passed_results_by_record_id": {
+                    "record-1": {
+                        "record_id": "record-1",
+                        "node_id": "node-1",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
+                    }
+                },
+                "passed_candidate_ids": ["candidate-1"],
+                "check_results_by_node": {
+                    "node-1": {
+                        "node_id": "node-1",
+                        "status": "passed",
+                        "position": 1,
+                        "task_region_id": "task-1",
+                        "record_id": "record-1",
+                        "candidate_record_ids": ["record-1"],
+                        "file_state_record_ids": ["record-1"],
+                        "evaluated_record_ids": ["record-1"],
+                    }
+                },
+                "invalid_test_blocks_by_task": {
+                    "task-1": {"position": 1, "candidate_id": "candidate-1"}
+                },
+            },
+            "requirements": {
+                "revisions_by_id": {
+                    "revision-1": {
+                        "requirement_id": "requirement-1",
+                        "version_id": "revision-1",
+                        "change_classification": "initial",
+                        "requires_authority": False,
+                        "position": 1,
+                        "validation_strengthening": False,
+                    }
+                },
+                "active_version_id_by_requirement": {"requirement-1": "revision-1"},
+                "support_by_id": {
+                    "support-1": {
+                        "support_id": "support-1",
+                        "evidence_id": "record-1",
+                        "requirement_id": "requirement-1",
+                        "requirement_version_id": "revision-1",
+                        "status": "fresh",
+                        "position": 1,
+                    }
+                },
+            },
+            "execution": {
+                "leases": {
+                    "lease-1": {
+                        "lease_id": "lease-1",
+                        "state": "active",
+                        "node_id": "node-1",
+                        "task_region_id": "task-1",
+                        "session_id": "session-1",
+                    }
+                },
+                "environment_failures_by_task": {
+                    "task-1": {
+                        "position": 1,
+                        "node_id": "node-1",
+                        "task_region_id": "task-1",
+                        "record_id": "record-1",
+                    }
+                },
+                "callback_events_by_key": {
+                    "callback-1": {
+                        "event_type": "callback_accepted",
+                        "node_id": "node-1",
+                        "idempotency_key": "callback-1",
+                        "outcome": "accepted",
+                    }
+                },
+                "cleanup_requests_by_id": {
+                    "cleanup-1": {
+                        "cleanup_id": "cleanup-1",
+                        "position": 1,
+                        "file_state_record_id": "record-1",
+                        "producer_node_id": "node-1",
+                    }
+                },
+                "applied_cleanup_ids": {"cleanup-1": True},
             },
         }
     )

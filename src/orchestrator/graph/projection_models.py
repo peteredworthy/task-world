@@ -1334,6 +1334,32 @@ ProjectedRecord: TypeAlias = Annotated[
     Field(discriminator="record_type"),
 ]
 
+# This deliberately finite list is the relation-audit contract.  Keep it in
+# lockstep with the public discriminated union above; codec visitors and tests
+# use it to make a newly-added record impossible to silently skip.
+PROJECTED_RECORD_TYPES = (
+    ProjectedAnalysisSummaryRecord,
+    ProjectedArtifactReferenceRecord,
+    ProjectedAuthorityDecisionRecord,
+    ProjectedAuthorityRequestRecord,
+    ProjectedCandidateRecord,
+    ProjectedCheckResultRecord,
+    ProjectedCompletionDecisionRecord,
+    ProjectedDecisionRecord,
+    ProjectedDecisionRequestRecord,
+    ProjectedFailureRecord,
+    ProjectedFanOutInputsRecord,
+    ProjectedFileStateRecord,
+    ProjectedGapClassificationRecord,
+    ProjectedGraphPatchProposalRecord,
+    ProjectedJoinResultRecord,
+    ProjectedRecoveryPlanRecord,
+    ProjectedRequirementRecord,
+    ProjectedRoutineSnapshotRecord,
+    ProjectedRunContextRecord,
+    ProjectedVerificationReportRecord,
+)
+
 _PROJECTED_RECORD_MODELS: FrozenMap[str, type[ProjectedRecordBase]] = FrozenMap(
     {
         "analysis_summary": ProjectedAnalysisSummaryRecord,

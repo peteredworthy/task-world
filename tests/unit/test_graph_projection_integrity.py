@@ -1,14 +1,17 @@
 """Referential-integrity contracts for immutable projection checkpoints."""
 
 from copy import deepcopy
-from typing import cast
+from typing import Annotated, cast, get_args, get_origin
 
 import pytest
 
 from orchestrator.graph import (
+    PROJECTED_RECORD_TYPES,
+    ProjectedRecord,
     ProjectionCheckpointIntegrityError,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
+    projection_relation_policy_catalog,
 )
 from tests.unit.test_graph_projection_codec import final_projection_fixture
 
@@ -147,4 +150,84 @@ def test_secondary_indexes_reject_extra_empty_keys() -> None:
     assert {diagnostic.path for diagnostic in raised.value.diagnostics} >= {
         "records.ids_by_node_port.node-1.unused",
         "topology.inbound_edge_ids.node-1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "expected_path", "expected_reason"),
+    [
+        (
+            "records.by_id.record-1.cleanup_id",
+            "missing-cleanup",
+            "records.by_id.record-1.cleanup_id",
+            "references missing cleanup request 'missing-cleanup'",
+        ),
+        (
+            "nodes.node-1.spec.authority_request_record",
+            {
+                "record_id": "missing-authority-record",
+                "record_kind": "graph_record",
+                "record_type": "authority_request_record",
+                "producer_node_id": "node-1",
+                "port": "authority_request_record",
+                "schema": "AuthorityRequest",
+                "value": {
+                    "requested_authority": ["graph_write"],
+                    "target_node_id": "node-2",
+                    "reason": "needed",
+                },
+            },
+            "nodes.node-1.spec.authority_request_record.record_id",
+            "references missing record 'missing-authority-record'",
+        ),
+    ],
+)
+def test_integrity_validates_record_and_node_envelope_cross_family_references(
+    path: str, value: object, expected_path: str, expected_reason: str
+) -> None:
+    raw = _checkpoint()
+    cursor: object = raw
+    parts = path.split(".")
+    for part in parts[:-1]:
+        assert isinstance(cursor, dict)
+        cursor = cursor[part]
+    assert isinstance(cursor, dict)
+    cursor[parts[-1]] = value
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        immutable_projection_from_checkpoint(raw)
+
+    diagnostics = {item.path: item.reason for item in raised.value.diagnostics}
+    assert diagnostics[expected_path] == expected_reason
+
+
+def test_public_relation_catalog_covers_each_concrete_record_and_reviewed_id_family() -> None:
+    union, metadata = get_args(ProjectedRecord)
+    assert get_origin(ProjectedRecord) is Annotated
+    assert metadata
+    assert set(get_args(union)) == set(PROJECTED_RECORD_TYPES)
+
+    catalog = projection_relation_policy_catalog()
+    assert {
+        "records.*.git.ref",
+        "records.*.value.command_id",
+        "records.*.value.execution_id",
+        "execution.callback_events_by_key.*.idempotency_key",
+        "governance.authority_revision_blockers.*.support_ids",
+        "planning.sessions.*.carryover_record_id",
+        "topology.input_bindings.*.*.record_ids",
+        "verification.*_results_by_record_id.*.record_id",
+    } <= set(catalog)
+    assert set(catalog.values()) >= {
+        "node",
+        "task",
+        "record",
+        "candidate",
+        "revision",
+        "support",
+        "lease",
+        "cleanup",
+        "edge",
+        "session",
+        "external",
     }

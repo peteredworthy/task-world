@@ -210,6 +210,7 @@ from orchestrator.graph.projection_codec import (
     ProjectionIntegrityDiagnostic,
     immutable_projection_from_checkpoint,
     immutable_projection_to_checkpoint,
+    projection_relation_policy_catalog,
     validate_projection_integrity,
 )
 from orchestrator.graph.projection_models import (
@@ -290,6 +291,7 @@ from orchestrator.graph.projection_models import (
     ProjectedDecisionActor,
     ProjectedRecord,
     ProjectedRecordBase,
+    PROJECTED_RECORD_TYPES,
     ProjectedVerificationReportRecord,
     ProjectedVerificationReportValue,
     RecordStore,
@@ -619,6 +621,7 @@ __all__ = [
     "PLANNER_OPS",
     "PROJECTION_SCHEMA_VERSION",
     "ProjectedRecord",
+    "PROJECTED_RECORD_TYPES",
     "ProjectedRecordBase",
     "ProjectedCandidateRecordValue",
     "ProjectedAnalysisSummaryValue",
@@ -912,6 +915,7 @@ __all__ = [
     "validate_emitted_event_type",
     "validate_event_ownership",
     "validate_projection_integrity",
+    "projection_relation_policy_catalog",
     "validate_patch",
     "resource_claim_dicts",
     "AnalysisSummaryRecord",
