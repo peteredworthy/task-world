@@ -16,6 +16,7 @@ from scripts.benchmark_graph_projection import (
     corpus_metadata,
     corpus_events,
     gate_violations,
+    max_event_count_metadata,
     protocol_hash,
 )
 from orchestrator.graph import (
@@ -61,6 +62,11 @@ def _write_minimal_baseline(path: Path, sizes: tuple[int, ...] = (100,)) -> dict
     )
     assert result.returncode == 0, result.stderr
     return json.loads(path.read_text())
+
+
+@pytest.fixture(scope="module")
+def smoke_baseline(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
+    return _write_minimal_baseline(tmp_path_factory.mktemp("graph-benchmark") / "baseline.json")
 
 
 @pytest.mark.parametrize("scenario", ("general", "edge-heavy", "record-heavy"))
@@ -135,20 +141,10 @@ def test_checkpoint_schema_decision_is_public_and_rejects_stale_versions() -> No
     assert not checkpoint_schema_is_current(PROJECTION_SCHEMA_VERSION - 1)
 
 
-def test_smoke_measurements_report_honest_operation_boundaries_and_real_views() -> None:
-    baseline_path = ROOT / "tmp" / "benchmark-smoke-unused.json"
-    result = json.loads(
-        _run(
-            "--sizes",
-            "100",
-            "--warmups",
-            "1",
-            "--runs",
-            "1",
-            "--baseline",
-            str(baseline_path),
-        ).stdout
-    )
+def test_smoke_measurements_report_honest_operation_boundaries_and_real_views(
+    smoke_baseline: dict[str, object],
+) -> None:
+    result = smoke_baseline
 
     for scenario, scenario_result in result["scenarios"].items():
         measurements = scenario_result["sizes"]["100"]
@@ -202,12 +198,11 @@ def test_corpus_metadata_expresses_scenario_dominance_without_generated_total_sn
 
 
 def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_gating(
-    tmp_path: Path,
+    smoke_baseline: dict[str, object],
 ) -> None:
-    baseline_path = tmp_path / "baseline.json"
-    baseline = _write_minimal_baseline(baseline_path)
+    baseline = smoke_baseline
 
-    assert json.loads(baseline_path.read_text()) == baseline
+    assert BenchmarkResult.model_validate(baseline).model_dump(mode="json") == baseline
     assert baseline["schema_version"] == 2
     assert baseline["tool"]["hash"]
     assert baseline["artifact"]["role"] == "baseline"
@@ -231,20 +226,8 @@ def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_g
 
 
 @pytest.mark.parametrize("count", (0, 7))
-def test_cli_records_operator_max_event_count_without_network(count: int) -> None:
-    result = _run(
-        "--sizes",
-        "4",
-        "--warmups",
-        "0",
-        "--runs",
-        "1",
-        "--max-event-count",
-        str(count),
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout)["max_event_count"] == {
+def test_operator_max_event_count_metadata_requires_no_network(count: int) -> None:
+    assert max_event_count_metadata(count) == {
         "kind": "available",
         "count": count,
         "status": "available",
@@ -363,7 +346,7 @@ def _gate_document(
                 "snapshot_tail": "decode_checkpoint_then_reduce_suffix",
                 "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
                 "cold_rebuild": "reject_stale_schema_then_replay",
-                "peak_memory_bytes": "replay_only_excluding_prebuilt_corpus",
+                "peak_memory_bytes": "fresh_process_replay_peak_rss",
             },
         }
 

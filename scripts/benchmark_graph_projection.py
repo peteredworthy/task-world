@@ -6,9 +6,9 @@ import argparse
 import hashlib
 import json
 import platform
+import resource
 import subprocess
 import sys
-import tracemalloc
 from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
@@ -77,7 +77,7 @@ BENCHMARK_PROTOCOL = {
     "corpora": "canonical-event-envelope-v2",
     "operation_boundaries": {
         "replay": "canonical_event_fold",
-        "peak_memory": "replay_only_excluding_prebuilt_corpus",
+        "peak_memory": "fresh_process_replay_peak_rss",
         "cold_rebuild": "reject_stale_schema_then_replay",
     },
     "units": {"time": "ms", "memory": "bytes"},
@@ -291,7 +291,7 @@ class OperationBoundaries(StrictResultModel):
     snapshot_tail: Literal["decode_checkpoint_then_reduce_suffix"]
     append_heavy_indexes: Literal["prebuilt_prefix_then_reduce_suffix"]
     cold_rebuild: Literal["reject_stale_schema_then_replay"]
-    peak_memory_bytes: Literal["replay_only_excluding_prebuilt_corpus"]
+    peak_memory_bytes: Literal["fresh_process_replay_peak_rss"]
 
 
 class SizeMetadata(StrictResultModel):
@@ -603,6 +603,30 @@ def _timed(fn: Callable[[], Any], runs: int, unit: str = "ms") -> dict[str, Any]
     }
 
 
+def _rss_bytes() -> int:
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak if sys.platform == "darwin" else peak * 1024
+
+
+def _peak_memory_sample(scenario: str, size: int) -> int:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "--peak-memory-sample",
+            scenario,
+            str(size),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    if completed.returncode:
+        raise RuntimeError(f"peak-memory sample failed: {completed.stderr.strip()}")
+    return int(completed.stdout.strip())
+
+
 def _warm(fn: Callable[[], Any], warmups: int) -> None:
     for _ in range(warmups):
         fn()
@@ -708,27 +732,25 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
         "snapshot_tail": "decode_checkpoint_then_reduce_suffix",
         "append_heavy_indexes": "prebuilt_prefix_then_reduce_suffix",
         "cold_rebuild": "reject_stale_schema_then_replay",
-        "peak_memory_bytes": "replay_only_excluding_prebuilt_corpus",
+        "peak_memory_bytes": "fresh_process_replay_peak_rss",
     }
     memory_samples: list[int] = []
+    for _ in range(warmups):
+        _peak_memory_sample(scenario, len(events))
     for _ in range(runs):
-        tracemalloc.start()
-        _replay(events)
-        _, peak = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
-        memory_samples.append(peak)
+        memory_samples.append(_peak_memory_sample(scenario, len(events)))
     measurements["peak_memory_bytes"] = {
         "kind": "sampled",
         "median": float(median(memory_samples)),
         "unit": "bytes",
         "source": "current",
         "sample_count": len(memory_samples),
-        "allocation_boundary": "replay_only_excluding_prebuilt_corpus",
+        "allocation_boundary": "fresh_process_replay_peak_rss",
     }
     return measurements
 
 
-def _max_event_count(operator_count: int | None) -> dict[str, Any]:
+def max_event_count_metadata(operator_count: int | None) -> dict[str, Any]:
     """Record only a supported count source; this API has no count-only endpoint."""
     if operator_count is None:
         return {
@@ -878,7 +900,7 @@ def benchmark(
             "runs": runs,
         },
         environment=_environment(),
-        max_event_count=_max_event_count(operator_max_event_count),
+        max_event_count=max_event_count_metadata(operator_max_event_count),
         scenarios=scenarios,
         scaling_probes=scaling_probes,
     )
@@ -1025,7 +1047,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--write-baseline", action="store_true")
     parser.add_argument("--check-gates", action="store_true")
     parser.add_argument("--max-event-count", type=int)
+    parser.add_argument(
+        "--peak-memory-sample", nargs=2, metavar=("SCENARIO", "SIZE"), help=argparse.SUPPRESS
+    )
     args = parser.parse_args()
+    if args.peak_memory_sample is not None:
+        scenario, size = args.peak_memory_sample
+        if scenario not in SCENARIO_NAMES or not size.isdigit() or int(size) < 1:
+            parser.error("invalid peak-memory sample")
+        return args
     if any(size < 2 or size % 2 for size in args.sizes) or sorted(set(args.sizes)) != args.sizes:
         parser.error("--sizes must be sorted, unique even integers of at least 2")
     if args.warmups < 0 or args.runs < 1:
@@ -1039,6 +1069,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.peak_memory_sample is not None:
+        scenario, raw_size = args.peak_memory_sample
+        events = corpus_events(scenario, int(raw_size))
+        projection = _replay(events)
+        if projection is None:
+            raise RuntimeError("peak-memory replay did not produce a projection")
+        print(_rss_bytes())
+        return
     result = benchmark(
         args.sizes,
         args.warmups,
