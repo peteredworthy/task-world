@@ -1003,7 +1003,10 @@ class ProjectedAnalysisSummaryRecord(ProjectedRecordBase):
     def port_schema_are_paired(self) -> "ProjectedAnalysisSummaryRecord":
         valid_pairs = {
             ("analysis_summary", "AnalysisSummary"),
+            ("analysis_summary", "RegionSummary"),
+            ("planning_summary", "AnalysisSummary"),
             ("planning_summary", "RegionSummary"),
+            ("region_summary", "AnalysisSummary"),
             ("region_summary", "RegionSummary"),
         }
         if (self.port, self.schema_) not in valid_pairs:

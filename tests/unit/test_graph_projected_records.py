@@ -221,7 +221,7 @@ PROJECTED_RECORD_SEMANTICS = (
         "fan_out_inputs",
         OUTPUT_RECORD_MODELS_BY_TYPE["fan_out_inputs"],
         ProjectedFanOutInputsRecord,
-        object,
+        FrozenMap,
         "output",
         "candidate",
         "ImplementationCandidate",
@@ -407,26 +407,27 @@ def test_public_projected_record_union_rejects_crossed_artifact_reference_pairs(
 
 
 @pytest.mark.parametrize(
-    "payload",
+    ("port", "schema"),
     [
-        {**OUTPUT_RECORD_CASES["analysis_summary"], "schema": "RegionSummary"},
-        {
-            **OUTPUT_RECORD_CASES["analysis_summary"],
-            "port": "planning_summary",
-            "schema": "AnalysisSummary",
-        },
-        {
-            **OUTPUT_RECORD_CASES["analysis_summary"],
-            "port": "region_summary",
-            "schema": "AnalysisSummary",
-        },
+        ("analysis_summary", "AnalysisSummary"),
+        ("analysis_summary", "RegionSummary"),
+        ("planning_summary", "AnalysisSummary"),
+        ("planning_summary", "RegionSummary"),
+        ("region_summary", "AnalysisSummary"),
+        ("region_summary", "RegionSummary"),
     ],
 )
-def test_public_projected_record_union_rejects_crossed_analysis_summary_pairs(
-    payload: dict[str, Any],
+def test_projected_analysis_summary_accepts_every_source_port_schema_alias(
+    port: str, schema: str
 ) -> None:
-    with pytest.raises(ValidationError):
-        TypeAdapter(ProjectedRecord).validate_python(payload)
+    payload = {**OUTPUT_RECORD_CASES["analysis_summary"], "port": port, "schema": schema}
+    source = OUTPUT_RECORD_MODELS_BY_TYPE["analysis_summary"].model_validate(payload)
+
+    projected = project_record(source)
+
+    assert TypeAdapter(ProjectedRecord).validate_python(payload) == projected
+    assert projected.port == port
+    assert projected.schema_ == schema
 
 
 @pytest.mark.parametrize(
@@ -652,6 +653,10 @@ def test_project_record_preserves_nondefault_file_state_and_fan_out_nested_value
     assert type(file_state.tracked[0]) is ProjectedFileEntry
     assert type(file_state.external[0]) is ProjectedExternalFileEntry
     assert type(file_state.external[0].manifest) is ProjectedExternalArtifactManifest
+    assert type(fan_out.value) is FrozenMap
+    assert type(fan_out.value["inputs"]) is tuple
+    assert type(fan_out.value["inputs"][0]) is FrozenMap
+    assert type(fan_out.value["options"]) is FrozenMap
     assert fan_out.value == FrozenMap(
         {"inputs": (FrozenMap({"requirement": "R-1"}),), "options": FrozenMap({"retry": True})}
     )
