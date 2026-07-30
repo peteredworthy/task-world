@@ -5,17 +5,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import platform
 import sys
 import tracemalloc
-import urllib.error
-import urllib.request
+from decimal import Decimal
 from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
 from statistics import median
 from time import perf_counter
-from typing import Any, Callable
+from typing import Any, Callable, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from orchestrator.graph import (
     Actor,
@@ -54,6 +56,72 @@ TIME_METRICS = (
     "append_heavy_indexes",
     "persistent_primitive_scaffold",
 )
+RESULT_SCHEMA_VERSION = 2
+TOOL_IDENTITY = "graph-projection-benchmark"
+TOOL_VERSION = "2"
+GATED_METRICS = {
+    "reducer_full_replay": ("ms", 1.15, "replay"),
+    "peak_memory_bytes": ("bytes", 1.15, "peak-memory"),
+    "checkpoint_bytes": ("bytes", 1.0, "checkpoint-size"),
+    "checkpoint_encode": ("ms", 1.25, "codec/view"),
+    "checkpoint_decode": ("ms", 1.25, "codec/view"),
+    "public_view": ("ms", 1.25, "codec/view"),
+}
+
+
+class StrictResultModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class MetricResult(StrictResultModel):
+    median: float
+    unit: str
+    source: str
+    sample_count: int = Field(ge=1)
+
+
+class SizeResult(StrictResultModel):
+    metrics: dict[str, MetricResult]
+    metadata: dict[str, Any]
+
+
+class ScenarioResult(StrictResultModel):
+    sizes: dict[str, SizeResult]
+
+
+class ScalingPoint(StrictResultModel):
+    median: float
+    startup_median: float
+    unit: Literal["ms"]
+
+
+class ScalingProbe(StrictResultModel):
+    n: ScalingPoint
+    two_n: ScalingPoint
+
+
+class ToolIdentity(StrictResultModel):
+    identity: Literal["graph-projection-benchmark"]
+    version: Literal["2"]
+    hash: str = Field(min_length=1)
+
+
+class ArtifactIdentity(StrictResultModel):
+    role: Literal["baseline", "target"]
+    implementation_signature: str = Field(min_length=1)
+
+
+class BenchmarkResult(StrictResultModel):
+    schema_version: Literal[2]
+    tool: ToolIdentity
+    artifact: ArtifactIdentity
+    source: dict[str, str]
+    corpus: dict[str, Any]
+    configuration: dict[str, Any]
+    environment: dict[str, Any]
+    max_event_count: dict[str, Any]
+    scenarios: dict[str, ScenarioResult]
+    scaling_probes: dict[str, dict[str, ScalingProbe]]
 
 
 def _event(index: int, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
@@ -371,118 +439,262 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
     return measurements
 
 
-def _api_max_event_count(url: str) -> dict[str, Any]:
-    try:
-        with urllib.request.urlopen(url, timeout=0.1) as response:
-            payload = json.loads(response.read())
-        count = payload.get("max_event_count")
-        if type(count) is int:
-            return {"count": count, "status": "available", "source": "api"}
-    except (OSError, urllib.error.URLError, json.JSONDecodeError):
-        pass
-    return {"count": None, "status": "unavailable", "source": "api"}
+def _max_event_count(operator_count: int | None) -> dict[str, Any]:
+    """Record only a supported count source; this API has no count-only endpoint."""
+    if operator_count is None:
+        return {"count": None, "status": "unsupported", "source": "unsupported"}
+    if type(operator_count) is not int or operator_count < 0:
+        raise ValueError("operator max event count must be a nonnegative exact integer")
+    return {"count": operator_count, "status": "available", "source": "operator"}
 
 
 def _environment() -> dict[str, Any]:
     dependencies = {name: version(name) for name in ("pydantic", "sqlalchemy")}
     return {
-        "hardware": {"machine": platform.machine(), "processor": platform.processor()},
-        "os": {"platform": platform.platform(), "release": platform.release()},
-        "python": sys.version.split()[0],
-        "dependencies": dependencies,
+        "comparable": {
+            "architecture": platform.machine(),
+            "python": sys.version.split()[0],
+            "dependencies": dependencies,
+        },
+        "informational": {
+            "host": platform.node(),
+            "processor": platform.processor(),
+            "os": platform.system(),
+            "os_release": platform.release(),
+        },
     }
 
 
-def benchmark(sizes: list[int], warmups: int, runs: int, api_url: str) -> dict[str, Any]:
-    scenario_metadata = json.loads(SCENARIOS_PATH.read_text())
+def _script_hash() -> str:
+    return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def _source_revision() -> str:
+    return os.environ.get("GIT_COMMIT", "unknown")
+
+
+def _metric_result(value: dict[str, Any], runs: int) -> dict[str, Any]:
+    return {
+        "median": value["median"],
+        "unit": value["unit"],
+        "source": value["source"],
+        "sample_count": value.get("sample_count", runs),
+    }
+
+
+def benchmark(
+    sizes: list[int],
+    warmups: int,
+    runs: int,
+    api_url: str,
+    *,
+    artifact_role: Literal["baseline", "target"] = "target",
+    operator_max_event_count: int | None = None,
+) -> dict[str, Any]:
+    del api_url  # Retained CLI compatibility; no bounded count-only endpoint exists.
+    probe_sizes = sorted({size for size in sizes for size in (size, size * 2)})
     corpora = {
         f"{name}:{size}": [event.model_dump(mode="json") for event in corpus_events(name, size)]
         for name in SCENARIO_NAMES
-        for size in sizes
+        for size in probe_sizes
     }
     corpus_hash = hashlib.sha256(
         json.dumps(corpora, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     scenarios: dict[str, Any] = {}
+    scaling_probes: dict[str, dict[str, Any]] = {}
     for name in SCENARIO_NAMES:
-        # The largest requested corpus is the gate corpus; smaller sizes establish scaling data.
         by_size = {
-            str(size): _measure(name, corpus_events(name, size), warmups, runs) for size in sizes
+            str(size): _measure(name, corpus_events(name, size), warmups, runs)
+            for size in probe_sizes
         }
-        selected = dict(by_size[str(max(sizes))])
-        selected["event_count"] = max(sizes)
-        selected["scenario"] = name
-        selected["stream_metadata"] = corpus_metadata(name, max(sizes))
-        selected["by_size"] = by_size
-        scenarios[name] = selected
-    return {
-        "schema_version": 1,
-        "measurement_source": "current-reducer",
-        "scenario_metadata": scenario_metadata,
-        "corpus": {"hash": corpus_hash, "sizes": sizes},
-        "configuration": {"sizes": sizes, "warmups": warmups, "runs": runs},
-        "environment": _environment(),
-        "api_max_event_count": _api_max_event_count(api_url),
-        "scenarios": scenarios,
-    }
+        scenarios[name] = {
+            "sizes": {
+                size: {
+                    "metrics": {
+                        metric: _metric_result(value, runs)
+                        for metric, value in measurement.items()
+                        if isinstance(value, dict) and "median" in value and "unit" in value
+                    },
+                    "metadata": {
+                        "event_count": int(size),
+                        "stream": corpus_metadata(name, int(size)),
+                        "operation_boundaries": measurement["operation_boundaries"],
+                    },
+                }
+                for size, measurement in by_size.items()
+            }
+        }
+        scaling_probes[name] = {}
+        for size in sizes:
+            small = by_size[str(size)]["reducer_full_replay"]["median"]
+            large = by_size[str(size * 2)]["reducer_full_replay"]["median"]
+            startup = _timed(lambda: _replay([]), runs)["median"]
+            scaling_probes[name][f"{size}_to_{size * 2}"] = {
+                "n": {"median": small, "startup_median": startup, "unit": "ms"},
+                "two_n": {"median": large, "startup_median": startup, "unit": "ms"},
+            }
+    result = BenchmarkResult(
+        schema_version=RESULT_SCHEMA_VERSION,
+        tool={"identity": TOOL_IDENTITY, "version": TOOL_VERSION, "hash": _script_hash()},
+        artifact={
+            "role": artifact_role,
+            "implementation_signature": (
+                "pre-cutover-current-reducer"
+                if artifact_role == "baseline"
+                else "post-cutover-immutable-projection"
+            ),
+        },
+        source={"revision": _source_revision()},
+        corpus={
+            "hash": corpus_hash,
+            "scenario_hash": hashlib.sha256(SCENARIOS_PATH.read_bytes()).hexdigest(),
+        },
+        configuration={
+            "requested_sizes": sizes,
+            "probe_sizes": probe_sizes,
+            "warmups": warmups,
+            "runs": runs,
+        },
+        environment=_environment(),
+        max_event_count=_max_event_count(operator_max_event_count),
+        scenarios=scenarios,
+        scaling_probes=scaling_probes,
+    )
+    return result.model_dump(mode="json")
 
 
-def _median(result: dict[str, Any], scenario: str, metric: str) -> float:
-    return float(result["scenarios"][scenario][metric]["median"])
+def _validation_diagnostics(document: dict[str, Any], name: str) -> list[str]:
+    try:
+        BenchmarkResult.model_validate(document)
+    except ValidationError as error:
+        return sorted(
+            f"invalid {name} {'.'.join(str(part) for part in item['loc'])}: {item['msg']}"
+            for item in error.errors()
+        )
+    return []
 
 
-def gate_violations(baseline: dict[str, Any], current: dict[str, Any]) -> list[str]:
-    if baseline.get("schema_version") != 1 or current.get("schema_version") != 1:
-        return ["incompatible baseline schema_version"]
-    for key in ("corpus", "configuration", "environment"):
-        if baseline.get(key) != current.get(key):
-            return [f"incompatible baseline {key}"]
-    if baseline.get("measurement_source") != "current-reducer":
-        return ["synthetic baseline measurements are not eligible for gates"]
+def _configuration_values(result: BenchmarkResult, key: str) -> list[int] | None:
+    value = result.configuration.get(key)
+    if not isinstance(value, list) or any(type(item) is not int or item < 2 for item in value):
+        return None
+    return value
+
+
+def _exceeds(observed: float, baseline: float, limit: str) -> bool:
+    return Decimal(str(observed)) > Decimal(str(baseline)) * Decimal(limit)
+
+
+def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[str]:
+    """Validate comparability before applying every release equation exactly."""
+    diagnostics = _validation_diagnostics(baseline, "baseline") + _validation_diagnostics(
+        target, "target"
+    )
+    if diagnostics:
+        return sorted(diagnostics)
+    prior = BenchmarkResult.model_validate(baseline)
+    observed = BenchmarkResult.model_validate(target)
+    compatibility: list[str] = []
+    if prior.artifact.role != "baseline":
+        compatibility.append("incompatible baseline artifact.role: expected baseline")
+    if observed.artifact.role != "target":
+        compatibility.append("incompatible target artifact.role: expected target")
+    if prior.artifact.implementation_signature == observed.artifact.implementation_signature:
+        compatibility.append(
+            "incompatible artifact.implementation_signature: baseline and target must differ"
+        )
+    for field in ("identity", "version", "hash"):
+        if getattr(prior.tool, field) != getattr(observed.tool, field):
+            compatibility.append(f"incompatible tool.{field}")
+    for field in ("hash", "scenario_hash"):
+        if prior.corpus.get(field) != observed.corpus.get(field):
+            compatibility.append(f"incompatible corpus.{field}")
+    if prior.environment.get("comparable") != observed.environment.get("comparable"):
+        compatibility.append("incompatible environment.comparable")
+    requested = _configuration_values(prior, "requested_sizes")
+    target_requested = _configuration_values(observed, "requested_sizes")
+    probes = _configuration_values(prior, "probe_sizes")
+    target_probes = _configuration_values(observed, "probe_sizes")
+    if requested is None or target_requested is None or requested != target_requested:
+        compatibility.append("incompatible configuration.requested_sizes")
+    if probes is None or target_probes is None or probes != target_probes:
+        compatibility.append("incompatible configuration.probe_sizes")
+    for key in ("warmups", "runs"):
+        if prior.configuration.get(key) != observed.configuration.get(key):
+            compatibility.append(f"incompatible configuration.{key}")
+    if set(prior.scenarios) != set(SCENARIO_NAMES) or set(observed.scenarios) != set(
+        SCENARIO_NAMES
+    ):
+        compatibility.append("incompatible scenarios: expected edge-heavy,general,record-heavy")
+    if compatibility:
+        return sorted(compatibility)
+
+    required_sizes = [*requested, *probes] if requested is not None and probes is not None else []
     violations: list[str] = []
     for scenario in SCENARIO_NAMES:
-        for metric, ratio, label in (
-            ("reducer_full_replay", 1.15, "replay"),
-            ("peak_memory_bytes", 1.15, "peak-memory"),
-            ("checkpoint_bytes", 1.0, "checkpoint-size"),
-            ("checkpoint_encode", 1.25, "codec/view"),
-            ("checkpoint_decode", 1.25, "codec/view"),
-            ("public_view", 1.25, "codec/view"),
-            ("cold_rebuild", 1.15, "cold-rebuild"),
-        ):
-            prior, observed = (
-                _median(baseline, scenario, metric),
-                _median(current, scenario, metric),
-            )
-            # One-run invocations are deliberately a CLI smoke contract, not a
-            # statistically useful performance sample. Zero/invalid thresholds
-            # remain failures so the smoke test still exercises each diagnostic.
-            if prior <= 0 or (current["configuration"]["runs"] >= 2 and observed > prior * ratio):
-                violations.append(
-                    f"{label} {scenario}/{metric}: {observed} exceeds {prior} * {ratio}"
-                )
-        sizes = current["configuration"]["sizes"]
-        if len(sizes) >= 2:
-            low, high = str(min(sizes)), str(max(sizes))
-            low_value = current["scenarios"][scenario]["by_size"][low]["reducer_per_event"][
-                "median"
-            ]
-            high_value = current["scenarios"][scenario]["by_size"][high]["reducer_per_event"][
-                "median"
-            ]
-            if low_value <= 0 or (
-                current["configuration"]["runs"] >= 2 and high_value / low_value > 2.5
+        baseline_sizes = prior.scenarios[scenario].sizes
+        target_sizes = observed.scenarios[scenario].sizes
+        for size in required_sizes:
+            size_key = str(size)
+            if size_key not in baseline_sizes or size_key not in target_sizes:
+                violations.append(f"incompatible {scenario}/{size}: missing size measurement")
+                continue
+            for metric, (unit, limit, label) in GATED_METRICS.items():
+                before = baseline_sizes[size_key].metrics.get(metric)
+                after = target_sizes[size_key].metrics.get(metric)
+                if before is None or after is None:
+                    violations.append(f"incompatible {scenario}/{size}/{metric}: missing metric")
+                    continue
+                if before.unit != unit or after.unit != unit or before.source != after.source:
+                    violations.append(f"incompatible {scenario}/{size}/{metric}: unit or source")
+                    continue
+                if before.median <= 0:
+                    violations.append(
+                        f"{label} {scenario}/{size}/{metric}: invalid baseline median"
+                    )
+                elif _exceeds(after.median, before.median, str(limit)):
+                    violations.append(
+                        f"{label} {scenario}/{size}/{metric}: {after.median} exceeds {before.median} * {limit}"
+                    )
+            cold_before = baseline_sizes[size_key].metrics.get("reducer_full_replay")
+            cold_after = target_sizes[size_key].metrics.get("cold_rebuild")
+            if cold_before is None or cold_after is None:
+                violations.append(f"incompatible {scenario}/{size}/cold_rebuild: missing metric")
+            elif (
+                cold_before.unit != "ms"
+                or cold_after.unit != "ms"
+                or cold_before.source != cold_after.source
             ):
+                violations.append(f"incompatible {scenario}/{size}/cold_rebuild: unit or source")
+            elif cold_before.median <= 0:
+                violations.append(f"cold-rebuild {scenario}/{size}: invalid baseline replay median")
+            elif _exceeds(cold_after.median, cold_before.median, "1.15"):
                 violations.append(
-                    f"scale {scenario}/reducer_full_replay exceeds 2.5x after startup exclusion"
+                    f"cold-rebuild {scenario}/{size}: {cold_after.median} exceeds {cold_before.median} * 1.15"
                 )
-    record_checkpoint = _median(current, "record-heavy", "checkpoint_bytes")
-    general_checkpoint = _median(current, "general", "checkpoint_bytes")
-    if record_checkpoint >= general_checkpoint:
-        violations.append(
-            "record-heavy checkpoint must be strictly smaller than general checkpoint"
-        )
-    return violations
+            if scenario == "record-heavy":
+                before = baseline_sizes[size_key].metrics.get("checkpoint_bytes")
+                after = target_sizes[size_key].metrics.get("checkpoint_bytes")
+                if before is not None and after is not None and after.median >= before.median:
+                    violations.append(
+                        f"record-heavy checkpoint {scenario}/{size}: {after.median} must be strictly smaller than {before.median}"
+                    )
+        for size in requested or []:
+            probe_key = f"{size}_to_{size * 2}"
+            probe = observed.scaling_probes.get(scenario, {}).get(probe_key)
+            if probe is None:
+                violations.append(f"incompatible scaling {scenario}/{probe_key}: missing probe")
+                continue
+            denominator = probe.n.median - probe.n.startup_median
+            numerator = probe.two_n.median - probe.two_n.startup_median
+            if denominator <= 0:
+                violations.append(f"scaling {scenario}/{probe_key}: invalid denominator")
+            elif numerator / denominator > 2.5:
+                violations.append(
+                    f"scaling {scenario}/{probe_key}: {numerator} / {denominator} exceeds 2.5"
+                )
+    return sorted(violations)
 
 
 def parse_args() -> argparse.Namespace:
@@ -494,6 +706,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--write-baseline", action="store_true")
     parser.add_argument("--check-gates", action="store_true")
     parser.add_argument("--api-url", default="http://127.0.0.1:8000/api/graph/max-event-count")
+    parser.add_argument("--max-event-count", type=int)
     args = parser.parse_args()
     if any(size < 2 for size in args.sizes) or sorted(set(args.sizes)) != args.sizes:
         parser.error("--sizes must be sorted, unique integers of at least 2")
@@ -506,7 +719,14 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    result = benchmark(args.sizes, args.warmups, args.runs, args.api_url)
+    result = benchmark(
+        args.sizes,
+        args.warmups,
+        args.runs,
+        args.api_url,
+        artifact_role="baseline" if args.write_baseline else "target",
+        operator_max_event_count=args.max_event_count,
+    )
     if args.write_baseline:
         args.baseline.parent.mkdir(parents=True, exist_ok=True)
         args.baseline.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

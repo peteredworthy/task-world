@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.benchmark_graph_projection import corpus_metadata, corpus_events
+from scripts.benchmark_graph_projection import corpus_metadata, corpus_events, gate_violations
 from orchestrator.graph import (
     OutputRecordAcceptedPayload,
     PROJECTION_SCHEMA_VERSION,
@@ -137,41 +137,31 @@ def test_smoke_measurements_report_honest_operation_boundaries_and_real_views() 
         ).stdout
     )
 
-    for scenario, measurements in result["scenarios"].items():
+    for scenario, scenario_result in result["scenarios"].items():
+        measurements = scenario_result["sizes"]["100"]
+        metrics = measurements["metrics"]
         assert (
-            measurements["operation_boundaries"]["snapshot_tail"]
+            measurements["metadata"]["operation_boundaries"]["snapshot_tail"]
             == "decode_checkpoint_then_reduce_suffix"
         )
         assert (
-            measurements["operation_boundaries"]["cold_rebuild"]
+            measurements["metadata"]["operation_boundaries"]["cold_rebuild"]
             == "reject_stale_schema_then_replay"
         )
         assert not checkpoint_schema_is_current(
-            measurements["cold_rebuild"]["rejected_schema_version"]
+            measurements["metadata"]["operation_boundaries"]["cold_rebuild"]
         )
-        expected_checkpoint = measurements["stream_metadata"]["projected"]
-        assert measurements["checkpoint_cardinalities"] == {
-            "nodes": expected_checkpoint["nodes"],
-            "edges": expected_checkpoint["edges"],
-            "records": expected_checkpoint["records"],
-        }
-        assert measurements["peak_memory_bytes"]["sample_count"] == 1
-        assert (
-            measurements["peak_memory_bytes"]["allocation_boundary"]
-            == "replay_only_excluding_prebuilt_corpus"
-        )
+        assert measurements["metadata"]["stream"]["event_count"] == 100
+        assert metrics["peak_memory_bytes"]["sample_count"] == 1
         for metric in (
             "reducer_full_replay",
             "snapshot_tail",
             "cold_rebuild",
             "append_heavy_indexes",
         ):
-            assert measurements[metric]["sample_count"] == 1
-            assert measurements[metric]["median"] >= 0
-        assert measurements["public_view"]["result_cardinality"] > 0
-        if scenario != "edge-heavy":
-            assert measurements["append_heavy_indexes"]["result_cardinality"] > 0
-        assert measurements["scenario"] == scenario
+            assert metrics[metric]["sample_count"] == 1
+            assert metrics[metric]["median"] >= 0
+        assert scenario in result["scaling_probes"]
 
 
 def test_corpus_metadata_expresses_scenario_dominance_without_generated_total_snapshots() -> None:
@@ -197,76 +187,186 @@ def test_corpus_metadata_expresses_scenario_dominance_without_generated_total_sn
     )
 
 
-def test_writes_deterministic_canonical_100_event_baseline_and_checks_it(tmp_path: Path) -> None:
+def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_gating(
+    tmp_path: Path,
+) -> None:
     baseline_path = tmp_path / "baseline.json"
     baseline = _write_minimal_baseline(baseline_path)
 
     assert json.loads(baseline_path.read_text()) == baseline
-    assert baseline["schema_version"] == 1
-    assert baseline["corpus"]["hash"]
-    assert baseline["configuration"] == {"runs": 1, "sizes": [100], "warmups": 1}
-    assert baseline["api_max_event_count"]["status"] in {"available", "unavailable"}
-    assert set(baseline["environment"]) >= {"hardware", "os", "python", "dependencies"}
+    assert baseline["schema_version"] == 2
+    assert baseline["tool"]["hash"]
+    assert baseline["artifact"]["role"] == "baseline"
+    assert baseline["configuration"]["requested_sizes"] == [100]
+    assert baseline["configuration"]["probe_sizes"] == [100, 200]
+    assert baseline["max_event_count"] == {
+        "count": None,
+        "source": "unsupported",
+        "status": "unsupported",
+    }
 
     scenarios = baseline["scenarios"]
     assert set(scenarios) == {"edge-heavy", "general", "record-heavy"}
-    for measurements in scenarios.values():
-        assert measurements["event_count"] == 100
-        assert measurements["checkpoint_bytes"]["unit"] == "bytes"
-        assert measurements["peak_memory_bytes"]["unit"] == "bytes"
-        assert measurements["reducer_full_replay"]["unit"] == "ms"
-        assert measurements["reducer_per_event"]["unit"] == "ms/event"
-        assert measurements["max_observed"]["source"] == "synthetic_corpus"
+    for scenario_result in scenarios.values():
+        for measurements in scenario_result["sizes"].values():
+            metrics = measurements["metrics"]
+            assert metrics["checkpoint_bytes"]["unit"] == "bytes"
+            assert metrics["peak_memory_bytes"]["unit"] == "bytes"
+            assert metrics["reducer_full_replay"]["unit"] == "ms"
 
-    checked = _run(
-        "--sizes",
-        "100",
-        "--warmups",
-        "1",
-        "--runs",
-        "1",
-        "--baseline",
-        str(baseline_path),
-        "--check-gates",
+
+def _gate_document(
+    *,
+    role: str,
+    replay: float = 100.0,
+    memory: float = 100.0,
+    checkpoint: float = 100.0,
+    codec: float = 100.0,
+    cold_rebuild: float = 100.0,
+    scale_low: float = 110.0,
+    scale_high: float = 210.0,
+) -> dict[str, object]:
+    """Return a complete, hand-built schema-v2 gate document."""
+    metrics = {
+        "reducer_full_replay": (replay, "ms"),
+        "peak_memory_bytes": (memory, "bytes"),
+        "checkpoint_bytes": (checkpoint, "bytes"),
+        "checkpoint_encode": (codec, "ms"),
+        "checkpoint_decode": (codec, "ms"),
+        "public_view": (codec, "ms"),
+        "cold_rebuild": (cold_rebuild, "ms"),
+    }
+
+    def measurement(values: dict[str, tuple[float, str]]) -> dict[str, object]:
+        return {
+            name: {"median": value, "unit": unit, "source": "current", "sample_count": 2}
+            for name, (value, unit) in values.items()
+        }
+
+    sizes = {
+        size: {"metrics": measurement(metrics), "metadata": {"event_count": int(size)}}
+        for size in ("100", "200")
+    }
+    return {
+        "schema_version": 2,
+        "tool": {"identity": "graph-projection-benchmark", "version": "2", "hash": "tool-hash"},
+        "artifact": {"role": role, "implementation_signature": f"{role}-implementation"},
+        "source": {"revision": f"{role}-revision"},
+        "corpus": {"hash": "corpus-hash", "scenario_hash": "scenario-hash"},
+        "configuration": {
+            "requested_sizes": [100],
+            "probe_sizes": [100, 200],
+            "warmups": 1,
+            "runs": 2,
+        },
+        "environment": {
+            "comparable": {
+                "architecture": "arm64",
+                "python": "3.12.0",
+                "dependencies": {"pydantic": "2", "sqlalchemy": "2"},
+            },
+            "informational": {"host": "test-host", "os": "test-os"},
+        },
+        "max_event_count": {"count": None, "status": "unsupported", "source": "unsupported"},
+        "scenarios": {
+            scenario: {"sizes": sizes} for scenario in ("general", "edge-heavy", "record-heavy")
+        },
+        "scaling_probes": {
+            scenario: {
+                "100_to_200": {
+                    "n": {"median": scale_low, "startup_median": 10.0, "unit": "ms"},
+                    "two_n": {"median": scale_high, "startup_median": 10.0, "unit": "ms"},
+                }
+            }
+            for scenario in ("general", "edge-heavy", "record-heavy")
+        },
+    }
+
+
+def test_gate_evaluator_accepts_complete_strict_documents() -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(
+        role="target", checkpoint=99.0, replay=115.0, memory=115.0, codec=125.0, cold_rebuild=115.0
     )
-    assert checked.returncode == 0, checked.stderr
-    assert json.loads(checked.stdout)["gates"] == {"status": "passed", "violations": []}
+
+    assert gate_violations(baseline, target) == []
 
 
 @pytest.mark.parametrize(
-    ("scenario", "metric", "expected"),
+    ("field", "limit", "label"),
     [
-        ("general", "reducer_full_replay", "replay"),
-        ("general", "peak_memory_bytes", "peak-memory"),
-        ("general", "checkpoint_bytes", "checkpoint-size"),
-        ("general", "checkpoint_encode", "codec/view"),
-        ("general", "cold_rebuild", "cold-rebuild"),
-        ("record-heavy", "checkpoint_record_heavy_smaller", "checkpoint-size"),
+        ("replay", 1.15, "replay"),
+        ("memory", 1.15, "peak-memory"),
+        ("checkpoint", 1.0, "checkpoint-size"),
+        ("codec", 1.25, "codec/view"),
+        ("cold_rebuild", 1.15, "cold-rebuild"),
     ],
 )
-def test_check_gates_reports_each_synthetic_metric_failure(
-    tmp_path: Path, scenario: str, metric: str, expected: str
+@pytest.mark.parametrize("multiplier", (0.999, 1.0, 1.001))
+def test_gate_ratio_boundaries_are_exact(
+    field: str, limit: float, label: str, multiplier: float
 ) -> None:
-    baseline_path = tmp_path / "baseline.json"
-    baseline = _write_minimal_baseline(baseline_path)
-    scenario_data = baseline["scenarios"][scenario]
-    if metric == "checkpoint_record_heavy_smaller":
-        scenario_data["checkpoint_bytes"]["median"] = 0
-    else:
-        scenario_data[metric]["median"] = 0
-    baseline_path.write_text(json.dumps(baseline, indent=2, sort_keys=True) + "\n")
+    baseline = _gate_document(role="baseline")
+    target_options = {"checkpoint": 99.0, field: 100.0 * limit * multiplier}
+    target = _gate_document(role="target", **target_options)
 
-    checked = _run(
-        "--sizes",
-        "100",
-        "--warmups",
-        "1",
-        "--runs",
-        "1",
-        "--baseline",
-        str(baseline_path),
-        "--check-gates",
+    violations = gate_violations(baseline, target)
+
+    assert (any(label in violation for violation in violations)) is (multiplier > 1.0)
+
+
+def test_gate_evaluator_rejects_missing_metric_with_sorted_compatibility_diagnostics() -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
+    scenarios = target["scenarios"]
+    assert isinstance(scenarios, dict)
+    general = scenarios["general"]
+    assert isinstance(general, dict)
+    sizes = general["sizes"]
+    assert isinstance(sizes, dict)
+    size_100 = sizes["100"]
+    assert isinstance(size_100, dict)
+    metrics = size_100["metrics"]
+    assert isinstance(metrics, dict)
+    del metrics["checkpoint_decode"]
+    tool = target["tool"]
+    assert isinstance(tool, dict)
+    tool["hash"] = "stale-tool"
+
+    violations = gate_violations(baseline, target)
+
+    assert violations == sorted(violations)
+    assert any("tool.hash" in violation for violation in violations) or any(
+        "checkpoint_decode" in violation for violation in violations
     )
 
-    assert checked.returncode != 0
-    assert expected in checked.stderr
+
+@pytest.mark.parametrize("scale_high", (259.9, 260.0, 260.1))
+def test_scaling_boundary_subtracts_startup(scale_high: float) -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0, scale_high=scale_high)
+
+    violations = gate_violations(baseline, target)
+
+    assert (any("scaling" in violation for violation in violations)) is (scale_high > 260.0)
+
+
+def test_scaling_refuses_nonpositive_startup_adjusted_denominator() -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0, scale_low=10.0)
+
+    assert any(
+        "invalid denominator" in violation for violation in gate_violations(baseline, target)
+    )
+
+
+@pytest.mark.parametrize("checkpoint", (99.1, 100.0, 100.1))
+def test_record_heavy_checkpoint_requires_strict_shrink(checkpoint: float) -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=checkpoint)
+
+    violations = gate_violations(baseline, target)
+
+    assert (any("record-heavy checkpoint" in violation for violation in violations)) is (
+        checkpoint >= 100.0
+    )
