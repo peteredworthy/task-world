@@ -39,6 +39,21 @@
 - Decision and authority request wrappers now retain their canonical required
   fields and enforce option/default and target invariants. `DecisionActorValue`
   is exported from the public graph API.
+- Split node execution authority from direct authority requests. The dedicated
+  frozen execution-authority value preserves canonical resource claims,
+  allowed actions, preconditions, defaults, and external-claim validation.
+- Replaced the abbreviated `authority_request_record` value with a frozen typed
+  record envelope preserving the canonical discriminator/schema, identity and
+  provenance fields, and nested authority request value. Both new support
+  models are public graph exports.
+- Replaced shallow ownership assertions with a recursive annotation/model
+  walker covering `Annotated`, unions, `FrozenMap`, tuples, nested generics, and
+  cycles. It proves that `records.by_id` is the sole full-record owner and
+  observably detects a test-only duplicate owner.
+- Node creation ownership now compares exact source-fact/destination pairs,
+  checks unique manifest ownership, and exactly reconciles all flattened node
+  spec/runtime/scheduling paths. Secondary record indexes recursively permit
+  only string IDs and the deliberate compact summary model.
 
 ## Contract Coverage
 
@@ -62,14 +77,21 @@ Executed successfully:
 
 ```text
 uv run pytest tests/unit/test_graph_projection_models.py tests/unit/test_graph_public_exports.py -q
-20 passed in 5.65s
+24 passed in 6.74s
 
 uv run ruff check src/orchestrator/graph/projection_models.py \
-  src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_models.py
+  src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_models.py \
+  tests/unit/test_graph_public_exports.py
 All checks passed!
 
+uv run ruff format --check src/orchestrator/graph/projection_models.py \
+  src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_models.py \
+  tests/unit/test_graph_public_exports.py
+4 files already formatted
+
 uv run pyright src/orchestrator/graph/projection_models.py \
-  src/orchestrator/graph/__init__.py
+  src/orchestrator/graph/__init__.py tests/unit/test_graph_projection_models.py \
+  tests/unit/test_graph_public_exports.py
 0 errors, 0 warnings, 0 informations
 ```
 

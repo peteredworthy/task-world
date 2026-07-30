@@ -112,6 +112,65 @@ class AuthorityRequestValue(ProjectionModel):
         return self
 
 
+class ExecutionAuthorityValue(ProjectionModel):
+    """Complete immutable counterpart of the canonical execution authority."""
+
+    allowed_actions: tuple[StrictStr, ...] = ()
+    resource_claims: tuple[ResourceClaimValue, ...] = ()
+    preconditions: tuple[StrictStr, ...] = ()
+
+    @field_validator("allowed_actions", "resource_claims", "preconditions", mode="before")
+    @classmethod
+    def freeze_authority_sequences(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "authority values must be sequences")
+
+    @model_validator(mode="after")
+    def external_claims_have_keys(self) -> "ExecutionAuthorityValue":
+        if any(
+            claim.mode == "external" and claim.external_resource_key is None
+            for claim in self.resource_claims
+        ):
+            raise ValueError("external claims require external_resource_key")
+        return self
+
+
+class AuthorityRequestRecordEnvelopeValue(ProjectionModel):
+    """Immutable canonical authority-request record envelope retained on a node."""
+
+    record_id: StrictStr
+    record_kind: Literal["graph_record"]
+    record_type: Literal["authority_request_record"]
+    schema_version: StrictInt | None = None
+    producer_node_id: StrictStr
+    producer_port: StrictStr | None = None
+    port: Literal["authority_request_record"]
+    schema_: Literal["AuthorityRequest"] = Field(alias="schema")
+    created_at: StrictStr | None = None
+    graph_position: StrictInt | None = None
+    run_id: StrictStr | None = None
+    payload: FrozenMap[StrictStr, FrozenJsonValue] | None = None
+    provenance: FrozenMap[StrictStr, FrozenJsonValue] | None = None
+    value: AuthorityRequestValue
+
+    @field_validator("payload", "provenance", mode="before")
+    @classmethod
+    def freeze_envelope_json(cls, value: object) -> FrozenMap[str, FrozenJsonValue] | None:
+        if value is None:
+            return None
+        frozen = freeze_json(value)
+        if not isinstance(frozen, FrozenMap):
+            raise ValueError("record envelope JSON must be an object")
+        return frozen
+
+    @model_validator(mode="after")
+    def envelope_fields_are_consistent(self) -> "AuthorityRequestRecordEnvelopeValue":
+        if self.schema_version is not None and self.schema_version <= 0:
+            raise ValueError("schema_version must be positive")
+        if self.producer_port is not None and self.producer_port != self.port:
+            raise ValueError("producer_port must match port")
+        return self
+
+
 class NodeSpecProjection(ProjectionModel):
     node_id: StrictStr
     creation_position: StrictInt
@@ -131,9 +190,9 @@ class NodeSpecProjection(ProjectionModel):
     blocker: StrictStr | None = None
     blocker_reason: StrictStr | None = None
     decision_request: DecisionRequestValue | None = None
-    authority_request_record: AuthorityRequestValue | None = None
+    authority_request_record: AuthorityRequestRecordEnvelopeValue | None = None
     authority_request: AuthorityRequestValue | None = None
-    authority: AuthorityRequestValue | None = None
+    authority: ExecutionAuthorityValue | None = None
     command_definition: CommandDefinitionValue | None = None
     command_definition_id: StrictStr | None = None
     hidden_oracle_command: StrictStr | None = None

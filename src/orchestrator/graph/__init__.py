@@ -205,6 +205,7 @@ from orchestrator.graph.projection_collections import (
     thaw_json,
 )
 from orchestrator.graph.projection_models import (
+    AuthorityRequestRecordEnvelopeValue,
     AuthorityRequestValue as ProjectionAuthorityRequestValue,
     CandidateValue as ProjectedCandidateValue,
     CallbackEventValue,
@@ -217,6 +218,7 @@ from orchestrator.graph.projection_models import (
     DecisionRequestValue as ProjectionDecisionRequestValue,
     EdgeValue,
     EnvironmentFailureValue,
+    ExecutionAuthorityValue,
     ExecutionProjection,
     FinalInvariantBlockerProjection,
     GovernanceProjection,
@@ -473,6 +475,7 @@ __all__ = [
     "AuthorityDecisionRecordedPayload",
     "AuthorityDecisionValue",
     "AuthorityRequestValue",
+    "AuthorityRequestRecordEnvelopeValue",
     "CallbackAcceptedPayload",
     "CallbackDuplicateReturnedPayload",
     "CallbackIdempotencyEvent",
@@ -876,6 +879,7 @@ __all__ = [
     "GovernanceProjection",
     "RequirementsProjection",
     "ExecutionProjection",
+    "ExecutionAuthorityValue",
     "UsageProjection",
     "ProjectedCandidateValue",
     "CallbackEventValue",

@@ -2,13 +2,16 @@
 
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 import pytest
 import yaml
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph import (
+    Authority,
+    AuthorityRequestRecord,
+    AuthorityRequestRecordEnvelopeValue,
     CandidateProjection,
     CallbackEventValue,
     CleanupRequestValue,
@@ -17,6 +20,7 @@ from orchestrator.graph import (
     EdgeValue,
     EdgeProjection,
     EnvironmentFailureValue,
+    ExecutionAuthorityValue,
     ExecutionProjection,
     FinalInvariantBlockerProjection,
     FrozenMap,
@@ -30,6 +34,7 @@ from orchestrator.graph import (
     LeaseValue,
     LatestRoutineSnapshotProjection,
     LifecycleProjection,
+    NodeCreationProjection,
     NodeProjection,
     NodeRuntimeProjection,
     NodeSchedulingProjection,
@@ -119,6 +124,53 @@ def _models_in_annotation(annotation: object) -> set[type[BaseModel]]:
     return {model for argument in get_args(annotation) for model in _models_in_annotation(argument)}
 
 
+def _concrete_annotation_models(annotation: object) -> set[type[BaseModel]]:
+    return {
+        model
+        for model in _models_in_annotation(annotation)
+        if model is not BaseModel and not get_args(model)
+    }
+
+
+def _grouped_paths_containing(root: type[BaseModel], targets: set[type[BaseModel]]) -> set[str]:
+    paths: set[str] = set()
+
+    def visit_annotation(annotation: object, path: str, ancestors: frozenset[object]) -> None:
+        if annotation in targets:
+            paths.add(path)
+        if annotation in ancestors:
+            return
+        next_ancestors = ancestors | {annotation}
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            annotations = get_type_hints(annotation, include_extras=True)
+            for name, field in annotation.model_fields.items():
+                visit_annotation(
+                    annotations.get(name, field.annotation),
+                    f"{path}.{name}" if path else name,
+                    next_ancestors,
+                )
+            return
+        arguments = get_args(annotation)
+        if get_origin(annotation) is Annotated:
+            arguments = arguments[:1]
+        for argument in arguments:
+            visit_annotation(argument, path, next_ancestors)
+
+    visit_annotation(root, "", frozenset())
+    return paths
+
+
+def _flatten_node_paths() -> set[str]:
+    paths: set[str] = set()
+    for group_name, group_type in (
+        ("spec", NodeSpecProjection),
+        ("runtime", NodeRuntimeProjection),
+        ("scheduling", NodeSchedulingProjection),
+    ):
+        paths.update(f"nodes.*.{group_name}.{name}" for name in group_type.model_fields)
+    return paths
+
+
 def test_root_groups_equal_manifest_groups_and_architecture() -> None:
     manifest_groups = {entry["group"] for entry in _manifest()["fields"] if entry["group"]}
     assert manifest_groups == ROOT_GROUPS
@@ -145,14 +197,38 @@ def test_manifest_exactly_owns_each_legacy_field_at_its_retained_destination() -
     }
 
 
-def test_every_node_creation_fact_has_one_explicit_node_or_group_owner() -> None:
+def test_node_creation_ownership_exactly_matches_explicit_node_fields() -> None:
     manifest = _manifest()
-    destinations = _destination_paths(ImmutableGraphProjection)
-    assert {
-        entry["new_path"].replace(".*", "") for entry in manifest["node_creation_ownership"]
-    } <= destinations
-    assert "details" not in NodeSpecProjection.model_fields
+    ownership = manifest["node_creation_ownership"]
+    relationships = [(entry["field_name"], entry["new_path"]) for entry in ownership]
+    node_relationships = {
+        (source, destination)
+        for source, destination in relationships
+        if destination.startswith("nodes.*.")
+    }
+    flattened_by_name = {path.rsplit(".", 1)[-1]: path for path in _flatten_node_paths()}
+    expected_node_relationships = {
+        (source, flattened_by_name[source])
+        for source in NodeCreationProjection.model_fields
+        if source in flattened_by_name
+    }
+    expected_node_relationships.add(("position", flattened_by_name["creation_position"]))
+
+    assert len(relationships) == len(set(relationships))
+    assert len({source for source, _ in relationships}) == len(relationships)
+    assert node_relationships == expected_node_relationships
+    assert _flatten_node_paths() == {
+        entry["new_path"]
+        for entry in [*manifest["fields"], *ownership]
+        if (entry.get("new_path") or "").startswith("nodes.*.")
+    }
     assert set(NodeProjection.model_fields) == {"spec", "runtime", "scheduling"}
+    assert not {
+        name
+        for name, field in NodeSpecProjection.model_fields.items()
+        if name != "command_definition"
+        and (field.annotation is Any or Any in get_args(field.annotation))
+    }
 
 
 def test_model_graph_has_no_mutable_annotations_or_open_extra() -> None:
@@ -206,7 +282,7 @@ def test_node_values_and_maps_cannot_be_mutated() -> None:
         node.scheduling = NodeSchedulingProjection(last_deferred_reason="later")
 
 
-def test_record_store_is_the_only_full_payload_owner_and_indexes_are_id_only() -> None:
+def test_record_store_is_the_only_recursive_full_payload_owner() -> None:
     assert set(RecordStore.model_fields) == {
         "by_id",
         "ids_by_node_port",
@@ -216,14 +292,49 @@ def test_record_store_is_the_only_full_payload_owner_and_indexes_are_id_only() -
     assert get_origin(ids_annotation) is FrozenMap
     assert Mapping not in get_args(ids_annotation)
 
-    reachable_annotations = [
-        annotation
-        for model in _models_in_annotation(ImmutableGraphProjection)
-        for annotation in get_type_hints(model).values()
-    ]
-    assert sum("ProjectedRecord" in str(annotation) for annotation in reachable_annotations) == 0
-    by_id_value = get_args(get_type_hints(RecordStore)["by_id"])[1]
-    assert get_args(by_id_value) == get_args(get_args(ProjectedRecord)[0])
+    record_models = _concrete_annotation_models(get_args(ProjectedRecord)[0])
+    assert _grouped_paths_containing(ImmutableGraphProjection, record_models) == {"records.by_id"}
+
+
+def test_recursive_full_payload_owner_guard_detects_a_second_group() -> None:
+    class BadRecordGroup(ProjectionModel):
+        duplicate_by_id: FrozenMap[str, ProjectedRecord] = FrozenMap()
+
+    class BadRoot(ProjectionModel):
+        records: RecordStore = RecordStore()
+        bad_records: BadRecordGroup = BadRecordGroup()
+
+    record_models = _concrete_annotation_models(get_args(ProjectedRecord)[0])
+    paths = _grouped_paths_containing(BadRoot, record_models)
+
+    assert paths == {"records.by_id", "bad_records.duplicate_by_id"}
+    assert paths != {"records.by_id"}
+
+
+def test_secondary_record_indexes_resolve_only_to_ids_or_compact_summaries() -> None:
+    allowed_models = {GraphRecordSummaryProjection}
+    allowed_scalars = {str}
+
+    def invalid(annotation: object, ancestors: frozenset[object] = frozenset()) -> set[object]:
+        if annotation in allowed_scalars or annotation in allowed_models:
+            return set()
+        if annotation in ancestors:
+            return set()
+        origin = get_origin(annotation)
+        if origin is Annotated:
+            return invalid(get_args(annotation)[0], ancestors | {annotation})
+        if origin in {FrozenMap, tuple}:
+            return set().union(
+                *(
+                    invalid(argument, ancestors | {annotation})
+                    for argument in get_args(annotation)
+                    if argument is not Ellipsis
+                )
+            )
+        return {annotation}
+
+    assert invalid(RecordStore.model_fields["ids_by_node_port"].annotation) == set()
+    assert invalid(RecordStore.model_fields["summaries_by_id"].annotation) == set()
 
 
 def test_new_models_are_available_from_public_graph_api() -> None:
@@ -231,6 +342,8 @@ def test_new_models_are_available_from_public_graph_api() -> None:
         ProjectionModel,
         LifecycleProjection,
         ResourceClaimValue,
+        ExecutionAuthorityValue,
+        AuthorityRequestRecordEnvelopeValue,
         CommandDefinitionValue,
         DecisionActorValue,
         ProjectionDecisionRequestValue,
@@ -356,6 +469,80 @@ def test_node_request_values_preserve_complete_nondefault_payloads() -> None:
         "requested_authority": ["operator"],
         "target_region_id": None,
     }
+
+
+def test_node_execution_authority_preserves_canonical_json_and_isolated_children() -> None:
+    raw = {
+        "resource_claims": [
+            {"mode": "write", "scope": "repo", "paths": ["docs/**"]},
+            {"mode": "external", "scope": "service", "external_resource_key": "deploy"},
+        ],
+        "allowed_actions": ["submit_output", "deploy"],
+        "preconditions": ["inputs_bound"],
+    }
+    canonical = Authority.model_validate(raw)
+    expected = canonical.model_dump(mode="json", exclude_unset=False)
+    spec = NodeSpecProjection.model_validate(
+        {"node_id": "node-1", "creation_position": 1, "authority": canonical.model_dump()}
+    )
+
+    raw["resource_claims"][0]["paths"].append("src/**")
+    raw["allowed_actions"].append("delete")
+    assert spec.model_dump(mode="json")["authority"] == expected
+    assert isinstance(spec.authority, ExecutionAuthorityValue)
+
+    with pytest.raises(ValidationError, match="extra_forbidden"):
+        NodeSpecProjection.model_validate(
+            {"node_id": "node-1", "creation_position": 1, "authority": {**raw, "unknown": True}}
+        )
+
+
+def test_wrapped_authority_request_record_preserves_canonical_json_and_isolation() -> None:
+    raw = {
+        "record_id": "authority-request-1",
+        "record_kind": "graph_record",
+        "record_type": "authority_request_record",
+        "schema_version": 2,
+        "producer_node_id": "planner-1",
+        "producer_port": "authority_request_record",
+        "port": "authority_request_record",
+        "schema": "AuthorityRequest",
+        "created_at": "2026-01-01T00:00:00Z",
+        "graph_position": 7,
+        "run_id": "run-1",
+        "payload": {"source": {"ids": ["proposal-1"]}},
+        "provenance": {"event_ids": ["event-1"]},
+        "value": {
+            "requested_authority": ["repo:docs/**:write"],
+            "target_node_id": "worker-1",
+            "target_region_id": "task-1",
+            "reason": "Worker needs docs access.",
+            "expires_at": "2026-02-01T00:00:00Z",
+        },
+    }
+    canonical = AuthorityRequestRecord.model_validate(raw)
+    expected = canonical.model_dump(mode="json", by_alias=True)
+    spec = NodeSpecProjection.model_validate(
+        {
+            "node_id": "gate-authority",
+            "creation_position": 1,
+            "authority_request_record": canonical.model_dump(mode="json"),
+        }
+    )
+
+    raw["value"]["requested_authority"].append("graph_write")
+    raw["payload"]["source"]["ids"].append("proposal-2")
+    assert spec.model_dump(mode="json", by_alias=True)["authority_request_record"] == expected
+    assert isinstance(spec.authority_request_record, AuthorityRequestRecordEnvelopeValue)
+
+    with pytest.raises(ValidationError, match="literal_error"):
+        NodeSpecProjection.model_validate(
+            {
+                "node_id": "gate-authority",
+                "creation_position": 1,
+                "authority_request_record": {**canonical.model_dump(), "schema": "Wrong"},
+            }
+        )
 
 
 @pytest.mark.parametrize(
