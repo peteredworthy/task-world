@@ -93,6 +93,15 @@ async def _seed_decision_graph_run(app: Any, run_id: str) -> None:
             },
         ),
         _event(
+            "node_created",
+            {
+                "node_id": "worker-docs",
+                "kind": "worker",
+                "state": "planned",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
             "output_record_accepted",
             {
                 "record_id": "authority-request-1",
@@ -113,6 +122,10 @@ async def _seed_decision_graph_run(app: Any, run_id: str) -> None:
         _event(
             "node_created",
             {"node_id": "appeal-1", "kind": "appeal", "state": "completed"},
+        ),
+        _event(
+            "node_created",
+            {"node_id": "oversight-1", "kind": "oversight", "state": "completed"},
         ),
         _event(
             "oversight_decision_recorded",
@@ -163,9 +176,19 @@ async def _seed_active_authority_graph_run(app: Any, run_id: str) -> None:
             },
         ),
         _event(
+            "edge_created",
+            {
+                "edge_id": "edge-1",
+                "from_node_id": "authority-1",
+                "from_port": "authority_request_record",
+                "to_node_id": "authority-1",
+                "to_port": "authority_request_record",
+            },
+        ),
+        _event(
             "input_bound",
             {
-                "edge_id": "edge-authority-request",
+                "edge_id": "edge-1",
                 "to_node_id": "authority-1",
                 "to_port": "authority_request_record",
                 "record_ids": ["authority-request-1"],
@@ -291,7 +314,7 @@ async def test_decisions_endpoint_reflects_seeded_gates_and_appeals(
     assert response.status_code == 200
     body = response.json()
     assert body["run_id"] == run_id
-    assert body["event_count"] == 6
+    assert body["event_count"] == 8
     assert body["pending_gates"] == [
         {
             "node_id": "authority-1",
@@ -334,7 +357,7 @@ async def test_record_authority_decision_updates_decision_readback(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["graph_position"] == 9
+    assert body["graph_position"] == 11
     assert [event["event_type"] for event in body["events"]] == [
         "authority_decision_recorded",
         "output_record_accepted",
@@ -348,7 +371,7 @@ async def test_record_authority_decision_updates_decision_readback(
     assert decision_record["port"] == "authority_decision"
     assert decision_record["schema"] == "AuthorityDecision"
     assert decision_record["run_id"] == run_id
-    assert decision_record["graph_position"] == 8
+    assert decision_record["graph_position"] == 10
     assert decision_record["value"] == {
         "decision": "granted",
         "decision_type": "authority",

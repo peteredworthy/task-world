@@ -28,8 +28,8 @@
         "warmups": 2
       },
       "10000": {
-        "runs": 1,
-        "warmups": 0
+        "runs": 7,
+        "warmups": 2
       },
       "50": {
         "runs": 7,
@@ -40,8 +40,8 @@
         "warmups": 2
       },
       "5000": {
-        "runs": 3,
-        "warmups": 1
+        "runs": 7,
+        "warmups": 2
       }
     },
     "warmups": 2
@@ -81,7 +81,7 @@
         },
         "startup": {
           "kind": "sampled",
-          "median": 0.002541,
+          "median": 0.002542,
           "sample_count": 7,
           "source": "current",
           "unit": "ms"
@@ -94,7 +94,7 @@
         },
         "startup": {
           "kind": "sampled",
-          "median": 0.002416,
+          "median": 0.002291,
           "sample_count": 7,
           "source": "current",
           "unit": "ms"
@@ -107,8 +107,8 @@
         },
         "startup": {
           "kind": "sampled",
-          "median": 0.002584,
-          "sample_count": 1,
+          "median": 0.002291,
+          "sample_count": 7,
           "source": "current",
           "unit": "ms"
         }
@@ -122,7 +122,48 @@
         },
         "startup": {
           "kind": "sampled",
-          "median": 0.002625,
+          "median": 0.002459,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      },
+      {
+        "pair": {
+          "n": 500,
+          "two_n": 1000
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002333,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      },
+      {
+        "pair": {
+          "n": 5000,
+          "two_n": 10000
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.002333,
+          "sample_count": 7,
+          "source": "current",
+          "unit": "ms"
+        }
+      }
+    ],
+    "record-heavy": [
+      {
+        "pair": {
+          "n": 50,
+          "two_n": 100
+        },
+        "startup": {
+          "kind": "sampled",
+          "median": 0.003,
           "sample_count": 7,
           "source": "current",
           "unit": "ms"
@@ -148,49 +189,8 @@
         },
         "startup": {
           "kind": "sampled",
-          "median": 0.002417,
-          "sample_count": 1,
-          "source": "current",
-          "unit": "ms"
-        }
-      }
-    ],
-    "record-heavy": [
-      {
-        "pair": {
-          "n": 50,
-          "two_n": 100
-        },
-        "startup": {
-          "kind": "sampled",
-          "median": 0.002542,
+          "median": 0.003167,
           "sample_count": 7,
-          "source": "current",
-          "unit": "ms"
-        }
-      },
-      {
-        "pair": {
-          "n": 500,
-          "two_n": 1000
-        },
-        "startup": {
-          "kind": "sampled",
-          "median": 0.002458,
-          "sample_count": 7,
-          "source": "current",
-          "unit": "ms"
-        }
-      },
-      {
-        "pair": {
-          "n": 5000,
-          "two_n": 10000
-        },
-        "startup": {
-          "kind": "sampled",
-          "median": 0.002542,
-          "sample_count": 1,
           "source": "current",
           "unit": "ms"
         }
@@ -233,7 +233,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 0.232792,
+              "median": 0.214833,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -247,63 +247,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 0.2335,
+              "median": 0.229209,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 0.174667,
+              "median": 0.171167,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 1.953583,
+              "median": 2.078375,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 69304320.0,
+              "median": 69287936.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 1.564667,
+              "median": 1.655,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 0.343208,
+              "median": 0.329917,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 2.025458,
+              "median": 2.076708,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.02025458,
+              "median": 0.02076708,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 1.214125,
+              "median": 1.407,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -343,7 +343,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 6.4475,
+              "median": 6.486291,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -357,63 +357,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 2.346041,
+              "median": 2.421459,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 1.758,
+              "median": 2.03225,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 42.798416,
+              "median": 47.623625,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 72220672.0,
+              "median": 72384512.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 18.024291,
+              "median": 19.513584,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 3.5015,
+              "median": 4.068833,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 42.059292,
+              "median": 45.013958,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.042059292,
+              "median": 0.045013958,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 28.7245,
+              "median": 31.333958,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -453,8 +453,8 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 533.650375,
-              "sample_count": 1,
+              "median": 563.475667,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
@@ -467,64 +467,64 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 27.692125,
-              "sample_count": 1,
+              "median": 27.975833,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 19.438666,
-              "sample_count": 1,
+              "median": 20.562834,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 3112.797917,
-              "sample_count": 1,
+              "median": 2989.254542,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 107282432.0,
-              "sample_count": 1,
+              "median": 106725376.0,
+              "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 416.324334,
-              "sample_count": 1,
+              "median": 432.708458,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 39.162584,
-              "sample_count": 1,
+              "median": 40.417542,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 2958.408833,
-              "sample_count": 1,
+              "median": 2988.328708,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.295840883,
-              "sample_count": 1,
+              "median": 0.298832871,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 2339.277167,
-              "sample_count": 1,
+              "median": 2228.978583,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             }
@@ -563,7 +563,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 0.102959,
+              "median": 0.137,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -577,63 +577,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 0.125292,
+              "median": 0.123083,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 0.089875,
+              "median": 0.088625,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 0.933625,
+              "median": 0.9105,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 69287936.0,
+              "median": 69337088.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 0.780375,
+              "median": 0.944875,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 0.164833,
+              "median": 0.204833,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 0.936083,
+              "median": 1.155709,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.01872166,
+              "median": 0.02311418,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 0.556833,
+              "median": 0.571708,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -673,7 +673,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 1.970792,
+              "median": 2.049166,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -687,63 +687,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 1.122208,
+              "median": 1.215834,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 0.815542,
+              "median": 0.900125,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 15.112875,
+              "median": 15.57225,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 70500352.0,
+              "median": 70565888.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 8.830792,
+              "median": 9.069958,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 1.7,
+              "median": 1.795166,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 15.265666,
+              "median": 16.329959,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.030531332,
+              "median": 0.032659918,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 9.629958,
+              "median": 10.303875,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -783,8 +783,8 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 130.260584,
-              "sample_count": 3,
+              "median": 140.609417,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
@@ -797,64 +797,64 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 12.84175,
-              "sample_count": 3,
+              "median": 13.613458,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 9.201041,
-              "sample_count": 3,
+              "median": 10.069917,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 737.475875,
-              "sample_count": 3,
+              "median": 776.099666,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 87457792.0,
-              "sample_count": 3,
+              "median": 87425024.0,
+              "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 212.414708,
-              "sample_count": 3,
+              "median": 207.86375,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 18.836833,
-              "sample_count": 3,
+              "median": 19.993083,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 739.57675,
-              "sample_count": 3,
+              "median": 775.941958,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.14791535,
-              "sample_count": 3,
+              "median": 0.155188392,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 535.032791,
-              "sample_count": 3,
+              "median": 568.1475,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             }
@@ -897,7 +897,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 0.528416,
+              "median": 0.441334,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -911,63 +911,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 4.500291,
+              "median": 4.943833,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 0.326708,
+              "median": 0.329042,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 4.60325,
+              "median": 4.558833,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 69451776.0,
+              "median": 69402624.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 1.5675,
+              "median": 1.856458,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 0.230083,
+              "median": 0.231542,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 4.03675,
+              "median": 4.583,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.0403675,
+              "median": 0.04583,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 4.7525,
+              "median": 5.2005,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1007,7 +1007,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 93.922333,
+              "median": 80.094208,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1021,63 +1021,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 57.017208,
+              "median": 49.586167,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 3.578958,
+              "median": 3.094584,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 363.316292,
+              "median": 286.727833,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 72876032.0,
+              "median": 73007104.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 19.38625,
+              "median": 19.694542,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 2.455917,
+              "median": 2.676417,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 312.656917,
+              "median": 290.829584,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.312656917,
+              "median": 0.290829584,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 299.808708,
+              "median": 258.230125,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1117,8 +1117,8 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 24011.075167,
-              "sample_count": 1,
+              "median": 21227.625875,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
@@ -1131,64 +1131,64 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 490.459084,
-              "sample_count": 1,
+              "median": 494.172875,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 37.818541,
-              "sample_count": 1,
+              "median": 38.329333,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 117321.859209,
-              "sample_count": 1,
+              "median": 112517.424292,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 105480192.0,
-              "sample_count": 1,
+              "median": 113786880.0,
+              "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 494.775666,
-              "sample_count": 1,
+              "median": 460.903791,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 30.555833,
-              "sample_count": 1,
+              "median": 27.624084,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 118190.244041,
-              "sample_count": 1,
+              "median": 103202.123375,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 11.819024404,
-              "sample_count": 1,
+              "median": 10.320212337,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 94000.497042,
-              "sample_count": 1,
+              "median": 78975.378125,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             }
@@ -1227,7 +1227,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 0.191834,
+              "median": 0.233083,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1241,63 +1241,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 2.367916,
+              "median": 2.533916,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 0.15075,
+              "median": 0.175583,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 1.778583,
+              "median": 1.987375,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 69369856.0,
+              "median": 69435392.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 0.825583,
+              "median": 0.955916,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 0.117,
+              "median": 0.131459,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 1.808125,
+              "median": 2.05575,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.0361625,
+              "median": 0.041115,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 2.299333,
+              "median": 2.450166,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1337,7 +1337,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 8.247833,
+              "median": 8.772875,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1351,63 +1351,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 24.035208,
+              "median": 24.582,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 1.574958,
+              "median": 1.476667,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 52.555625,
+              "median": 52.968459,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 70893568.0,
+              "median": 70860800.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 9.391917,
+              "median": 9.768459,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 1.133583,
+              "median": 1.138,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 52.99425,
+              "median": 50.057166,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.1059885,
+              "median": 0.100114332,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 48.903625,
+              "median": 47.631209,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1447,8 +1447,8 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 4597.736417,
-              "sample_count": 3,
+              "median": 4508.208459,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
@@ -1461,64 +1461,64 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 235.117333,
-              "sample_count": 3,
+              "median": 245.288625,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 19.002125,
-              "sample_count": 3,
+              "median": 18.706708,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 23495.907667,
-              "sample_count": 3,
+              "median": 21351.004333,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 90636288.0,
-              "sample_count": 3,
+              "median": 90865664.0,
+              "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 225.916625,
-              "sample_count": 3,
+              "median": 219.927416,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 13.134458,
-              "sample_count": 3,
+              "median": 13.826291,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 23286.864875,
-              "sample_count": 3,
+              "median": 21355.281125,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 4.657372975,
-              "sample_count": 3,
+              "median": 4.271056225,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 19755.3665,
-              "sample_count": 3,
+              "median": 17634.971375,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             }
@@ -1561,7 +1561,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 0.86175,
+              "median": 0.958125,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1575,63 +1575,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 17.620958,
+              "median": 19.210709,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 0.794958,
+              "median": 0.821459,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 7.845125,
+              "median": 8.288833,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 69369856.0,
+              "median": 69320704.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 1.565417,
+              "median": 1.900792,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 1.490875,
+              "median": 1.6405,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 7.961542,
+              "median": 8.4575,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.07961542,
+              "median": 0.084575,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 13.292834,
+              "median": 13.592125,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1671,7 +1671,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 24.048375,
+              "median": 24.686792,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1685,63 +1685,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 181.688667,
+              "median": 184.377041,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 8.917333,
+              "median": 9.73375,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 162.044583,
+              "median": 166.691375,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 74711040.0,
+              "median": 74645504.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 19.120625,
+              "median": 20.23025,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 15.178416,
+              "median": 14.595916,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 162.757041,
+              "median": 170.468333,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.162757041,
+              "median": 0.170468333,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 195.369417,
+              "median": 202.742333,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1781,8 +1781,8 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 2544.560291,
-              "sample_count": 1,
+              "median": 2341.782291,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
@@ -1795,64 +1795,64 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 1827.33925,
-              "sample_count": 1,
+              "median": 2115.965333,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 395.18575,
-              "sample_count": 1,
+              "median": 104.911334,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 13541.281375,
-              "sample_count": 1,
+              "median": 14073.369583,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 131301376.0,
-              "sample_count": 1,
+              "median": 130826240.0,
+              "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 209.857916,
-              "sample_count": 1,
+              "median": 467.251417,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 161.685125,
-              "sample_count": 1,
+              "median": 162.938084,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 13650.376708,
-              "sample_count": 1,
+              "median": 13983.333542,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 1.365037671,
-              "sample_count": 1,
+              "median": 1.398333354,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 10450.205625,
-              "sample_count": 1,
+              "median": 10715.515541,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             }
@@ -1891,7 +1891,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 0.3905,
+              "median": 0.357083,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -1905,63 +1905,63 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 8.845792,
+              "median": 8.927584,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 0.375459,
+              "median": 0.388667,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 3.725291,
+              "median": 4.009917,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 69353472.0,
+              "median": 69337088.0,
               "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 0.800584,
+              "median": 0.835334,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 0.675709,
+              "median": 0.649459,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 3.706541,
+              "median": 4.0705,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.07413082,
+              "median": 0.08141,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 6.396041,
+              "median": 6.885875,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -2001,7 +2001,7 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 7.321125,
+              "median": 7.2255,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -2015,21 +2015,21 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 88.728208,
+              "median": 91.309625,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 4.333,
+              "median": 4.322708,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 55.696083,
+              "median": 58.534583,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -2043,35 +2043,35 @@
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 8.559084,
+              "median": 10.055958,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 7.627792,
+              "median": 7.408042,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 55.877875,
+              "median": 58.487167,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.11175575,
+              "median": 0.116974334,
               "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 77.419541,
+              "median": 79.6465,
               "sample_count": 7,
               "source": "current",
               "unit": "ms"
@@ -2111,8 +2111,8 @@
           "metrics": {
             "append_heavy_indexes": {
               "kind": "sampled",
-              "median": 537.609,
-              "sample_count": 3,
+              "median": 532.07,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
@@ -2125,64 +2125,64 @@
             },
             "checkpoint_decode": {
               "kind": "sampled",
-              "median": 1082.621833,
-              "sample_count": 3,
+              "median": 1062.097833,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "checkpoint_encode": {
               "kind": "sampled",
-              "median": 52.909375,
-              "sample_count": 3,
+              "median": 53.199041,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "cold_rebuild": {
               "kind": "sampled",
-              "median": 3399.815917,
-              "sample_count": 3,
+              "median": 3274.291542,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "peak_memory_bytes": {
               "kind": "sampled",
-              "median": 100024320.0,
-              "sample_count": 3,
+              "median": 99794944.0,
+              "sample_count": 7,
               "source": "current",
               "unit": "bytes"
             },
             "persistent_primitive_scaffold": {
               "kind": "sampled",
-              "median": 102.34075,
-              "sample_count": 3,
+              "median": 252.66375,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "public_view": {
               "kind": "sampled",
-              "median": 79.670625,
-              "sample_count": 3,
+              "median": 78.905042,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_full_replay": {
               "kind": "sampled",
-              "median": 3376.621708,
-              "sample_count": 3,
+              "median": 3209.987333,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             },
             "reducer_per_event": {
               "kind": "sampled",
-              "median": 0.675324342,
-              "sample_count": 3,
+              "median": 0.641997467,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms/event"
             },
             "snapshot_tail": {
               "kind": "sampled",
-              "median": 2639.0535,
-              "sample_count": 3,
+              "median": 2775.83175,
+              "sample_count": 7,
               "source": "current",
               "unit": "ms"
             }
@@ -2196,8 +2196,8 @@
     "revision": "d2c401cb83db059db46b1caefa590ecdb81846c3"
   },
   "tool": {
-    "hash": "0b6c2d671c31e8c17d84aaaf796cb9f34cf68b38519058b2a4a2b98c22dec21f",
+    "hash": "26808c77121ceb4db824201db6b912cf3bfff3c1325356a41f0741c9705c02b6",
     "identity": "graph-projection-benchmark",
-    "version": "2"
+    "version": "3"
   }
 }

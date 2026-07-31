@@ -195,6 +195,16 @@ async def _seed_authority_denial_graph_run(app: Any, run_id: str) -> None:
             },
         ),
         _event(
+            "edge_created",
+            {
+                "edge_id": "edge-authority-request",
+                "from_node_id": "authority-1",
+                "from_port": "authority_request_record",
+                "to_node_id": "authority-1",
+                "to_port": "authority_request_record",
+            },
+        ),
+        _event(
             "input_bound",
             {
                 "edge_id": "edge-authority-request",

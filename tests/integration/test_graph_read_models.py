@@ -96,8 +96,8 @@ def _sample_events(run_id: str) -> list[EventEnvelope]:
                 "record_kind": "output",
                 "record_type": "fan_out_inputs",
                 "producer_node_id": "worker-1",
-                "port": "result",
-                "schema": "TestRecord",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
                 "value": {"large": "x" * 1024},
             },
         ),
@@ -239,6 +239,31 @@ def _verification_payload(candidate_id: str, outcome: str) -> dict[str, Any]:
     }
 
 
+def _verification_record_event(
+    event_id: str,
+    run_id: str,
+    candidate_id: str,
+    outcome: str,
+    verifier_node_id: str,
+) -> EventEnvelope:
+    return _event(
+        event_id,
+        run_id,
+        "output_record_accepted",
+        {
+            "record_id": f"verification-{candidate_id}",
+            "record_kind": "verification",
+            "record_type": "verification_report",
+            "producer_node_id": verifier_node_id,
+            "port": "verification_report",
+            "schema": "VerificationReport",
+            "candidate_id": candidate_id,
+            "outcome": outcome,
+            "value": {"outcome": outcome, "grades": []},
+        },
+    )
+
+
 def _july_4_supersession_incident_events(run_id: str) -> list[EventEnvelope]:
     return [
         _event("incident-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -247,7 +272,7 @@ def _july_4_supersession_incident_events(run_id: str) -> list[EventEnvelope]:
             run_id,
             "node_created",
             {
-                "node_id": "worker-origin",
+                "node_id": "worker-candidate-origin",
                 "kind": "worker",
                 "role": "builder",
                 "state": "completed",
@@ -266,6 +291,13 @@ def _july_4_supersession_incident_events(run_id: str) -> list[EventEnvelope]:
                 "state": "failed",
                 "task_region_id": "origin",
             },
+        ),
+        _verification_record_event(
+            "incident-origin-verification-record",
+            run_id,
+            "candidate-origin",
+            "failed",
+            "verifier-origin",
         ),
         _event(
             "incident-origin-failed",
@@ -313,7 +345,7 @@ def _july_4_supersession_incident_events(run_id: str) -> list[EventEnvelope]:
             run_id,
             "node_created",
             {
-                "node_id": "worker-corrective",
+                "node_id": "worker-candidate-corrective",
                 "kind": "worker",
                 "role": "fixer",
                 "state": "completed",
@@ -328,7 +360,7 @@ def _july_4_supersession_incident_events(run_id: str) -> list[EventEnvelope]:
                 "task_region_id": "corrective",
                 "candidate_id": "candidate-corrective",
                 "attempt_number": 1,
-                "producer_node_id": "worker-corrective",
+                "producer_node_id": "worker-candidate-corrective",
                 "record_id": "candidate-corrective",
                 "record_kind": "output",
                 "record_type": "candidate",
@@ -337,6 +369,13 @@ def _july_4_supersession_incident_events(run_id: str) -> list[EventEnvelope]:
                 "supersedes_task_region_id": "origin",
                 "value": {"summary": "repair origin candidate"},
             },
+        ),
+        _verification_record_event(
+            "incident-corrective-verification-record",
+            run_id,
+            "candidate-corrective",
+            "passed",
+            "verifier-corrective",
         ),
         _event(
             "incident-corrective-verifier",
@@ -614,7 +653,7 @@ async def test_append_keeps_graph_read_models_synchronized(
         "producer_node_id": "worker-1",
         "record_id": "record-1",
         "record_kind": "output",
-        "port": "result",
+        "port": "candidate",
     }
     assert snapshot is not None
     assert snapshot.position == 4

@@ -228,6 +228,7 @@ async def _complete_worker(
                         "producer_node_id": node_id,
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
+                        "task_region_id": "task-fr11",
                         "value": {"summary": f"{node_id} completed"},
                     },
                     {

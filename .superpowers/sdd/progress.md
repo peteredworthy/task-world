@@ -53,3 +53,17 @@ Task test-speed: complete (commits da1b43f68..a7c545a70, default suite 94.72s an
 Task 3e2c1a: complete (commits da077bea1..8016d2714, shared source reanchoring and 187 nonoverlapping composition actions covering all 201 reviewed transform IDs; independent review approved).
 Task 3e2c1b: complete (203 exact recipes removed 226 physical read IDs across 11 consumer files; zero non-core/non-fixture physical reads, zero pending/query transforms; independent review approved and migration gate 11/11 passed).
 Task 3e2 fixture migration: complete (100 fixture reads and 71 fixture mutations mechanically migrated; 410+ neutral fixture flows structurally classified; zero physical fixture reads/mutations, handoffs, pending sites, or persisted deferred identities; independent review approved).
+Task 3e whole-tree migration contract: complete (commits 9c8c75364..5ddb28da8, historical/current sites closed; independent review approved).
+Task 3f boundary provenance/performance and closure: complete (commits 1c2be7963..359983dde, exact boundary evidence, fast guards, zero violations, no migration count edit traps; all review waves approved).
+
+## Session execution constraints
+
+- Tests assert observable contracts and failure behavior, not implementation helpers, generated counts, validator recomputations, or internal layout.
+- Implementer subagents run only bounded focused tests; the controller runs long gates once per final change set.
+- Repeated checks must have practical measured cycle time and regression coverage.
+
+Task 4 immutable collections: complete (commit 8aeedcdc0; independent review approved; thaw-result isolation follow-up implemented).
+Task 5 grouped immutable models and projected records: complete (commits 5afb395ab..d07263d68; all bounded review gates approved).
+Task 6 strict codec and integrity: complete (commits 0ab18ac3e..af6b56466; 358 focused tests in 4.82s; all review gates approved).
+Task 7 performance baselines and gates: complete (commits 69028f082..fc1b0dcd9; strict cross-cutover protocol/gates, fast 9.17s test loop, independently approved adaptive 7/3/1 sample schedule, and approved 10k pre-cutover baseline artifact).
+Task 8 immutable GraphProjection cutover: complete (fresh whole-task review approved; full suite 5700 passed and 3 skipped; 936-site generated migration closure with zero unresolved diagnostics; Ruff, format, Pyright, goldens, inventory, boundary, and module-import checks passed). The final uniform 2-warmup/7-run benchmark passed with no hard violations and visible scaling diagnostics in `/Users/peter/.local/share/opencode/tool-output/tool_fb9ba8a580012TpvIn420sfYW3`.

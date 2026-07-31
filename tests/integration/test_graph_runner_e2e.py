@@ -14,7 +14,12 @@ from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
-from orchestrator.graph import project_leases, project_residue_report, project_task_states
+from orchestrator.graph import (
+    active_leases,
+    project_leases,
+    project_residue_report,
+    project_task_states,
+)
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -680,7 +685,7 @@ async def test_reconcile_runtime_skips_lease_already_recovered_by_another_driver
         {"lease_seconds": 60, "max_grants": 1},
     )
     projection = await controller.read_projection(run_id)
-    active_lease = next(lease for lease in projection["leases"].values() if lease.state == "active")
+    active_lease = next(iter(active_leases(projection)))
     stale_lease = {
         "run_id": run_id,
         "lease_id": active_lease.lease_id,

@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections import defaultdict
 from importlib.resources import files
 from importlib.resources.abc import Traversable
-from pathlib import Path
 from math import isfinite
+from pathlib import Path
 from re import Pattern, compile as compile_regex, escape, fullmatch
 from types import UnionType
 from typing import (
@@ -29,7 +29,7 @@ from pydantic_core import PydanticSerializationError
 
 from orchestrator.graph.projection_models import (
     PROJECTED_RECORD_TYPES,
-    ImmutableGraphProjection,
+    GraphProjection,
     ProjectedAnalysisSummaryRecord,
     ProjectedArtifactReferenceRecord,
     ProjectedAuthorityDecisionRecord,
@@ -77,32 +77,58 @@ class ProjectionCheckpointIntegrityError(ValueError):
         super().__init__("; ".join(f"{item.path}: {item.reason}" for item in diagnostics))
 
 
-def immutable_projection_to_checkpoint(projection: ImmutableGraphProjection) -> dict[str, Any]:
-    """Return the scaffold as ordinary JSON-compatible Python values."""
+def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
+    """Return the canonical immutable projection as JSON-compatible values."""
     try:
-        return projection.model_dump(mode="json")
+        checkpoint = projection.model_dump(
+            mode="json",
+            exclude_unset=True,
+            exclude_none=True,
+            exclude={"records"},
+        )
+        records = projection.records
+        if records.by_id or records.ids_by_node_port or records.summaries_by_id:
+            checkpoint["records"] = {
+                "by_id": {
+                    record_id: record.model_dump(mode="json", exclude_unset=True, exclude_none=True)
+                    for record_id, record in records.by_id.items()
+                },
+                "ids_by_node_port": {
+                    node_id: {port: list(record_ids) for port, record_ids in ports.items()}
+                    for node_id, ports in records.ids_by_node_port.items()
+                },
+                "summaries_by_id": {
+                    record_id: summary.model_dump(
+                        mode="json", exclude_unset=True, exclude_none=True
+                    )
+                    for record_id, summary in records.summaries_by_id.items()
+                },
+            }
+        for group in GraphProjection.model_fields:
+            checkpoint.setdefault(group, {})
+        return checkpoint
     except PydanticSerializationError as error:
         raise ProjectionCheckpointCodecError("immutable projection serialization failed") from error
 
 
-def immutable_projection_from_checkpoint(raw: object) -> ImmutableGraphProjection:
+def projection_from_checkpoint(raw: object) -> GraphProjection:
     """Strictly validate a canonical checkpoint and its cross-group references."""
     _validate_canonical_checkpoint(raw)
-    projection = ImmutableGraphProjection.model_validate(raw)
+    projection = GraphProjection.model_validate(raw, context={"canonical_checkpoint": True})
     validate_projection_integrity(projection)
     return projection
 
 
 def _validate_canonical_checkpoint(raw: object) -> None:
-    """Reject non-JSON transport values before immutable model conversion."""
+    """Scan canonical JSON transport without reconstructing its object graph."""
 
-    def reject(path: tuple[str | int, ...], value: object, message: str) -> None:
+    def fail(value: object, message: str) -> None:
         raise ValidationError.from_exception_data(
-            "ImmutableGraphProjection",
+            "GraphProjection",
             [
                 {
                     "type": "value_error",
-                    "loc": path,
+                    "loc": (),
                     "input": value,
                     "ctx": {"error": ValueError(message)},
                 }
@@ -110,54 +136,59 @@ def _validate_canonical_checkpoint(raw: object) -> None:
         )
 
     if type(raw) is not dict:
-        reject((), raw, "checkpoint root must be an exact JSON object")
+        fail(raw, "checkpoint root must be an exact JSON object")
+    root = cast(dict[str, object], raw)
+    expected_root_keys = set(GraphProjection.model_fields)
+    actual_root_keys = set(root)
+    if actual_root_keys != expected_root_keys:
+        fail(
+            root,
+            "checkpoint root keys must exactly match canonical projection groups "
+            f"(missing={sorted(expected_root_keys - actual_root_keys)!r}, "
+            f"unexpected={sorted(actual_root_keys - expected_root_keys)!r})",
+        )
 
     active_ids: set[int] = set()
 
-    def visit(value: object, path: tuple[str | int, ...], depth: int) -> None:
+    def scan(item: object, depth: int = 0) -> None:
         if depth > 100:
-            reject(path, value, "checkpoint JSON depth must not exceed 100")
-        value_type = type(value)
-        if value is None or value_type in {bool, int, str}:
-            return
-        if value_type is float:
-            if not isfinite(cast(float, value)):
-                reject(path, value, "checkpoint JSON numbers must be finite")
-            return
-        if value_type is list:
-            value_id = id(value)
-            if value_id in active_ids:
-                reject(path, value, "checkpoint JSON cannot contain a cycle")
-            active_ids.add(value_id)
+            fail(item, "checkpoint JSON depth must not exceed 100")
+        item_type = type(item)
+        if item_type is float and not isfinite(cast(float, item)):
+            fail(item, "checkpoint JSON numbers must be finite")
+        if item_type is list:
+            sequence = cast(list[object], item)
+            item_id = id(sequence)
+            if item_id in active_ids:
+                fail(item, "checkpoint JSON cannot contain a cycle")
+            active_ids.add(item_id)
             try:
-                for index, child in enumerate(cast(list[object], value)):
-                    visit(child, (*path, index), depth + 1)
+                for child in sequence:
+                    scan(child, depth + 1)
             finally:
-                active_ids.remove(value_id)
+                active_ids.remove(item_id)
             return
-        if value_type is dict:
-            value_id = id(value)
-            if value_id in active_ids:
-                reject(path, value, "checkpoint JSON cannot contain a cycle")
-            dictionary = cast(dict[object, object], value)
+        if item_type is dict:
+            dictionary = cast(dict[object, object], item)
+            item_id = id(dictionary)
+            if item_id in active_ids:
+                fail(item, "checkpoint JSON cannot contain a cycle")
             if any(type(key) is not str for key in dictionary):
-                reject(path, value, "checkpoint JSON objects must have string keys")
-            active_ids.add(value_id)
+                fail(item, "checkpoint JSON objects must have string keys")
+            active_ids.add(item_id)
             try:
-                for key, child in dictionary.items():
-                    visit(child, (*path, cast(str, key)), depth + 1)
+                for child in dictionary.values():
+                    scan(child, depth + 1)
             finally:
-                active_ids.remove(value_id)
+                active_ids.remove(item_id)
             return
-        reject(
-            path, value, f"checkpoint must contain canonical JSON values, not {value_type.__name__}"
-        )
+        if item is not None and item_type not in {bool, int, float, str}:
+            fail(item, f"checkpoint must contain canonical JSON values, not {item_type.__name__}")
 
-    root = cast(dict[object, object], raw)
-    visit(cast(object, root), (), 0)
+    scan(cast(dict[object, object], root))
 
 
-def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
+def validate_projection_integrity(projection: GraphProjection) -> None:
     """Validate all stored references without mutating or repairing ``projection``."""
     diagnostics: list[ProjectionIntegrityDiagnostic] = []
 
@@ -205,22 +236,50 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         elif len(paths) > 1:
             fail(path, f"references ambiguous candidate {value!r}: {', '.join(sorted(paths))}")
 
+    dynamic_requirement_ids = frozenset(
+        revision.requirement_id for revision in projection.requirements.revisions_by_id.values()
+    )
+    active_requirement_ids = frozenset(projection.requirements.active_version_id_by_requirement)
+    represented_requirement_ids = dynamic_requirement_ids | frozenset(
+        item.value.id
+        for item in records.values()
+        if isinstance(item, ProjectedRequirementRecord) and item.value.source == "routine"
+    )
+    represented_revision_ids = frozenset(
+        item.version_id for item in projection.requirements.revisions_by_id.values()
+    )
+    represented_support_ids = frozenset(
+        item.support_id for item in projection.requirements.support_by_id.values()
+    )
+    represented_lease_ids = frozenset(
+        item.lease_id for item in projection.execution.leases.values()
+    )
+    represented_cleanup_ids = frozenset(
+        item.cleanup_id for item in projection.execution.cleanup_requests_by_id.values()
+    )
+    represented_edge_ids = frozenset(item.edge_id for item in projection.topology.edges.values())
+
     def resolve_requirement(value: str | None, path: str) -> None:
         requirement_ids = (
-            {
-                revision.requirement_id
-                for revision in projection.requirements.revisions_by_id.values()
-            }
-            if path.count(".") == 2
-            and path.startswith("requirements.active_version_id_by_requirement.")
-            else projection.requirements.active_version_id_by_requirement
+            dynamic_requirement_ids
+            if (
+                path.count(".") == 2
+                and path.startswith("requirements.active_version_id_by_requirement.")
+            )
+            else active_requirement_ids
+            if (
+                path.startswith("requirements.revisions_by_id.")
+                and path.endswith(".requirement_id")
+            )
+            or (path.startswith("requirements.support_by_id.") and path.endswith(".requirement_id"))
+            else represented_requirement_ids
         )
         reference(requirement_ids, value, path, "requirement")
 
     def resolve_revision(value: str | None, path: str) -> None:
         revisions = projection.requirements.revisions_by_id
         represented = (
-            {item.version_id for item in revisions.values()}
+            represented_revision_ids
             if path.count(".") == 2 and path.startswith("requirements.revisions_by_id.")
             else revisions
         )
@@ -229,7 +288,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     def resolve_support(value: str | None, path: str) -> None:
         supports = projection.requirements.support_by_id
         represented = (
-            {item.support_id for item in supports.values()}
+            represented_support_ids
             if path.count(".") == 2 and path.startswith("requirements.support_by_id.")
             else supports
         )
@@ -238,7 +297,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     def resolve_lease(value: str | None, path: str) -> None:
         leases = projection.execution.leases
         represented = (
-            {item.lease_id for item in leases.values()}
+            represented_lease_ids
             if path.count(".") == 2 and path.startswith("execution.leases.")
             else leases
         )
@@ -247,7 +306,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     def resolve_cleanup(value: str | None, path: str) -> None:
         cleanups = projection.execution.cleanup_requests_by_id
         represented = (
-            {item.cleanup_id for item in cleanups.values()}
+            represented_cleanup_ids
             if path.count(".") == 2 and path.startswith("execution.cleanup_requests_by_id.")
             else cleanups
         )
@@ -256,7 +315,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     def resolve_edge(value: str | None, path: str) -> None:
         edges = projection.topology.edges
         represented = (
-            {item.edge_id for item in edges.values()}
+            represented_edge_ids
             if path.count(".") == 2 and path.startswith("topology.edges.")
             else edges
         )
@@ -265,22 +324,6 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     def resolve_session(value: str | None, path: str) -> None:
         reference(projection.planning.sessions, value, path, "session")
 
-    dispatcher = ProjectionRelationResolverDispatcher(
-        policies={**RELATION_POLICY_CATALOG, **RECORD_RELATION_POLICY_CATALOG},
-        validation_paths=projection_relation_validation_paths(),
-        resolve_node=resolve_node,
-        resolve_task=resolve_task,
-        resolve_record=resolve_record,
-        resolve_candidate=resolve_candidate,
-        resolve_requirement=resolve_requirement,
-        resolve_revision=resolve_revision,
-        resolve_support=resolve_support,
-        resolve_lease=resolve_lease,
-        resolve_cleanup=resolve_cleanup,
-        resolve_edge=resolve_edge,
-        resolve_session=resolve_session,
-    )
-
     def node(
         value: str | None,
         path: str,
@@ -288,7 +331,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         map_role: Literal["key", "value"] | None = None,
         map_depth: int | None = None,
     ) -> None:
-        dispatcher.resolve_runtime("node", path, value, map_role=map_role, map_depth=map_depth)
+        resolve_node(value, path)
 
     def task(
         value: str | None,
@@ -297,7 +340,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         map_role: Literal["key", "value"] | None = None,
         map_depth: int | None = None,
     ) -> None:
-        dispatcher.resolve_runtime("task", path, value, map_role=map_role)
+        resolve_task(value, path)
 
     def record(
         value: str | None,
@@ -305,7 +348,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> None:
-        dispatcher.resolve_runtime("record", path, value, map_role=map_role)
+        resolve_record(value, path)
 
     def candidate(
         value: str | None,
@@ -313,7 +356,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> None:
-        dispatcher.resolve_runtime("candidate", path, value, map_role=map_role)
+        resolve_candidate(value, path)
 
     def candidate_for_task(
         candidate_id: str | None,
@@ -336,7 +379,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> None:
-        dispatcher.resolve_runtime("requirement", path, value, map_role=map_role)
+        resolve_requirement(value, path)
 
     def revision(
         value: str | None,
@@ -344,7 +387,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> Any:
-        dispatcher.resolve_runtime("revision", path, value, map_role=map_role)
+        resolve_revision(value, path)
         return projection.requirements.revisions_by_id.get(value) if value is not None else None
 
     def support(
@@ -353,7 +396,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> Any:
-        dispatcher.resolve_runtime("support", path, value, map_role=map_role)
+        resolve_support(value, path)
         return projection.requirements.support_by_id.get(value) if value is not None else None
 
     def lease(
@@ -362,7 +405,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> Any:
-        dispatcher.resolve_runtime("lease", path, value, map_role=map_role)
+        resolve_lease(value, path)
         return projection.execution.leases.get(value) if value is not None else None
 
     def cleanup(
@@ -371,7 +414,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> Any:
-        dispatcher.resolve_runtime("cleanup", path, value, map_role=map_role)
+        resolve_cleanup(value, path)
         return projection.execution.cleanup_requests_by_id.get(value) if value is not None else None
 
     def edge(
@@ -380,7 +423,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> Any:
-        dispatcher.resolve_runtime("edge", path, value, map_role=map_role)
+        resolve_edge(value, path)
         return projection.topology.edges.get(value) if value is not None else None
 
     def session(
@@ -389,7 +432,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         *,
         map_role: Literal["key", "value"] | None = None,
     ) -> Any:
-        dispatcher.resolve_runtime("session", path, value, map_role=map_role)
+        resolve_session(value, path)
         return projection.planning.sessions.get(value) if value is not None else None
 
     for node_id, item in nodes.items():
@@ -398,20 +441,10 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         if item.spec.node_id != node_id:
             fail(f"{base}.spec.node_id", f"must equal map key {node_id!r}")
         task(item.spec.task_region_id, f"{base}.spec.task_region_id")
-        if item.spec.authority_request_record is not None:
-            envelope = item.spec.authority_request_record
-            record(envelope.record_id, f"{base}.spec.authority_request_record.record_id")
-            node(
-                envelope.producer_node_id, f"{base}.spec.authority_request_record.producer_node_id"
-            )
-            node(
-                envelope.value.target_node_id,
-                f"{base}.spec.authority_request_record.value.target_node_id",
-            )
-            task(
-                envelope.value.target_region_id,
-                f"{base}.spec.authority_request_record.value.target_region_id",
-            )
+        record(
+            item.spec.authority_request_record_id,
+            f"{base}.spec.authority_request_record_id",
+        )
         if item.spec.decision_request is not None:
             node(
                 item.spec.decision_request.target_node_id,
@@ -430,10 +463,6 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
                 item.spec.authority_request.target_region_id,
                 f"{base}.spec.authority_request.target_region_id",
             )
-        for field in ("candidate_id", "failed_candidate_id"):
-            candidate_for_task(
-                getattr(item.runtime, field), f"{base}.runtime.{field}", item.spec.task_region_id
-            )
 
     for task_id, item in tasks.items():
         for number, candidate_item in enumerate(item.candidates):
@@ -449,7 +478,8 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         record(item.record_id, f"{base}.record_id")
         if item.record_id != record_id:
             fail(f"{base}.record_id", f"must equal map key {record_id!r}")
-        node(item.producer_node_id, f"{base}.producer_node_id")
+        if item.producer_node_id != "run_lifecycle":
+            node(item.producer_node_id, f"{base}.producer_node_id")
         if item.producer_node_id is not None:
             expected_index[item.producer_node_id][item.port].add(record_id)
         _record_relations(
@@ -469,7 +499,8 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
         )
 
     for node_id, ports in projection.records.ids_by_node_port.items():
-        node(node_id, f"records.ids_by_node_port.{node_id}", map_role="key")
+        if node_id != "run_lifecycle":
+            node(node_id, f"records.ids_by_node_port.{node_id}", map_role="key")
         if node_id not in expected_index:
             fail(
                 f"records.ids_by_node_port.{node_id}",
@@ -505,7 +536,8 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     for record_id, summary in projection.records.summaries_by_id.items():
         base = f"records.summaries_by_id.{record_id}"
         record(summary.record_id, f"{base}.record_id")
-        node(summary.producer_node_id, f"{base}.producer_node_id")
+        if summary.producer_node_id != "run_lifecycle":
+            node(summary.producer_node_id, f"{base}.producer_node_id")
         item = records.get(record_id)
         if item is None:
             fail(base, f"references missing record {record_id!r}")
@@ -517,7 +549,7 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
             item.schema_,
             item.producer_node_id,
             item.producer_port or item.port,
-            item.graph_position,
+            item.position if isinstance(item, ProjectedFileStateRecord) else item.graph_position,
         )
         actual = (
             summary.record_id,
@@ -565,10 +597,36 @@ def validate_projection_integrity(projection: ImmutableGraphProjection) -> None:
     )
     _requirement_relations(projection, record, requirement, revision, support, fail)
     _execution_relations(projection, node, task, record, lease, cleanup, session, fail)
+    lease_order = projection.execution.lease_ids_in_grant_order
+    if len(set(lease_order)) != len(lease_order) or not set(lease_order).issubset(
+        projection.execution.leases
+    ):
+        fail(
+            "execution.lease_ids_in_grant_order",
+            "must contain only known lease IDs once in grant order",
+        )
     for index, node_id in enumerate(projection.scheduling.ready_node_ids):
         node(node_id, f"scheduling.ready_node_ids[{index}]")
-    for field in ("tokens_by_node", "recorded_keys"):
-        for node_id in getattr(projection.usage, field):
+    expected_ready_node_ids = tuple(
+        sorted(
+            (
+                node_id
+                for node_id, item in projection.nodes.items()
+                if item.runtime.state == "ready"
+            ),
+            key=lambda node_id: (
+                projection.nodes[node_id].spec.creation_position,
+                node_id,
+            ),
+        )
+    )
+    if projection.scheduling.ready_node_ids != expected_ready_node_ids:
+        fail(
+            "scheduling.ready_node_ids",
+            "must exactly match ready nodes in canonical order",
+        )
+    for field, values in (("tokens_by_node", projection.usage.tokens_by_node),):
+        for node_id in values:
             node(node_id, f"usage.{field}.{node_id}", map_role="key")
 
     if diagnostics:
@@ -607,6 +665,13 @@ RelationFamily = Literal[
 ]
 RelationScope = Literal["grouped", "record"]
 RelationValidation = Literal["resolver", "external", "derived"]
+RuntimePolicyIndex = tuple[
+    tuple[
+        tuple[str, Literal["key", "value"] | None],
+        tuple[tuple[str, Pattern[str]], ...],
+    ],
+    ...,
+]
 _RELATION_PATH_PATTERN = r"^[a-z][a-z0-9_]*(?:\.(?:[a-z][a-z0-9_]*|\*))*$"
 
 
@@ -697,10 +762,7 @@ class ProjectionRelationResolverDispatcher:
     ) -> None:
         self._policies = policies
         self._validation_paths = validation_paths
-        self._runtime_patterns = {path: _compile_runtime_policy_path(path) for path in policies}
-        self._runtime_paths_by_root: dict[str, list[str]] = defaultdict(list)
-        for path in policies:
-            self._runtime_paths_by_root[path.partition(".")[0]].append(path)
+        self._runtime_policy_index = dict(_compile_runtime_policy_index(policies))
         self._resolvers: dict[str, RecordResolver] = {
             "node": resolve_node,
             "task": resolve_task,
@@ -745,16 +807,12 @@ class ProjectionRelationResolverDispatcher:
         map_depth: int | None = None,
     ) -> None:
         """Resolve a runtime diagnostic through its unique reviewed policy path."""
+        key = (diagnostic_path.partition(".")[0], map_role)
         matches = [
             path
-            for path in self._runtime_paths_by_root.get(diagnostic_path.partition(".")[0], ())
-            if self._runtime_patterns[path].fullmatch(diagnostic_path) is not None
+            for path, pattern in self._runtime_policy_index.get(key, ())
+            if pattern.fullmatch(diagnostic_path) is not None
             and (map_depth is None or path.count("*") == map_depth)
-            and (
-                path.endswith(f".{map_role}")
-                if map_role is not None
-                else not path.endswith((".key", ".value"))
-            )
         ]
         if matches:
             strongest = max(path.count(".") - path.count(".*") for path in matches)
@@ -785,6 +843,26 @@ def _compile_runtime_policy_path(policy_path: str) -> Pattern[str]:
         else:
             pattern += rf"\.{escape(segment)}"
     return compile_regex(pattern)
+
+
+def _compile_runtime_policy_index(policies: dict[str, RelationPolicy]) -> RuntimePolicyIndex:
+    grouped: dict[
+        tuple[str, Literal["key", "value"] | None],
+        list[tuple[str, Pattern[str]]],
+    ] = defaultdict(list)
+    for path in policies:
+        map_role: Literal["key", "value"] | None = None
+        if path.endswith(".key"):
+            map_role = "key"
+        elif path.endswith(".value"):
+            map_role = "value"
+        grouped[(path.partition(".")[0], map_role)].append(
+            (path, _compile_runtime_policy_path(path))
+        )
+    return tuple(
+        (key, tuple(sorted(patterns, key=lambda item: item[0])))
+        for key, patterns in sorted(grouped.items(), key=lambda item: repr(item[0]))
+    )
 
 
 _RELATION_POLICY_RESOURCE = "_projection_relation_policy.yaml"
@@ -844,7 +922,6 @@ def _map_key_is_identifier(field_name: str, prefix: str, map_depth: int) -> bool
         "failed_candidate_ids",
         "input_bindings",
         "node_gate_decisions",
-        "recorded_keys",
         "authority_revision_blockers",
         "callback_events_by_key",
         "inbound_edge_ids",
@@ -1023,7 +1100,7 @@ def _record_relations(
     lease: RuntimeRelationResolver,
     cleanup: RuntimeRelationResolver,
     candidate_tasks: dict[str, str],
-    projection: ImmutableGraphProjection,
+    projection: GraphProjection,
     fail: Callable[[str, str], None],
 ) -> None:
     policy = _RECORD_RELATION_POLICIES.get(type(item))
@@ -1092,7 +1169,7 @@ def _visit_projected_record(
     lease: RuntimeRelationResolver,
     cleanup: RuntimeRelationResolver,
     candidate_tasks: dict[str, str],
-    projection: ImmutableGraphProjection,
+    projection: GraphProjection,
     fail: Callable[[str, str], None],
 ) -> None:
     """Typed visitor over every concrete public ProjectedRecord member."""
@@ -1167,6 +1244,12 @@ def _visit_projected_record(
         record(item.file_state_record_id, f"{base}.file_state_record_id")
         _record_each(item.file_state_record_ids, f"{base}.file_state_record_ids", record)
     elif isinstance(item, ProjectedFileStateRecord):
+        identity = item.acceptance_identity
+        if identity is None or fullmatch(r"[0-9a-f]{64}", identity) is None:
+            fail(
+                f"{base}.acceptance_identity",
+                "must contain a lowercase 64-character SHA-256 acceptance identity",
+            )
         task(item.task_region_id, f"{base}.task_region_id")
         candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
         record(item.supersedes_record_id, f"{base}.supersedes_record_id")
@@ -1182,6 +1265,8 @@ def _visit_projected_record(
     elif isinstance(item, ProjectedRecoveryPlanRecord):
         return
     elif isinstance(item, ProjectedRequirementRecord):
+        if item.value.source == "routine":
+            return
         requirement(item.value.id, f"{base}.value.id")
         version = revision(item.value.version, f"{base}.value.version")
         if version is not None and version.requirement_id != item.value.id:
@@ -1214,7 +1299,7 @@ def _visit_projected_record(
 
 
 def _topology_relations(
-    projection: ImmutableGraphProjection,
+    projection: GraphProjection,
     node: RuntimeRelationResolver,
     record: RuntimeRelationResolver,
     resolve_edge: RuntimeRelationResolver,
@@ -1281,10 +1366,24 @@ def _topology_relations(
             if binding.record_bound_positions is not None:
                 for record_id in binding.record_bound_positions:
                     record(record_id, f"{base}.record_bound_positions.{record_id}", map_role="key")
+    for node_id in set(topology.input_bindings) | set(topology.input_binding_port_order):
+        base = f"topology.input_binding_port_order.{node_id}"
+        if node_id not in topology.input_bindings:
+            fail(base, "is not a canonical input-binding key")
+            continue
+        node(node_id, base, map_role="key")
+        port_ids = topology.input_binding_port_order.get(node_id)
+        if port_ids is None:
+            fail(base, "must have an input-binding port order entry")
+            continue
+        if len(port_ids) != len(set(port_ids)):
+            fail(base, "must not repeat input-binding ports")
+        if set(port_ids) != set(topology.input_bindings.get(node_id, ())):
+            fail(base, "must exactly contain input-binding ports for its node")
 
 
 def _planning_relations(
-    projection: ImmutableGraphProjection,
+    projection: GraphProjection,
     node: RuntimeRelationResolver,
     record: RuntimeRelationResolver,
     session: RuntimeRelationResolver,
@@ -1295,23 +1394,13 @@ def _planning_relations(
         node(node_id, f"planning.successor_by_node.{node_id}", map_role="key")
         node(successor, f"planning.successor_by_node.{node_id}", map_role="value")
     for field in ("accepted_patch_ids_by_node", "no_successor_patch_ids_by_node"):
-        for node_id, ids in getattr(planning, field).items():
+        for node_id in getattr(planning, field):
             node(node_id, f"planning.{field}.{node_id}", map_role="key")
-            for index, record_id in enumerate(ids):
-                record(
-                    record_id,
-                    f"planning.{field}.{node_id}[{index}]",
-                )
     for node_id, record_id in planning.latest_no_successor_patch_id_by_node.items():
         node(
             node_id,
             f"planning.latest_no_successor_patch_id_by_node.{node_id}",
             map_role="key",
-        )
-        record(
-            record_id,
-            f"planning.latest_no_successor_patch_id_by_node.{node_id}",
-            map_role="value",
         )
         if record_id not in planning.no_successor_patch_ids_by_node.get(node_id, ()):
             fail(
@@ -1350,7 +1439,7 @@ def _planning_relations(
 
 
 def _verification_relations(
-    projection: ImmutableGraphProjection,
+    projection: GraphProjection,
     node: RuntimeRelationResolver,
     task: RuntimeRelationResolver,
     record: RuntimeRelationResolver,
@@ -1421,7 +1510,7 @@ def _verification_relations(
 
 
 def _governance_relations(
-    projection: ImmutableGraphProjection,
+    projection: GraphProjection,
     node: RuntimeRelationResolver,
     task: RuntimeRelationResolver,
     record: RuntimeRelationResolver,
@@ -1436,9 +1525,6 @@ def _governance_relations(
     for field in (
         "pending_appeals_by_node",
         "node_gate_decisions",
-        "approval_decisions_by_node",
-        "authority_decisions_by_node",
-        "oversight_decisions_by_node",
         "decision_requests_by_node",
     ):
         for node_id, item in getattr(value, field).items():
@@ -1457,6 +1543,34 @@ def _governance_relations(
             for related in ("appeal_node_id", "appealed_node_id", "target_node_id"):
                 if hasattr(item, related):
                     node(getattr(item, related), f"{base}.{related}")
+    for decisions_field, aliases_field, decision_name in (
+        ("approval_decisions_by_id", "approval_decision_id_by_node", "approval decision"),
+        ("authority_decisions_by_id", "authority_decision_id_by_node", "authority decision"),
+        ("oversight_decisions_by_id", "oversight_decision_id_by_node", "oversight decision"),
+    ):
+        decisions = getattr(value, decisions_field)
+        for decision_id, item in decisions.items():
+            base = f"governance.{decisions_field}.{decision_id}"
+            node(item.node_id, f"{base}.node_id")
+            task(item.task_region_id, f"{base}.task_region_id")
+            if isinstance(item, OversightDecisionValue):
+                candidate_for_task(item.candidate_id, f"{base}.candidate_id", item.task_region_id)
+            node(item.appeal_node_id, f"{base}.appeal_node_id")
+            if isinstance(item, OversightDecisionValue):
+                node(item.appealed_node_id, f"{base}.appealed_node_id")
+        aliases = getattr(value, aliases_field)
+        for node_id, decision_id in aliases.items():
+            base = f"governance.{aliases_field}.{node_id}"
+            node(node_id, base, map_role="key")
+            decision = decisions.get(decision_id)
+            if decision is None:
+                fail(base, f"references missing {decision_name} {decision_id!r}")
+            elif node_id not in {
+                decision.node_id,
+                decision.appeal_node_id,
+                decision.appealed_node_id if isinstance(decision, OversightDecisionValue) else None,
+            }:
+                fail(base, "must reference a decision for its node")
     for field in ("configured_gates_by_task", "gate_decisions_by_task"):
         decisions = getattr(value, field)
         for task_id in decisions:
@@ -1491,7 +1605,7 @@ def _governance_relations(
 
 
 def _requirement_relations(
-    projection: ImmutableGraphProjection,
+    projection: GraphProjection,
     record: Callable[[str | None, str], None],
     requirement: RuntimeRelationResolver,
     revision: RuntimeRelationResolver,
@@ -1552,7 +1666,7 @@ def _requirement_relations(
 
 
 def _execution_relations(
-    projection: ImmutableGraphProjection,
+    projection: GraphProjection,
     node: Callable[[str | None, str], None],
     task: RuntimeRelationResolver,
     record: Callable[[str | None, str], None],
@@ -1581,8 +1695,9 @@ def _execution_relations(
         record(failure.record_id, f"{base}.record_id")
     for key, callback in value.callback_events_by_key.items():
         base = f"execution.callback_events_by_key.{key}"
-        if callback.idempotency_key != key:
-            fail(f"{base}.idempotency_key", f"must equal map key {key!r}")
+        expected_key = f"{callback.node_id}\0{callback.idempotency_key}"
+        if expected_key != key:
+            fail(f"{base}.idempotency_key", f"must form composite map key {key!r}")
         node(callback.node_id, f"{base}.node_id")
     for cleanup_id, cleanup in value.cleanup_requests_by_id.items():
         base = f"execution.cleanup_requests_by_id.{cleanup_id}"

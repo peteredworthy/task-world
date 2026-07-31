@@ -17,7 +17,7 @@ from pydantic import (
     StrictFloat,
     StrictInt,
     StrictStr,
-    TypeAdapter,
+    ValidationInfo,
     field_validator,
     model_validator,
 )
@@ -48,6 +48,13 @@ def _freeze_sequence(value: object, message: str) -> tuple[object, ...]:
     if not isinstance(value, (list, tuple)):
         raise ValueError(message)
     return tuple(cast(list[object] | tuple[object, ...], value))
+
+
+def _freeze_sequence_map(value: object, message: str) -> object:
+    if type(value) is not dict:
+        return value
+    dictionary = cast(dict[object, object], value)
+    return {key: _freeze_sequence(item, message) for key, item in dictionary.items()}
 
 
 class LifecycleProjection(ProjectionModel):
@@ -147,43 +154,6 @@ class ExecutionAuthorityValue(ProjectionModel):
         return self
 
 
-class AuthorityRequestRecordEnvelopeValue(ProjectionModel):
-    """Immutable canonical authority-request record envelope retained on a node."""
-
-    record_id: StrictStr
-    record_kind: Literal["graph_record"]
-    record_type: Literal["authority_request_record"]
-    schema_version: StrictInt | None = None
-    producer_node_id: StrictStr
-    producer_port: StrictStr | None = None
-    port: Literal["authority_request_record"]
-    schema_: Literal["AuthorityRequest"] = Field(alias="schema")
-    created_at: StrictStr | None = None
-    graph_position: StrictInt | None = None
-    run_id: StrictStr | None = None
-    payload: FrozenMap[StrictStr, FrozenJsonValue] | None = None
-    provenance: FrozenMap[StrictStr, FrozenJsonValue] | None = None
-    value: AuthorityRequestValue
-
-    @field_validator("payload", "provenance", mode="before")
-    @classmethod
-    def freeze_envelope_json(cls, value: object) -> FrozenMap[str, FrozenJsonValue] | None:
-        if value is None:
-            return None
-        frozen = _freeze_json_input(value)
-        if type(frozen) is not FrozenMap:
-            raise ValueError("record envelope JSON must be an object")
-        return cast(FrozenMap[str, FrozenJsonValue], frozen)
-
-    @model_validator(mode="after")
-    def envelope_fields_are_consistent(self) -> "AuthorityRequestRecordEnvelopeValue":
-        if self.schema_version is not None and self.schema_version <= 0:
-            raise ValueError("schema_version must be positive")
-        if self.producer_port is not None and self.producer_port != self.port:
-            raise ValueError("producer_port must match port")
-        return self
-
-
 class NodeSpecProjection(ProjectionModel):
     node_id: StrictStr
     creation_position: StrictInt
@@ -203,7 +173,7 @@ class NodeSpecProjection(ProjectionModel):
     blocker: StrictStr | None = None
     blocker_reason: StrictStr | None = None
     decision_request: DecisionRequestValue | None = None
-    authority_request_record: AuthorityRequestRecordEnvelopeValue | None = None
+    authority_request_record_id: StrictStr | None = None
     authority_request: AuthorityRequestValue | None = None
     authority: ExecutionAuthorityValue | None = None
     command_definition: CommandDefinitionValue | None = None
@@ -219,8 +189,10 @@ class NodeSpecProjection(ProjectionModel):
 
     @field_validator("command_definition", mode="before")
     @classmethod
-    def wrap_command_definition(cls, value: object) -> object:
+    def wrap_command_definition(cls, value: object, info: ValidationInfo) -> object:
         if value is None or isinstance(value, CommandDefinitionValue):
+            return value
+        if info.context and info.context.get("canonical_checkpoint") is True:
             return value
         if isinstance(value, FrozenMap) or isinstance(value, dict):
             return {"value": cast(object, value)}
@@ -263,6 +235,11 @@ class TaskProjection(ProjectionModel):
     state: StrictStr | None = None
     candidates: tuple[CandidateValue, ...] = ()
 
+    @field_validator("candidates", mode="before")
+    @classmethod
+    def freeze_candidates(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "candidates must be a sequence")
+
 
 class EdgeValue(ProjectionModel):
     edge_id: StrictStr
@@ -281,7 +258,7 @@ class EdgeValue(ProjectionModel):
     binding_policy: FrozenJsonValue | None = None
     freshness_policy: FrozenJsonValue | None = None
     prompt_hydration_policy: FrozenJsonValue | None = None
-    metadata: FrozenMap[StrictStr, FrozenJsonValue] = Field(default_factory=FrozenMap)
+    metadata: FrozenMap[StrictStr, FrozenJsonValue] | None = None
 
     @field_validator(
         "accepted_record_selector",
@@ -321,10 +298,20 @@ class TopologyProjection(ProjectionModel):
     input_bindings: FrozenMap[StrictStr, FrozenMap[StrictStr, InputBindingValue]] = Field(
         default_factory=FrozenMap
     )
+    input_binding_port_order: FrozenMap[StrictStr, tuple[StrictStr, ...]] = Field(
+        default_factory=FrozenMap
+    )
     inbound_edge_ids: FrozenMap[StrictStr, tuple[StrictStr, ...]] = Field(default_factory=FrozenMap)
     outbound_edge_ids: FrozenMap[StrictStr, tuple[StrictStr, ...]] = Field(
         default_factory=FrozenMap
     )
+
+    @field_validator(
+        "input_binding_port_order", "inbound_edge_ids", "outbound_edge_ids", mode="before"
+    )
+    @classmethod
+    def freeze_adjacency_ids(cls, value: object) -> object:
+        return _freeze_sequence_map(value, "edge IDs must be sequences")
 
 
 class GraphRecordSummaryProjection(ProjectionModel):
@@ -355,6 +342,11 @@ class FinalInvariantBlockerProjection(ProjectionModel):
     exit_code: StrictInt | None = None
     support_ids: tuple[StrictStr, ...] = ()
 
+    @field_validator("support_ids", mode="before")
+    @classmethod
+    def freeze_support_ids(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "support IDs must be a sequence")
+
 
 class RecordStore(ProjectionModel):
     """Canonical full-record ownership; indexes elsewhere retain identifiers only."""
@@ -367,9 +359,25 @@ class RecordStore(ProjectionModel):
         default_factory=FrozenMap
     )
 
+    @field_validator("ids_by_node_port", mode="before")
+    @classmethod
+    def freeze_record_indexes(cls, value: object) -> object:
+        if type(value) is not dict:
+            return value
+        indexes = cast(dict[object, object], value)
+        return {
+            node_id: _freeze_sequence_map(ports, "record IDs must be sequences")
+            for node_id, ports in indexes.items()
+        }
+
 
 class SchedulingProjection(ProjectionModel):
     ready_node_ids: tuple[StrictStr, ...] = ()
+
+    @field_validator("ready_node_ids", mode="before")
+    @classmethod
+    def freeze_ready_node_ids(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "ready node IDs must be a sequence")
 
 
 class PlannerSessionProjection(ProjectionModel):
@@ -401,6 +409,11 @@ class PlanningProjection(ProjectionModel):
     session_id_by_node: FrozenMap[StrictStr, StrictStr] = Field(default_factory=FrozenMap)
     sessions: FrozenMap[StrictStr, PlannerSessionProjection] = Field(default_factory=FrozenMap)
     region_label_by_node: FrozenMap[StrictStr, StrictStr] = Field(default_factory=FrozenMap)
+
+    @field_validator("accepted_patch_ids_by_node", "no_successor_patch_ids_by_node", mode="before")
+    @classmethod
+    def freeze_patch_indexes(cls, value: object) -> object:
+        return _freeze_sequence_map(value, "patch IDs must be sequences")
 
 
 class RecoveryNodeIndexValue(ProjectionModel):
@@ -478,6 +491,13 @@ class AuthorityDecisionValue(ProjectionModel):
     expires_at: StrictStr | None = None
     reason: StrictStr | None = None
 
+    @field_validator("scope", mode="before")
+    @classmethod
+    def freeze_scope(cls, value: object) -> FrozenJsonValue | None:
+        if value is None:
+            return None
+        return _freeze_json_input(value)
+
 
 class OversightDecisionValue(ProjectionModel):
     node_id: StrictStr
@@ -493,6 +513,13 @@ class OversightDecisionValue(ProjectionModel):
     scope: FrozenJsonValue | None = None
     expires_at: StrictStr | None = None
     reason: StrictStr | None = None
+
+    @field_validator("scope", mode="before")
+    @classmethod
+    def freeze_scope(cls, value: object) -> FrozenJsonValue | None:
+        if value is None:
+            return None
+        return _freeze_json_input(value)
 
 
 class RequirementRevisionValue(ProjectionModel):
@@ -561,6 +588,13 @@ class CallbackEventValue(ProjectionModel):
     outcome: StrictStr
     payload: FrozenJsonValue | None = None
 
+    @field_validator("payload", mode="before")
+    @classmethod
+    def freeze_callback_payload(cls, value: object) -> FrozenJsonValue | None:
+        if value is None:
+            return None
+        return _freeze_json_input(value)
+
 
 class CleanupRequestValue(ProjectionModel):
     cleanup_id: StrictStr
@@ -597,9 +631,21 @@ class VerificationProjection(ProjectionModel):
         default_factory=FrozenMap
     )
 
+    @field_validator("passed_candidate_ids", mode="before")
+    @classmethod
+    def freeze_passed_candidate_ids(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "passed candidate IDs must be a sequence")
+
+    @field_validator("recovery_nodes_by_record_id", mode="before")
+    @classmethod
+    def freeze_recovery_nodes(cls, value: object) -> object:
+        return _freeze_sequence_map(value, "recovery nodes must be sequences")
+
 
 class GovernanceProjection(ProjectionModel):
     pending_appeals_by_node: FrozenMap[StrictStr, StrictBool] = Field(default_factory=FrozenMap)
+    # Resolution-only replacement for the removed open-proposal payload cache.
+    resolved_patch_ids: FrozenMap[StrictStr, StrictBool] = Field(default_factory=FrozenMap)
     node_gate_decisions: FrozenMap[StrictStr, StrictBool] = Field(default_factory=FrozenMap)
     configured_gates_by_task: FrozenMap[StrictStr, FrozenMap[StrictStr, StrictBool]] = Field(
         default_factory=FrozenMap
@@ -607,13 +653,23 @@ class GovernanceProjection(ProjectionModel):
     gate_decisions_by_task: FrozenMap[StrictStr, FrozenMap[StrictStr, StrictBool]] = Field(
         default_factory=FrozenMap
     )
-    approval_decisions_by_node: FrozenMap[StrictStr, ApprovalDecisionValue] = Field(
+    # Decisions have one canonical value keyed by durable record/event identity.
+    # Node and appeal lookups are aliases to that identity, never duplicate
+    # serialized decision payloads.
+    approval_decisions_by_id: FrozenMap[StrictStr, ApprovalDecisionValue] = Field(
         default_factory=FrozenMap
     )
-    authority_decisions_by_node: FrozenMap[StrictStr, AuthorityDecisionValue] = Field(
+    approval_decision_id_by_node: FrozenMap[StrictStr, StrictStr] = Field(default_factory=FrozenMap)
+    authority_decisions_by_id: FrozenMap[StrictStr, AuthorityDecisionValue] = Field(
         default_factory=FrozenMap
     )
-    oversight_decisions_by_node: FrozenMap[StrictStr, OversightDecisionValue] = Field(
+    authority_decision_id_by_node: FrozenMap[StrictStr, StrictStr] = Field(
+        default_factory=FrozenMap
+    )
+    oversight_decisions_by_id: FrozenMap[StrictStr, OversightDecisionValue] = Field(
+        default_factory=FrozenMap
+    )
+    oversight_decision_id_by_node: FrozenMap[StrictStr, StrictStr] = Field(
         default_factory=FrozenMap
     )
     decision_requests_by_node: FrozenMap[StrictStr, DecisionRequestValue] = Field(
@@ -636,6 +692,7 @@ class RequirementsProjection(ProjectionModel):
 
 class ExecutionProjection(ProjectionModel):
     leases: FrozenMap[StrictStr, LeaseValue] = Field(default_factory=FrozenMap)
+    lease_ids_in_grant_order: tuple[StrictStr, ...] = ()
     environment_failures_by_task: FrozenMap[StrictStr, EnvironmentFailureValue] = Field(
         default_factory=FrozenMap
     )
@@ -647,6 +704,11 @@ class ExecutionProjection(ProjectionModel):
     )
     applied_cleanup_ids: FrozenMap[StrictStr, StrictBool] = Field(default_factory=FrozenMap)
 
+    @field_validator("lease_ids_in_grant_order", mode="before")
+    @classmethod
+    def freeze_lease_order(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "lease grant order must be a sequence")
+
 
 class UsageProjection(ProjectionModel):
     tokens_by_node: FrozenMap[StrictStr, StrictInt] = Field(default_factory=FrozenMap)
@@ -657,8 +719,8 @@ class UsageProjection(ProjectionModel):
     recorded_keys: FrozenMap[StrictStr, StrictBool] = Field(default_factory=FrozenMap)
 
 
-class ImmutableGraphProjection(ProjectionModel):
-    """Unused grouped projection scaffold; production ``GraphProjection`` remains canonical."""
+class GraphProjection(ProjectionModel):
+    """The canonical immutable grouped graph projection."""
 
     lifecycle: LifecycleProjection = Field(default_factory=LifecycleProjection)
     nodes: FrozenMap[StrictStr, NodeProjection] = Field(default_factory=FrozenMap)
@@ -672,23 +734,6 @@ class ImmutableGraphProjection(ProjectionModel):
     requirements: RequirementsProjection = Field(default_factory=RequirementsProjection)
     execution: ExecutionProjection = Field(default_factory=ExecutionProjection)
     usage: UsageProjection = Field(default_factory=UsageProjection)
-
-    @model_validator(mode="before")
-    @classmethod
-    def freeze_checkpoint_arrays(cls, value: object) -> object:
-        """Accept canonical JSON arrays at the checkpoint boundary as tuples."""
-
-        def freeze_arrays(item: object) -> object:
-            if type(item) is list:
-                return tuple(freeze_arrays(child) for child in cast(list[object], item))
-            if type(item) is dict:
-                return {
-                    key: freeze_arrays(child)
-                    for key, child in cast(dict[object, object], item).items()
-                }
-            return item
-
-        return freeze_arrays(value)
 
 
 class ProjectedCandidateRecordValue(ProjectionModel):
@@ -1163,8 +1208,8 @@ class ProjectedFanOutInputsRecord(ProjectedRecordBase):
     record_type: Literal["fan_out_inputs"]
     record_kind: Literal["output"]
     producer_node_id: StrictStr
-    port: Literal["candidate"]
-    schema_: Literal["ImplementationCandidate"] = Field(alias="schema")
+    port: StrictStr
+    schema_: StrictStr = Field(alias="schema")
     value: FrozenMap[StrictStr, FrozenJsonValue]
     candidate_id: StrictStr | None = None
     task_region_id: StrictStr | None = None
@@ -1180,7 +1225,7 @@ class ProjectedFileStateRecord(ProjectedRecordBase):
     producer_node_id: StrictStr | None = None
     snapshot_id: StrictStr | None = None
     base_snapshot_id: StrictStr | None = None
-    port: Literal["file_state"] = "file_state"
+    port: Literal["file_state", "accepted_file_state"] = "file_state"
     schema_: Literal["FileStateRecord"] = Field(default="FileStateRecord", alias="schema")
     git: ProjectedGitRef | None = None
     tracked: tuple[ProjectedFileEntry, ...] = ()
@@ -1206,6 +1251,7 @@ class ProjectedFileStateRecord(ProjectedRecordBase):
     cleanup_applied_event_id: StrictStr | None = None
     compromised_snapshot_deleted: StrictBool | None = None
     compromised_paths: tuple[StrictStr, ...] | None = None
+    acceptance_identity: StrictStr | None = None
 
 
 class ProjectedGapClassificationRecord(ProjectedRecordBase):
@@ -1391,15 +1437,17 @@ if set(_PROJECTED_RECORD_MODELS) != set(OUTPUT_RECORD_MODELS_BY_TYPE):
     raise RuntimeError("projected record registry must cover every accepted output record type")
 
 
-_PROJECTED_RECORD_ADAPTER: TypeAdapter[ProjectedRecord] = TypeAdapter(ProjectedRecord)
-
-
 def project_record(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
     """Copy a validated accepted record into its immutable projection counterpart."""
     if not hasattr(record, "model_dump"):
         raise ValueError("unknown projected record discriminator")
-    payload = record.model_dump(mode="json", by_alias=True)
+    payload = record.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_unset=True,
+        exclude_none=True,
+    )
     record_type = payload.get("record_type")
     if not isinstance(record_type, str) or record_type not in _PROJECTED_RECORD_MODELS:
         raise ValueError("unknown projected record discriminator")
-    return _PROJECTED_RECORD_ADAPTER.validate_python(payload)
+    return cast(ProjectedRecord, _PROJECTED_RECORD_MODELS[record_type].model_validate(payload))

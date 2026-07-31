@@ -12,14 +12,16 @@ from pydantic import ValidationError
 
 from scripts.benchmark_graph_projection import (
     BENCHMARK_PROTOCOL,
+    BenchmarkConfiguration,
     BenchmarkResult,
     SCENARIOS_PATH,
+    benchmark,
     corpus_metadata,
     corpus_events,
+    evaluate_gates,
     gate_violations,
     max_event_count_metadata,
     protocol_hash,
-    sample_schedule,
 )
 from orchestrator.graph import (
     OutputRecordAcceptedPayload,
@@ -38,6 +40,9 @@ from orchestrator.graph import (
 
 ROOT = Path(__file__).parents[2]
 SCRIPT = ROOT / "scripts" / "benchmark_graph_projection.py"
+PERFORMANCE_BASELINE = (
+    ROOT / "tests" / "fixtures" / "graph_projection_performance" / "baseline.json"
+)
 
 
 def _run(*args: str) -> subprocess.CompletedProcess[str]:
@@ -50,25 +55,9 @@ def _run(*args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _write_minimal_baseline(path: Path, sizes: tuple[int, ...] = (100,)) -> dict[str, object]:
-    result = _run(
-        "--sizes",
-        *(str(size) for size in sizes),
-        "--warmups",
-        "1",
-        "--runs",
-        "1",
-        "--baseline",
-        str(path),
-        "--write-baseline",
-    )
-    assert result.returncode == 0, result.stderr
-    return json.loads(path.read_text())
-
-
 @pytest.fixture(scope="module")
-def smoke_baseline(tmp_path_factory: pytest.TempPathFactory) -> dict[str, object]:
-    return _write_minimal_baseline(tmp_path_factory.mktemp("graph-benchmark") / "baseline.json")
+def smoke_result() -> dict[str, object]:
+    return benchmark([100], 1, 1)
 
 
 @pytest.mark.parametrize("scenario", ("general", "edge-heavy", "record-heavy"))
@@ -104,10 +93,26 @@ def test_corpus_events_are_valid_unique_canonical_streams_with_declared_growth(
             assert isinstance(payload["provenance"], dict)
         projection = reduce_event(projection, event)
 
-    assert len(projection["node_kinds"]) == metadata["projected"]["nodes"]
+    assert len(node_states_view(projection)) == metadata["projected"]["nodes"]
     assert len(edges_view(projection)) == metadata["projected"]["edges"]
     assert len(accepted_record_summaries_by_id_view(projection)) == metadata["projected"]["records"]
     assert metadata["projected"]["append_index_entries"] == metadata["projected"]["records"]
+
+
+def test_edge_heavy_checkpoint_fits_the_baseline_size_budget() -> None:
+    projection = initial_projection()
+    for event in corpus_events("edge-heavy", 100):
+        projection = reduce_event(projection, event)
+
+    checkpoint = projection_to_checkpoint(projection)
+    checkpoint_bytes = len(json.dumps(checkpoint, sort_keys=True, separators=(",", ":")).encode())
+    baseline = json.loads(PERFORMANCE_BASELINE.read_text())
+    budget = baseline["scenarios"]["edge-heavy"]["sizes"]["100"]["metrics"]["checkpoint_bytes"][
+        "median"
+    ]
+
+    assert checkpoint_bytes <= budget
+    assert projection_from_checkpoint(checkpoint) == projection
 
 
 @pytest.mark.parametrize("scenario", ("general", "edge-heavy", "record-heavy"))
@@ -144,9 +149,9 @@ def test_checkpoint_schema_decision_is_public_and_rejects_stale_versions() -> No
 
 
 def test_smoke_measurements_report_honest_operation_boundaries_and_real_views(
-    smoke_baseline: dict[str, object],
+    smoke_result: dict[str, object],
 ) -> None:
-    result = smoke_baseline
+    result = smoke_result
 
     for scenario, scenario_result in result["scenarios"].items():
         measurements = scenario_result["sizes"]["100"]
@@ -206,15 +211,15 @@ def test_scenario_metadata_declares_each_emitted_event_family() -> None:
         assert set(declared[scenario]["event_mix"].split(",")) == emitted
 
 
-def test_smoke_writes_and_reloads_a_versioned_100_event_baseline_without_ratio_gating(
-    smoke_baseline: dict[str, object],
+def test_smoke_produces_a_versioned_100_event_target_artifact(
+    smoke_result: dict[str, object],
 ) -> None:
-    baseline = smoke_baseline
+    baseline = smoke_result
 
     assert BenchmarkResult.model_validate(baseline).model_dump(mode="json") == baseline
     assert baseline["schema_version"] == 2
     assert baseline["tool"]["hash"]
-    assert baseline["artifact"]["role"] == "baseline"
+    assert baseline["artifact"]["role"] == "target"
     assert baseline["configuration"]["requested_sizes"] == [100]
     assert baseline["configuration"]["probe_sizes"] == [50, 100]
     assert baseline["configuration"]["samples_by_size"] == {
@@ -271,6 +276,9 @@ def _gate_document(
     memory: float = 100.0,
     checkpoint: float = 100.0,
     codec: float = 100.0,
+    checkpoint_encode: float | None = None,
+    checkpoint_decode: float | None = None,
+    public_view: float | None = None,
     cold_rebuild: float = 100.0,
 ) -> dict[str, object]:
     """Return a complete, hand-built schema-v2 gate document."""
@@ -278,9 +286,9 @@ def _gate_document(
         "reducer_full_replay": (replay, "ms"),
         "peak_memory_bytes": (memory, "bytes"),
         "checkpoint_bytes": (checkpoint, "bytes"),
-        "checkpoint_encode": (codec, "ms"),
-        "checkpoint_decode": (codec, "ms"),
-        "public_view": (codec, "ms"),
+        "checkpoint_encode": (checkpoint_encode or codec, "ms"),
+        "checkpoint_decode": (checkpoint_decode or codec, "ms"),
+        "public_view": (public_view or codec, "ms"),
         "cold_rebuild": (cold_rebuild, "ms"),
     }
 
@@ -365,7 +373,7 @@ def _gate_document(
 
     return {
         "schema_version": 2,
-        "tool": {"identity": "graph-projection-benchmark", "version": "2", "hash": "c" * 64},
+        "tool": {"identity": "graph-projection-benchmark", "version": "3", "hash": "c" * 64},
         "artifact": {"role": role, "implementation_signature": f"{role}-implementation"},
         "source": {"revision": "a" * 40 if role == "baseline" else "b" * 40},
         "corpus": {"hash": "a" * 64, "scenario_hash": "b" * 64},
@@ -441,8 +449,14 @@ def test_protocol_hash_is_stable_when_implementation_fingerprints_differ() -> No
     baseline = _gate_document(role="baseline")
     target = _gate_document(role="target", checkpoint=99.0)
 
-    assert BENCHMARK_PROTOCOL["version"] == 1
-    assert protocol_hash() == protocol_hash()
+    assert BENCHMARK_PROTOCOL["version"] == 3
+    assert BENCHMARK_PROTOCOL["sampling"] == {
+        "schedule": "configured_warmups_and_runs_for_every_probe",
+        "aggregation": "median",
+        "garbage_collection": "unmodified",
+    }
+    assert protocol_hash() == "26808c77121ceb4db824201db6b912cf3bfff3c1325356a41f0741c9705c02b6"
+    assert protocol_hash() != "7b1239cab8682ba477948e35b679830b206cb5718b5b56719021a5fee3ffcee7"
     assert (
         baseline["artifact"]["implementation_signature"]
         != target["artifact"]["implementation_signature"]
@@ -451,10 +465,21 @@ def test_protocol_hash_is_stable_when_implementation_fingerprints_differ() -> No
     assert protocol_hash() != ""
 
 
-def test_sampling_schedule_bounds_quadratic_large_corpora() -> None:
-    assert sample_schedule(1000, 2, 7).model_dump() == {"warmups": 2, "runs": 7}
-    assert sample_schedule(5000, 2, 7).model_dump() == {"warmups": 1, "runs": 3}
-    assert sample_schedule(10000, 2, 7).model_dump() == {"warmups": 0, "runs": 1}
+def test_sampling_schedule_is_uniform_for_requested_and_half_size_probes() -> None:
+    configuration = BenchmarkConfiguration.model_validate(
+        {
+            "requested_sizes": [10000],
+            "probe_sizes": [5000, 10000],
+            "warmups": 2,
+            "runs": 7,
+            "samples_by_size": {
+                "5000": {"warmups": 2, "runs": 7},
+                "10000": {"warmups": 2, "runs": 7},
+            },
+        }
+    )
+
+    assert configuration.samples_by_size["5000"] == configuration.samples_by_size["10000"]
 
 
 @pytest.mark.parametrize(
@@ -463,7 +488,6 @@ def test_sampling_schedule_bounds_quadratic_large_corpora() -> None:
         ("replay", 1.15, "replay"),
         ("memory", 1.15, "peak-memory"),
         ("checkpoint", 1.0, "checkpoint-size"),
-        ("codec", 1.25, "codec/view"),
         ("cold_rebuild", 1.15, "cold-rebuild"),
     ],
 )
@@ -478,6 +502,60 @@ def test_gate_ratio_boundaries_are_exact(
     violations = gate_violations(baseline, target)
 
     assert (any(label in violation for violation in violations)) is (multiplier > 1.0)
+
+
+def test_amended_codec_gate_boundaries_are_metric_and_scenario_specific() -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(
+        role="target",
+        checkpoint=99.0,
+        checkpoint_encode=225.0,
+        checkpoint_decode=125.0,
+        public_view=125.0,
+    )
+    scenarios = target["scenarios"]
+    assert isinstance(scenarios, dict)
+    edge_heavy = scenarios["edge-heavy"]
+    assert isinstance(edge_heavy, dict)
+    sizes = edge_heavy["sizes"]
+    assert isinstance(sizes, dict)
+    for measurement in sizes.values():
+        assert isinstance(measurement, dict)
+        metrics = measurement["metrics"]
+        assert isinstance(metrics, dict)
+        decode = metrics["checkpoint_decode"]
+        assert isinstance(decode, dict)
+        decode["median"] = 900.0
+
+    assert gate_violations(baseline, target) == []
+
+    for measurement in sizes.values():
+        metrics = measurement["metrics"]
+        decode = metrics["checkpoint_decode"]
+        decode["median"] = 900.1
+    violations = gate_violations(baseline, target)
+    assert any("checkpoint-decode edge-heavy" in violation for violation in violations)
+
+
+@pytest.mark.parametrize(
+    ("metric", "label"),
+    [("checkpoint_decode", "checkpoint-decode"), ("public_view", "public-view")],
+)
+def test_non_edge_decode_and_public_view_keep_original_gate(metric: str, label: str) -> None:
+    baseline = _gate_document(role="baseline")
+    target = _gate_document(role="target", checkpoint=99.0)
+    scenarios = target["scenarios"]
+    assert isinstance(scenarios, dict)
+    general = scenarios["general"]
+    assert isinstance(general, dict)
+    sizes = general["sizes"]
+    assert isinstance(sizes, dict)
+    for measurement in sizes.values():
+        metrics = measurement["metrics"]
+        value = metrics[metric]
+        value["median"] = 125.1
+
+    assert any(label in violation for violation in gate_violations(baseline, target))
 
 
 def test_gate_evaluator_rejects_missing_metric_with_sorted_compatibility_diagnostics() -> None:
@@ -563,6 +641,84 @@ def test_scaling_refuses_nonpositive_startup_adjusted_denominator() -> None:
     assert any(
         "invalid denominator" in violation for violation in gate_violations(baseline, target)
     )
+
+
+def test_subsecond_ten_thousand_event_scaling_ratio_is_a_visible_nonblocking_diagnostic() -> None:
+    baseline = _gate_document(role="baseline", replay=1000.0)
+    target = _gate_document(role="target", checkpoint=99.0)
+    _retarget_sizes(baseline, 10_000)
+    _retarget_sizes(target, 10_000)
+    _set_replay_medians(target, half=110.0, full=260.1)
+
+    evaluation = evaluate_gates(baseline, target)
+
+    assert evaluation.violations == ()
+    assert evaluation.diagnostics == tuple(sorted(evaluation.diagnostics))
+    assert evaluation.diagnostics == (
+        "scaling edge-heavy/5000_to_10000: 250.1 / 100.0 exceeds 2.5",
+        "scaling general/5000_to_10000: 250.1 / 100.0 exceeds 2.5",
+        "scaling record-heavy/5000_to_10000: 250.1 / 100.0 exceeds 2.5",
+    )
+    assert gate_violations(baseline, target) == []
+
+
+def test_scaling_ratio_is_a_hard_violation_when_any_ten_thousand_event_replay_is_not_subsecond() -> (
+    None
+):
+    baseline = _gate_document(role="baseline", replay=1000.0)
+    target = _gate_document(role="target", checkpoint=99.0)
+    _retarget_sizes(baseline, 10_000)
+    _retarget_sizes(target, 10_000)
+    _set_replay_medians(target, half=110.0, full=260.1)
+    _set_replay_median(target, "general", "10000", 1000.0)
+
+    evaluation = evaluate_gates(baseline, target)
+
+    assert evaluation.diagnostics == ()
+    assert any("scaling general/5000_to_10000" in issue for issue in evaluation.violations)
+    assert gate_violations(baseline, target) == list(evaluation.violations)
+
+
+def test_other_gate_remains_hard_when_subsecond_scaling_is_diagnostic() -> None:
+    baseline = _gate_document(role="baseline", replay=1000.0)
+    target = _gate_document(role="target", checkpoint=99.0)
+    _retarget_sizes(baseline, 10_000)
+    _retarget_sizes(target, 10_000)
+    _set_replay_medians(target, half=110.0, full=260.1)
+    _set_metric_median(target, "general", "10000", "public_view", 125.1)
+
+    evaluation = evaluate_gates(baseline, target)
+
+    assert any("public-view general/10000" in issue for issue in evaluation.violations)
+    assert any("scaling general/5000_to_10000" in issue for issue in evaluation.diagnostics)
+
+
+def test_invalid_scaling_denominator_remains_hard_when_ten_thousand_replays_are_subsecond() -> None:
+    baseline = _gate_document(role="baseline", replay=1000.0)
+    target = _gate_document(role="target", checkpoint=99.0)
+    _retarget_sizes(baseline, 10_000)
+    _retarget_sizes(target, 10_000)
+    _set_replay_medians(target, half=10.0, full=260.1)
+
+    evaluation = evaluate_gates(baseline, target)
+
+    assert evaluation.diagnostics == ()
+    assert any("invalid denominator" in issue for issue in evaluation.violations)
+
+
+def test_gate_output_is_successful_with_sorted_diagnostics_as_its_only_issues() -> None:
+    baseline = _gate_document(role="baseline", replay=1000.0)
+    target = _gate_document(role="target", checkpoint=99.0)
+    _retarget_sizes(baseline, 10_000)
+    _retarget_sizes(target, 10_000)
+    _set_replay_medians(target, half=110.0, full=260.1)
+
+    output = evaluate_gates(baseline, target).output()
+
+    assert output["status"] == "passed"
+    assert output["violations"] == []
+    assert output["diagnostics"] == sorted(output["diagnostics"])
+    assert evaluate_gates(baseline, target).exit_code() == 0
 
 
 @pytest.mark.parametrize("checkpoint", (99.1, 100.0, 100.1))
@@ -757,6 +913,36 @@ def _retarget_sizes(document: dict[str, object], n: int) -> None:
         scenario_probes[0]["pair"] = {"n": n // 2, "two_n": n}
 
 
+def _set_metric_median(
+    document: dict[str, object], scenario_name: str, size: str, metric_name: str, median: float
+) -> None:
+    scenarios = document["scenarios"]
+    assert isinstance(scenarios, dict)
+    scenario = scenarios[scenario_name]
+    assert isinstance(scenario, dict)
+    sizes = scenario["sizes"]
+    assert isinstance(sizes, dict)
+    result = sizes[size]
+    assert isinstance(result, dict)
+    metrics = result["metrics"]
+    assert isinstance(metrics, dict)
+    metric = metrics[metric_name]
+    assert isinstance(metric, dict)
+    metric["median"] = median
+
+
+def _set_replay_median(
+    document: dict[str, object], scenario_name: str, size: str, median: float
+) -> None:
+    _set_metric_median(document, scenario_name, size, "reducer_full_replay", median)
+
+
+def _set_replay_medians(document: dict[str, object], *, half: float, full: float) -> None:
+    for scenario in ("general", "edge-heavy", "record-heavy"):
+        _set_replay_median(document, scenario, "5000", half)
+        _set_replay_median(document, scenario, "10000", full)
+
+
 @pytest.mark.parametrize(
     ("family", "mutate", "expected"),
     [
@@ -878,9 +1064,9 @@ def test_compatibility_rejects_scenario_metadata_mismatch_independently() -> Non
         ("reducer_full_replay", 115.1, "replay"),
         ("peak_memory_bytes", 115.1, "peak-memory"),
         ("checkpoint_bytes", 100.1, "checkpoint-size"),
-        ("checkpoint_encode", 125.1, "codec/view"),
-        ("checkpoint_decode", 125.1, "codec/view"),
-        ("public_view", 125.1, "codec/view"),
+        ("checkpoint_encode", 225.1, "checkpoint-encode"),
+        ("checkpoint_decode", 125.1, "checkpoint-decode"),
+        ("public_view", 125.1, "public-view"),
         ("cold_rebuild", 115.1, "cold-rebuild"),
     ],
 )
@@ -901,6 +1087,8 @@ def test_every_scenario_size_metric_gate_rejects_its_own_outside_value(
     assert isinstance(metrics, dict)
     selected_metric = metrics[metric]
     assert isinstance(selected_metric, dict)
+    if metric == "checkpoint_decode" and scenario == "edge-heavy":
+        outside = 900.1
     selected_metric["median"] = outside
 
     assert any(

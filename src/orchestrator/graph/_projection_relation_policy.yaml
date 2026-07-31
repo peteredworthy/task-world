@@ -104,57 +104,77 @@ policies:
   family: task
   rationale: Identifier is checked against represented task state by an integrity resolver.
   validation: resolver
-- path: governance.approval_decisions_by_node.*.appeal_node_id
+- path: governance.approval_decision_id_by_node.*.key
+  scope: grouped
+  family: node
+  rationale: Alias map keys identify represented decision target nodes.
+  validation: resolver
+- path: governance.approval_decision_id_by_node.*.value
+  scope: grouped
+  family: external
+  rationale: Alias values are checked against their canonical decision map by integrity validation.
+  validation: external
+- path: governance.approval_decisions_by_id.*.appeal_node_id
   scope: grouped
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
-- path: governance.approval_decisions_by_node.*.decider.id
+- path: governance.approval_decisions_by_id.*.decider.id
   scope: grouped
   family: external
   rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
   validation: external
-- path: governance.approval_decisions_by_node.*.gate_id
+- path: governance.approval_decisions_by_id.*.gate_id
   scope: grouped
   family: external
   rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
   validation: external
-- path: governance.approval_decisions_by_node.*.key
+- path: governance.approval_decisions_by_id.*.key
   scope: grouped
-  family: node
-  rationale: Map key is checked against represented node state by an integrity resolver.
-  validation: resolver
-- path: governance.approval_decisions_by_node.*.node_id
+  family: external
+  rationale: Canonical decision identity is a durable event or record identity.
+  validation: external
+- path: governance.approval_decisions_by_id.*.node_id
   scope: grouped
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
-- path: governance.approval_decisions_by_node.*.task_region_id
+- path: governance.approval_decisions_by_id.*.task_region_id
   scope: grouped
   family: task
   rationale: Identifier is checked against represented task state by an integrity resolver.
   validation: resolver
-- path: governance.authority_decisions_by_node.*.appeal_node_id
+- path: governance.authority_decision_id_by_node.*.key
+  scope: grouped
+  family: node
+  rationale: Alias map keys identify represented decision target nodes.
+  validation: resolver
+- path: governance.authority_decision_id_by_node.*.value
+  scope: grouped
+  family: external
+  rationale: Alias values are checked against their canonical decision map by integrity validation.
+  validation: external
+- path: governance.authority_decisions_by_id.*.appeal_node_id
   scope: grouped
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
-- path: governance.authority_decisions_by_node.*.decider.id
+- path: governance.authority_decisions_by_id.*.decider.id
   scope: grouped
   family: external
   rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
   validation: external
-- path: governance.authority_decisions_by_node.*.key
+- path: governance.authority_decisions_by_id.*.key
   scope: grouped
-  family: node
-  rationale: Map key is checked against represented node state by an integrity resolver.
-  validation: resolver
-- path: governance.authority_decisions_by_node.*.node_id
+  family: external
+  rationale: Canonical decision identity is a durable event or record identity.
+  validation: external
+- path: governance.authority_decisions_by_id.*.node_id
   scope: grouped
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
-- path: governance.authority_decisions_by_node.*.task_region_id
+- path: governance.authority_decisions_by_id.*.task_region_id
   scope: grouped
   family: task
   rationale: Identifier is checked against represented task state by an integrity resolver.
@@ -244,37 +264,47 @@ policies:
   family: node
   rationale: Map key is checked against represented node state by an integrity resolver.
   validation: resolver
-- path: governance.oversight_decisions_by_node.*.appeal_node_id
+- path: governance.oversight_decision_id_by_node.*.key
+  scope: grouped
+  family: node
+  rationale: Alias map keys identify represented decision target nodes.
+  validation: resolver
+- path: governance.oversight_decision_id_by_node.*.value
+  scope: grouped
+  family: external
+  rationale: Alias values are checked against their canonical decision map by integrity validation.
+  validation: external
+- path: governance.oversight_decisions_by_id.*.appeal_node_id
   scope: grouped
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
-- path: governance.oversight_decisions_by_node.*.appealed_node_id
+- path: governance.oversight_decisions_by_id.*.appealed_node_id
   scope: grouped
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
-- path: governance.oversight_decisions_by_node.*.candidate_id
+- path: governance.oversight_decisions_by_id.*.candidate_id
   scope: grouped
   family: candidate
   rationale: Candidate identity is checked against the decision task by an integrity resolver.
   validation: resolver
-- path: governance.oversight_decisions_by_node.*.gate_id
+- path: governance.oversight_decisions_by_id.*.gate_id
   scope: grouped
   family: external
   rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
   validation: external
-- path: governance.oversight_decisions_by_node.*.key
+- path: governance.oversight_decisions_by_id.*.key
   scope: grouped
-  family: node
-  rationale: Map key is checked against represented node state by an integrity resolver.
-  validation: resolver
-- path: governance.oversight_decisions_by_node.*.node_id
+  family: external
+  rationale: Canonical decision identity is a durable event or record identity.
+  validation: external
+- path: governance.oversight_decisions_by_id.*.node_id
   scope: grouped
   family: node
   rationale: Identifier is checked against represented node state by an integrity resolver.
   validation: resolver
-- path: governance.oversight_decisions_by_node.*.task_region_id
+- path: governance.oversight_decisions_by_id.*.task_region_id
   scope: grouped
   family: task
   rationale: Identifier is checked against represented task state by an integrity resolver.
@@ -291,14 +321,14 @@ policies:
   validation: derived
 - path: nodes.*.runtime.candidate_id
   scope: grouped
-  family: candidate
-  rationale: Identifier is checked against represented candidate state by an integrity resolver.
-  validation: resolver
+  family: derived
+  rationale: Runtime candidate identity names the node's planned output before acceptance.
+  validation: derived
 - path: nodes.*.runtime.failed_candidate_id
   scope: grouped
-  family: candidate
-  rationale: Identifier is checked against represented candidate state by an integrity resolver.
-  validation: resolver
+  family: derived
+  rationale: Failed runtime candidate identity is retained even when no accepted candidate exists.
+  validation: derived
 - path: nodes.*.spec.authority_request.target_node_id
   scope: grouped
   family: node
@@ -309,30 +339,10 @@ policies:
   family: task
   rationale: Identifier is checked against represented task state by an integrity resolver.
   validation: resolver
-- path: nodes.*.spec.authority_request_record.producer_node_id
-  scope: grouped
-  family: node
-  rationale: Identifier is checked against represented node state by an integrity resolver.
-  validation: resolver
-- path: nodes.*.spec.authority_request_record.record_id
+- path: nodes.*.spec.authority_request_record_id
   scope: grouped
   family: record
-  rationale: Identifier is checked against represented record state by an integrity resolver.
-  validation: resolver
-- path: nodes.*.spec.authority_request_record.run_id
-  scope: grouped
-  family: external
-  rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
-  validation: external
-- path: nodes.*.spec.authority_request_record.value.target_node_id
-  scope: grouped
-  family: node
-  rationale: Identifier is checked against represented node state by an integrity resolver.
-  validation: resolver
-- path: nodes.*.spec.authority_request_record.value.target_region_id
-  scope: grouped
-  family: task
-  rationale: Identifier is checked against represented task state by an integrity resolver.
+  rationale: Node creation retains only a canonical record-store reference.
   validation: resolver
 - path: nodes.*.spec.command_definition_id
   scope: grouped
@@ -361,9 +371,9 @@ policies:
   validation: resolver
 - path: planning.accepted_patch_ids_by_node.*.*
   scope: grouped
-  family: record
-  rationale: Identifier is checked against represented record state by an integrity resolver.
-  validation: resolver
+  family: derived
+  rationale: Patch IDs identify graph patch attempts, not projected records.
+  validation: derived
 - path: planning.accepted_patch_ids_by_node.*.key
   scope: grouped
   family: node
@@ -381,9 +391,9 @@ policies:
   validation: resolver
 - path: planning.latest_no_successor_patch_id_by_node.*.value
   scope: grouped
-  family: record
-  rationale: Identifier is checked against represented record state by an integrity resolver.
-  validation: resolver
+  family: derived
+  rationale: Patch IDs identify graph patch attempts, not projected records.
+  validation: derived
 - path: planning.latest_routine_snapshot.producer_node_id
   scope: grouped
   family: node
@@ -396,9 +406,9 @@ policies:
   validation: resolver
 - path: planning.no_successor_patch_ids_by_node.*.*
   scope: grouped
-  family: record
-  rationale: Identifier is checked against represented record state by an integrity resolver.
-  validation: resolver
+  family: derived
+  rationale: Patch IDs identify graph patch attempts, not projected records.
+  validation: derived
 - path: planning.no_successor_patch_ids_by_node.*.key
   scope: grouped
   family: node
@@ -1016,9 +1026,9 @@ policies:
   validation: derived
 - path: usage.recorded_keys.*.key
   scope: grouped
-  family: node
-  rationale: Map key is checked against represented node state by an integrity resolver.
-  validation: resolver
+  family: external
+  rationale: Map key is the external node-usage idempotency key formatted as execution_id:usage_index, not a graph node ID.
+  validation: external
 - path: usage.tokens_by_node.*.key
   scope: grouped
   family: node
@@ -1173,14 +1183,14 @@ validation_paths:
 - execution.leases.*.node_id
 - execution.leases.*.session_id
 - execution.leases.*.task_region_id
-- governance.approval_decisions_by_node.*.appeal_node_id
-- governance.approval_decisions_by_node.*.key
-- governance.approval_decisions_by_node.*.node_id
-- governance.approval_decisions_by_node.*.task_region_id
-- governance.authority_decisions_by_node.*.appeal_node_id
-- governance.authority_decisions_by_node.*.key
-- governance.authority_decisions_by_node.*.node_id
-- governance.authority_decisions_by_node.*.task_region_id
+- governance.approval_decision_id_by_node.*.key
+- governance.approval_decisions_by_id.*.appeal_node_id
+- governance.approval_decisions_by_id.*.node_id
+- governance.approval_decisions_by_id.*.task_region_id
+- governance.authority_decision_id_by_node.*.key
+- governance.authority_decisions_by_id.*.appeal_node_id
+- governance.authority_decisions_by_id.*.node_id
+- governance.authority_decisions_by_id.*.task_region_id
 - governance.authority_revision_blockers.*.edge_id
 - governance.authority_revision_blockers.*.from_node_id
 - governance.authority_revision_blockers.*.key
@@ -1198,33 +1208,25 @@ validation_paths:
 - governance.gate_decisions_by_task.*.*.key
 - governance.gate_decisions_by_task.*.key
 - governance.node_gate_decisions.*.key
-- governance.oversight_decisions_by_node.*.appeal_node_id
-- governance.oversight_decisions_by_node.*.appealed_node_id
-- governance.oversight_decisions_by_node.*.candidate_id
-- governance.oversight_decisions_by_node.*.key
-- governance.oversight_decisions_by_node.*.node_id
-- governance.oversight_decisions_by_node.*.task_region_id
+- governance.oversight_decision_id_by_node.*.key
+- governance.oversight_decisions_by_id.*.appeal_node_id
+- governance.oversight_decisions_by_id.*.appealed_node_id
+- governance.oversight_decisions_by_id.*.candidate_id
+- governance.oversight_decisions_by_id.*.node_id
+- governance.oversight_decisions_by_id.*.task_region_id
 - governance.pending_appeals_by_node.*.key
-- nodes.*.runtime.candidate_id
-- nodes.*.runtime.failed_candidate_id
 - nodes.*.spec.authority_request.target_node_id
 - nodes.*.spec.authority_request.target_region_id
-- nodes.*.spec.authority_request_record.producer_node_id
-- nodes.*.spec.authority_request_record.record_id
-- nodes.*.spec.authority_request_record.value.target_node_id
-- nodes.*.spec.authority_request_record.value.target_region_id
+- nodes.*.spec.authority_request_record_id
 - nodes.*.spec.decision_request.target_node_id
 - nodes.*.spec.decision_request.target_region_id
 - nodes.*.spec.node_id
 - nodes.*.spec.task_region_id
-- planning.accepted_patch_ids_by_node.*.*
 - planning.accepted_patch_ids_by_node.*.key
 - planning.generation_by_node.*.key
 - planning.latest_no_successor_patch_id_by_node.*.key
-- planning.latest_no_successor_patch_id_by_node.*.value
 - planning.latest_routine_snapshot.producer_node_id
 - planning.latest_routine_snapshot.record_id
-- planning.no_successor_patch_ids_by_node.*.*
 - planning.no_successor_patch_ids_by_node.*.key
 - planning.region_label_by_node.*.key
 - planning.session_id_by_node.*.key
@@ -1300,7 +1302,6 @@ validation_paths:
 - topology.input_bindings.*.key
 - topology.outbound_edge_ids.*.*
 - topology.outbound_edge_ids.*.key
-- usage.recorded_keys.*.key
 - usage.tokens_by_node.*.key
 - verification.check_results_by_node.*.candidate_record_ids.*
 - verification.check_results_by_node.*.evaluated_record_ids.*

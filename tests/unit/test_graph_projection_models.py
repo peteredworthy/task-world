@@ -10,8 +10,6 @@ from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph import (
     Authority,
-    AuthorityRequestRecord,
-    AuthorityRequestRecordEnvelopeValue,
     CandidateProjection,
     CallbackEventValue,
     CleanupRequestValue,
@@ -27,7 +25,6 @@ from orchestrator.graph import (
     GovernanceProjection,
     GraphRecordSummaryProjection,
     GraphProjection,
-    ImmutableGraphProjection,
     InputBindingValue,
     InputBindingProjection,
     InvalidTestBlockValue,
@@ -174,15 +171,15 @@ def _flatten_node_paths() -> set[str]:
 def test_root_groups_equal_manifest_groups_and_architecture() -> None:
     manifest_groups = {entry["group"] for entry in _manifest()["fields"] if entry["group"]}
     assert manifest_groups == ROOT_GROUPS
-    assert set(ImmutableGraphProjection.model_fields) == manifest_groups
+    assert set(GraphProjection.model_fields) == manifest_groups
 
 
 def test_manifest_exactly_owns_each_legacy_field_at_its_retained_destination() -> None:
     manifest = _manifest()
-    destinations = _destination_paths(ImmutableGraphProjection)
+    destinations = _destination_paths(GraphProjection)
     by_old_name = {entry["old_name"]: entry for entry in manifest["fields"]}
 
-    assert set(by_old_name) == set(GraphProjection.__annotations__)
+    assert len(by_old_name) == 73
     assert len(by_old_name) == len(manifest["fields"])
     retained = {
         (old_name, entry["new_path"].replace(".*", ""), entry["group"])
@@ -232,7 +229,7 @@ def test_node_creation_ownership_exactly_matches_explicit_node_fields() -> None:
 
 
 def test_model_graph_has_no_mutable_annotations_or_open_extra() -> None:
-    pending = [ImmutableGraphProjection]
+    pending = [GraphProjection]
     visited: set[type[BaseModel]] = set()
     violations: list[str] = []
     while pending:
@@ -252,11 +249,11 @@ def test_model_graph_has_no_mutable_annotations_or_open_extra() -> None:
 
 def test_graph_projection_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError, match="extra_forbidden"):
-        ImmutableGraphProjection.model_validate({"unknown": True})
+        GraphProjection.model_validate({"unknown": True})
 
 
 def test_empty_projection_uses_persistent_defaults() -> None:
-    projection = ImmutableGraphProjection()
+    projection = GraphProjection()
 
     assert isinstance(projection.nodes, FrozenMap)
     assert projection.scheduling.ready_node_ids == ()
@@ -264,7 +261,7 @@ def test_empty_projection_uses_persistent_defaults() -> None:
 
 
 def test_projection_groups_are_frozen() -> None:
-    projection = ImmutableGraphProjection()
+    projection = GraphProjection()
 
     with pytest.raises(ValidationError, match="frozen_instance"):
         projection.scheduling.ready_node_ids = ("node-1",)
@@ -272,7 +269,7 @@ def test_projection_groups_are_frozen() -> None:
 
 def test_node_values_and_maps_cannot_be_mutated() -> None:
     node = NodeProjection(spec=NodeSpecProjection(node_id="node-1", creation_position=1))
-    projection = ImmutableGraphProjection(nodes=FrozenMap({"node-1": node}))
+    projection = GraphProjection.model_validate({"nodes": FrozenMap({"node-1": node})})
 
     with pytest.raises(ValidationError, match="frozen_instance"):
         node.runtime = NodeRuntimeProjection(state="ready")
@@ -288,7 +285,7 @@ def test_projection_map_revalidates_and_reconstructs_model_children() -> None:
 
     source = UntrustedNode(spec=NodeSpecProjection(node_id="node-1", creation_position=1))
 
-    projection = ImmutableGraphProjection(nodes=FrozenMap({"node-1": source}))
+    projection = GraphProjection.model_validate({"nodes": FrozenMap({"node-1": source})})
 
     assert type(projection.nodes["node-1"]) is NodeProjection
     assert projection.nodes["node-1"] is not source
@@ -306,29 +303,12 @@ def test_projection_map_rejects_invalid_existing_model_children() -> None:
     )
 
     with pytest.raises(ValidationError):
-        ImmutableGraphProjection(nodes=FrozenMap({"node-1": invalid_node}))
+        GraphProjection.model_validate({"nodes": FrozenMap({"node-1": invalid_node})})
 
 
 def test_populated_frozen_json_models_revalidate_exact_instances() -> None:
     command = CommandDefinitionValue.model_validate(
         {"value": {"argv": ["uv", "run", "pytest"], "options": {"quiet": True}}}
-    )
-    authority = AuthorityRequestRecordEnvelopeValue.model_validate(
-        {
-            "record_id": "authority-request-1",
-            "record_kind": "graph_record",
-            "record_type": "authority_request_record",
-            "producer_node_id": "gate-1",
-            "port": "authority_request_record",
-            "schema": "AuthorityRequest",
-            "payload": {"requirements": ["R-1"]},
-            "provenance": {"event_ids": ["event-1"]},
-            "value": {
-                "requested_authority": ["graph_write"],
-                "target_node_id": "worker-1",
-                "reason": "required",
-            },
-        }
     )
     edge = EdgeValue.model_validate(
         {
@@ -342,7 +322,7 @@ def test_populated_frozen_json_models_revalidate_exact_instances() -> None:
         }
     )
 
-    for value in (command, authority, edge):
+    for value in (command, edge):
         restored = type(value).model_validate(value)
         assert restored == value
         assert restored.model_dump(mode="json", by_alias=True) == value.model_dump(
@@ -357,23 +337,6 @@ def test_frozen_json_models_reject_frozen_map_subclasses() -> None:
     value = UntrustedFrozenMap({"nested": ("value",)})
     cases = (
         (CommandDefinitionValue, {"value": value}),
-        (
-            AuthorityRequestRecordEnvelopeValue,
-            {
-                "record_id": "authority-request-1",
-                "record_kind": "graph_record",
-                "record_type": "authority_request_record",
-                "producer_node_id": "gate-1",
-                "port": "authority_request_record",
-                "schema": "AuthorityRequest",
-                "payload": value,
-                "value": {
-                    "requested_authority": ["graph_write"],
-                    "target_node_id": "worker-1",
-                    "reason": "required",
-                },
-            },
-        ),
         (
             EdgeValue,
             {
@@ -420,7 +383,7 @@ def test_record_store_is_the_only_recursive_full_payload_owner() -> None:
     assert Mapping not in get_args(ids_annotation)
 
     record_models = _concrete_annotation_models(get_args(ProjectedRecord)[0])
-    assert _grouped_paths_containing(ImmutableGraphProjection, record_models) == {"records.by_id"}
+    assert _grouped_paths_containing(GraphProjection, record_models) == {"records.by_id"}
 
 
 def test_recursive_full_payload_owner_guard_detects_a_second_group() -> None:
@@ -470,7 +433,6 @@ def test_new_models_are_available_from_public_graph_api() -> None:
         LifecycleProjection,
         ResourceClaimValue,
         ExecutionAuthorityValue,
-        AuthorityRequestRecordEnvelopeValue,
         CommandDefinitionValue,
         DecisionActorValue,
         ProjectionDecisionRequestValue,
@@ -624,52 +586,44 @@ def test_node_execution_authority_preserves_canonical_json_and_isolated_children
         )
 
 
-def test_wrapped_authority_request_record_preserves_canonical_json_and_isolation() -> None:
-    raw = {
-        "record_id": "authority-request-1",
-        "record_kind": "graph_record",
-        "record_type": "authority_request_record",
-        "schema_version": 2,
-        "producer_node_id": "planner-1",
-        "producer_port": "authority_request_record",
-        "port": "authority_request_record",
-        "schema": "AuthorityRequest",
-        "created_at": "2026-01-01T00:00:00Z",
-        "graph_position": 7,
-        "run_id": "run-1",
-        "payload": {"source": {"ids": ["proposal-1"]}},
-        "provenance": {"event_ids": ["event-1"]},
-        "value": {
-            "requested_authority": ["repo:docs/**:write"],
-            "target_node_id": "worker-1",
-            "target_region_id": "task-1",
-            "reason": "Worker needs docs access.",
-            "expires_at": "2026-02-01T00:00:00Z",
-        },
-    }
-    canonical = AuthorityRequestRecord.model_validate(raw)
-    expected = canonical.model_dump(mode="json", by_alias=True)
+def test_node_spec_retains_only_authority_request_record_id() -> None:
     spec = NodeSpecProjection.model_validate(
         {
             "node_id": "gate-authority",
             "creation_position": 1,
-            "authority_request_record": canonical.model_dump(mode="json"),
+            "authority_request_record_id": "authority-request-1",
         }
     )
 
-    raw["value"]["requested_authority"].append("graph_write")
-    raw["payload"]["source"]["ids"].append("proposal-2")
-    assert spec.model_dump(mode="json", by_alias=True)["authority_request_record"] == expected
-    assert isinstance(spec.authority_request_record, AuthorityRequestRecordEnvelopeValue)
-
-    with pytest.raises(ValidationError, match="literal_error"):
-        NodeSpecProjection.model_validate(
-            {
-                "node_id": "gate-authority",
-                "creation_position": 1,
-                "authority_request_record": {**canonical.model_dump(), "schema": "Wrong"},
-            }
-        )
+    assert spec.authority_request_record_id == "authority-request-1"
+    assert spec.model_dump(mode="json") == {
+        "node_id": "gate-authority",
+        "creation_position": 1,
+        "kind": None,
+        "role": None,
+        "task_region_id": None,
+        "resource_claims": [],
+        "allowed_actions": [],
+        "preconditions": [],
+        "gate_type": None,
+        "approval_type": None,
+        "reason": None,
+        "prompt": None,
+        "approval_prompt": None,
+        "human_prompt": None,
+        "message": None,
+        "blocker": None,
+        "blocker_reason": None,
+        "decision_request": None,
+        "authority_request_record_id": "authority-request-1",
+        "authority_request": None,
+        "authority": None,
+        "command_definition": None,
+        "command_definition_id": None,
+        "hidden_oracle_command": None,
+        "command_binding": None,
+        "max_attempts": None,
+    }
 
 
 @pytest.mark.parametrize(

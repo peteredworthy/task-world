@@ -603,8 +603,8 @@ def test_projected_analysis_summary_accepts_every_source_port_schema_alias(
 @pytest.mark.parametrize(
     "record_type, mutation",
     [
-        ("fan_out_inputs", {"port": "check_result"}),
-        ("fan_out_inputs", {"schema": "CheckResult"}),
+        ("fan_out_inputs", {"port": 7}),
+        ("fan_out_inputs", {"schema": 7}),
         ("file_state", {"port": "candidate"}),
         ("file_state", {"schema": "ImplementationCandidate"}),
         ("verification_report", {"value": {"outcome": "failed", "grades": []}}),
@@ -835,3 +835,26 @@ def test_project_record_preserves_nondefault_file_state_and_fan_out_nested_value
             mode="json", by_alias=True, exclude_unset=True
         ) == source.model_dump(mode="json", by_alias=True, exclude_unset=True)
         assert TypeAdapter(ProjectedRecord).validate_json(projected.model_dump_json()) == projected
+
+
+@pytest.mark.parametrize(
+    ("port", "schema"),
+    [("reader_output", "FanOutInputs"), ("fan_out_inputs", "FanOutJoinedInputs")],
+)
+def test_project_record_preserves_runtime_fan_out_contract(port: str, schema: str) -> None:
+    source = OUTPUT_RECORD_MODELS_BY_TYPE["fan_out_inputs"].model_validate(
+        {
+            "record_id": f"fan-out-{port}",
+            "record_kind": "output",
+            "record_type": "fan_out_inputs",
+            "producer_node_id": "planner-1",
+            "port": port,
+            "schema": schema,
+            "value": {"summary": "fan-out inputs"},
+        }
+    )
+
+    projected = project_record(source)
+
+    assert projected.port == port
+    assert projected.schema_ == schema

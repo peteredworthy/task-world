@@ -16,6 +16,7 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
     init_db,
 )
+from orchestrator.graph_runtime import GraphEventStore
 from tests.graph_fr17_fixture import create_graph_run, seed_less_used_readback_graph
 
 
@@ -39,6 +40,13 @@ async def test_fr17_less_used_readbacks_survive_projection_rebuild(
     run_id = f"fr17-readback-{uuid4().hex[:8]}"
     await create_graph_run(session_factory, run_id)
     await seed_less_used_readback_graph(session_factory, run_id)
+    async with session_factory() as session:
+        stored_events = await GraphEventStore(session).read_run(run_id)
+    assert [
+        (event.position, event.payload["bound_at_position"])
+        for event in stored_events
+        if event.event_type == "input_bound"
+    ] == [(15, 15), (21, 21)]
 
     decision_response = await client.post(
         f"/api/runs/{run_id}/graph/decisions",
@@ -132,7 +140,7 @@ async def _assert_fr17_surfaces(run_id: str, surfaces: dict[str, Any]) -> None:
     )
     assert recovery_edge["metadata"]["binding_policy"] == "bind_latest"
     assert recovery_edge["binding"]["record_ids"] == ["recovery-plan-1"]
-    assert recovery_edge["binding"]["record_bound_positions"] == {"recovery-plan-1": 19}
+    assert recovery_edge["binding"]["record_bound_positions"] == {"recovery-plan-1": 21}
     assert recovery_edge["bound_records"][0]["record_type"] == "recovery_plan"
 
     decision_edge = next(

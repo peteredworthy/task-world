@@ -10,6 +10,7 @@
 - name: readiness_blocked_node_becomes_ready
   given_events:
     - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
+    - node_created: {node_id: gate-1, kind: gate, state: completed}
     - node_created: {node_id: gate-successor, kind: worker, state: blocked}
     - approval_decision_recorded: {decision_type: approval, node_id: gate-1, decision: approved, decider: fixture-controller}
     - node_state_changed: {node_id: gate-successor, new_state: ready, trigger: gate_approved}

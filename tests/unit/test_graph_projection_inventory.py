@@ -6,9 +6,9 @@ from pydantic import ValidationError
 import pytest
 
 from orchestrator.graph import (
-    GraphProjection,
     NodeCreationProjection,
-    initial_projection,
+    ResourceClaimProjection,
+    build_projection,
     resource_claims_for_node,
 )
 from scripts.graph_projection_inventory import (
@@ -27,7 +27,7 @@ from scripts.graph_projection_inventory import (
     load_manifest,
     occurrence_id,
 )
-from tests.unit.graph_test_utils import projection_fixture_set
+from tests.unit.graph_test_utils import event
 
 
 MANIFEST_PATH = Path(__file__).parents[2] / "scripts/codemods/graph_projection_manifest.yaml"
@@ -82,7 +82,7 @@ def _normative_ownership() -> list[tuple[str, str | None, str]]:
 
 def test_manifest_covers_every_projection_field_exactly_once() -> None:
     manifest = load_manifest(MANIFEST_PATH)
-    old_fields = set(GraphProjection.__annotations__)
+    old_fields = {old_name for old_name, _, _ in _normative_ownership()}
 
     assert len(old_fields) == 73
     assert len(manifest.fields) == 73
@@ -166,13 +166,19 @@ def test_manifest_rejects_node_creation_field_mismatch(tmp_path: Path) -> None:
 
 
 def test_resource_claim_query_returns_an_immutable_sequence() -> None:
-    projection = initial_projection()
-    claim = NodeCreationProjection(
-        node_id="worker-1",
-        position=1,
-        resource_claims=[{"mode": "read", "scope": "repo"}],
-    ).resource_claims[0]
-    projection = projection_fixture_set(projection, "node_resource_claims", ("worker-1",), [claim])
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "resource_claims": [{"mode": "read", "scope": "repo"}],
+                },
+                position=1,
+            )
+        ]
+    )
+    claim = ResourceClaimProjection(mode="read", scope="repo")
 
     assert resource_claims_for_node(projection, "worker-1") == (claim,)
     assert resource_claims_for_node(projection, "missing") == ()

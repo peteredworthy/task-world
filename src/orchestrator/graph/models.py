@@ -244,8 +244,10 @@ class SimpleRecordSelector(SelectorBaseModel):
         "analysis_summary",
         "artifact_reference",
         "authority_decision",
+        "authority_request_record",
         "completion_decision",
         "decision_record",
+        "decision_request",
         "failure_record",
         "file_state",
         "graph_patch_proposal",
@@ -1512,6 +1514,7 @@ class NodeCreationProjection(GraphBaseModel):
     blocker_reason: str | None = None
     decision_request: dict[str, Any] | None = None
     authority_request_record: dict[str, Any] | None = None
+    authority_request_record_id: str | None = None
     authority_request: dict[str, Any] | None = None
     authority: dict[str, Any] | None = None
     command_definition: CommandDefinitionProjection | None = None
@@ -2248,6 +2251,18 @@ class GatekeeperCostRecordedPayload(StrictEventPayload):
     item_count: StrictInt = Field(default=0, ge=0)
     cost_usd: StrictFloat = Field(default=0.0, ge=0.0)
     wall_time_ms: StrictInt = Field(default=0, ge=0)
+
+
+class OutboxRequeuedPayload(StrictEventPayload):
+    run_id: StrictStr
+    outbox_id: StrictInt
+    event_id: StrictStr
+    kind: StrictStr
+    previous_status: StrictStr
+    previous_attempts: StrictInt
+    previous_last_error: StrictStr | None
+    operator: StrictStr
+    graph_position: StrictInt
 
 
 class GraphRecordKind(str, Enum):

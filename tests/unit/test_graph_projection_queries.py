@@ -7,33 +7,20 @@ import yaml
 from pydantic import ValidationError
 
 from orchestrator.graph import (
-    environment_failures_view,
-    file_state_records_view,
     Actor,
     ActorKind,
-    ApprovalDecisionProjection,
-    AuthorityDecisionProjection,
-    CallbackIdempotencyEvent,
-    CheckResultProjection,
-    CleanupRequestedProjection,
-    EnvironmentFailureProjection,
     EventEnvelope,
     FileStateRecord,
-    InvalidTestBlockProjection,
-    RequirementRevisionProjection,
-    RecoveryNodeIndexEntry,
-    SupportEvidenceProjection,
-    VerificationResultProjection,
-    VerifierVerdictProjection,
+    GraphProjection,
     active_leases,
     active_requirement_version,
     accepted_graph_patch_ids,
     accepted_graph_patches_by_node_view,
     accepted_no_successor_patches_by_node_view,
+    accepted_output_records,
     accepted_output_records_by_node_port_view,
     accepted_record_summaries_by_id_view,
     active_requirement_versions_view,
-    accepted_output_records,
     accepted_output_records_for_node_port,
     accepted_no_successor_patch_id,
     accepted_no_successor_patch_ids,
@@ -42,6 +29,7 @@ from orchestrator.graph import (
     authority_decision,
     authority_decisions_view,
     authority_revision_blocker,
+    action_count_by_node_kind_view,
     bound_record_ids,
     callback_idempotency_event,
     callback_idempotency_events_view,
@@ -74,6 +62,8 @@ from orchestrator.graph import (
     input_bindings_for_node,
     input_bindings_view,
     initial_projection,
+    projection_from_checkpoint,
+    projection_to_checkpoint,
     invalid_test_block,
     invalid_test_blocks,
     invalid_test_blocks_view,
@@ -170,13 +160,7 @@ from scripts.graph_projection_inventory import (
     query_migration_skeleton,
     validate_query_migration_manifest,
 )
-from tests.unit.graph_test_utils import (
-    projection_fixture_append,
-    projection_fixture_set,
-    projection_fixture_update,
-    canonical_event_payload,
-)
-from tests.graph_fr17_fixture import less_used_events
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
 ROOT = Path(__file__).parents[2]
@@ -244,141 +228,89 @@ def test_verification_and_recovery_queries_preserve_missing_values() -> None:
 
 
 def test_verification_and_recovery_queries_preserve_order_and_isolation() -> None:
-    projection = initial_projection()
-    projection = projection_fixture_set(
-        projection,
-        "verifier_verdicts",
-        ("candidate-1",),
-        VerifierVerdictProjection(candidate_id="candidate-1", verdict="passed", position=1),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "passed_verification_results_by_record_id",
-        ("passed-1",),
-        (
-            VerificationResultProjection(
-                node_id="verifier-1", record_id="passed-1", candidate_id="candidate-1"
-            )
-        ),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "failed_verification_results_by_record_id",
-        ("failed-1",),
-        (
-            VerificationResultProjection(
-                node_id="verifier-2", record_id="failed-1", candidate_id="candidate-2"
-            )
-        ),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "passed_verification_results_by_record_id",
-        ("passed-2",),
-        (VerificationResultProjection(node_id="verifier-2", record_id="passed-2")),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "failed_verification_results_by_record_id",
-        ("failed-2",),
-        (VerificationResultProjection(node_id="verifier-3", record_id="failed-2")),
-    )
-    projection = projection_fixture_append(
-        projection_fixture_append(projection, "passed_verification_candidate_ids", "candidate-2"),
-        "passed_verification_candidate_ids",
-        "candidate-1",
-    )
-    projection = projection_fixture_update(
-        projection, "failed_verification_candidate_ids", {"candidate-3": True, "candidate-2": True}
-    )
-    projection = projection_fixture_set(
-        projection,
-        "recovery_nodes_by_record_id",
-        ("failed-1",),
-        [
-            RecoveryNodeIndexEntry(node_id="recovery-2", recovery_reason="second"),
-            RecoveryNodeIndexEntry(node_id="recovery-1", recovery_reason="first"),
-        ],
-    )
-    projection = projection_fixture_set(
-        projection,
-        "recovery_nodes_by_record_id",
-        ("failed-2",),
-        [RecoveryNodeIndexEntry(node_id="recovery-3", recovery_reason="third")],
-    )
-    projection = projection_fixture_update(
-        projection, "node_states", {"node-2": "running", "node-1": "ready"}
-    )
-    projection = projection_fixture_update(
-        projection, "task_states", {"task-2": "pending", "task-1": "accepted"}
-    )
-    projection = projection_fixture_set(projection, "recorded_node_usage_keys", ("usage-1",), True)
-    projection = projection_fixture_set(
-        projection,
-        "accepted_output_records_by_node_port",
-        ("node-2",),
+    projection = GraphProjection.model_validate(
         {
-            "z-port": [{"record_id": "record-3", "payload": {"nested": ["original"]}}],
-            "a-port": [
-                {"record_id": "record-2", "payload": {"nested": ["original"]}},
-                {"record_id": "record-1", "payload": {"nested": ["original"]}},
-            ],
-        },
+            "nodes": {
+                "node-2": {
+                    "spec": {"node_id": "node-2", "creation_position": 2},
+                    "runtime": {"state": "running"},
+                },
+                "node-1": {
+                    "spec": {"node_id": "node-1", "creation_position": 1},
+                    "runtime": {"state": "ready"},
+                },
+            },
+            "tasks": {"task-2": {"state": "pending"}, "task-1": {"state": "accepted"}},
+            "verification": {
+                "verdicts_by_node": {
+                    "verifier-1": {
+                        "candidate_id": "candidate-1",
+                        "verdict": "passed",
+                        "position": 1,
+                    }
+                },
+                "passed_results_by_record_id": {
+                    "passed-1": {
+                        "node_id": "verifier-1",
+                        "record_id": "passed-1",
+                        "candidate_id": "candidate-1",
+                    },
+                    "passed-2": {"node_id": "verifier-2", "record_id": "passed-2"},
+                },
+                "failed_results_by_record_id": {
+                    "failed-1": {
+                        "node_id": "verifier-2",
+                        "record_id": "failed-1",
+                        "candidate_id": "candidate-2",
+                    },
+                    "failed-2": {"node_id": "verifier-3", "record_id": "failed-2"},
+                },
+                "passed_candidate_ids": ["candidate-2", "candidate-1"],
+                "failed_candidate_ids": {"candidate-3": True, "candidate-2": True},
+                "recovery_nodes_by_record_id": {
+                    "failed-1": [
+                        {"node_id": "recovery-2", "recovery_reason": "second"},
+                        {"node_id": "recovery-1", "recovery_reason": "first"},
+                    ],
+                    "failed-2": [{"node_id": "recovery-3", "recovery_reason": "third"}],
+                },
+                "check_results_by_node": {
+                    "check-2": {
+                        "node_id": "check-2",
+                        "status": "failed",
+                        "position": 2,
+                        "candidate_record_ids": ["candidate-2"],
+                    },
+                    "check-1": {
+                        "node_id": "check-1",
+                        "status": "passed",
+                        "position": 1,
+                        "candidate_record_ids": ["candidate-1"],
+                    },
+                },
+                "invalid_test_blocks_by_task": {
+                    "region-2": {"position": 2},
+                    "region-1": {"position": 1},
+                },
+            },
+            "governance": {
+                "configured_gates_by_task": {"region-1": {"gate-2": True, "gate-1": True}},
+                "gate_decisions_by_task": {"region-1": {"gate-2": False}},
+                "node_gate_decisions": {"gate-node": True},
+            },
+            "usage": {"recorded_keys": {"usage-1": True}},
+        }
     )
-    projection = projection_fixture_set(
-        projection,
-        "accepted_output_records_by_node_port",
-        ("node-1",),
-        {"b-port": [{"record_id": "record-0", "payload": {"nested": ["original"]}}]},
-    )
-    projection = projection_fixture_set(
-        projection,
-        "check_results",
-        ("check-2",),
-        CheckResultProjection(
-            node_id="check-2", status="failed", position=2, candidate_record_ids=["candidate-2"]
-        ),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "check_results",
-        ("check-1",),
-        CheckResultProjection(
-            node_id="check-1", status="passed", position=1, candidate_record_ids=["candidate-1"]
-        ),
-    )
-    projection = projection_fixture_set(
-        projection, "invalid_test_blocks", ("region-2",), InvalidTestBlockProjection(position=2)
-    )
-    projection = projection_fixture_set(
-        projection, "invalid_test_blocks", ("region-1",), InvalidTestBlockProjection(position=1)
-    )
-    projection = projection_fixture_set(
-        projection, "configured_gates", ("region-1",), {"gate-2": True, "gate-1": True}
-    )
-    projection = projection_fixture_set(
-        projection, "gate_decisions", ("region-1",), {"gate-2": False}
-    )
-    projection = projection_fixture_set(projection, "node_gate_decisions", ("gate-node",), True)
 
     assert verifier_verdict(projection, "candidate-1") is not None
     assert passed_verification_result(projection, "passed-1") is not None
     assert failed_verification_result(projection, "failed-1") is not None
     assert passed_verification_candidate_ids(projection) == ("candidate-2", "candidate-1")
-    assert failed_verification_candidate_ids(projection) == ("candidate-3", "candidate-2")
-    assert node_states(projection) == (("node-2", "running"), ("node-1", "ready"))
-    assert task_states(projection) == (("task-2", "pending"), ("task-1", "accepted"))
+    assert failed_verification_candidate_ids(projection) == ("candidate-2", "candidate-3")
+    assert node_states(projection) == (("node-1", "ready"), ("node-2", "running"))
+    assert task_states(projection) == (("task-1", "accepted"), ("task-2", "pending"))
     assert node_usage_recorded(projection, "usage-1") is True
     assert node_usage_recorded(projection, "missing-usage") is False
-    assert tuple(
-        record["record_id"]
-        for record in accepted_output_records_for_node_port(projection, "node-2", "a-port")
-    ) == ("record-2", "record-1")
-    assert tuple((node_id, port) for node_id, port, _ in accepted_output_records(projection)) == (
-        ("node-1", "b-port"),
-        ("node-2", "a-port"),
-        ("node-2", "z-port"),
-    )
     assert tuple(record_id for record_id, _ in passed_verification_results(projection)) == (
         "passed-1",
         "passed-2",
@@ -395,12 +327,12 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
         "recovery-2",
         "recovery-1",
     )
-    assert tuple(node_id for node_id, _ in check_results(projection)) == ("check-2", "check-1")
+    assert tuple(node_id for node_id, _ in check_results(projection)) == ("check-1", "check-2")
     assert tuple(region_id for region_id, _ in invalid_test_blocks(projection)) == (
-        "region-2",
         "region-1",
+        "region-2",
     )
-    assert configured_gates(projection, "region-1") == ("gate-2", "gate-1")
+    assert configured_gates(projection, "region-1") == ("gate-1", "gate-2")
     assert gate_decision(projection, "region-1", "gate-2") is False
     assert node_gate_decision(projection, "gate-node") is True
 
@@ -414,321 +346,94 @@ def test_verification_and_recovery_queries_preserve_order_and_isolation() -> Non
     fresh_result = check_result(projection, "check-2")
     assert fresh_result is not None
     assert fresh_result.candidate_record_ids == ["candidate-2"]
-    assert (
-        verifier_verdict(projection, "candidate-1")
-        is not projection["verifier_verdicts"]["candidate-1"]
-    )
-    assert (
-        passed_verification_result(projection, "passed-1")
-        is not projection["passed_verification_results_by_record_id"]["passed-1"]
-    )
-    assert (
-        failed_verification_result(projection, "failed-1")
-        is not projection["failed_verification_results_by_record_id"]["failed-1"]
-    )
-    assert (
-        passed_verification_results(projection)[0][1]
-        is not projection["passed_verification_results_by_record_id"]["passed-1"]
-    )
-    assert (
-        failed_verification_results(projection)[0][1]
-        is not projection["failed_verification_results_by_record_id"]["failed-1"]
-    )
-    assert (
-        recovery_nodes_for_record(projection, "failed-1")[0]
-        is not projection["recovery_nodes_by_record_id"]["failed-1"][0]
-    )
-    assert (
-        recovery_nodes(projection)[0][1][0]
-        is not projection["recovery_nodes_by_record_id"]["failed-1"][0]
-    )
-    accepted = accepted_output_records(projection)[1][2][0]
-    accepted["payload"]["nested"].append("changed")
-    assert accepted_output_records_for_node_port(projection, "node-2", "a-port")[0]["payload"] == {
-        "nested": ["original"]
-    }
-    assert (
-        invalid_test_block(projection, "region-1")
-        is not projection["invalid_test_blocks"]["region-1"]
-    )
-    assert check_results(projection)[0][1] is not projection["check_results"]["check-2"]
-    assert (
-        invalid_test_blocks(projection)[0][1] is not projection["invalid_test_blocks"]["region-2"]
-    )
 
 
 def test_task_3c_queries_preserve_present_values_order_and_mutation_isolation() -> None:
-    projection = build_projection(less_used_events("task-3c-query"))
-    projection = projection_fixture_set(
-        projection,
-        "file_state_records",
-        ("file-state-query",),
-        FileStateRecord(
-            record_id="file-state-query",
-            record_type="file_state",
-            cleanup_excluded_paths=["secret"],
-        ),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "output_record_payloads",
-        ("file-state-query",),
-        file_state_records_view(projection)["file-state-query"],
-    )
-    projection = projection_fixture_set(
-        projection,
-        "node_output_ports",
-        ("worker-source",),
-        {"failure_record": ["failure-record-1", "failure-record-2"]},
-    )
-    projection = projection_fixture_set(
-        projection, "planner_successors", ("planner-fr17",), "planner-next"
-    )
-    projection = projection_fixture_set(
-        projection, "accepted_graph_patches_by_node", ("planner-fr17",), ["patch-1", "patch-2"]
-    )
-    projection = projection_fixture_set(
-        projection, "accepted_no_successor_patches_by_node", ("planner-fr17",), ["no-successor-1"]
-    )
-    projection = projection_fixture_set(
-        projection, "accepted_no_successor_patch_ids_by_node", ("planner-fr17",), "no-successor-1"
-    )
-    projection = projection_fixture_set(projection, "planner_generations", ("planner-fr17",), 3)
-    projection = projection_fixture_set(
-        projection, "planner_sessions", ("planner-fr17",), "session-1"
-    )
-    projection = projection_fixture_set(
-        projection, "planner_session_states", ("session-1",), "active"
-    )
-    projection = projection_fixture_set(
-        projection, "planner_session_current_nodes", ("session-1",), "planner-fr17"
-    )
-    projection = projection_fixture_set(
-        projection, "planner_session_carryovers", ("session-1",), "carryover-1"
-    )
-    projection = projection_fixture_set(
-        projection, "planner_region_labels", ("planner-fr17",), "region-1"
-    )
-    projection = projection_fixture_set(
-        projection, "open_proposal_blockers", ("proposal-1",), {"reasons": ["original"]}
-    )
-    projection = projection_fixture_set(
-        projection, "authority_revision_blockers", ("revision-1",), {"reasons": ["original"]}
-    )
-    projection = projection_fixture_set(
-        projection,
-        "approval_decisions",
-        ("approval-1",),
-        ApprovalDecisionProjection(
-            node_id="approval-1", decision="approved", scope={"items": ["original"]}
-        ),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "authority_decisions",
-        ("authority-1",),
-        AuthorityDecisionProjection(
-            node_id="authority-1", decision="granted", scope={"items": ["original"]}
-        ),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "requirement_revisions",
-        ("version-1",),
-        RequirementRevisionProjection(
-            requirement_id="requirement-1",
-            version_id="version-1",
-            change_classification="clarification",
-            requires_authority=False,
-            position=1,
-            validation_strengthening=False,
-        ),
-    )
-    projection = projection_fixture_set(
-        projection, "active_requirement_versions", ("requirement-1",), "version-1"
-    )
-    projection = projection_fixture_set(
-        projection,
-        "support_evidence",
-        ("support-1",),
-        SupportEvidenceProjection(
-            support_id="support-1",
-            evidence_id="evidence-1",
-            requirement_id="requirement-1",
-            requirement_version_id="version-1",
-            status="current",
-            position=1,
-        ),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "cleanup_requested_events",
-        ("cleanup-1",),
-        CleanupRequestedProjection(cleanup_id="cleanup-1", position=1, paths=["secret"]),
-    )
-    projection = projection_fixture_set(projection, "cleanup_applied_ids", ("cleanup-1",), True)
-    projection = projection_fixture_set(
-        projection,
-        "callback_idempotency_events",
-        ("key-1",),
-        CallbackIdempotencyEvent(
-            event_type="callback_accepted",
-            node_id="worker-source",
-            idempotency_key="key-1",
-            outcome="accepted",
-            payload={"nested": ["original"]},
-        ),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "environment_failures",
-        ("region-2",),
-        EnvironmentFailureProjection(position=2, task_region_id="region-2", reason="second"),
-    )
-    projection = projection_fixture_set(
-        projection,
-        "environment_failures",
-        ("region-1",),
-        EnvironmentFailureProjection(position=1, task_region_id="region-1", reason="first"),
+    projection = GraphProjection.model_validate(
+        {
+            "planning": {
+                "generation_budget": 13,
+                "successor_by_node": {"planner": "next"},
+                "accepted_patch_ids_by_node": {"planner": ["patch-1", "patch-2"]},
+                "no_successor_patch_ids_by_node": {"planner": ["no-successor-1"]},
+                "latest_no_successor_patch_id_by_node": {"planner": "no-successor-1"},
+                "generation_by_node": {"planner": 3},
+                "session_id_by_node": {"planner": "session-1"},
+                "sessions": {
+                    "session-1": {
+                        "state": "active",
+                        "current_node_id": "planner",
+                        "carryover_record_id": "carryover-1",
+                    }
+                },
+                "region_label_by_node": {"planner": "region-1"},
+            },
+            "requirements": {
+                "revisions_by_id": {
+                    "version-1": {
+                        "requirement_id": "requirement-1",
+                        "version_id": "version-1",
+                        "change_classification": "clarification",
+                        "requires_authority": False,
+                        "position": 1,
+                        "validation_strengthening": False,
+                    }
+                },
+                "active_version_id_by_requirement": {"requirement-1": "version-1"},
+                "support_by_id": {
+                    "support-1": {
+                        "support_id": "support-1",
+                        "evidence_id": "evidence-1",
+                        "requirement_id": "requirement-1",
+                        "requirement_version_id": "version-1",
+                        "status": "current",
+                        "position": 1,
+                    }
+                },
+            },
+            "execution": {
+                "cleanup_requests_by_id": {
+                    "cleanup-1": {"cleanup_id": "cleanup-1", "position": 1, "paths": ["secret"]}
+                },
+                "applied_cleanup_ids": {"cleanup-1": True},
+                "callback_events_by_key": {
+                    "key-1": {
+                        "event_type": "callback_accepted",
+                        "node_id": "worker",
+                        "idempotency_key": "key-1",
+                        "outcome": "accepted",
+                        "payload": {"nested": ["original"]},
+                    }
+                },
+                "environment_failures_by_task": {
+                    "region-2": {"position": 2, "task_region_id": "region-2", "reason": "second"},
+                    "region-1": {"position": 1, "task_region_id": "region-1", "reason": "first"},
+                },
+            },
+        }
     )
 
-    assert output_record_payload(projection, "recovery-plan-1") is not None
-    assert output_record_payload(projection, "file-state-query") is not None
-    assert file_state_record(projection, "file-state-query") is not None
-    assert output_record_ids_for_node_port(projection, "worker-source", "failure_record") == (
-        "failure-record-1",
-        "failure-record-2",
-    )
-    assert planner_successor(projection, "planner-fr17") == "planner-next"
     assert planner_generation_budget(projection) == 13
-    assert accepted_graph_patch_ids(projection, "planner-fr17") == ("patch-1", "patch-2")
-    assert accepted_no_successor_patch_ids(projection, "planner-fr17") == ("no-successor-1",)
-    assert accepted_no_successor_patch_id(projection, "planner-fr17") == "no-successor-1"
-    assert accepted_graph_patch_ids(projection, "missing") == ()
-    assert accepted_no_successor_patch_ids(projection, "missing") == ()
-    assert accepted_no_successor_patch_id(projection, "missing") is None
-    assert planner_generation(projection, "planner-fr17") == 3
-    assert planner_session(projection, "planner-fr17") == "session-1"
+    assert planner_successor(projection, "planner") == "next"
+    assert accepted_graph_patch_ids(projection, "planner") == ("patch-1", "patch-2")
+    assert accepted_no_successor_patch_ids(projection, "planner") == ("no-successor-1",)
+    assert accepted_no_successor_patch_id(projection, "planner") == "no-successor-1"
+    assert planner_generation(projection, "planner") == 3
+    assert planner_session(projection, "planner") == "session-1"
     assert planner_session_state(projection, "session-1") == "active"
-    assert planner_session_current_node(projection, "session-1") == "planner-fr17"
+    assert planner_session_current_node(projection, "session-1") == "planner"
     assert planner_session_carryover(projection, "session-1") == "carryover-1"
-    assert planner_region_label(projection, "planner-fr17") == "region-1"
-    snapshot = latest_routine_snapshot_record(projection)
-    assert snapshot is not None
-    assert snapshot.record_id == "routine-snapshot-fr17"
-    assert snapshot.producer_node_id == "root-fr17"
-    assert snapshot.port == "snapshot"
-    assert decision_request(projection, "gate-pending") is not None
-    assert approval_decision(projection, "approval-1") is not None
-    assert authority_decision(projection, "authority-1") is not None
-    assert oversight_decision(projection, "oversight-1") is not None
-    assert open_proposal_blocker(projection, "proposal-1") == {"reasons": ["original"]}
-    assert authority_revision_blocker(projection, "revision-1") == {"reasons": ["original"]}
-    assert requirement_revision(projection, "version-1") is not None
+    assert planner_region_label(projection, "planner") == "region-1"
     assert active_requirement_version(projection, "requirement-1") == "version-1"
+    assert requirement_revision(projection, "version-1") is not None
     assert support_evidence(projection, "support-1") is not None
     assert cleanup_request(projection, "cleanup-1") is not None
     assert cleanup_applied(projection, "cleanup-1") is True
     assert callback_idempotency_event(projection, "key-1") is not None
-    assert environment_failure(projection, "region-1") is not None
     assert tuple(region_id for region_id, _ in environment_failures(projection)) == (
-        "region-2",
         "region-1",
+        "region-2",
     )
-
-    blocker = open_proposal_blocker(projection, "proposal-1")
-    assert blocker is not None
-    reasons = blocker["reasons"]
-    assert isinstance(reasons, list)
-    reasons.append("changed")
-    authority_blocker = authority_revision_blocker(projection, "revision-1")
-    assert authority_blocker is not None
-    authority_reasons = authority_blocker["reasons"]
-    assert isinstance(authority_reasons, list)
-    authority_reasons.append("changed")
-    callback = callback_idempotency_event(projection, "key-1")
-    assert callback is not None and callback.payload is not None
-    nested = callback.payload["nested"]
-    assert isinstance(nested, list)
-    nested.append("changed")
-    file_state = file_state_record(projection, "file-state-query")
-    assert file_state is not None
-    file_state.cleanup_excluded_paths.append("changed")
-    output_payload = output_record_payload(projection, "file-state-query")
-    assert isinstance(output_payload, FileStateRecord)
-    output_payload.cleanup_excluded_paths.append("output-changed")
-    approval = approval_decision(projection, "approval-1")
-    assert approval is not None and approval.scope is not None
-    approval.scope["items"].append("changed")
-    authority = authority_decision(projection, "authority-1")
-    assert authority is not None and authority.scope is not None
-    authority.scope["items"].append("changed")
-    cleanup = cleanup_request(projection, "cleanup-1")
-    assert cleanup is not None
-    cleanup.paths.append("changed")
-    request = decision_request(projection, "gate-pending")
-    assert request is not None and request.options is not None
-    request.options.append("changed")
-    oversight = oversight_decision(projection, "oversight-1")
-    assert oversight is not None and oversight.scope is not None
-    oversight.scope["items"].append("changed")
-
-    snapshot = latest_routine_snapshot_record(projection)
-    assert snapshot is not None
-    with pytest.raises(ValidationError):
-        snapshot.record_id = "changed"
-    revision = requirement_revision(projection, "version-1")
-    assert revision is not None
-    with pytest.raises(ValidationError):
-        revision.position = 99
-    support = support_evidence(projection, "support-1")
-    assert support is not None
-    with pytest.raises(ValidationError):
-        support.status = "changed"
-    environment = environment_failure(projection, "region-1")
-    assert environment is not None
-    with pytest.raises(ValidationError):
-        environment.position = 99
-    environment_collection = environment_failures(projection)
-    with pytest.raises(ValidationError):
-        environment_collection[0][1].position = 99
-
-    assert open_proposal_blocker(projection, "proposal-1") == {"reasons": ["original"]}
-    assert authority_revision_blocker(projection, "revision-1") == {"reasons": ["original"]}
-    fresh_callback = callback_idempotency_event(projection, "key-1")
-    assert fresh_callback is not None and fresh_callback.payload == {"nested": ["original"]}
-    fresh_file_state = file_state_record(projection, "file-state-query")
-    assert fresh_file_state is not None
-    assert fresh_file_state.cleanup_excluded_paths == ["secret"]
-    fresh_output_payload = output_record_payload(projection, "file-state-query")
-    assert isinstance(fresh_output_payload, FileStateRecord)
-    assert fresh_output_payload.cleanup_excluded_paths == ["secret"]
-    fresh_approval = approval_decision(projection, "approval-1")
-    assert fresh_approval is not None and fresh_approval.scope == {"items": ["original"]}
-    fresh_authority = authority_decision(projection, "authority-1")
-    assert fresh_authority is not None and fresh_authority.scope == {"items": ["original"]}
-    fresh_cleanup = cleanup_request(projection, "cleanup-1")
-    assert fresh_cleanup is not None and fresh_cleanup.paths == ["secret"]
-    fresh_request = decision_request(projection, "gate-pending")
-    assert fresh_request is not None and fresh_request.options == ["approved", "rejected"]
-    fresh_oversight = oversight_decision(projection, "oversight-1")
-    assert fresh_oversight is not None
-    assert fresh_oversight.scope == {"items": ["original"]}
-    fresh_snapshot = latest_routine_snapshot_record(projection)
-    assert fresh_snapshot is not None
-    assert fresh_snapshot.record_id == "routine-snapshot-fr17"
-    fresh_requirement = requirement_revision(projection, "version-1")
-    assert fresh_requirement is not requirement_revisions_view(projection)["version-1"]
-    assert fresh_requirement.position == 1
-    fresh_support = support_evidence(projection, "support-1")
-    assert fresh_support is not support_evidence_view(projection)["support-1"]
-    assert fresh_support.status == "current"
-    fresh_environment = environment_failure(projection, "region-1")
-    assert fresh_environment is not environment_failures_view(projection)["region-1"]
-    assert fresh_environment.position == 1
-    environments = environment_failures(projection)
-    assert environments[0][1] is not environment_failures_view(projection)["region-2"]
-    assert tuple(failure.position for _, failure in environments) == (2, 1)
 
 
 def test_lifecycle_queries_read_active_and_completed_event_projections() -> None:
@@ -779,42 +484,163 @@ def test_node_and_task_queries_preserve_missing_values() -> None:
 
 
 def test_topology_and_lease_queries_preserve_fixture_order_and_selection() -> None:
-    projection = build_projection(less_used_events("query-fixture"))
+    projection = GraphProjection.model_validate(
+        {
+            "topology": {
+                "edges": {
+                    "edge-1": {
+                        "edge_id": "edge-1",
+                        "from_node_id": "source",
+                        "from_port": "out",
+                        "to_node_id": "target",
+                        "to_port": "input",
+                    },
+                    "edge-2": {
+                        "edge_id": "edge-2",
+                        "from_node_id": "other",
+                        "from_port": "out",
+                        "to_node_id": "target",
+                        "to_port": "other",
+                    },
+                },
+                "input_bindings": {
+                    "target": {
+                        "input": {
+                            "edge_id": "edge-1",
+                            "to_node_id": "target",
+                            "to_port": "input",
+                            "record_ids": ["record-1"],
+                            "bound_at_position": 1,
+                        }
+                    }
+                },
+                "input_binding_port_order": {"target": ["input"]},
+            },
+            "execution": {
+                "leases": {
+                    "lease-active": {
+                        "lease_id": "lease-active",
+                        "state": "active",
+                        "generation": 1,
+                    },
+                    "lease-released": {
+                        "lease_id": "lease-released",
+                        "state": "released",
+                        "generation": 2,
+                    },
+                }
+            },
+        }
+    )
 
-    assert node_exists(projection, "worker-source") is True
-    assert node_kind(projection, "worker-source") == "worker"
-    assert node_role(projection, "worker-source") == "builder"
-    assert node_task_region(projection, "worker-source") == "task-fr17"
-    assert node_state(projection, "recovery-1") == "completed"
-    assert node_last_deferred_reason(projection, "review-1") == "merge_conflicts"
-    assert node_allowed_actions(projection, "worker-source") == (
-        "submit_records",
-        "raise_appeal",
+    assert tuple(edge.edge_id for edge in iter_edges(projection)) == ("edge-1", "edge-2")
+    assert edge_by_id(projection, "edge-1") is not None
+    assert tuple(edge.edge_id for edge in edges_from_node(projection, "source")) == ("edge-1",)
+    assert tuple(edge.edge_id for edge in edges_to_node(projection, "target")) == (
+        "edge-1",
+        "edge-2",
     )
-    assert node_preconditions(projection, "recovery-1") == ("failure_record_bound",)
-    assert node_command_definition(projection, "recovery-1") is not None
-    assert tuple(edge.edge_id for edge in iter_edges(projection)) == (
-        "edge-failure-recovery",
-        "edge-recovery-consumer",
-        "edge-decision-consumer",
+    assert bound_record_ids(projection, "target", "input") == ("record-1",)
+    assert input_binding_for_port(projection, "target", "input") is not None
+    assert tuple(binding.to_port for binding in input_bindings_for_node(projection, "target")) == (
+        "input",
     )
-    assert edge_by_id(projection, "edge-failure-recovery") is not None
-    assert tuple(edge.edge_id for edge in edges_from_node(projection, "recovery-1")) == (
-        "edge-recovery-consumer",
+    assert lease_generation(projection, "lease-active") == 1
+    assert tuple(lease.lease_id for lease in iter_leases(projection)) == (
+        "lease-active",
+        "lease-released",
     )
-    assert tuple(edge.edge_id for edge in edges_to_node(projection, "consumer-1")) == (
-        "edge-recovery-consumer",
-        "edge-decision-consumer",
+    assert tuple(lease.lease_id for lease in active_leases(projection)) == ("lease-active",)
+
+
+def test_input_bindings_preserve_first_port_insertion_order_across_updates_and_checkpoints() -> (
+    None
+):
+    projection = build_projection(
+        [
+            _query_event(1, "node_created", {"node_id": "source", "kind": "worker"}),
+            _query_event(2, "node_created", {"node_id": "target", "kind": "worker"}),
+            _query_event(
+                3,
+                "output_record_accepted",
+                {
+                    "record_id": "record-1",
+                    "record_kind": "output",
+                    "record_type": "fan_out_inputs",
+                    "producer_node_id": "source",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "value": {},
+                },
+            ),
+            _query_event(
+                4,
+                "edge_created",
+                {
+                    "edge_id": "edge-a",
+                    "from_node_id": "source",
+                    "from_port": "candidate",
+                    "to_node_id": "target",
+                    "to_port": "a",
+                },
+            ),
+            _query_event(
+                5,
+                "edge_created",
+                {
+                    "edge_id": "edge-b",
+                    "from_node_id": "source",
+                    "from_port": "candidate",
+                    "to_node_id": "target",
+                    "to_port": "b",
+                },
+            ),
+            _query_event(
+                6,
+                "input_bound",
+                {
+                    "edge_id": "edge-a",
+                    "to_node_id": "target",
+                    "to_port": "a",
+                    "record_ids": ["record-1"],
+                    "bound_at_position": 6,
+                },
+            ),
+            _query_event(
+                7,
+                "input_bound",
+                {
+                    "edge_id": "edge-b",
+                    "to_node_id": "target",
+                    "to_port": "b",
+                    "record_ids": ["record-1"],
+                    "bound_at_position": 7,
+                },
+            ),
+            _query_event(
+                8,
+                "input_bound",
+                {
+                    "edge_id": "edge-a",
+                    "to_node_id": "target",
+                    "to_port": "a",
+                    "record_ids": ["record-1"],
+                    "bound_at_position": 8,
+                },
+            ),
+        ]
     )
-    assert bound_record_ids(projection, "recovery-1", "failure_record") == ("failure-record-1",)
-    assert input_binding_for_port(projection, "recovery-1", "failure_record") is not None
-    assert tuple(
-        binding.to_port for binding in input_bindings_for_node(projection, "consumer-1")
-    ) == ("outstanding_failures",)
-    assert lease_by_id(projection, "lease-recovery") is not None
-    assert lease_generation(projection, "lease-recovery") == 1
-    assert tuple(lease.lease_id for lease in iter_leases(projection)) == ("lease-recovery",)
-    assert active_leases(projection) == ()
+
+    assert tuple(binding.to_port for binding in input_bindings_for_node(projection, "target")) == (
+        "a",
+        "b",
+    )
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    assert tuple(binding.to_port for binding in input_bindings_for_node(restored, "target")) == (
+        "a",
+        "b",
+    )
+    assert tuple(input_bindings_view(restored)["target"]) == ("a", "b")
 
 
 def test_node_task_and_lease_queries_preserve_present_and_missing_values() -> None:
@@ -873,6 +699,7 @@ def test_exact_collection_views_preserve_shape_and_isolate_nested_values() -> No
 
     mapping_views = (
         accepted_no_successor_patches_by_node_view,
+        action_count_by_node_kind_view,
         approval_decisions_view,
         authority_decisions_view,
         accepted_output_records_by_node_port_view,
@@ -934,6 +761,136 @@ def test_exact_collection_views_preserve_shape_and_isolate_nested_values() -> No
     assert input_bindings_view(projection)["worker-query"]["input"].record_ids == ["record-1"]
     assert accepted_graph_patches_by_node_view(projection).get("worker-query", []) == []
     assert "changed" not in ready_nodes_view(projection)
+
+
+def test_action_count_by_node_kind_view_returns_grouped_usage_totals() -> None:
+    projection = build_projection(
+        (
+            _query_event(
+                1,
+                "node_created",
+                {"node_id": "worker-actions", "kind": "worker", "state": "ready"},
+            ),
+            _query_event(
+                2,
+                "node_usage_recorded",
+                {
+                    "node_id": "worker-actions",
+                    "node_kind": "worker",
+                    "execution_id": "execution-actions",
+                    "usage_index": 0,
+                    "usage_count": 1,
+                    "usage_key": "execution-actions:0",
+                    "model": "model-actions",
+                    "num_actions": 3,
+                },
+            ),
+        )
+    )
+
+    assert action_count_by_node_kind_view(projection) == {"worker": 3}
+
+
+def test_output_record_view_thaws_projected_verification_evidence_for_event_transport() -> None:
+    projection = build_projection(
+        (
+            _query_event(
+                1,
+                "node_created",
+                {"node_id": "verifier-serialization", "kind": "verifier", "state": "ready"},
+            ),
+            _query_event(
+                2,
+                "output_record_accepted",
+                {
+                    "record_id": "verification-serialization",
+                    "record_kind": "verification",
+                    "record_type": "verification_report",
+                    "producer_node_id": "verifier-serialization",
+                    "port": "verification_report",
+                    "schema": "VerificationReport",
+                    "candidate_id": "candidate-serialization",
+                    "outcome": "failed",
+                    "value": {"outcome": "failed", "grades": []},
+                    "evidence": {"nested": {"record_ids": ["candidate-serialization"]}},
+                },
+            ),
+        )
+    )
+
+    record = output_records_by_node_port_view(projection)["verifier-serialization"][
+        "verification_report"
+    ][0]
+    payload = record.model_dump(mode="json")
+    event = EventEnvelope(
+        event_id="verification-transport",
+        run_id="query-run",
+        position=3,
+        event_type="output_record_accepted",
+        schema_version=1,
+        actor=Actor(kind=ActorKind.SYSTEM, id="system"),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        payload=payload,
+    )
+
+    assert payload["evidence"] == {"nested": {"record_ids": ["candidate-serialization"]}}
+    assert '"evidence"' in event.model_dump_json()
+
+
+def test_accepted_output_record_view_hides_file_state_acceptance_identity() -> None:
+    projection = build_projection(
+        (
+            _query_event(
+                1,
+                "node_created",
+                {"node_id": "worker-file-state", "kind": "worker", "state": "ready"},
+            ),
+            _query_event(
+                2,
+                "file_state_accepted",
+                {
+                    "record_id": "file-state-serialization",
+                    "record_kind": "file_state",
+                    "record_type": "file_state",
+                    "producer_node_id": "worker-file-state",
+                    "snapshot_id": "snapshot-file-state",
+                    "base_snapshot_id": "base-file-state",
+                    "git": {
+                        "commit_sha": "commit-file-state",
+                        "tree_sha": "tree-file-state",
+                        "ref": "refs/orchestrator/snapshots/snapshot-file-state",
+                    },
+                },
+            ),
+        )
+    )
+
+    record = accepted_output_records_by_node_port_view(projection)["worker-file-state"][
+        "file_state"
+    ][0]["payload"]
+
+    assert "acceptance_identity" not in record.model_dump(mode="json")
+
+
+def test_accepted_output_records_for_node_port_returns_canonical_file_state() -> None:
+    projection = _file_state_query_projection()
+
+    records = accepted_output_records_for_node_port(
+        projection, "worker-file-state-query", "file_state"
+    )
+
+    assert len(records) == 1
+    _assert_public_file_state_payload(records[0]["payload"])
+
+
+def test_accepted_output_records_aggregate_returns_canonical_file_state() -> None:
+    projection = _file_state_query_projection()
+
+    records = accepted_output_records(projection)
+
+    assert len(records) == 1
+    assert records[0][:2] == ("worker-file-state-query", "file_state")
+    _assert_public_file_state_payload(records[0][2][0]["payload"])
 
 
 def test_disposition_site_key_is_stable_without_source_position() -> None:
@@ -1250,6 +1207,103 @@ def _lifecycle(to_state: str) -> dict[str, object]:
         "from_state": "queued" if to_state == "active" else "active",
         "to_state": to_state,
         "trigger": "test",
+    }
+
+
+def _file_state_query_projection():
+    return build_projection(
+        (
+            _query_event(
+                1,
+                "node_created",
+                {"node_id": "worker-file-state-query", "kind": "worker", "state": "ready"},
+            ),
+            _query_event(
+                2,
+                "file_state_accepted",
+                {
+                    "record_id": "file-state-query",
+                    "record_kind": "file_state",
+                    "record_type": "file_state",
+                    "producer_node_id": "worker-file-state-query",
+                    "snapshot_id": "snapshot-query",
+                    "base_snapshot_id": "base-query",
+                    "git": {
+                        "commit_sha": "commit-query",
+                        "tree_sha": "tree-query",
+                        "ref": "refs/orchestrator/snapshots/snapshot-query",
+                    },
+                    "verdict": "captured",
+                    "patch_bundle_id": "patch-query",
+                    "tree_snapshot_id": "tree-snapshot-query",
+                    "position": 2,
+                    "task_region_id": "task-query",
+                    "candidate_id": "candidate-query",
+                    "compromised": True,
+                    "superseded_pending": True,
+                    "supersedes_record_id": "file-state-before-query",
+                    "superseded_by_record_id": "file-state-after-query",
+                    "cleanup_id": "cleanup-query",
+                    "cleanup_excluded_paths": ["secret.txt"],
+                    "cleanup_reason": "secret_detected",
+                    "cleanup_applied_event_id": "cleanup-applied-query",
+                    "compromised_snapshot_deleted": True,
+                    "compromised_paths": ["secret.txt"],
+                },
+            ),
+        )
+    )
+
+
+def _assert_public_file_state_payload(payload: FileStateRecord) -> None:
+    value = payload.model_dump(mode="json", by_alias=True)
+    assert "acceptance_identity" not in value
+    assert value == {
+        "record_type": "file_state",
+        "schema_version": None,
+        "producer_port": None,
+        "created_at": None,
+        "graph_position": None,
+        "run_id": "query-run",
+        "payload": None,
+        "provenance": None,
+        "record_id": "file-state-query",
+        "record_kind": "file_state",
+        "snapshot_id": "snapshot-query",
+        "base_snapshot_id": "base-query",
+        "producer_node_id": "worker-file-state-query",
+        "port": "file_state",
+        "schema": "FileStateRecord",
+        "git": {
+            "commit_sha": "commit-query",
+            "tree_sha": "tree-query",
+            "ref": "refs/orchestrator/snapshots/snapshot-query",
+            "diff_summary": None,
+            "no_commit_reason": None,
+        },
+        "tracked": [],
+        "untracked": [],
+        "ignored": [],
+        "external": [],
+        "classifications": [],
+        "residue": [],
+        "rejected_paths": [],
+        "verdict": "captured",
+        "patch_bundle_id": "patch-query",
+        "tree_snapshot_id": "tree-snapshot-query",
+        "position": 2,
+        "task_region_id": "task-query",
+        "candidate_id": "candidate-query",
+        "compromised": True,
+        "superseded_pending": True,
+        "supersedes_record_id": "file-state-before-query",
+        "superseded_by_record_id": "file-state-after-query",
+        "cleanup_id": "cleanup-query",
+        "cleanup_excluded_paths": ["secret.txt"],
+        "cleanup_reason": "secret_detected",
+        "cleanup_applied_event_id": "cleanup-applied-query",
+        "compromised_snapshot_deleted": True,
+        "compromised_paths": ["secret.txt"],
     }
 
 

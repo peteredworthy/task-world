@@ -113,6 +113,11 @@ def test_lifecycle_event_factory_excludes_explicit_none() -> None:
 @pytest.mark.asyncio
 async def test_sqlite_compact_readers_retain_runtime_retry_backoff() -> None:
     retry_not_before = "2026-07-09T12:01:00+00:00"
+    node_created = event(
+        "node_created",
+        {"node_id": "worker-1", "kind": "worker", "state": "planned"},
+        position=1,
+    )
     retry = event(
         "runtime_retry_scheduled",
         {
@@ -124,7 +129,7 @@ async def test_sqlite_compact_readers_retain_runtime_retry_backoff() -> None:
             "retry_after_seconds": 60,
             "retry_not_before": retry_not_before,
         },
-        position=1,
+        position=2,
     )
     engine = create_engine(":memory:")
     await init_db(engine)
@@ -132,7 +137,7 @@ async def test_sqlite_compact_readers_retain_runtime_retry_backoff() -> None:
     try:
         async with session_factory() as session:
             async with session.begin():
-                await GraphEventStore(session).append_events("run-1", 0, [retry])
+                await GraphEventStore(session).append_events("run-1", 0, [node_created, retry])
             store = GraphEventStore(session)
             for reader in (
                 store.read_run_projection,
@@ -141,9 +146,45 @@ async def test_sqlite_compact_readers_retain_runtime_retry_backoff() -> None:
                 store.read_run_node_detail,
             ):
                 compact_events = await reader("run-1")
-                assert compact_events[0].payload["retry_not_before"] == retry_not_before
+                compact_retry = next(
+                    item for item in compact_events if item.event_type == "runtime_retry_scheduled"
+                )
+                assert compact_retry.payload["retry_not_before"] == retry_not_before
                 assert retry_not_before_by_node_view(build_projection(compact_events)) == {
                     "worker-1": retry_not_before
                 }
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_compact_readers_retain_explicit_null_callback_payload() -> None:
+    callback = event(
+        "callback_accepted",
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "execution_id": "execution-1",
+            "idempotency_key": "callback-1",
+            "payload": None,
+            "reason": "accepted",
+        },
+        position=1,
+    )
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    try:
+        async with session_factory() as session:
+            async with session.begin():
+                await GraphEventStore(session).append_events("run-1", 0, [callback])
+            store = GraphEventStore(session)
+            for reader in (store.read_run_projection, store.read_run_summary_rebuild):
+                compact_callback = (await reader("run-1"))[0]
+                assert compact_callback.payload["payload"] is None
+            for reader in (store.read_run_light, store.read_run_node_detail):
+                compact_callback = (await reader("run-1"))[0]
+                assert "payload" not in compact_callback.payload
     finally:
         await engine.dispose()

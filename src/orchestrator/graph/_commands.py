@@ -49,6 +49,7 @@ from orchestrator.graph.contracts import (
     input_port_contract,
     merge_bound_record_ids,
     output_port_contract,
+    validate_edge_payload,
     validate_output_record,
 )
 from orchestrator.graph.event_registry import (
@@ -99,6 +100,7 @@ from orchestrator.graph.models import (
     PatchOp,
     PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
+    RequirementRecord,
     RequirementRevisionPayload,
     SupportEvidencePayload,
     VerificationResultProjection,
@@ -150,6 +152,7 @@ from orchestrator.graph.projection_queries import (
     node_roles_view,
     node_states_view,
     node_task_regions_view,
+    output_record_payloads_view,
     output_records_by_node_port_view,
     passed_verification_candidate_ids_view,
     passed_verification_results_by_record_id_view,
@@ -1532,6 +1535,18 @@ def _verification_record_conflict(
             )
         if not record.value.grades:
             return f"verification record at index {index} missing grades"
+        represented_requirement_ids = set(active_requirement_versions_view(projection))
+        represented_requirement_ids.update(
+            item.value.id
+            for item in output_record_payloads_view(projection).values()
+            if isinstance(item, RequirementRecord) and item.value.source == "routine"
+        )
+        for grade in record.value.grades:
+            if grade.requirement_id not in represented_requirement_ids:
+                return (
+                    f"verification record at index {index} grades unrepresented requirement: "
+                    f"{grade.requirement_id}"
+                )
         record_payload = record.model_dump(mode="json")
         citation_conflict = _evaluated_record_citation_conflict(
             projection,
@@ -2330,6 +2345,29 @@ def _apply_patch_command(
 
     parent_session_id = planner_sessions_view(projection).get(patch.proposed_by_node_id)
     carryover_record_id = payload.carryover_record_id
+    carryover_edge_payload: dict[str, Any] | None = None
+    if carryover_record_id is not None:
+        carryover_error: str | None = None
+        if carryover_record_id not in accepted_record_summaries_by_id_view(projection):
+            carryover_error = f"unknown_carryover_record_id:{carryover_record_id}"
+        elif successor_planner_node_ids:
+            carryover_edge_payload, carryover_error = _carryover_binding_edge_payload(
+                projection,
+                carryover_record_id,
+                successor_planner_node_ids[0],
+            )
+        if carryover_error is not None:
+            return [
+                make_event(
+                    "graph_patch_rejected",
+                    _patch_rejected_payload(
+                        patch,
+                        actor_role,
+                        reason=carryover_error,
+                        read_set_diff=None,
+                    ),
+                )
+            ]
     output = [
         make_event(
             "graph_patch_accepted",
@@ -2358,15 +2396,18 @@ def _apply_patch_command(
             )
         )
     if carryover_record_id is not None and successor_planner_node_ids:
+        assert carryover_edge_payload is not None
+        output.append(make_event("edge_created", carryover_edge_payload))
         output.append(
             make_event(
                 "input_bound",
                 {
-                    "edge_id": f"edge-session-carryover-{successor_planner_node_ids[0]}",
+                    "edge_id": carryover_edge_payload["edge_id"],
                     "to_node_id": successor_planner_node_ids[0],
                     "to_port": "session_carryover",
                     "record_ids": [carryover_record_id],
                     "bound_at_position": 0,
+                    "binding_policy": carryover_edge_payload["binding_policy"],
                 },
             )
         )
@@ -4819,20 +4860,92 @@ def _request_record_events_for_node(
         output.append(make_event("output_record_accepted", record_payload))
         record_id = record_payload["record_id"]
         node_id = record_payload["producer_node_id"]
+        target_contract = DEFAULT_NODE_CONTRACTS.contract_for(
+            str(node_payload["kind"]),
+            node_payload.get("role") if isinstance(node_payload.get("role"), str) else None,
+        )
+        assert target_contract is not None
+        port_contract = input_port_contract(target_contract, to_port)
+        assert port_contract is not None
+        edge_payload = {
+            "edge_id": f"edge-{record_id}-to-{node_id}-{to_port}",
+            "from_node_id": node_id,
+            "from_port": record_payload["port"],
+            "to_node_id": node_id,
+            "to_port": to_port,
+            "required": port_contract.required,
+            "dependency_type": "input_binding",
+            "accepted_record_selector": {
+                "record_type": record_payload["record_type"],
+                "schema": record_payload["schema"],
+            },
+            "binding_policy": binding_policy(None, port_contract),
+        }
+        output.append(make_event("edge_created", edge_payload))
         output.append(
             make_event(
                 "input_bound",
                 {
-                    "edge_id": f"edge-{record_id}-to-{node_id}-{to_port}",
+                    "edge_id": edge_payload["edge_id"],
                     "to_node_id": node_id,
                     "to_port": to_port,
                     "record_ids": [record_id],
                     "bound_at_position": 0,
-                    "binding_policy": "bind_latest",
+                    "binding_policy": edge_payload["binding_policy"],
                 },
             )
         )
     return output
+
+
+def _carryover_binding_edge_payload(
+    projection: GraphProjection,
+    record_id: str,
+    successor_node_id: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    summary = accepted_record_summaries_by_id_view(projection).get(record_id)
+    if summary is None:
+        return None, f"unknown_carryover_record_id:{record_id}"
+    source_node_id = summary.get("producer_node_id")
+    source_port = summary.get("producer_port")
+    record_type = summary.get("record_type")
+    schema = summary.get("schema")
+    if (
+        not isinstance(source_node_id, str)
+        or not isinstance(source_port, str)
+        or not isinstance(record_type, str)
+        or not isinstance(schema, str)
+    ):
+        return None, f"invalid_carryover_record_id:{record_id}"
+    source_kind = node_kinds_view(projection).get(source_node_id)
+    source_role = node_roles_view(projection).get(source_node_id)
+    target_contract = DEFAULT_NODE_CONTRACTS.contract_for("planner", "planner")
+    if source_kind is None or target_contract is None:
+        return None, f"invalid_carryover_record_id:{record_id}"
+    target_port = input_port_contract(target_contract, "session_carryover")
+    if target_port is None:
+        return None, f"invalid_carryover_record_id:{record_id}"
+    edge_payload = {
+        "edge_id": f"edge-session-carryover-{successor_node_id}",
+        "from_node_id": source_node_id,
+        "from_port": source_port,
+        "to_node_id": successor_node_id,
+        "to_port": "session_carryover",
+        "required": target_port.required,
+        "dependency_type": "input_binding",
+        "accepted_record_selector": {"record_type": record_type, "schema": schema},
+        "binding_policy": binding_policy(None, target_port),
+    }
+    edge_error = validate_edge_payload(
+        edge_payload,
+        source_kind=source_kind,
+        source_role=source_role,
+        target_kind="planner",
+        target_role="planner",
+    )
+    if edge_error is not None:
+        return None, f"invalid_carryover_record_id:{record_id}:{edge_error}"
+    return edge_payload, None
 
 
 def _request_record_bindings_for_node(

@@ -8,7 +8,7 @@
           "state": "completed"
         }
       ],
-      "event_count": 27,
+      "event_count": 29,
       "pending_gates": [
         {
           "consequence_summary": "FR-17 acceptance fixture.",
@@ -284,7 +284,7 @@
           "producer_node_id": "worker-source",
           "producer_port": "failure_record",
           "record_id": "failure-record-1",
-          "record_kind": "output",
+          "record_kind": "graph_record",
           "record_type": "failure_record",
           "run_id": "fr17-public-golden",
           "schema": "FailureRecord",
@@ -304,7 +304,7 @@
         "event_id": "fr17-event-15",
         "event_type": "input_bound",
         "payload": {
-          "bound_at_position": 12,
+          "bound_at_position": 15,
           "edge_id": "edge-failure-recovery",
           "record_ids": [
             "failure-record-1"
@@ -416,7 +416,7 @@
         "event_id": "fr17-event-21",
         "event_type": "input_bound",
         "payload": {
-          "bound_at_position": 19,
+          "bound_at_position": 21,
           "edge_id": "edge-recovery-consumer",
           "record_ids": [
             "recovery-plan-1"
@@ -524,12 +524,11 @@
       },
       {
         "event_id": "fr17-event-25",
-        "event_type": "appeal_opened",
+        "event_type": "node_created",
         "payload": {
-          "appeal_type": "invalid_test",
-          "appealed_node_id": "worker-source",
-          "candidate_id": "candidate-fr17",
-          "node_id": "appeal-1",
+          "kind": "oversight",
+          "node_id": "oversight-1",
+          "state": "ready",
           "task_region_id": "task-fr17"
         },
         "position": 25,
@@ -538,6 +537,49 @@
       },
       {
         "event_id": "fr17-event-26",
+        "event_type": "output_record_accepted",
+        "payload": {
+          "attempt_number": 1,
+          "candidate_id": "candidate-fr17",
+          "created_at": "2026-01-01T00:00:00+00:00",
+          "graph_position": 26,
+          "payload": {
+            "summary": "FR-17 candidate"
+          },
+          "port": "candidate",
+          "producer_node_id": "worker-source",
+          "producer_port": "candidate",
+          "record_id": "candidate-record-fr17",
+          "record_kind": "output",
+          "record_type": "candidate",
+          "run_id": "fr17-public-golden",
+          "schema": "ImplementationCandidate",
+          "schema_version": 1,
+          "task_region_id": "task-fr17",
+          "value": {
+            "summary": "FR-17 candidate"
+          }
+        },
+        "position": 26,
+        "run_id": "fr17-public-golden",
+        "timestamp": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "event_id": "fr17-event-27",
+        "event_type": "appeal_opened",
+        "payload": {
+          "appeal_type": "invalid_test",
+          "appealed_node_id": "worker-source",
+          "candidate_id": "candidate-fr17",
+          "node_id": "appeal-1",
+          "task_region_id": "task-fr17"
+        },
+        "position": 27,
+        "run_id": "fr17-public-golden",
+        "timestamp": "2026-01-01T00:00:00+00:00"
+      },
+      {
+        "event_id": "fr17-event-28",
         "event_type": "oversight_decision_recorded",
         "payload": {
           "appeal_node_id": "appeal-1",
@@ -555,19 +597,16 @@
           },
           "task_region_id": "task-fr17"
         },
-        "position": 26,
+        "position": 28,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       },
       {
-        "event_id": "fr17-event-27",
+        "event_id": "fr17-event-29",
         "event_type": "graph_patch_rejected",
         "payload": {
           "actor_role": "planner",
           "base_graph_position": 3,
-          "created_edge_ids": [],
-          "created_node_ids": [],
-          "current_graph_position": 25,
           "diagnostics": {
             "macro": "create_join",
             "valid": false
@@ -576,7 +615,7 @@
           "proposed_by_node_id": "planner-fr17",
           "reason": "invalid macro expansion for FR-17 fixture"
         },
-        "position": 27,
+        "position": 29,
         "run_id": "fr17-public-golden",
         "timestamp": "2026-01-01T00:00:00+00:00"
       }
@@ -643,6 +682,25 @@
         {
           "edge_id": null,
           "kind": "pending_node",
+          "node_id": "oversight-1",
+          "outbox_attempts": null,
+          "outbox_event_id": null,
+          "outbox_id": null,
+          "outbox_kind": null,
+          "outbox_last_error": null,
+          "proposal_id": null,
+          "reason": "node has not reached a terminal state",
+          "requirement_id": null,
+          "revision_id": null,
+          "run_id": null,
+          "state": "ready",
+          "support_ids": null,
+          "task_region_id": "task-fr17",
+          "to_port": null
+        },
+        {
+          "edge_id": null,
+          "kind": "pending_node",
           "node_id": "review-1",
           "outbox_attempts": null,
           "outbox_event_id": null,
@@ -679,11 +737,11 @@
           "to_port": null
         }
       ],
-      "event_count": 27,
+      "event_count": 29,
       "run_id": "fr17-public-golden"
     },
     "graph": {
-      "event_count": 27,
+      "event_count": 29,
       "leases": {
         "lease-recovery": {
           "execution_id": "exec-recovery",
@@ -701,6 +759,7 @@
         "consumer-1": "ready",
         "gate-decision": "ready",
         "gate-pending": "ready",
+        "oversight-1": "ready",
         "planner-fr17": "completed",
         "recovery-1": "completed",
         "review-1": "ready",
@@ -711,7 +770,8 @@
         "review-1",
         "gate-pending",
         "gate-decision",
-        "consumer-1"
+        "consumer-1",
+        "oversight-1"
       ],
       "run_id": "fr17-public-golden",
       "run_state": "active",
@@ -727,27 +787,27 @@
           "base_graph_position": 3,
           "created_edge_ids": [],
           "created_node_ids": [],
-          "current_graph_position": 27,
+          "current_graph_position": 29,
           "diagnostics": {
             "actor_role": "planner",
-            "created_edge_ids": [],
-            "created_node_ids": [],
-            "current_graph_position": 25,
+            "budget": null,
+            "count": null,
             "diagnostics": {
               "macro": "create_join",
               "valid": false
-            }
+            },
+            "rejection_reason": null
           },
           "patch_id": "patch-fr17-rejected",
           "proposed_by_node_id": "planner-fr17",
           "read_set_diff": null,
-          "rejected_event_id": "fr17-event-27",
-          "rejected_position": 27,
+          "rejected_event_id": "fr17-event-29",
+          "rejected_position": 29,
           "rejection_reason": "invalid macro expansion for FR-17 fixture",
           "status": "rejected"
         }
       ],
-      "current_graph_position": 27,
+      "current_graph_position": 29,
       "run_id": "fr17-public-golden"
     },
     "recovery_node": {
@@ -858,7 +918,7 @@
           "event_id": "fr17-event-15",
           "event_type": "input_bound",
           "payload": {
-            "bound_at_position": 12,
+            "bound_at_position": 15,
             "edge_id": "edge-failure-recovery",
             "record_ids": [
               "failure-record-1"
@@ -1001,7 +1061,7 @@
       "task_region_id": "task-fr17"
     },
     "regions": {
-      "event_count": 27,
+      "event_count": 29,
       "regions": [
         {
           "blockers": [
@@ -1047,6 +1107,25 @@
               "edge_id": null,
               "kind": "pending_node",
               "node_id": "gate-pending",
+              "outbox_attempts": null,
+              "outbox_event_id": null,
+              "outbox_id": null,
+              "outbox_kind": null,
+              "outbox_last_error": null,
+              "proposal_id": null,
+              "reason": "node has not reached a terminal state",
+              "requirement_id": null,
+              "revision_id": null,
+              "run_id": null,
+              "state": "ready",
+              "support_ids": null,
+              "task_region_id": "task-fr17",
+              "to_port": null
+            },
+            {
+              "edge_id": null,
+              "kind": "pending_node",
+              "node_id": "oversight-1",
               "outbox_attempts": null,
               "outbox_event_id": null,
               "outbox_id": null,
@@ -1368,7 +1447,7 @@
       "worktree_relative_path": null
     },
     "scheduler": {
-      "event_count": 27,
+      "event_count": 29,
       "leases": {
         "active": [],
         "suspended": []
@@ -1385,6 +1464,7 @@
           "consumer-1",
           "gate-decision",
           "gate-pending",
+          "oversight-1",
           "review-1"
         ],
         "waiting_gates": [],
@@ -1437,10 +1517,10 @@
           "accepted_record_selector": null,
           "binding": {
             "binding_policy": "bind_first",
-            "bound_at_position": 12,
+            "bound_at_position": 15,
             "edge_id": "edge-failure-recovery",
             "record_bound_positions": {
-              "failure-record-1": 12
+              "failure-record-1": 15
             },
             "record_ids": [
               "failure-record-1"
@@ -1449,7 +1529,17 @@
             "to_port": "failure_record",
             "trigger": "record_accepted"
           },
-          "bound_records": [],
+          "bound_records": [
+            {
+              "position": 14,
+              "producer_node_id": "worker-source",
+              "producer_port": "failure_record",
+              "record_id": "failure-record-1",
+              "record_kind": "graph_record",
+              "record_type": "failure_record",
+              "schema": "FailureRecord"
+            }
+          ],
           "dependency_type": "input_binding",
           "edge_id": "edge-failure-recovery",
           "from_node_id": "worker-source",
@@ -1481,10 +1571,10 @@
           "accepted_record_selector": null,
           "binding": {
             "binding_policy": "bind_latest",
-            "bound_at_position": 19,
+            "bound_at_position": 21,
             "edge_id": "edge-recovery-consumer",
             "record_bound_positions": {
-              "recovery-plan-1": 19
+              "recovery-plan-1": 21
             },
             "record_ids": [
               "recovery-plan-1"
@@ -1532,7 +1622,7 @@
           "to_port": "outstanding_failures"
         }
       ],
-      "event_count": 27,
+      "event_count": 29,
       "nodes": [
         {
           "contract": {
@@ -1951,6 +2041,57 @@
           },
           "kind": "human_gate",
           "node_id": "gate-pending",
+          "role": null,
+          "state": "ready"
+        },
+        {
+          "contract": {
+            "allowed_tools": [],
+            "contract_version": 1,
+            "fulfillment": {
+              "contribution": "none",
+              "required_outputs": []
+            },
+            "handler_type": "controller",
+            "input_ports": {
+              "failure_record": {
+                "cardinality": "one",
+                "record_types": [
+                  "failure_record"
+                ],
+                "required": true,
+                "schemas": [
+                  "FailureRecord"
+                ]
+              }
+            },
+            "node_type": "recovery",
+            "output_ports": {
+              "graph_patch_proposal": {
+                "cardinality": "one",
+                "record_types": [
+                  "graph_patch_proposal"
+                ],
+                "required": false,
+                "schemas": [
+                  "GraphPatch"
+                ]
+              },
+              "recovery_plan": {
+                "cardinality": "one",
+                "record_types": [
+                  "recovery_plan"
+                ],
+                "required": true,
+                "schemas": [
+                  "RecoveryPlan"
+                ]
+              }
+            },
+            "roles": null
+          },
+          "kind": "oversight",
+          "node_id": "oversight-1",
           "role": null,
           "state": "ready"
         },

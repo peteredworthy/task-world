@@ -42,6 +42,7 @@ from orchestrator.graph.models import (
     NodeStateChangedPayload,
     NodeUsageRecordedPayload,
     NodeSuspectPayload,
+    OutboxRequeuedPayload,
     OutputRecordAcceptedPayload,
     OversightDecisionRecordedPayload,
     PlannerSessionStateChangedPayload,
@@ -120,7 +121,7 @@ INTERNAL_EVENT_TYPES_BY_PRODUCER: MappingProxyType[str, frozenset[str]] = Mappin
 
 # Stale callbacks can still surface this event even though no current command
 # producer emits it.
-EXTERNAL_EVENT_TYPES = frozenset({"lease_suspended"})
+EXTERNAL_EVENT_TYPES = frozenset({"lease_suspended", "outbox_requeued"})
 
 EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType(
     {
@@ -160,6 +161,7 @@ EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType(
         "node_retired": NodeRetiredPayload,
         "node_state_changed": NodeStateChangedPayload,
         "node_usage_recorded": NodeUsageRecordedPayload,
+        "outbox_requeued": OutboxRequeuedPayload,
         "output_record_accepted": OutputRecordAcceptedPayload,
         "oversight_decision_recorded": OversightDecisionRecordedPayload,
         "plan_region_marked_suspect": NodeSuspectPayload,
@@ -198,6 +200,29 @@ def canonical_event_types(produced_event_types: frozenset[str]) -> frozenset[str
 
 
 CANONICAL_EVENT_TYPES = canonical_event_types(PRODUCED_EVENT_TYPES)
+
+PROJECTION_NEUTRAL_EVENT_TYPES = frozenset(
+    {
+        "agent_died",
+        "agent_dispatch_requested",
+        "callback_duplicate_returned",
+        "callback_rejected_conflict",
+        "callback_rejected_stale",
+        "command_recorded",
+        "command_rejected",
+        "dead_input_detected",
+        "file_state_rejected",
+        "gatekeeper_cost_recorded",
+        "graph_patch_rejected",
+        "heartbeat_recorded",
+        "outbox_requeued",
+        "revision_created",
+    }
+)
+
+if not PROJECTION_NEUTRAL_EVENT_TYPES <= CANONICAL_EVENT_TYPES:
+    mismatch = ", ".join(sorted(PROJECTION_NEUTRAL_EVENT_TYPES - CANONICAL_EVENT_TYPES))
+    raise ValueError(f"projection-neutral event coverage mismatch: {mismatch}")
 
 
 def validate_event_ownership(

@@ -13,11 +13,19 @@ from orchestrator.graph import (
     PatchCommandContext,
     SequentialIdGenerator,
     apply_command as apply_graph_command,
+    completion_decision_passed,
+    input_binding_for_port,
+    input_bindings_for_node,
     initial_projection,
+    iter_edges,
+    leases_view,
+    node_retry_not_before,
+    node_state,
     project_requirement_freshness_facts,
     project_task_states,
     projection_from_checkpoint,
     projection_to_checkpoint,
+    ready_nodes_view,
     reduce_event,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
@@ -47,6 +55,34 @@ def _project(events: list[EventEnvelope]):
     for event in events:
         projection = reduce_event(projection, event)
     return projection
+
+
+def _with_routine_requirement(
+    events: list[EventEnvelope], requirement_id: str
+) -> list[EventEnvelope]:
+    position = max(event.position for event in events) + 1
+    node_id = f"requirement-{requirement_id}"
+    return [
+        *events,
+        _event(
+            "node_created",
+            {"node_id": node_id, "kind": "requirement", "state": "completed"},
+            position,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": node_id,
+                "record_kind": "graph_record",
+                "record_type": "requirement_record",
+                "producer_node_id": node_id,
+                "port": "requirement",
+                "schema": "RequirementRecord",
+                "value": {"id": requirement_id, "text": requirement_id, "source": "routine"},
+            },
+            position + 1,
+        ),
+    ]
 
 
 def _legacy_has_passed_completion_decision(events: list[EventEnvelope]) -> bool:
@@ -212,10 +248,10 @@ def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None
     completion_stream = [*completion_events, *decision_events]
     completion_projection = _project(completion_stream)
 
-    assert completion_projection["completion_decision_passed"] is True
-    assert completion_projection[
-        "completion_decision_passed"
-    ] == _legacy_has_passed_completion_decision(completion_stream)
+    assert completion_decision_passed(completion_projection) is True
+    assert completion_decision_passed(
+        completion_projection
+    ) == _legacy_has_passed_completion_decision(completion_stream)
 
     retry_events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -249,7 +285,7 @@ def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None
     retry_stream = [*retry_events, *retry_output]
     retry_projection = _project(retry_stream)
 
-    assert retry_projection["retry_not_before_by_node"]["worker-1"] == _legacy_retry_not_before(
+    assert node_retry_not_before(retry_projection, "worker-1") == _legacy_retry_not_before(
         retry_stream, "worker-1"
     )
 
@@ -378,8 +414,8 @@ def test_cancel_revokes_active_lease_and_cancels_running_node() -> None:
     }
 
     projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"].state == "revoked"
-    assert projected["node_states"]["worker-1"] == "cancelled"
+    assert leases_view(projected)["lease-1"].state == "revoked"
+    assert node_state(projected, "worker-1") == "cancelled"
 
 
 def test_cancel_revokes_suspended_lease_without_reopening_terminal_node() -> None:
@@ -394,8 +430,8 @@ def test_cancel_revokes_suspended_lease_without_reopening_terminal_node() -> Non
 
     assert [event.event_type for event in output] == ["run_lifecycle_changed", "lease_revoked"]
     projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"].state == "revoked"
-    assert projected["node_states"]["worker-1"] == "failed"
+    assert leases_view(projected)["lease-1"].state == "revoked"
+    assert node_state(projected, "worker-1") == "failed"
 
 
 def test_record_heartbeat_renews_active_lease() -> None:
@@ -433,8 +469,8 @@ def test_record_heartbeat_renews_active_lease() -> None:
     assert output[1].payload == output[0].payload
 
     projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"].state == "active"
-    assert projected["leases"]["lease-1"].expires_at == "2026-01-01T00:02:00+00:00"
+    assert leases_view(projected)["lease-1"].state == "active"
+    assert leases_view(projected)["lease-1"].expires_at == "2026-01-01T00:02:00+00:00"
 
 
 def test_record_heartbeat_rejects_non_active_lease() -> None:
@@ -1116,8 +1152,8 @@ def test_callback_before_acknowledge_start_rejected_and_leaves_lease_intact() ->
     assert output[0].payload["reason"] == "node not running: leased"
 
     projected = _project([*events, *output])
-    assert projected["node_states"]["worker-1"] == "leased"
-    assert projected["leases"]["lease-1"].state == "active"
+    assert node_state(projected, "worker-1") == "leased"
+    assert leases_view(projected)["lease-1"].state == "active"
 
 
 def test_callback_claiming_non_mutating_cannot_complete_leased_node() -> None:
@@ -1134,8 +1170,8 @@ def test_callback_claiming_non_mutating_cannot_complete_leased_node() -> None:
     assert output[0].payload["reason"] == "node not running: leased"
 
     projected = _project([*events, *output])
-    assert projected["node_states"]["worker-1"] == "leased"
-    assert projected["leases"]["lease-1"].state == "active"
+    assert node_state(projected, "worker-1") == "leased"
+    assert leases_view(projected)["lease-1"].state == "active"
 
 
 def test_schedule_tick_defers_node_without_base_snapshot() -> None:
@@ -1241,8 +1277,8 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
     )
 
     projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"].state == "expired"
-    assert projected["node_states"]["verifier-1"] == "failed"
+    assert leases_view(projected)["lease-1"].state == "expired"
+    assert node_state(projected, "verifier-1") == "failed"
 
 
 def test_callback_after_acknowledge_start_accepts_boundary() -> None:
@@ -1538,7 +1574,8 @@ def test_callback_binds_first_record_only_for_one_cardinality_input() -> None:
 
     assert "input_bound" not in [event.event_type for event in second_output]
     projected = _project([*events, *first_output, *second_output])
-    binding = projected["input_bindings"]["verifier-1"]["candidate_under_test"]
+    binding = input_binding_for_port(projected, "verifier-1", "candidate_under_test")
+    assert binding is not None
     assert binding.binding_policy == "bind_first"
     assert binding.record_ids == ["candidate-1"]
 
@@ -1598,7 +1635,8 @@ def test_callback_accumulates_records_for_many_cardinality_input() -> None:
 
     assert [event.event_type for event in output].count("input_bound") == 2
     projected = _project([*events, *output])
-    binding = projected["input_bindings"]["summarizer-1"]["source_records"]
+    binding = input_binding_for_port(projected, "summarizer-1", "source_records")
+    assert binding is not None
     assert binding.binding_policy == "bind_all"
     assert binding.record_ids == ["candidate-1", "candidate-2"]
 
@@ -1677,7 +1715,8 @@ def test_callback_rebinds_superseding_record_when_policy_allows() -> None:
     )
 
     projected = _project([*events, *first_output, *second_output])
-    binding = projected["input_bindings"]["planner-1"]["accepted_file_state"]
+    binding = input_binding_for_port(projected, "planner-1", "accepted_file_state")
+    assert binding is not None
     assert binding.binding_policy == "rebind_on_superseding"
     assert binding.record_ids == ["file-state-2"]
 
@@ -1995,7 +2034,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "candidate_id": "candidate-1",
                 "task_region_id": "task-1",
                 "attempt_number": 1,
-                "value": {},
+                "value": {"summary": "candidate under test"},
             },
             2,
         ),
@@ -2084,6 +2123,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         ),
     ]
 
+    events = _with_routine_requirement(events, "R-1")
     output = _apply(
         events,
         "submit_callback",
@@ -2169,6 +2209,111 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
     )
 
 
+def test_verifier_callback_rejects_grade_for_unrepresented_requirement_before_acceptance() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "requirement-known",
+                "kind": "requirement",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "requirement-known",
+                "record_kind": "graph_record",
+                "record_type": "requirement_record",
+                "producer_node_id": "requirement-known",
+                "port": "requirement",
+                "schema": "RequirementRecord",
+                "value": {
+                    "id": "known-requirement",
+                    "text": "Known requirement",
+                    "source": "routine",
+                },
+            },
+            2,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "value": {"summary": "candidate under test"},
+            },
+            3,
+        ),
+        _event(
+            "node_created",
+            {"node_id": "verifier-1", "kind": "verifier", "state": "running"},
+            4,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            5,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-v",
+                "generation": 1,
+                "execution_id": "exec-v",
+                "base_snapshot_id": "S0",
+            },
+            6,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-unknown-requirement",
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "outcome": "passed",
+                        "value": {
+                            "outcome": "passed",
+                            "grades": [{"requirement_id": "missing-requirement", "grade": "A"}],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == (
+        "verification record at index 0 grades unrepresented requirement: missing-requirement"
+    )
+
+
 def test_verifier_callback_rejects_verification_record_with_status_key() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -2182,7 +2327,7 @@ def test_verifier_callback_rejects_verification_record_with_status_key() -> None
                 "port": "candidate",
                 "schema": "ImplementationCandidate",
                 "candidate_id": "candidate-1",
-                "value": {},
+                "value": {"summary": "candidate under test"},
             },
             2,
         ),
@@ -2290,6 +2435,7 @@ def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
         ),
     ]
 
+    events = _with_routine_requirement(events, "R-1")
     output = _apply(
         events,
         "submit_callback",
@@ -2607,7 +2753,7 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
                 "candidate_id": "candidate-fix",
                 "task_region_id": "corrective_work_region",
                 "attempt_number": 2,
-                "value": {},
+                "value": {"summary": "candidate under test"},
             },
             2,
         ),
@@ -2678,6 +2824,7 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
         ),
     ]
 
+    events = _with_routine_requirement(events, "R-1")
     output = _apply(
         events,
         "submit_callback",
@@ -2851,6 +2998,7 @@ def test_verifier_callback_rejects_mismatched_candidate_record_citation() -> Non
         ),
     ]
 
+    events = _with_routine_requirement(events, "R-1")
     output = _apply(
         events,
         "submit_callback",
@@ -3114,8 +3262,8 @@ def test_worker_smuggled_verification_record_rejected_atomically() -> None:
     assert "verification_passed" not in event_types
 
     projected = _project([*events, *output])
-    assert projected["node_states"]["worker-1"] == "running"
-    assert projected["leases"]["lease-1"].state == "active"
+    assert node_state(projected, "worker-1") == "running"
+    assert leases_view(projected)["lease-1"].state == "active"
     assert project_task_states([*events, *output]).get("task-1") != "accepted"
 
 
@@ -3183,7 +3331,7 @@ def test_callback_rejects_output_record_producer_forgery_without_partial_events(
     assert "input_bound" not in [event.event_type for event in output]
 
     projected = _project([*events, *output])
-    assert "consumer-1" not in projected["input_bindings"]
+    assert input_bindings_for_node(projected, "consumer-1") == ()
 
     schedule_output = apply_command(
         projected,
@@ -4203,8 +4351,15 @@ def test_patch_accept_adds_default_worker_write_authority() -> None:
 
 
 def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
+    events = [
+        _event(
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "role": "planner", "state": "running"},
+            1,
+        )
+    ]
     output = _apply(
-        [],
+        events,
         "submit_patch",
         {
             "patch_id": "patch-human-gate",
@@ -4233,6 +4388,7 @@ def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
         "graph_patch_accepted",
         "node_created",
         "output_record_accepted",
+        "edge_created",
         "input_bound",
     ]
     request_record = output[2].payload
@@ -4252,16 +4408,31 @@ def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
     }
     assert output[3].payload == {
         "edge_id": "edge-decision-request-gate-review-to-gate-review-decision_request",
+        "from_node_id": "gate-review",
+        "from_port": "decision_request",
+        "to_node_id": "gate-review",
+        "to_port": "decision_request",
+        "required": True,
+        "dependency_type": "input_binding",
+        "accepted_record_selector": {
+            "record_type": "decision_request",
+            "schema": "DecisionRequest",
+        },
+        "binding_policy": "bind_first",
+    }
+    assert output[4].payload == {
+        "edge_id": "edge-decision-request-gate-review-to-gate-review-decision_request",
         "to_node_id": "gate-review",
         "to_port": "decision_request",
         "record_ids": ["decision-request-gate-review"],
         "bound_at_position": 0,
-        "binding_policy": "bind_latest",
+        "binding_policy": "bind_first",
     }
-    projected = _project(output)
-    assert projected["input_bindings"]["gate-review"]["decision_request"].record_ids == [
-        "decision-request-gate-review"
-    ]
+    projected = _project([*events, *output])
+    projection_from_checkpoint(projection_to_checkpoint(projected))
+    binding = input_binding_for_port(projected, "gate-review", "decision_request")
+    assert binding is not None
+    assert binding.record_ids == ["decision-request-gate-review"]
 
 
 def test_patch_accept_emits_authority_request_record_and_binding() -> None:
@@ -4293,6 +4464,7 @@ def test_patch_accept_emits_authority_request_record_and_binding() -> None:
         "graph_patch_accepted",
         "node_created",
         "output_record_accepted",
+        "edge_created",
         "input_bound",
     ]
     assert output[2].payload == {
@@ -4309,7 +4481,7 @@ def test_patch_accept_emits_authority_request_record_and_binding() -> None:
         },
     }
     assert output[3].payload["to_port"] == "authority_request_record"
-    assert output[3].payload["record_ids"] == ["authority-request-gate-authority"]
+    assert output[4].payload["record_ids"] == ["authority-request-gate-authority"]
 
 
 def test_patch_accepts_authority_request_typed_record_envelope() -> None:
@@ -4345,6 +4517,7 @@ def test_patch_accepts_authority_request_typed_record_envelope() -> None:
         "graph_patch_accepted",
         "node_created",
         "output_record_accepted",
+        "edge_created",
         "input_bound",
     ]
     assert output[2].payload["value"] == {
@@ -4407,6 +4580,7 @@ def test_patch_accepts_authority_request_edge_to_worker_authority_input() -> Non
         "graph_patch_accepted",
         "node_created",
         "output_record_accepted",
+        "edge_created",
         "input_bound",
         "node_created",
         "edge_created",
@@ -4801,13 +4975,39 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
         _event(
             "node_created",
             {
+                "node_id": "worker-r1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+                "candidate_id": "candidate-r1",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-r1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-r1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-r1",
+                "task_region_id": "region-r1-final",
+                "value": {"summary": "candidate under final check"},
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
                 "node_id": "check-final-invariant-r1",
                 "kind": "check",
                 "role": "invariant_gate",
                 "state": "completed",
                 "task_region_id": "region-r1-final",
             },
-            3,
+            5,
         ),
         _event(
             "output_record_accepted",
@@ -4840,11 +5040,11 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
                     "environment_policy": {},
                 },
             },
-            4,
+            6,
         ),
     ]
 
-    assert project_task_states(events) == {"region-r1-final": "pending"}
+    assert project_task_states(events) == {"region-r1-final": "blocked_environment"}
 
     output = _apply_from_checkpoint(events, "reconcile", {})
 
@@ -6069,6 +6269,15 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
             5,
         ),
         _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-1",
+                "version_id": "R-1.v1",
+                "classification": "initial",
+            },
+            6,
+        ),
+        _event(
             "output_record_accepted",
             {
                 "record_id": "verification-passed-old",
@@ -6077,14 +6286,14 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                 "producer_node_id": "verifier-corrective",
                 "port": "verification_report",
                 "schema": "VerificationReport",
-                "candidate_id": "candidate-old",
+                "candidate_id": "candidate-fix",
                 "outcome": "passed",
                 "value": {
                     "outcome": "passed",
                     "grades": [{"requirement_id": "R-1", "grade": "A"}],
                 },
             },
-            6,
+            7,
         ),
         _event(
             "output_record_accepted",
@@ -6102,7 +6311,7 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                     "grades": [{"requirement_id": "R-1", "grade": "C"}],
                 },
             },
-            7,
+            8,
         ),
         _event(
             "verification_failed",
@@ -6114,7 +6323,7 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                 "record_id": "verification-fix-failed",
                 "task_region_id": "corrective_work_region",
             },
-            8,
+            9,
         ),
         _event(
             "node_created",
@@ -6126,7 +6335,7 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                 "task_region_id": "final-region",
                 "command_definition": {"id": "hidden-oracle", "cmd": "true", "must": True},
             },
-            9,
+            10,
         ),
     ]
 
@@ -6211,7 +6420,7 @@ def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery(
                 "schema": "ImplementationCandidate",
                 "candidate_id": "candidate-1",
                 "task_region_id": "implementation-region",
-                "value": {},
+                "value": {"summary": "candidate under test"},
             },
             4,
         ),
@@ -6338,7 +6547,7 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
                 "schema": "ImplementationCandidate",
                 "candidate_id": "candidate-fix",
                 "task_region_id": "corrective_work_region",
-                "value": {},
+                "value": {"summary": "candidate under test"},
             },
             4,
         ),
@@ -6463,7 +6672,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                 "schema": "ImplementationCandidate",
                 "candidate_id": "candidate-1",
                 "task_region_id": "implementation-region",
-                "value": {},
+                "value": {"summary": "candidate under test"},
             },
             2,
         ),
@@ -6798,7 +7007,7 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
     valid_projection = _project([*events[:-1], *valid_output])
     assert any(
         edge.from_node_id == "verifier-implementation" and edge.to_node_id == "check-final"
-        for edge in valid_projection["edges"].values()
+        for edge in iter_edges(valid_projection)
     )
 
 
@@ -7100,6 +7309,7 @@ def test_output_record_binds_to_producer_class_edge() -> None:
         ),
     ]
 
+    events = _with_routine_requirement(events, "R1")
     output = _apply(
         events,
         "submit_callback",
@@ -7458,8 +7668,8 @@ def test_schedule_tick_projection_ready_state_comes_from_node_state_changed() ->
     ]
     assert output[1].payload["new_state"] == "ready"
     assert output[2].payload["reason"] == "max_grants_reached"
-    assert projection["node_states"]["worker-1"] == "ready"
-    assert projection["ready_nodes"] == ["worker-1"]
+    assert node_state(projection, "worker-1") == "ready"
+    assert ready_nodes_view(projection) == ["worker-1"]
 
 
 def test_schedule_tick_check_precondition_requires_command_definition() -> None:
@@ -7519,7 +7729,7 @@ def test_schedule_tick_check_precondition_passes_with_command_definition() -> No
     ]
 
 
-def test_schedule_tick_check_precondition_passes_with_known_command_binding() -> None:
+def test_schedule_tick_check_precondition_passes_with_resolved_known_command_binding() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event(
@@ -7527,8 +7737,15 @@ def test_schedule_tick_check_precondition_passes_with_known_command_binding() ->
             {
                 "node_id": "check-1",
                 "kind": "check",
+                "role": "check",
                 "state": "planned",
                 "command_binding": "dynamic_feature_hidden_oracle",
+                "command_definition": {
+                    "id": "check-1",
+                    "cmd": "true",
+                    "must": True,
+                    "source": "dynamic_feature_hidden_oracle_binding",
+                },
             },
             1,
         ),
@@ -7698,8 +7915,8 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "trigger": "agent_died_retry_scheduled",
         "attempt_number": 1,
     }
-    assert projection["leases"]["lease-1"].state == "revoked"
-    assert projection["node_states"]["worker-1"] == "ready"
+    assert leases_view(projection)["lease-1"].state == "revoked"
+    assert node_state(projection, "worker-1") == "ready"
 
 
 def test_agent_died_check_missing_command_fails_without_retry() -> None:
@@ -7752,8 +7969,8 @@ def test_agent_died_check_missing_command_fails_without_retry() -> None:
         "trigger": "non_retryable_runtime_error",
         "reason": "check node missing command_definition",
     }
-    assert projection["leases"]["lease-1"].state == "revoked"
-    assert projection["node_states"]["check-1"] == "failed"
+    assert leases_view(projection)["lease-1"].state == "revoked"
+    assert node_state(projection, "check-1") == "failed"
 
 
 def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
@@ -7811,7 +8028,7 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         "retry_not_before": retry_not_before,
         "attempt_number": 1,
     }
-    assert projection["node_states"]["worker-1"] == "blocked"
+    assert node_state(projection, "worker-1") == "blocked"
 
     immediate = apply_command(
         projection,
@@ -7920,8 +8137,8 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
         "attempt_number": 2,
         "max_attempts": 2,
     }
-    assert projection["leases"]["lease-1"].state == "revoked"
-    assert projection["node_states"]["worker-1"] == "failed"
+    assert leases_view(projection)["lease-1"].state == "revoked"
+    assert node_state(projection, "worker-1") == "failed"
 
 
 def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
@@ -7975,8 +8192,8 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
         "trigger": "agent_rate_limited",
         "reason": reason,
     }
-    assert projection["leases"]["lease-1"].state == "revoked"
-    assert projection["node_states"]["planner-1"] == "failed"
+    assert leases_view(projection)["lease-1"].state == "revoked"
+    assert node_state(projection, "planner-1") == "failed"
 
 
 def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
@@ -8022,8 +8239,8 @@ def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
     assert output[2].payload["value"]["error_class"] == "agent_rate_limited"
     assert output[2].payload["value"]["retryable"] is False
     assert output[3].payload["trigger"] == "agent_rate_limited"
-    assert projection["leases"]["lease-1"].state == "revoked"
-    assert projection["node_states"]["verifier-1"] == "failed"
+    assert leases_view(projection)["lease-1"].state == "revoked"
+    assert node_state(projection, "verifier-1") == "failed"
 
 
 def test_agent_died_completes_non_gap_planner_after_accepted_patch() -> None:
@@ -8076,7 +8293,7 @@ def test_agent_died_completes_non_gap_planner_after_accepted_patch() -> None:
         "new_state": "completed",
         "trigger": "accepted_graph_patch_before_agent_death",
     }
-    assert projection["node_states"]["planner-1"] == "completed"
+    assert node_state(projection, "planner-1") == "completed"
 
 
 def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
@@ -8727,6 +8944,7 @@ def test_callback_binds_required_input_by_wildcard_producer_class_edge() -> None
         ),
     ]
 
+    events = _with_routine_requirement(events, "R-01")
     output = _apply(
         events,
         "submit_callback",

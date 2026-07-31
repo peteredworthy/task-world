@@ -14,10 +14,10 @@ from typing import Any
 import pytest
 
 from orchestrator.graph import node_contract_summary
-from orchestrator.graph import EdgeProjection, PatchEnvelope, PatchOp
+from orchestrator.graph import PatchEnvelope, PatchOp, build_projection
 from orchestrator.graph import validate_patch
 from orchestrator.graph import GraphProjection, initial_projection
-from tests.unit.graph_test_utils import projection_fixture_replace
+from tests.unit.graph_test_utils import event
 
 
 def _patch(ops: list[dict[str, Any]], *, proposed_by: str = "planner-1") -> PatchEnvelope:
@@ -31,12 +31,14 @@ def _patch(ops: list[dict[str, Any]], *, proposed_by: str = "planner-1") -> Patc
 
 
 def _projection_with_classified_gap_successor(gap_node_id: str) -> GraphProjection:
-    projection = initial_projection()
-    projection = projection_fixture_replace(
-        projection,
-        "edges",
-        {
-            "edge-gap-corrective": EdgeProjection.model_validate(
+    return build_projection(
+        [
+            event(
+                "node_created", {"node_id": gap_node_id, "kind": "planner", "role": "gap_planner"}
+            ),
+            event("node_created", {"node_id": "worker-corrective", "kind": "worker"}, position=1),
+            event(
+                "edge_created",
                 {
                     "edge_id": "edge-gap-corrective",
                     "from_node_id": gap_node_id,
@@ -48,11 +50,11 @@ def _projection_with_classified_gap_successor(gap_node_id: str) -> GraphProjecti
                         "record_type": "gap_classification",
                         "schema": "GapClassification",
                     },
-                }
-            )
-        },
+                },
+                position=2,
+            ),
+        ]
     )
-    return projection
 
 
 def test_agent_contracts_allow_runtime_file_state_output() -> None:

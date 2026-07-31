@@ -227,6 +227,28 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
     }
 
 
+def test_root_planner_patch_scopes_builder_and_corrective_worker_regions() -> None:
+    nodes = {
+        operation["node"]["node_id"]: operation["node"]
+        for operation in _root_planner_patch("planner-s-01")["ops"]
+        if operation["op"] == "create_node"
+    }
+
+    assert nodes["worker-ds-builder"]["task_region_id"] == "feature-region"
+    assert nodes["worker-ds-corrective"]["task_region_id"] == "corrective_work_region"
+
+
+def test_passed_verifier_terminalization_check_shares_initial_verifier_region() -> None:
+    check = next(
+        operation["node"]
+        for operation in _passed_verifier_terminalization_patch("planner-s-01")["ops"]
+        if operation.get("op") == "create_node"
+        and operation["node"].get("node_id") == "check-ds-invariant"
+    )
+
+    assert check["task_region_id"] == "feature-region"
+
+
 def _passed_verifier_terminalization_patch(proposed_by: str) -> dict[str, Any]:
     patch = _root_planner_patch(proposed_by)
     patch["patch_id"] = "patch-ds-passed-verifier-terminalization"
@@ -247,7 +269,7 @@ def _passed_verifier_terminalization_patch(proposed_by: str) -> dict[str, Any]:
                 "kind": "check",
                 "role": "invariant_gate",
                 "state": "planned",
-                "task_region_id": "final-invariant-region",
+                "task_region_id": "feature-region",
                 "command_binding": "dynamic_feature_hidden_oracle",
             },
         }
@@ -500,7 +522,7 @@ class VerifierAgent(_BaseAgent):
         on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         if on_grade is not None:
-            await on_grade("req-1", self._grade, None)
+            await on_grade(_advertised_requirement_id(context), self._grade, None)
         await on_submit()
         return ExecutionResult(success=True)
 
@@ -523,9 +545,16 @@ class SequenceVerifierAgent(_BaseAgent):
         grade = self._grades.pop(0) if self._grades else "A"
         self.seen_grades.append(grade)
         if on_grade is not None:
-            await on_grade("req-1", grade, None)
+            await on_grade(_advertised_requirement_id(context), grade, None)
         await on_submit()
         return ExecutionResult(success=True)
+
+
+def _advertised_requirement_id(context: ExecutionContext) -> str:
+    assert context.requirements, "verifier must receive an advertised requirement"
+    requirement_id, separator, _ = context.requirements[0].partition(":")
+    assert separator and requirement_id, "advertised requirement must include its canonical ID"
+    return requirement_id
 
 
 class NoSubmitAgent(_BaseAgent):

@@ -12,7 +12,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.api import token_usage_to_schema
 from orchestrator.db import EventV2Model, RunModel, create_engine, create_session_factory, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, SequentialIdGenerator
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
+    SequentialIdGenerator,
+    tokens_by_node_view,
+)
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph_runtime.dispatch import GraphDispatchContext
@@ -82,6 +89,17 @@ async def test_controller_persists_usage_event_and_replays_run_usage_read_model(
                     updated_at=datetime(2026, 1, 1, tzinfo=UTC),
                 )
             )
+            await GraphEventStore(session).append_events(
+                context.run_id,
+                0,
+                [
+                    _event(
+                        "node-1",
+                        "node_created",
+                        {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+                    )
+                ],
+            )
     usage = [
         ModelTokenUsage(
             model="model-a",
@@ -115,7 +133,7 @@ async def test_controller_persists_usage_event_and_replays_run_usage_read_model(
             await session.execute(select(RunModel).where(RunModel.id == context.run_id))
         ).scalar_one()
 
-    assert projection["tokens_by_node"] == {"worker-1": 370}
+    assert tokens_by_node_view(projection) == {"worker-1": 370}
     assert run.total_duration_ms == 900
     assert run.total_num_actions == 4
     assert len(run.token_usage_by_model or []) == 2
@@ -144,7 +162,13 @@ async def test_rebuild_preserves_untagged_historical_usage_when_graph_usage_is_e
             await GraphEventStore(session).append_events(
                 context.run_id,
                 0,
-                [_event("node-1", "node_created", {"node_id": "worker-1", "kind": "worker"})],
+                [
+                    _event(
+                        "node-1",
+                        "node_created",
+                        {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+                    )
+                ],
             )
             await GraphEventStore(session).rebuild_read_models(context.run_id)
 
@@ -184,7 +208,13 @@ async def test_rebuild_replaces_only_graph_usage_and_preserves_legacy_baseline(
             await GraphEventStore(session).append_events(
                 context.run_id,
                 0,
-                [_event("node-1", "node_created", {"node_id": "worker-1", "kind": "worker"})],
+                [
+                    _event(
+                        "node-1",
+                        "node_created",
+                        {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+                    )
+                ],
             )
             await GraphEventStore(session).rebuild_read_models(context.run_id)
 
@@ -223,6 +253,11 @@ async def test_rebuild_persists_exact_node_usage_provenance_without_api_leakage(
                 0,
                 [
                     _event(
+                        "node-1",
+                        "node_created",
+                        {"node_id": context.node_id, "kind": context.node_kind, "state": "ready"},
+                    ),
+                    _event(
                         "usage-1",
                         "node_usage_recorded",
                         {
@@ -241,7 +276,7 @@ async def test_rebuild_persists_exact_node_usage_provenance_without_api_leakage(
                             "latency_ms": 321,
                             "num_actions": 6,
                         },
-                    )
+                    ),
                 ],
             )
             await store.rebuild_read_models(context.run_id)
@@ -294,7 +329,13 @@ async def test_unrelated_append_does_not_rescan_historical_event_bodies(
             await store.append_events(
                 context.run_id,
                 0,
-                [_event("node-1", "node_created", {"node_id": "worker-1", "kind": "worker"})],
+                [
+                    _event(
+                        "node-1",
+                        "node_created",
+                        {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+                    )
+                ],
             )
         async with session.begin():
             await session.execute(
@@ -307,7 +348,13 @@ async def test_unrelated_append_does_not_rescan_historical_event_bodies(
             await GraphEventStore(session).append_events(
                 context.run_id,
                 1,
-                [_event("node-2", "node_created", {"node_id": "worker-2", "kind": "worker"})],
+                [
+                    _event(
+                        "node-2",
+                        "node_created",
+                        {"node_id": "worker-2", "kind": "worker", "state": "ready"},
+                    )
+                ],
             )
 
 
@@ -333,6 +380,17 @@ async def test_concurrent_usage_appends_retry_and_persist_without_agent_death(
                         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
                     )
                 )
+                await GraphEventStore(session).append_events(
+                    first_context.run_id,
+                    0,
+                    [
+                        _event(
+                            "node-1",
+                            "node_created",
+                            {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+                        )
+                    ],
+                )
 
         usage = [ModelTokenUsage(model="model-a", gen_ai_usage_input_tokens=10)]
         first = GraphController(
@@ -351,7 +409,9 @@ async def test_concurrent_usage_appends_retry_and_persist_without_agent_death(
             events = await GraphEventStore(session).read_run(first_context.run_id)
             run = await session.get(RunModel, first_context.run_id)
 
-        assert [event.event_type for event in events] == [
+        assert [
+            event.event_type for event in events if event.event_type == "node_usage_recorded"
+        ] == [
             "node_usage_recorded",
             "node_usage_recorded",
         ]

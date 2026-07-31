@@ -904,6 +904,7 @@ _GRAPH_PROJECTION_TYPE_ORIGINS = frozenset(
     {
         "orchestrator.graph.GraphProjection",
         "orchestrator.graph._commands.GraphProjection",
+        "orchestrator.graph.projection_models.GraphProjection",
         "orchestrator.graph.projections.GraphProjection",
     }
 )
@@ -935,6 +936,7 @@ _APPROVED_SYMBOLS = frozenset(
         "orchestrator.graph.GraphDispatchContext",
         "orchestrator.graph.GraphProjectionCheckpoint",
         "orchestrator.graph_runtime.GraphController",
+        "orchestrator.graph.projection_models.GraphProjection",
         "orchestrator.graph.projections.GraphProjection",
         "orchestrator.graph_runtime.controller.GraphController",
         "orchestrator.graph_runtime.dispatch.GraphDispatchContext",

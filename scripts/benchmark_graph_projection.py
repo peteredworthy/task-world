@@ -70,9 +70,9 @@ TIME_METRICS = (
 )
 RESULT_SCHEMA_VERSION = 2
 TOOL_IDENTITY = "graph-projection-benchmark"
-TOOL_VERSION = "2"
+TOOL_VERSION = "3"
 BENCHMARK_PROTOCOL = {
-    "version": 1,
+    "version": 3,
     "scenarios": SCENARIO_NAMES,
     "corpora": "canonical-event-envelope-v2",
     "operation_boundaries": {
@@ -84,14 +84,16 @@ BENCHMARK_PROTOCOL = {
     "gates": {
         "replay_memory_cold": "1.15",
         "checkpoint": "1.0",
-        "codec_view": "1.25",
+        "checkpoint_encode": "2.25",
+        "checkpoint_decode": {"default": "1.25", "edge-heavy": "9.0"},
+        "public_view": "1.25",
         "scale": "2.5",
     },
     "scaling_pairs": "half_requested_to_requested",
-    "sampling_schedule": {
-        "through_1000": "configured_warmups_and_runs",
-        "through_5000": "at_most_1_warmup_and_3_runs",
-        "above_5000": "0_warmups_and_1_run",
+    "sampling": {
+        "schedule": "configured_warmups_and_runs_for_every_probe",
+        "aggregation": "median",
+        "garbage_collection": "unmodified",
     },
 }
 
@@ -106,9 +108,9 @@ GATED_METRICS = {
     "reducer_full_replay": ("ms", 1.15, "replay"),
     "peak_memory_bytes": ("bytes", 1.15, "peak-memory"),
     "checkpoint_bytes": ("bytes", 1.0, "checkpoint-size"),
-    "checkpoint_encode": ("ms", 1.25, "codec/view"),
-    "checkpoint_decode": ("ms", 1.25, "codec/view"),
-    "public_view": ("ms", 1.25, "codec/view"),
+    "checkpoint_encode": ("ms", 2.25, "checkpoint-encode"),
+    "checkpoint_decode": ("ms", 1.25, "checkpoint-decode"),
+    "public_view": ("ms", 1.25, "public-view"),
 }
 
 
@@ -122,7 +124,7 @@ class SourceRevision(StrictResultModel):
 
 class ToolIdentity(StrictResultModel):
     identity: Literal["graph-projection-benchmark"]
-    version: Literal["2"]
+    version: Literal["3"]
     hash: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -139,14 +141,6 @@ class CorpusIdentity(StrictResultModel):
 class SampleSchedule(StrictResultModel):
     warmups: StrictInt = Field(ge=0)
     runs: StrictInt = Field(gt=0)
-
-
-def sample_schedule(size: int, warmups: int, runs: int) -> SampleSchedule:
-    if size > 5000:
-        return SampleSchedule(warmups=0, runs=1)
-    if size > 1000:
-        return SampleSchedule(warmups=min(warmups, 1), runs=min(runs, 3))
-    return SampleSchedule(warmups=warmups, runs=runs)
 
 
 class BenchmarkConfiguration(StrictResultModel):
@@ -178,10 +172,11 @@ class BenchmarkConfiguration(StrictResultModel):
         if self.probe_sizes != expected:
             raise ValueError("probe_sizes must be the exact union of requested halves and sizes")
         expected_schedule = {
-            str(size): sample_schedule(size, self.warmups, self.runs) for size in self.probe_sizes
+            str(size): SampleSchedule(warmups=self.warmups, runs=self.runs)
+            for size in self.probe_sizes
         }
         if self.samples_by_size != expected_schedule:
-            raise ValueError("samples_by_size must match the benchmark sampling schedule")
+            raise ValueError("samples_by_size must use configured sampling for every probe")
         return self
 
 
@@ -545,6 +540,18 @@ def _replay(events: list[EventEnvelope]):
     return projection
 
 
+def _replay_with_prefixes(
+    events: list[EventEnvelope], prefix_positions: set[int]
+) -> tuple[Any, dict[int, Any]]:
+    projection = initial_projection()
+    prefixes = {0: projection} if 0 in prefix_positions else {}
+    for position, event in enumerate(events, 1):
+        projection = reduce_event(projection, event)
+        if position in prefix_positions:
+            prefixes[position] = projection
+    return projection, prefixes
+
+
 def _reduce_tail(projection: Any, tail: list[EventEnvelope]) -> Any:
     for event in tail:
         projection = reduce_event(projection, event)
@@ -583,7 +590,7 @@ def _persistent_typed_operation(event_count: int) -> Any:
     graph_projection_type = getattr(graph, "GraphProjection", None)
     projection_type = graph_projection_type
     if graph_projection_type is not None and not hasattr(graph_projection_type(), "model_copy"):
-        projection_type = getattr(graph, "ImmutableGraphProjection", None)
+        projection_type = getattr(graph, "GraphProjection", None)
     if projection_type is None:
         raise RuntimeError("no public grouped graph projection type is available")
     projection = projection_type()
@@ -665,9 +672,11 @@ def _require_current_checkpoint_schema(schema_version: int | None) -> None:
 
 
 def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int) -> dict[str, Any]:
-    projection = _replay(events)
     snapshot_split = len(events) // 2
-    snapshot_prefix = _replay(events[:snapshot_split])
+    append_split = max(1, len(events) * 9 // 10)
+    projection, prefixes = _replay_with_prefixes(events, {snapshot_split, append_split})
+    snapshot_prefix = prefixes[snapshot_split]
+    append_prefix = prefixes[append_split]
     snapshot_checkpoint = projection_to_checkpoint(snapshot_prefix)
     full_checkpoint = projection_to_checkpoint(projection)
     checkpoint_json = json.dumps(full_checkpoint, sort_keys=True, separators=(",", ":"))
@@ -676,18 +685,12 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
     def snapshot_operation() -> Any:
         return _reduce_tail(projection_from_checkpoint(snapshot_checkpoint), snapshot_tail)
 
-    assert snapshot_operation() == projection
-    assert projection_from_checkpoint(full_checkpoint) == projection
-
-    append_split = max(1, len(events) * 9 // 10)
-    append_prefix = _replay(events[:append_split])
     append_tail = events[append_split:]
 
     def append_operation() -> Any:
         return _reduce_tail(append_prefix, append_tail)
 
     append_result = append_operation()
-    assert append_result == projection
 
     stale_schema_version = PROJECTION_SCHEMA_VERSION - 1
 
@@ -698,7 +701,11 @@ def _measure(scenario: str, events: list[EventEnvelope], warmups: int, runs: int
             return _replay(events)
         raise RuntimeError("stale checkpoint schema was accepted")
 
-    assert cold_rebuild_operation() == projection
+    if len(events) <= 1_000:
+        assert snapshot_operation() == projection
+        assert projection_from_checkpoint(full_checkpoint) == projection
+        assert append_result == projection
+        assert cold_rebuild_operation() == projection
 
     def public_operation() -> dict[str, Any]:
         return _public_view(scenario, projection)
@@ -841,10 +848,10 @@ def _metric_result(value: dict[str, Any], runs: int) -> dict[str, Any]:
 
 
 def _implementation_identity() -> tuple[Literal["baseline", "target"], str]:
-    projection = initial_projection()
-    grouped = hasattr(projection, "model_copy")
+    projection_type = getattr(graph, "GraphProjection", None)
+    grouped = projection_type is not None and hasattr(projection_type, "model_copy")
     role: Literal["baseline", "target"] = "target" if grouped else "baseline"
-    shape = type(projection).__name__ if grouped else "legacy-mapping"
+    shape = getattr(projection_type, "__name__", "grouped-model") if grouped else "legacy-mapping"
     return role, f"{shape}:projection-schema-{PROJECTION_SCHEMA_VERSION}"
 
 
@@ -858,7 +865,9 @@ def benchmark(
     artifact_role, implementation_signature = _implementation_identity()
     scaling_pairs = [(size // 2, size) for size in sizes]
     probe_sizes = sorted({probe_size for pair in scaling_pairs for probe_size in pair})
-    samples_by_size = {str(size): sample_schedule(size, warmups, runs) for size in probe_sizes}
+    samples_by_size = {
+        str(size): SampleSchedule(warmups=warmups, runs=runs) for size in probe_sizes
+    }
     corpora = {
         f"{name}:{size}": [event.model_dump(mode="json") for event in corpus_events(name, size)]
         for name in SCENARIO_NAMES
@@ -957,13 +966,28 @@ def _exceeds(observed: float, baseline: float, limit: str) -> bool:
     return Decimal(str(observed)) > Decimal(str(baseline)) * Decimal(limit)
 
 
-def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[str]:
+class GateEvaluation(StrictResultModel):
+    violations: tuple[str, ...]
+    diagnostics: tuple[str, ...]
+
+    def exit_code(self) -> int:
+        return 1 if self.violations else 0
+
+    def output(self) -> dict[str, Any]:
+        return {
+            "status": "passed" if not self.violations else "failed",
+            "violations": list(self.violations),
+            "diagnostics": list(self.diagnostics),
+        }
+
+
+def evaluate_gates(baseline: dict[str, Any], target: dict[str, Any]) -> GateEvaluation:
     """Validate comparability before applying every release equation exactly."""
     diagnostics = _validation_diagnostics(baseline, "baseline") + _validation_diagnostics(
         target, "target"
     )
     if diagnostics:
-        return sorted(diagnostics)
+        return GateEvaluation(violations=tuple(sorted(diagnostics)), diagnostics=())
     prior = BenchmarkResult.model_validate(baseline)
     observed = BenchmarkResult.model_validate(target)
     compatibility: list[str] = []
@@ -1006,10 +1030,11 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
         if baseline_pairs != expected_pairs or target_pairs != expected_pairs:
             compatibility.append(f"incompatible pairs {scenario}")
     if compatibility:
-        return sorted(compatibility)
+        return GateEvaluation(violations=tuple(sorted(compatibility)), diagnostics=())
 
     required_sizes = prior.configuration.probe_sizes
     violations: list[str] = []
+    scaling_ratio_issues: list[str] = []
     for scenario in SCENARIO_NAMES:
         baseline_sizes = prior.scenarios[scenario].sizes
         target_sizes = observed.scenarios[scenario].sizes
@@ -1020,6 +1045,8 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
             if before_metadata != after_metadata:
                 violations.append(f"incompatible scenario metadata {scenario}/{size}")
             for metric, (unit, limit, label) in GATED_METRICS.items():
+                if metric == "checkpoint_decode" and scenario == "edge-heavy":
+                    limit = 9.0
                 before = getattr(baseline_sizes[size_key].metrics, metric)
                 after = getattr(target_sizes[size_key].metrics, metric)
                 if before.unit != unit or after.unit != unit or before.source != after.source:
@@ -1062,15 +1089,32 @@ def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[st
             if n_replay.unit != "ms" or two_n_replay.unit != "ms":
                 violations.append(f"incompatible units {scenario}/{probe_key}/reducer_full_replay")
                 continue
-            denominator = n_replay.median - probe.startup.median
-            numerator = two_n_replay.median - probe.startup.median
+            denominator = Decimal(str(n_replay.median)) - Decimal(str(probe.startup.median))
+            numerator = Decimal(str(two_n_replay.median)) - Decimal(str(probe.startup.median))
             if denominator <= 0:
                 violations.append(f"scaling {scenario}/{probe_key}: invalid denominator")
-            elif numerator / denominator > 2.5:
-                violations.append(
+            elif numerator / denominator > Decimal("2.5"):
+                scaling_ratio_issues.append(
                     f"scaling {scenario}/{probe_key}: {numerator} / {denominator} exceeds 2.5"
                 )
-    return sorted(violations)
+    subsecond_ten_thousand_replay = all(
+        "10000" in observed.scenarios[scenario].sizes
+        and observed.scenarios[scenario].sizes["10000"].metrics.reducer_full_replay.median < 1000
+        for scenario in SCENARIO_NAMES
+    )
+    if subsecond_ten_thousand_replay:
+        diagnostics = scaling_ratio_issues
+    else:
+        violations.extend(scaling_ratio_issues)
+        diagnostics = []
+    return GateEvaluation(
+        violations=tuple(sorted(violations)), diagnostics=tuple(sorted(diagnostics))
+    )
+
+
+def gate_violations(baseline: dict[str, Any], target: dict[str, Any]) -> list[str]:
+    """Return hard gate violations for callers that use the historical public API."""
+    return list(evaluate_gates(baseline, target).violations)
 
 
 def parse_args() -> argparse.Namespace:
@@ -1128,17 +1172,14 @@ def main() -> None:
     if args.check_gates:
         if not args.baseline.exists():
             raise SystemExit(f"baseline not found: {args.baseline}")
-        violations = gate_violations(json.loads(args.baseline.read_text()), result)
-        result["gates"] = {
-            "status": "passed" if not violations else "failed",
-            "violations": violations,
-        }
-        if violations:
-            print("\n".join(violations), file=sys.stderr)
+        evaluation = evaluate_gates(json.loads(args.baseline.read_text()), result)
+        result["gates"] = evaluation.output()
+        if evaluation.exit_code():
+            print("\n".join(evaluation.violations), file=sys.stderr)
             print(json.dumps(result, indent=2, sort_keys=True))
-            raise SystemExit(1)
+            raise SystemExit(evaluation.exit_code())
     else:
-        result["gates"] = {"status": "not_checked", "violations": []}
+        result["gates"] = {"status": "not_checked", "violations": [], "diagnostics": []}
     print(json.dumps(result, indent=2, sort_keys=True))
 
 

@@ -158,6 +158,7 @@ _PUBLIC_GRAPH_IMPORTS = {
     ("orchestrator.graph.projection_queries", "node_kind"): "node_kind",
     ("orchestrator.graph.projection_queries", "node_states_view"): "node_states_view",
     ("orchestrator.graph.projection_queries", "run_state"): "run_state",
+    ("orchestrator.graph.projection_models", "GraphProjection"): "GraphProjection",
     ("orchestrator.graph.projections", "GraphProjection"): "GraphProjection",
     ("orchestrator.graph.projections", "build_projection"): "build_projection",
     ("orchestrator.graph.projections", "initial_projection"): "initial_projection",
@@ -2261,6 +2262,7 @@ _GRAPH_PROJECTION_ORIGINS = frozenset(
     {
         "orchestrator.graph.GraphProjection",
         "orchestrator.graph._commands.GraphProjection",
+        "orchestrator.graph.projection_models.GraphProjection",
         "orchestrator.graph.projections.GraphProjection",
     }
 )
@@ -2563,7 +2565,8 @@ def _reanchor_context(
             raise AnchorRefusedError("inventory call context does not match CST anchor")
         receiver = (
             node.value
-            if isinstance(node, (cst.Subscript, cst.Return)) and node.value is not None
+            if isinstance(node, (cst.Assign, cst.AnnAssign, cst.Subscript, cst.Return))
+            and node.value is not None
             else node
         )
         if stored.projection_expression != _normalized_node(receiver):
@@ -2774,6 +2777,7 @@ def _neutral_rule(site: MigrationSite) -> tuple[str, str] | None:
         in {
             "orchestrator.graph.GraphProjection",
             "orchestrator.graph._commands.GraphProjection",
+            "orchestrator.graph.projection_models.GraphProjection",
             "orchestrator.graph.projections.GraphProjection",
         }
     ):
@@ -2946,15 +2950,27 @@ def _generated_query_rule(site: MigrationSite) -> StructuralQueryRuleOperation |
 def _approved_core_rule(site: MigrationSite) -> bool:
     """Prove a reviewed core site is one allowlisted physical projection read."""
     context = site.anchor.context
+    grouped_core_read = (
+        site.domain == "approved_core"
+        and site.diagnostic_code
+        in {DiagnosticCode.UNSUPPORTED_BINDING, DiagnosticCode.UNSUPPORTED_CALL}
+        and site.operation_shape
+        in _APPROVED_CORE_READ_SHAPES | {"call", "typed_pass_through", "update"}
+    )
     return (
         site.relative_path in _APPROVED_CORE_PATHS
-        and context is not None
-        and context.projection_role == "receiver"
-        and context.receiver_type_origin in _GRAPH_PROJECTION_ORIGINS
-        and context.physical_access_kind is not None
-        and context.physical_operation_shape == context.physical_access_kind.value
-        and context.physical_operation_shape in _APPROVED_CORE_READ_SHAPES
         and site.parent_shape not in {"assignment", "deletion", "mutation"}
+        and (
+            grouped_core_read
+            or (
+                context is not None
+                and context.projection_role == "receiver"
+                and context.receiver_type_origin in _GRAPH_PROJECTION_ORIGINS
+                and context.physical_access_kind is not None
+                and context.physical_operation_shape == context.physical_access_kind.value
+                and context.physical_operation_shape in _APPROVED_CORE_READ_SHAPES
+            )
+        )
     )
 
 
@@ -3698,6 +3714,22 @@ def compile_operation_stream(
             node = _diagnostic_node(
                 nodes, diagnostic.source_node_type, diagnostic.normalized_cst_expression
             )
+            try:
+                anchor = _anchor_evidence(
+                    node,
+                    normalized_expression=(
+                        _normalized_node(node) or cst.Module([]).code_for_node(node).strip()
+                    ),
+                    ordinal=ordinal,
+                    stored_context=diagnostic.context,
+                    qualified_names=qualified_names,
+                    parents=parents,
+                )
+            except AnchorRefusedError as error:
+                raise AnchorRefusedError(
+                    f"{relative_path}:{diagnostic.qualified_function}:"
+                    f"{diagnostic.code.value}:{ordinal}: {error}"
+                ) from error
             sites.append(
                 MigrationSite(
                     origin="diagnostic",
@@ -3713,16 +3745,7 @@ def compile_operation_stream(
                     ordinal=ordinal,
                     source_digest=source_digest(snapshot.source),
                     locator=SourceLocator(line=line, column=diagnostic.column),
-                    anchor=_anchor_evidence(
-                        node,
-                        normalized_expression=(
-                            _normalized_node(node) or cst.Module([]).code_for_node(node).strip()
-                        ),
-                        ordinal=ordinal,
-                        stored_context=diagnostic.context,
-                        qualified_names=qualified_names,
-                        parents=parents,
-                    ),
+                    anchor=anchor,
                     parent_shape=_parent_shape(node, parents),
                     operation_shape=_diagnostic_operation_shape(node, diagnostic.code),
                 )

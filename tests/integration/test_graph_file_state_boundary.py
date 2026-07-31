@@ -14,7 +14,12 @@ from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import RunModel, create_engine, create_session_factory, init_db
 from orchestrator.git import restore
-from orchestrator.graph import project_leases, project_node_states, project_residue_report
+from orchestrator.graph import (
+    action_count_by_node_kind_view,
+    project_leases,
+    project_node_states,
+    project_residue_report,
+)
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -582,5 +587,5 @@ async def test_graph_dispatch_surfaces_agent_usage(
 
     assert usage_event.payload["usage_index"] == 0
     assert usage_event.payload["num_actions"] == 2
-    assert projection["num_actions_by_node_kind"] == {"worker": 2}
+    assert action_count_by_node_kind_view(projection) == {"worker": 2}
     assert run.total_num_actions == 2

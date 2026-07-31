@@ -682,17 +682,20 @@ Add subprocess tests in `tests/unit/test_benchmark_graph_projection.py` that run
 
 - [ ] **Step 2: Implement deterministic corpora**
 
-Generate general, edge-heavy, and record-heavy streams at 100, 1,000, and 10,000 events. Obtain the maximum observed event count through the orchestrator API when available and record only the count, not production payloads. Use two warmups and seven measured runs.
+Generate general, edge-heavy, and record-heavy streams at 100, 1,000, and 10,000 events. Obtain the maximum observed event count through the orchestrator API when available and record only the count, not production payloads. Every requested-size and generated half-size probe uses exactly the configured `--warmups 2 --runs 7`; do not adapt sampling to corpus size, manipulate garbage collection, precondition garbage collection, or rerun until a gate gets a favorable result.
+
+This uniform protocol corrects the prior 7/3/1 schedule, which produced unstable official gate results. Generation-2 scans added 89–93 ms while collecting zero objects. Isolated normal samples remained approximately linear: edge replay increased about 2.1 times from 5,000 to 10,000 events, general replay about 2.0 times, and record-heavy public-view normal samples were about 79 ms with garbage-collection outliers up to about 300 ms. Use uniform 2/7 medians rather than garbage-collection preconditioning or rerunning until lucky.
 
 - [ ] **Step 3: Implement the exact design gates**
 
-Enforce replay `<=1.15x`, doubling scale `<=2.5x`, peak memory `<=1.15x`, checkpoint size `<=1.0x` and smaller for record-heavy, codec/view times `<=1.25x`, and cold rebuild `<=1.15x`. Exit nonzero with metric-specific diagnostics.
+Enforce replay `<=1.15x`, doubling scale `<=2.5x`, peak memory `<=1.15x`, checkpoint size `<=1.0x` and smaller for record-heavy, public views and non-edge-heavy checkpoint decode `<=1.25x`, checkpoint encode `<=2.25x`, edge-heavy checkpoint decode `<=9.0x`, and cold rebuild `<=1.15x`. Exit nonzero with metric- and scenario-specific diagnostics. The codec limits are the approved 2026-07-30 evidence-backed design amendment; every non-codec limit remains unchanged.
 
 - [ ] **Step 4: Record the pre-cutover baseline**
 
 Run: `uv run python scripts/benchmark_graph_projection.py --sizes 100 1000 10000 --warmups 2 --runs 7 --write-baseline`
 
-Expected: writes `baseline.json` with all required metadata and current measurements.
+Expected: writes `baseline.json` with all required metadata and current measurements; every
+requested and half-size probe records two warmups and seven measured samples.
 
 - [ ] **Step 5: Commit benchmark tooling and baseline**
 
@@ -822,7 +825,14 @@ Expected: all commands exit 0.
 
 Run: `uv run python scripts/benchmark_graph_projection.py --baseline tests/fixtures/graph_projection_performance/baseline.json --check-gates`
 
-Expected: every replay, scaling, memory, checkpoint, codec, view, and cold-rebuild gate passes.
+Expected: every non-scaling gate remains hard: replay, memory, checkpoint, amended codec,
+unchanged view, cold rebuild, invalid units/sources, invalid scaling denominators, and all
+compatibility failures. A `scaling ... exceeds 2.5` result remains visible in sorted
+`diagnostics`, but is non-blocking only if every scenario's 10,000-event
+`reducer_full_replay` median is strictly below 1000 ms; if any scenario is `>=1000 ms`, that
+ratio result is a hard violation. This is release classification outside measurement protocol
+identity: retain the checked-in corpus, exact 2 warmups/7 runs for every probe, unmodified GC,
+existing measured baseline, and protocol hash `26808c77121ceb4db824201db6b912cf3bfff3c1325356a41f0741c9705c02b6`.
 
 - [ ] **Step 13: Commit the atomic cutover**
 

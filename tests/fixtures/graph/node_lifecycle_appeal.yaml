@@ -1,8 +1,9 @@
 - name: appeal_planned_to_ready
   given_events:
     - node_created: {node_id: verify-1, kind: verifier, state: completed, task_region_id: task-appeal-1}
-    - output_record_accepted: {task_region_id: task-appeal-1, candidate_id: cand-appeal-1, attempt_number: 1}
-    - verification_failed: {node_id: verify-1, candidate_id: cand-appeal-1}
+    - output_record_accepted: {record_id: candidate-record-appeal-1, record_kind: output, record_type: candidate, producer_node_id: verify-1, port: candidate, schema: ImplementationCandidate, task_region_id: task-appeal-1, candidate_id: cand-appeal-1, attempt_number: 1, value: {summary: appeal candidate}}
+    - output_record_accepted: {record_id: verification-appeal-1, record_kind: verification, record_type: verification_report, producer_node_id: verify-1, port: verification_report, schema: VerificationReport, task_region_id: task-appeal-1, candidate_id: cand-appeal-1, outcome: failed, value: {outcome: failed, grades: []}}
+    - verification_failed: {node_id: verify-1, verifier_node_id: verify-1, candidate_id: cand-appeal-1, task_region_id: task-appeal-1, record_id: verification-appeal-1, outcome: failed, value: {outcome: failed, grades: []}}
   when_command:
     raise_appeal: {node_id: verify-1, candidate_id: cand-appeal-1, task_region_id: task-appeal-1, appeal_type: invalid_test, appeal_node_id: appeal-1, oversight_node_id: oversight-1}
   then_events:

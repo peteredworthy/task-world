@@ -17,6 +17,9 @@ def test_less_used_events_are_deterministic_and_scoped_to_run() -> None:
     ]
     assert [event.timestamp for event in first] == [datetime(2026, 1, 1, tzinfo=UTC)] * len(first)
     assert [event.run_id for event in first] == [run_id] * len(first)
+    assert [
+        event.payload["bound_at_position"] for event in first if event.event_type == "input_bound"
+    ] == [0, 0]
     assert [event.event_type for event in first] == [
         "run_lifecycle_changed",
         "node_created",
@@ -42,6 +45,8 @@ def test_less_used_events_are_deterministic_and_scoped_to_run() -> None:
         "output_record_accepted",
         "output_record_accepted",
         "edge_created",
+        "node_created",
+        "output_record_accepted",
         "appeal_opened",
         "oversight_decision_recorded",
         "graph_patch_rejected",
@@ -53,5 +58,5 @@ def test_less_used_events_are_deterministic_and_scoped_to_run() -> None:
     )
     assert (
         sha256(signature.encode()).hexdigest()
-        == "6d4e64ee75a4cca61af1837cb8e7dfe08e6ffe5bf43f95f5eb2072392c864c07"
+        == "3026b0b3ffe4552322fcf0bf8a99eb0ba51bae45200f9c444cc7d54bea11e29d"
     )

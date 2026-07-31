@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from math import isfinite
-from typing import Any, cast, get_args
+from typing import Any, TypeGuard, cast, get_args
 
 from immutables import Map
 from pydantic import GetCoreSchemaHandler
@@ -30,11 +30,23 @@ class FrozenMap[K, V](Mapping[K, V]):
     def __getitem__(self, key: K) -> V:
         return self.__map[key]
 
+    def __contains__(self, key: object) -> bool:
+        return key in self.__map
+
     def __iter__(self) -> Iterator[K]:
         return iter(self.__map)
 
     def __len__(self) -> int:
         return len(self.__map)
+
+    def object_items(self) -> Iterator[tuple[object, object]]:
+        """Return entries at the runtime-erased generic boundary."""
+        for key, value in self.__map.items():
+            yield key, value
+
+    def thaw_json(self) -> JsonValue:
+        """Validate and convert this persistent map as a canonical JSON value."""
+        return thaw_json(self)
 
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, Mapping):
@@ -82,7 +94,8 @@ def _serialize_frozen_map(
     value: FrozenMap[Any, Any],
     handler: core_schema.SerializerFunctionWrapHandler,
 ) -> Any:
-    return handler(dict(value))
+    backend = cast(Map[Any, Any], object.__getattribute__(value, "_FrozenMap__map"))
+    return handler(dict(backend))
 
 
 def _mapping_to_dict(value: object) -> object:
@@ -201,7 +214,7 @@ def _freeze_json(value: object, *, active_ids: set[int], depth: int) -> FrozenJs
     )
 
 
-def thaw_json(value: FrozenJsonValue) -> JsonValue:
+def thaw_json(value: object) -> JsonValue:
     """Recursively convert an immutable JSON value to lists and dictionaries."""
     value_type = type(value)
     if value is None:
@@ -220,8 +233,17 @@ def thaw_json(value: FrozenJsonValue) -> JsonValue:
     if value_type is tuple:
         sequence = cast(tuple[FrozenJsonValue, ...], value)
         return [thaw_json(item) for item in sequence]
-    if isinstance(value, FrozenMap):
-        if any(type(key) is not str for key in value):
-            raise FrozenJsonValueError("frozen JSON objects must have string keys")
-        return {key: thaw_json(item) for key, item in value.items()}
+    if _is_exact_frozen_map(value, value_type):
+        thawed: dict[str, JsonValue] = {}
+        for key, item in value.object_items():
+            if type(key) is not str:
+                raise FrozenJsonValueError("frozen JSON objects must have string keys")
+            thawed[key] = thaw_json(item)
+        return thawed
     raise FrozenJsonValueError(f"expected a frozen JSON value; got {value_type.__name__}")
+
+
+def _is_exact_frozen_map(
+    value: object, value_type: type[object]
+) -> TypeGuard[FrozenMap[object, object]]:
+    return value_type is FrozenMap

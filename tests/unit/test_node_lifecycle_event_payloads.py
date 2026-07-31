@@ -45,13 +45,17 @@ def test_authority_reducer_reads_direct_fields() -> None:
     projection = build_projection(
         [
             event(
+                "node_created",
+                {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+            ),
+            event(
                 "node_authority_changed",
                 {
                     "node_id": "worker-1",
                     "allowed_actions": ["submit_output"],
                     "preconditions": ["inputs_bound"],
                 },
-            )
+            ),
         ]
     )
     assert node_allowed_actions_view(projection)["worker-1"] == ["submit_output"]

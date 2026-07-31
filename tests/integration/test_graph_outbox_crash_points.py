@@ -363,13 +363,31 @@ async def _seed_cleanup_request(
             await GraphEventStore(session).append_events(
                 run_id,
                 0,
-                [_event("file-state-event", run_id, "file_state_accepted", boundary.output_record)],
+                [
+                    _event(
+                        "worker-created",
+                        run_id,
+                        "node_created",
+                        {
+                            "node_id": "worker-1",
+                            "kind": "worker",
+                            "state": "planned",
+                            "task_region_id": "task-1",
+                            "resource_claims": [
+                                {"mode": "write", "scope": "repo", "paths": ["src/**"]}
+                            ],
+                        },
+                    ),
+                    _event(
+                        "file-state-event", run_id, "file_state_accepted", boundary.output_record
+                    ),
+                ],
             )
 
     controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
     result = await controller.handle_command(
         run_id,
-        1,
+        2,
         "record_gatekeeper_verdicts",
         {
             "file_state_record_id": record_id,

@@ -71,6 +71,13 @@ def test_frozen_map_exposes_only_immutable_mapping_operations() -> None:
     assert not hasattr(value, "mutate")
 
 
+def test_frozen_map_membership_reports_present_and_missing_keys() -> None:
+    value = FrozenMap({"present": 1})
+
+    assert "present" in value
+    assert "missing" not in value
+
+
 def test_frozen_map_has_mapping_equality_and_readable_repr() -> None:
     value = FrozenMap({"a": 1})
 
@@ -211,6 +218,27 @@ def test_frozen_json_round_trips_normal_json() -> None:
     assert isinstance(frozen, FrozenMap)
     assert isinstance(frozen["nested"], tuple)
     assert thaw_json(frozen) == value
+
+
+def test_thaw_json_rejects_frozen_map_subclasses() -> None:
+    with pytest.raises(FrozenJsonValueError, match="expected a frozen JSON value"):
+        thaw_json(FrozenMapSubclass({"one": 1}))
+
+
+def test_thaw_json_rejects_non_string_map_keys() -> None:
+    with pytest.raises(FrozenJsonValueError, match="string keys"):
+        thaw_json(FrozenMap({1: "bad"}))
+
+
+def test_thaw_json_rejects_unsupported_scalar_objects() -> None:
+    with pytest.raises(FrozenJsonValueError, match="expected a frozen JSON value"):
+        thaw_json(object())
+
+
+@pytest.mark.parametrize("value", [nan, inf, -inf])
+def test_thaw_json_rejects_non_finite_numbers(value: float) -> None:
+    with pytest.raises(FrozenJsonValueError, match="finite"):
+        thaw_json(value)
 
 
 @pytest.mark.parametrize("value", [None, False, True, 0, -2, 1.5, "text"])

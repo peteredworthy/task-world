@@ -30,6 +30,7 @@ from orchestrator.graph import (
     InMemoryEventStore,
     PatchCommandContext,
     SequentialIdGenerator,
+    active_requirement_versions_view,
     build_projection,
     initial_projection,
     project_decision_view,
@@ -42,11 +43,11 @@ from orchestrator.graph import (
     project_planner_session,
     project_requirement_freshness_facts,
     project_residue_report,
-    project_support_evidence_freshness,
     projection_from_checkpoint,
     projection_to_checkpoint,
     reduce_event,
     run_scenario,
+    support_evidence_view,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -128,6 +129,25 @@ def _replay_views(events: list[Any]) -> dict[str, JsonValue]:
     for event in events:
         incremental = reduce_event(incremental, event)
     checkpoint = projection_to_checkpoint(replay)
+    active_versions = active_requirement_versions_view(replay)
+    support_freshness: dict[str, JsonValue] = {}
+    for support_id, support in sorted(support_evidence_view(replay).items()):
+        stale_reason = support.stale_reason
+        if support.status != "active":
+            stale_reason = stale_reason or f"support edge status is {support.status}"
+        elif active_versions.get(support.requirement_id) is None:
+            stale_reason = "requirement has no active version"
+        elif support.requirement_version_id != active_versions[support.requirement_id]:
+            stale_reason = "support edge targets a superseded requirement version"
+        support_freshness[support_id] = {
+            "support_id": support_id,
+            "evidence_id": support.evidence_id,
+            "requirement_id": support.requirement_id,
+            "requirement_version_id": support.requirement_version_id,
+            "status": support.status,
+            "freshness": "fresh" if stale_reason is None else "stale",
+            "stale_reason": stale_reason,
+        }
     return {
         "full_replay": checkpoint,
         "incremental_replay": projection_to_checkpoint(incremental),
@@ -142,7 +162,7 @@ def _replay_views(events: list[Any]) -> dict[str, JsonValue]:
         },
         "verification": {
             "requirements": project_requirement_freshness_facts(events),
-            "support_evidence": project_support_evidence_freshness(events),
+            "support_evidence": support_freshness,
         },
         "governance": project_decision_view(events),
         "recovery": {

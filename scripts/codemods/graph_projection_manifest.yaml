@@ -57,9 +57,9 @@ fields:
   - {old_name: retry_not_before_by_node, new_path: "nodes.*.scheduling.retry_not_before", group: nodes, disposition: canonical, value_type: "dict[str, str | None]", default_policy: empty_map, merge_policy: latest_event_per_node, ordering: insensitive, checkpoint_policy: canonical}
   - {old_name: node_creation_payloads, new_path: nodes, group: nodes, disposition: removed, value_type: "dict[str, NodeCreationProjection]", default_policy: empty_map, merge_policy: project_fields_then_omit_payload, ordering: insensitive, checkpoint_policy: omitted}
   - {old_name: output_record_payloads, new_path: records.by_id, group: records, disposition: canonical, value_type: "dict[str, AcceptedOutputRecordPayload]", default_policy: empty_map, merge_policy: immutable_record_id, ordering: insensitive, checkpoint_policy: canonical}
-  - {old_name: approval_decisions, new_path: governance.approval_decisions_by_node, group: governance, disposition: canonical, value_type: "dict[str, ApprovalDecisionProjection]", default_policy: empty_map, merge_policy: latest_event_per_node, ordering: insensitive, checkpoint_policy: canonical}
-  - {old_name: authority_decisions, new_path: governance.authority_decisions_by_node, group: governance, disposition: canonical, value_type: "dict[str, AuthorityDecisionProjection]", default_policy: empty_map, merge_policy: latest_event_per_node, ordering: insensitive, checkpoint_policy: canonical}
-  - {old_name: oversight_decisions, new_path: governance.oversight_decisions_by_node, group: governance, disposition: canonical, value_type: "dict[str, OversightDecisionProjection]", default_policy: empty_map, merge_policy: latest_event_per_node, ordering: insensitive, checkpoint_policy: canonical}
+  - {old_name: approval_decisions, new_path: governance.approval_decisions_by_id, group: governance, disposition: canonical, value_type: "dict[str, ApprovalDecisionProjection]", default_policy: empty_map, merge_policy: latest_event_per_node, ordering: insensitive, checkpoint_policy: canonical}
+  - {old_name: authority_decisions, new_path: governance.authority_decisions_by_id, group: governance, disposition: canonical, value_type: "dict[str, AuthorityDecisionProjection]", default_policy: empty_map, merge_policy: latest_event_per_node, ordering: insensitive, checkpoint_policy: canonical}
+  - {old_name: oversight_decisions, new_path: governance.oversight_decisions_by_id, group: governance, disposition: canonical, value_type: "dict[str, OversightDecisionProjection]", default_policy: empty_map, merge_policy: latest_event_per_node, ordering: insensitive, checkpoint_policy: canonical}
   - {old_name: decision_request_details, new_path: governance.decision_requests_by_node, group: governance, disposition: canonical, value_type: "dict[str, PendingGateDecisionProjection]", default_policy: empty_map, merge_policy: latest_event_per_node, ordering: insensitive, checkpoint_policy: canonical}
   - {old_name: callback_idempotency_events, new_path: execution.callback_events_by_key, group: execution, disposition: canonical, value_type: "dict[str, CallbackIdempotencyEvent]", default_policy: empty_map, merge_policy: first_write_wins, ordering: insensitive, checkpoint_policy: canonical}
   - {old_name: open_proposal_blockers, new_path: null, group: null, disposition: removed, value_type: "dict[str, FinalInvariantBlocker]", default_policy: empty_map, merge_policy: remove_dormant_checkpoint_only_state_no_event_producer, ordering: insensitive, checkpoint_policy: omitted}
@@ -100,7 +100,8 @@ node_creation_ownership:
   - {field_name: blocker, new_path: "nodes.*.spec.blocker"}
   - {field_name: blocker_reason, new_path: "nodes.*.spec.blocker_reason"}
   - {field_name: decision_request, new_path: "nodes.*.spec.decision_request"}
-  - {field_name: authority_request_record, new_path: "nodes.*.spec.authority_request_record"}
+  - {field_name: authority_request_record, new_path: "records.by_id.*"}
+  - {field_name: authority_request_record_id, new_path: "nodes.*.spec.authority_request_record_id"}
   - {field_name: authority_request, new_path: "nodes.*.spec.authority_request"}
   - {field_name: authority, new_path: "nodes.*.spec.authority"}
   - {field_name: command_definition, new_path: "nodes.*.spec.command_definition"}
@@ -136,6 +137,7 @@ node_creation_fields:
   - blocker_reason
   - decision_request
   - authority_request_record
+  - authority_request_record_id
   - authority_request
   - authority
   - command_definition

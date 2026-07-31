@@ -145,8 +145,8 @@ async def _seed_file_state_report_run(app: Any, run_id: str) -> None:
                             "confidence": 0.92,
                             "rationale": "metadata shape matches test output",
                             "model_id": "fake-small-model",
-                            "input_tokens": 7,
-                            "output_tokens": 2,
+                            "gen_ai_usage_input_tokens": 7,
+                            "gen_ai_usage_output_tokens": 2,
                             "cost_usd": 0.0001,
                             "wall_time_ms": 5,
                         }

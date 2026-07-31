@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 from orchestrator.graph import (
+    action_count_by_node_kind_view,
     execution_count_by_node_kind_view,
     latency_ms_by_node_kind_view,
     recorded_node_usage_keys_view,
@@ -122,6 +123,7 @@ def test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once
         "gen_ai_response_finish_reasons": ["stop"],
         "cost_usd": 0.25,
         "latency_ms": 900,
+        "num_actions": 4,
         "rate_missing": False,
     }
     second_usage_payload = {
@@ -136,9 +138,14 @@ def test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once
 
     projection = initial_projection()
     for event in (
-        _event("node_usage_recorded", usage_payload, 1),
-        _event("node_usage_recorded", second_usage_payload, 2),
-        _event("node_usage_recorded", usage_payload, 3),
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+            1,
+        ),
+        _event("node_usage_recorded", usage_payload, 2),
+        _event("node_usage_recorded", second_usage_payload, 3),
+        _event("node_usage_recorded", usage_payload, 4),
     ):
         projection = reduce_event(projection, event)
 
@@ -150,7 +157,12 @@ def test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once
     assert tokens_by_node_kind_view(projection) == {"worker": 370}
     assert latency_ms_by_node_kind_view(projection) == {"worker": 900}
     assert execution_count_by_node_kind_view(projection) == {"worker": 1}
+    assert action_count_by_node_kind_view(projection) == {"worker": 4}
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
-    assert restored["tokens_by_node"] == {"worker-1": 370}
-    assert restored["recorded_node_usage_keys"] == {"execution-1:0": True, "execution-1:1": True}
+    assert tokens_by_node_view(restored) == {"worker-1": 370}
+    assert recorded_node_usage_keys_view(restored) == {
+        "execution-1:0": True,
+        "execution-1:1": True,
+    }
+    assert action_count_by_node_kind_view(restored) == {"worker": 4}

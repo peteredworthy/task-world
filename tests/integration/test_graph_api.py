@@ -7,7 +7,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from orchestrator.api import append_requeue_audit_event, build_expired_lease_rows
@@ -20,8 +20,15 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
     RunModel,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
-from orchestrator.graph import IdGenerator
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
+    IdGenerator,
+    PatchCommandContext,
+    output_record_payloads_view,
+)
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
 from orchestrator.graph_runtime import (
@@ -81,6 +88,12 @@ def _routine() -> RoutineConfig:
                             "id": "task-1",
                             "title": "Do one thing",
                             "task_context": "Exercise graph projections.",
+                            "requirements": [
+                                {
+                                    "id": "req-1",
+                                    "desc": "The implementation is correct.",
+                                }
+                            ],
                             "verifier": {
                                 "rubric": [
                                     {
@@ -415,6 +428,11 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
         for event in events
         if event.event_type == "node_created" and event.payload.get("node_id") == worker_node
     )
+    requirement_id = next(
+        record.value.id
+        for record in output_record_payloads_view(await controller.read_projection(run_id)).values()
+        if record.record_type == "requirement_record"
+    )
     candidate_id = str(worker_created.payload["candidate_id"])
     task_region_id = str(worker_created.payload["task_region_id"])
     attempt_number = int(worker_created.payload["attempt_number"])
@@ -442,12 +460,14 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
             "base_snapshot_id": worker_lease.payload["base_snapshot_id"],
             "observed_graph_position": acknowledged.projection_position,
             "idempotency_key": f"callback-{worker_node}",
+            "complete_node": False,
             "payload": {
                 "payload_hash": f"hash-{worker_node}",
                 "output_records": [
                     {
                         "record_id": candidate_id,
                         "record_kind": "output",
+                        "record_type": "candidate",
                         "producer_node_id": worker_node,
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
@@ -456,9 +476,21 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
                         "attempt_number": attempt_number,
                         "value": {"summary": "worker output"},
                     },
+                ],
+            },
+        },
+    )
+    async with session_factory() as session:
+        stored_events = await GraphEventStore(session).append_events(
+            run_id,
+            completed_worker.projection_position,
+            [
+                _event(
+                    "file_state_accepted",
                     {
                         "record_id": f"fs-{worker_node}",
                         "record_kind": "file_state",
+                        "record_type": "file_state",
                         "snapshot_id": f"snapshot-{worker_node}",
                         "producer_node_id": worker_node,
                         "verdict": "captured",
@@ -477,13 +509,22 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
                             }
                         ],
                     },
-                ],
-            },
-        },
-    )
+                ),
+                _event(
+                    "node_state_changed",
+                    {
+                        "node_id": worker_node,
+                        "new_state": "completed",
+                        "trigger": "callback_accepted",
+                    },
+                ),
+                _event("lease_released", {"lease_id": worker_lease.payload["lease_id"]}),
+            ],
+        )
+        await session.commit()
     scheduled_verifier = await controller.handle_command(
         run_id,
-        completed_worker.projection_position,
+        stored_events[-1].position,
         "schedule_tick",
         {"max_grants": 1, "lease_seconds": 60},
     )
@@ -520,6 +561,7 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
                     {
                         "record_id": f"verification-{candidate_id}",
                         "record_kind": "verification",
+                        "record_type": "verification_report",
                         "producer_node_id": verifier_node,
                         "port": "verification_report",
                         "schema": "VerificationReport",
@@ -530,7 +572,7 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
                             "outcome": "passed",
                             "grades": [
                                 {
-                                    "requirement_id": "R-1",
+                                    "requirement_id": requirement_id,
                                     "grade": "A",
                                     "reason": "candidate satisfies requirement",
                                 }
@@ -690,7 +732,10 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
                 "candidate_id": "candidate-1",
                 "task_region_id": "step-1/task-1",
                 "record_id": "verification-pass",
-                "value": {"grades": [{"requirement_id": "req-1", "grade": "A", "reason": "met"}]},
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "req-1", "grade": "A", "reason": "met"}],
+                },
             },
         ),
         _event(
@@ -701,7 +746,8 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
                 "task_region_id": "step-1/task-1",
                 "record_id": "verification-failed",
                 "value": {
-                    "grades": [{"requirement_id": "req-2", "grade": "C", "reason": "not met"}]
+                    "outcome": "failed",
+                    "grades": [{"requirement_id": "req-2", "grade": "C", "reason": "not met"}],
                 },
             },
         ),
@@ -711,7 +757,6 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
                 "patch_id": "patch-accepted",
                 "actor_role": "planner",
                 "proposed_by_node_id": "planner-1",
-                "ops": [{"op": "create_node"}],
             },
         ),
         _event(
@@ -1258,7 +1303,7 @@ async def test_active_graph_execution_readback_uses_bounded_summary_paths(
     assert "routine" not in str(node["events"])
 
 
-async def test_graph_projection_routes_recreate_deleted_read_models(
+async def test_graph_projection_routes_durably_repair_deleted_read_models(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
@@ -1277,31 +1322,28 @@ async def test_graph_projection_routes_recreate_deleted_read_models(
         )
         await session.commit()
 
-    projection_resp = await client.get(f"/api/runs/{run_id}/graph")
     scheduler_resp = await client.get(f"/api/runs/{run_id}/graph/scheduler")
-    decisions_resp = await client.get(f"/api/runs/{run_id}/graph/decisions")
-
-    assert projection_resp.status_code == 200
     assert scheduler_resp.status_code == 200
-    assert decisions_resp.status_code == 200
-    assert projection_resp.json()["event_count"] > 0
-    assert scheduler_resp.json()["event_count"] == projection_resp.json()["event_count"]
-    assert decisions_resp.json()["event_count"] == projection_resp.json()["event_count"]
 
     async with session_factory() as session:
-        summary_count = await session.scalar(
-            select(func.count())
-            .select_from(GraphEventSummaryModel)
-            .where(GraphEventSummaryModel.run_id == run_id)
+        repaired_checkpoint = await GraphEventStore(session).read_projection_checkpoint(run_id)
+        assert repaired_checkpoint is not None
+        assert repaired_checkpoint.schema_version == 13
+        await session.execute(
+            delete(GraphProjectionSnapshotModel).where(
+                GraphProjectionSnapshotModel.run_id == run_id
+            )
         )
-        snapshot_count = await session.scalar(
-            select(func.count())
-            .select_from(GraphProjectionSnapshotModel)
-            .where(GraphProjectionSnapshotModel.run_id == run_id)
-        )
+        await session.commit()
 
-    assert summary_count == projection_resp.json()["event_count"]
-    assert snapshot_count == 1
+    decisions_resp = await client.get(f"/api/runs/{run_id}/graph/decisions")
+    assert decisions_resp.status_code == 200
+
+    async with session_factory() as session:
+        repaired_checkpoint = await GraphEventStore(session).read_projection_checkpoint(run_id)
+
+    assert repaired_checkpoint is not None
+    assert repaired_checkpoint.schema_version == 13
 
 
 async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
@@ -1403,10 +1445,16 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
             {
                 "record_id": "plan-1",
                 "record_kind": "output",
+                "record_type": "analysis_summary",
                 "producer_node_id": "planner-s-01",
-                "port": "plan",
-                "schema": "PlannerPacket",
-                "value": {"body": "target planner body"},
+                "port": "planning_summary",
+                "schema": "AnalysisSummary",
+                "value": {
+                    "summary": "target planner body",
+                    "source_record_ids": [],
+                    "lossy": False,
+                    "omitted_details": [],
+                },
             },
         ),
         _event(
@@ -1455,10 +1503,12 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
                 {
                     "record_id": f"noise-{index}",
                     "record_kind": "output",
+                    "record_type": "candidate",
                     "producer_node_id": "noise-worker",
                     "port": "candidate",
                     "schema": "ImplementationCandidate",
-                    "value": {"body": "x" * 4096, "index": index},
+                    "candidate_id": f"noise-{index}",
+                    "value": {"summary": "x" * 4096},
                 },
             )
             for index in range(40)
@@ -1494,7 +1544,7 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
     full_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/planner-s-01?payload_mode=full")
     assert full_resp.status_code == 200
     full = full_resp.json()
-    assert full["output_records"][0]["value"]["body"] == "target planner body"
+    assert full["output_records"][0]["value"]["summary"] == "target planner body"
     assert all(record["producer_node_id"] == "planner-s-01" for record in full["output_records"])
     assert all(
         event["payload"].get("producer_node_id", "planner-s-01") == "planner-s-01"

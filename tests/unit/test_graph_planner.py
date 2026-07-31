@@ -8,7 +8,12 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
+    bound_record_ids,
     initial_projection,
+    input_binding_for_port,
+    node_exists,
+    node_kind,
+    node_state,
     project_planner_chain,
     project_run_state,
     reduce_event,
@@ -27,7 +32,7 @@ def test_planner_lifecycle_states() -> None:
 
     assert accepted[0].event_type == "graph_patch_accepted"
     assert rejected[0].event_type == "graph_patch_rejected"
-    assert _project([*events, *accepted, *rejected])["node_states"]["planner-0"] == "completed"
+    assert node_state(_project([*events, *accepted, *rejected]), "planner-0") == "completed"
 
 
 def test_horizon_patch_creates_region_and_successor() -> None:
@@ -35,16 +40,24 @@ def test_horizon_patch_creates_region_and_successor() -> None:
     accepted = _append(events, _submit_patch(events, "patch-1", _region_ops("planner-1")))
     projection = _project([*events, *accepted])
 
-    assert projection["node_kinds"]["worker-1"] == "worker"
-    assert projection["node_kinds"]["verifier-1"] == "verifier"
-    assert projection["node_kinds"]["planner-1"] == "planner"
-    assert "region_summary" not in projection["input_bindings"].get("planner-1", {})
+    assert node_kind(projection, "worker-1") == "worker"
+    assert node_kind(projection, "verifier-1") == "verifier"
+    assert node_kind(projection, "planner-1") == "planner"
+    assert input_binding_for_port(projection, "planner-1", "region_summary") is None
 
     scheduled = _apply([*events, *accepted], "schedule_tick", {})
-    assert any(
-        event.event_type == "node_deferred"
-        and event.payload
-        == {"node_id": "planner-1", "reason": "missing_required_input:region_summary"}
+    planner_deferrals = [
+        event.payload
+        for event in scheduled
+        if event.event_type == "node_deferred" and event.payload.get("node_id") == "planner-1"
+    ]
+    assert len(planner_deferrals) == 1
+    assert planner_deferrals[0]["reason"] in {
+        "missing_required_input:accepted_file_state",
+        "missing_required_input:region_summary",
+    }
+    assert not any(
+        event.event_type == "lease_granted" and event.payload.get("node_id") == "planner-1"
         for event in scheduled
     )
 
@@ -369,10 +382,8 @@ def test_successor_readiness_via_milestone_records() -> None:
     events = _drive_region_to_accepted(events)
 
     projection = _project(events)
-    assert projection["input_bindings"]["planner-1"]["region_summary"].record_ids == ["summary-1"]
-    assert projection["input_bindings"]["planner-1"]["accepted_file_state"].record_ids == [
-        "file-state-1"
-    ]
+    assert bound_record_ids(projection, "planner-1", "region_summary") == ("summary-1",)
+    assert bound_record_ids(projection, "planner-1", "accepted_file_state") == ("file-state-1",)
 
     scheduled = _apply(
         events,
@@ -436,8 +447,8 @@ def test_parallel_successor_planners_rejected() -> None:
 
     assert [event.event_type for event in rejected] == ["graph_patch_rejected"]
     assert rejected[0].payload["reason"] == "multiple_successor_planners_not_allowed"
-    assert "planner-a" not in projection["node_states"]
-    assert "planner-b" not in projection["node_states"]
+    assert not node_exists(projection, "planner-a")
+    assert not node_exists(projection, "planner-b")
     assert project_planner_chain([*events, *_append(events, rejected)]) == [
         {
             "node_id": "planner-0",
@@ -484,8 +495,8 @@ def test_patch_acceptance_separate_from_planner_completion() -> None:
     projection = _project([*events, *_append(events, rejected)])
 
     assert rejected[0].event_type == "graph_patch_rejected"
-    assert projection["node_states"]["planner-0"] == "completed"
-    assert "worker-1" not in projection["node_states"]
+    assert node_state(projection, "planner-0") == "completed"
+    assert not node_exists(projection, "worker-1")
 
 
 def _planner_events(
@@ -514,6 +525,26 @@ def _planner_events(
                     "role": "planner",
                     "state": "completed",
                     "generation_index": planner_generation,
+                },
+            ),
+            _event(
+                "node_created",
+                {"node_id": "requirement-R-1", "kind": "requirement", "state": "completed"},
+            ),
+            _event(
+                "output_record_accepted",
+                {
+                    "record_id": "requirement-R-1",
+                    "record_kind": "graph_record",
+                    "record_type": "requirement_record",
+                    "producer_node_id": "requirement-R-1",
+                    "port": "requirement",
+                    "schema": "RequirementRecord",
+                    "value": {
+                        "id": "R-1",
+                        "text": "Planner flow requirement",
+                        "source": "routine",
+                    },
                 },
             ),
         ]

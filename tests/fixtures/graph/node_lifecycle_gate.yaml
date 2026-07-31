@@ -1,7 +1,6 @@
 - name: gate_planned_to_ready
   given_events:
     - node_created: {node_id: gate-1, kind: gate, state: planned}
-    - input_bound: {to_node_id: gate-1, input: candidate_and_verdict}
     - node_state_changed: {node_id: gate-1, new_state: ready, trigger: all_gate_inputs_present}
   when_command: null
   then_events: []

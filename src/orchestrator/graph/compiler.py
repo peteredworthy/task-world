@@ -87,6 +87,7 @@ class _Compiler:
     def compile(self) -> list[EventEnvelope]:
         self._create_root()
         self._create_routine_snapshot()
+        self._compile_dynamic_feature_acceptance_requirement()
 
         prior_step_terminals: list[str] = []
         for step_index, step in enumerate(self._routine.steps):
@@ -224,6 +225,50 @@ class _Compiler:
             }
         )
         self._accept_record(snapshot_record.model_dump(mode="json"))
+
+    def _compile_dynamic_feature_acceptance_requirement(self) -> None:
+        if self._dynamic_feature_inputs is None:
+            return
+
+        requirement_node_id = "requirement-dynamic-feature-acceptance"
+        requirement_record = RequirementRecord.model_validate(
+            {
+                "record_id": requirement_node_id,
+                "record_kind": "graph_record",
+                "record_type": "requirement_record",
+                "producer_node_id": requirement_node_id,
+                "port": "requirement",
+                "schema": "RequirementRecord",
+                "value": {
+                    "id": "dynamic_feature_acceptance",
+                    "text": _dynamic_feature_acceptance_text(self._dynamic_feature_inputs),
+                    "desc": _dynamic_feature_acceptance_text(self._dynamic_feature_inputs),
+                    "priority": "critical",
+                    "source": "routine",
+                    "version": "initial",
+                    "must": True,
+                },
+            }
+        )
+        self._node(
+            {
+                "node_id": requirement_node_id,
+                "kind": "requirement",
+                "state": "completed",
+                "role": "requirement",
+                "requirement": requirement_record.value.model_dump(mode="json"),
+                "requirement_record": requirement_record.model_dump(mode="json"),
+                "outputs": [
+                    {
+                        "port": "requirement",
+                        "direction": "output",
+                        "schema": "RequirementRecord",
+                        "record_layers": ["graph_record"],
+                    }
+                ],
+            }
+        )
+        self._accept_record(requirement_record.model_dump(mode="json"))
 
     def _create_step_gate(self, step: StepConfig, step_index: int) -> str | None:
         if step.gate is None:
@@ -664,6 +709,7 @@ class _Compiler:
                     ],
                 }
             )
+            self._accept_record(requirement_record.model_dump(mode="json"))
             self._bind_requirement(requirement_id, worker_id)
             requirement_node_ids.append(requirement_id)
         return requirement_node_ids
@@ -1029,6 +1075,17 @@ def _dynamic_feature_inputs(
     selected.setdefault("patch_budget", 8)
     selected.setdefault("gap_policy_profile", "standard")
     return selected
+
+
+def _dynamic_feature_acceptance_text(dynamic_feature: dict[str, Any]) -> str:
+    parts: list[str] = []
+    content = dynamic_feature.get("feature_spec_content")
+    command = dynamic_feature.get("acceptance_command")
+    if isinstance(content, str) and content.strip():
+        parts.append(content.strip())
+    if isinstance(command, str) and command.strip():
+        parts.append(f"Acceptance command: {command.strip()}")
+    return " ".join(parts) or "Dynamic feature acceptance criteria must be satisfied."
 
 
 def _worker_write_paths(task: TaskConfig) -> list[str]:

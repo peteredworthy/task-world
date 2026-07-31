@@ -7,7 +7,6 @@ from orchestrator.graph import ResourceClaimProjection
 from orchestrator.graph import (
     Actor,
     ActorKind,
-    EdgeProjection,
     EventEnvelope,
     PatchEnvelope,
     PatchOp,
@@ -17,8 +16,8 @@ from orchestrator.graph import (
     resource_claim_dicts,
     validate_patch,
 )
-from orchestrator.graph import GraphProjection, initial_projection
-from tests.unit.graph_test_utils import projection_fixture_replace, projection_fixture_set
+from orchestrator.graph import GraphProjection, build_projection, initial_projection
+from tests.unit.graph_test_utils import event
 
 
 def _patch(
@@ -62,29 +61,27 @@ def _projection(
     edges: dict[str, dict[str, Any]] | None = None,
     resource_claims: dict[str, list[dict[str, Any]]] | None = None,
 ) -> GraphProjection:
-    projection = initial_projection()
-    if node_states is not None:
-        projection = projection_fixture_replace(projection, "node_states", node_states)
-    if node_kinds is not None:
-        projection = projection_fixture_replace(projection, "node_kinds", node_kinds)
-    if node_roles is not None:
-        projection = projection_fixture_replace(projection, "node_roles", node_roles)
-    if edges is not None:
-        projection = projection_fixture_replace(
-            projection,
-            "edges",
-            {edge_id: EdgeProjection.model_validate(edge) for edge_id, edge in edges.items()},
-        )
-    if resource_claims is not None:
-        projection = projection_fixture_replace(
-            projection,
-            "node_resource_claims",
+    node_ids = set(node_states or {}) | set(node_kinds or {}) | set(node_roles or {})
+    node_ids.update(resource_claims or {})
+    events = [
+        event(
+            "node_created",
             {
-                node_id: [ResourceClaimProjection.model_validate(claim) for claim in claims]
-                for node_id, claims in resource_claims.items()
+                "node_id": node_id,
+                "kind": (node_kinds or {}).get(node_id, "worker"),
+                "role": (node_roles or {}).get(node_id),
+                "state": (node_states or {}).get(node_id, "planned"),
+                "resource_claims": (resource_claims or {}).get(node_id, []),
             },
+            position=index,
         )
-    return projection
+        for index, node_id in enumerate(sorted(node_ids))
+    ]
+    events.extend(
+        event("edge_created", edge, position=len(events) + index)
+        for index, edge in enumerate((edges or {}).values())
+    )
+    return build_projection(events)
 
 
 def _validate(
@@ -931,13 +928,10 @@ def test_gap_planner_can_submit_no_op_patch() -> None:
 
 
 def test_gap_planner_no_op_allowed_when_classified_gap_successor_waits() -> None:
-    projection = initial_projection()
-    projection = projection_fixture_set(
-        projection,
-        "edges",
-        ("edge-gap-to-corrective",),
-        EdgeProjection.model_validate(
-            {
+    projection = _projection(
+        node_kinds={"planner-1": "planner", "worker-corrective": "worker"},
+        edges={
+            "edge-gap-to-corrective": {
                 "edge_id": "edge-gap-to-corrective",
                 "from_node_id": "planner-1",
                 "from_port": "gap_classification",
@@ -946,7 +940,7 @@ def test_gap_planner_no_op_allowed_when_classified_gap_successor_waits() -> None
                 "required": True,
                 "dependency_type": "input_binding",
             }
-        ),
+        },
     )
 
     result = _validate(_patch([]), projection=projection, actor_role="gap_planner")

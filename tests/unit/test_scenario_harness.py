@@ -27,7 +27,13 @@ def test_scenario_with_all_expected_events_passes() -> None:
         {
             "name": "node_completed",
             "given_events": [
-                {"node_created": {"node_id": "build-A-1", "kind": "worker"}},
+                {
+                    "node_created": {
+                        "node_id": "build-A-1",
+                        "kind": "worker",
+                        "state": "planned",
+                    }
+                },
                 {
                     "node_state_changed": {
                         "node_id": "build-A-1",
@@ -74,7 +80,15 @@ def test_scenario_detects_missing_then_event() -> None:
     result = run_scenario(
         {
             "name": "missing_event",
-            "given_events": [{"node_created": {"node_id": "build-A-1"}}],
+            "given_events": [
+                {
+                    "node_created": {
+                        "node_id": "build-A-1",
+                        "kind": "worker",
+                        "state": "planned",
+                    }
+                }
+            ],
             "then_events": ["appeal_opened"],
         },
         GraphCommandContext(run_id="run-1", current_graph_position=-1),
@@ -91,7 +105,15 @@ def test_scenario_detects_wrong_payload_in_then_event() -> None:
     result = run_scenario(
         {
             "name": "payload_mismatch",
-            "given_events": [{"node_created": {"node_id": "build-A-1"}}],
+            "given_events": [
+                {
+                    "node_created": {
+                        "node_id": "build-A-1",
+                        "kind": "worker",
+                        "state": "planned",
+                    }
+                }
+            ],
             "then_events": [{"node_created": {"node_id": "build-A-2"}}],
         },
         GraphCommandContext(run_id="run-1", current_graph_position=-1),

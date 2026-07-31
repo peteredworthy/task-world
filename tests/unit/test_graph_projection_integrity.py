@@ -11,17 +11,22 @@ from pydantic import BaseModel, StrictStr
 
 import orchestrator.graph as graph
 from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
     PROJECTED_RECORD_TYPES,
-    ImmutableGraphProjection,
+    GraphProjection,
     ProjectionModel,
     ProjectedRecord,
     ProjectionCheckpointIntegrityError,
     ProjectionRelationPolicyError,
     ProjectionRelationResolverDispatcher,
     RelationPolicy,
+    build_projection,
     discover_projection_identifier_paths,
-    immutable_projection_from_checkpoint,
-    immutable_projection_to_checkpoint,
+    projection_from_checkpoint,
+    projection_to_checkpoint,
     load_projection_relation_policy,
     projection_relation_policy_catalog,
     projection_record_relation_policy_catalog,
@@ -60,14 +65,59 @@ class NestedRecordIndexDiscoveryFixture(ProjectionModel):
 
 
 def _checkpoint() -> dict[str, object]:
-    return immutable_projection_to_checkpoint(final_projection_fixture())
+    return projection_to_checkpoint(final_projection_fixture())
+
+
+def test_checkpoint_round_trip_accepts_lease_observed_without_grant() -> None:
+    event = EventEnvelope(
+        event_id="lease-suspended-1",
+        run_id="run-1",
+        position=1,
+        event_type="lease_suspended",
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=FakeClock().now(),
+        payload={"lease_id": "lease-1"},
+    )
+    projection = build_projection([event])
+    checkpoint = projection_to_checkpoint(projection)
+
+    assert checkpoint["execution"]["leases"] == {
+        "lease-1": {"lease_id": "lease-1", "state": "suspended"}
+    }
+    assert projection_from_checkpoint(checkpoint) == projection
+
+
+@pytest.mark.parametrize("case", ("non-ready", "duplicate", "missing", "out-of-order"))
+def test_checkpoint_ready_index_must_exactly_match_canonical_ready_nodes(case: str) -> None:
+    raw = _checkpoint()
+    nodes = cast(dict[str, Any], raw["nodes"])
+    scheduling = cast(dict[str, Any], raw["scheduling"])
+    if case == "non-ready":
+        nodes["node-1"]["runtime"]["state"] = "planned"
+    elif case == "duplicate":
+        scheduling["ready_node_ids"] = ["node-1", "node-1"]
+    elif case == "missing":
+        scheduling["ready_node_ids"] = []
+    else:
+        nodes["node-2"]["runtime"] = {"state": "ready"}
+        scheduling["ready_node_ids"] = ["node-2", "node-1"]
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        projection_from_checkpoint(raw)
+
+    assert any(
+        diagnostic.path == "scheduling.ready_node_ids"
+        and diagnostic.reason == "must exactly match ready nodes in canonical order"
+        for diagnostic in raised.value.diagnostics
+    )
 
 
 def test_relation_call_site_alias_is_not_public_integrity_evidence() -> None:
     assert not hasattr(graph, "projection_relation_resolver_call_sites")
 
 
-def complete_projection_fixture() -> ImmutableGraphProjection:
+def complete_projection_fixture() -> GraphProjection:
     """A valid checkpoint containing every concrete projected-record visitor type."""
     raw = _checkpoint()
     records = cast(dict[str, Any], raw["records"])
@@ -145,6 +195,7 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
                 cleanup_id="cleanup-1",
                 superseded_by_record_id=referenced_record_id,
                 supersedes_record_id=referenced_record_id,
+                acceptance_identity="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             )
         if record_type == "failure_record":
             item["value"]["lease_id"] = "lease-1"
@@ -166,7 +217,11 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
     cast(dict[str, Any], raw["nodes"])["gate-1"] = {
         "spec": {"node_id": "gate-1", "creation_position": 3, "task_region_id": "task-1"}
     }
-    node["runtime"] = {"candidate_id": "candidate-1", "failed_candidate_id": "candidate-1"}
+    node["runtime"] = {
+        "state": "ready",
+        "candidate_id": "candidate-1",
+        "failed_candidate_id": "candidate-1",
+    }
     node["spec"].update(
         task_region_id="task-1",
         authority_request={
@@ -182,20 +237,7 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
             "target_node_id": "node-1",
             "target_region_id": "task-1",
         },
-        authority_request_record={
-            "record_id": record_id_by_type["authority_request_record"],
-            "record_kind": "graph_record",
-            "record_type": "authority_request_record",
-            "producer_node_id": "node-1",
-            "port": "authority_request_record",
-            "schema": "AuthorityRequest",
-            "value": {
-                "requested_authority": ["graph_write"],
-                "target_node_id": "node-1",
-                "target_region_id": "task-1",
-                "reason": "fixture",
-            },
-        },
+        authority_request_record_id=record_id_by_type["authority_request_record"],
     )
     cast(dict[str, Any], raw["tasks"])["task-1"]["candidates"][0]["supersedes_task_region_ids"] = [
         "task-1"
@@ -213,6 +255,7 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
             }
         }
     }
+    cast(dict[str, Any], raw["topology"])["input_binding_port_order"] = {"node-2": ["input"]}
     cast(dict[str, Any], raw["planning"]).update(
         successor_by_node={"node-1": "node-2"},
         accepted_patch_ids_by_node={"node-1": [referenced_record_id]},
@@ -255,24 +298,26 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
         node_gate_decisions={"node-1": True},
         configured_gates_by_task={"task-1": {"gate-1": True}},
         gate_decisions_by_task={"task-1": {"gate-1": True}},
-        approval_decisions_by_node={
-            "node-1": {
+        approval_decisions_by_id={
+            "approval-1": {
                 "node_id": "node-1",
                 "decision": "approved",
                 "task_region_id": "task-1",
                 "appeal_node_id": "node-1",
             }
         },
-        authority_decisions_by_node={
-            "node-1": {
+        approval_decision_id_by_node={"node-1": "approval-1"},
+        authority_decisions_by_id={
+            "authority-1": {
                 "node_id": "node-1",
                 "decision": "granted",
                 "task_region_id": "task-1",
                 "appeal_node_id": "node-1",
             }
         },
-        oversight_decisions_by_node={
-            "node-1": {
+        authority_decision_id_by_node={"node-1": "authority-1"},
+        oversight_decisions_by_id={
+            "oversight-1": {
                 "node_id": "node-1",
                 "decision": "accepted",
                 "position": 1,
@@ -282,6 +327,7 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
                 "appealed_node_id": "node-1",
             }
         },
+        oversight_decision_id_by_node={"node-1": "oversight-1"},
         decision_requests_by_node={
             "node-1": {
                 "decision_type": "fixture",
@@ -319,11 +365,11 @@ def complete_projection_fixture() -> ImmutableGraphProjection:
             return [replace_record_one(item) for item in value]
         return "file-state-1" if value == "record-1" else value
 
-    return ImmutableGraphProjection.model_validate(replace_record_one(raw))
+    return GraphProjection.model_validate(replace_record_one(raw))
 
 
 COMPLETE_PROJECTION_FIXTURE = complete_projection_fixture()
-COMPLETE_PROJECTION_CHECKPOINT = immutable_projection_to_checkpoint(COMPLETE_PROJECTION_FIXTURE)
+COMPLETE_PROJECTION_CHECKPOINT = projection_to_checkpoint(COMPLETE_PROJECTION_FIXTURE)
 
 
 @dataclass(frozen=True)
@@ -449,9 +495,6 @@ def _consistency_reason(policy_path: str, location: tuple[str | int, ...]) -> st
         "topology.edges.*.edge_id",
         "execution.leases.*.lease_id",
         "execution.cleanup_requests_by_id.*.cleanup_id",
-        "governance.approval_decisions_by_node.*.node_id",
-        "governance.authority_decisions_by_node.*.node_id",
-        "governance.oversight_decisions_by_node.*.node_id",
         "verification.check_results_by_node.*.node_id",
         "verification.failed_results_by_record_id.*.record_id",
         "verification.passed_results_by_record_id.*.record_id",
@@ -510,7 +553,7 @@ def test_complete_fixture_exercises_every_concrete_projected_record_visitor() ->
     assert {type(item) for item in projection.records.by_id.values()} == set(PROJECTED_RECORD_TYPES)
 
 
-def _multi_edge_projection(edge_order: tuple[str, ...]) -> ImmutableGraphProjection:
+def _multi_edge_projection(edge_order: tuple[str, ...]) -> GraphProjection:
     raw = _checkpoint()
     topology = cast(dict[str, Any], raw["topology"])
     edge_values = {
@@ -526,7 +569,7 @@ def _multi_edge_projection(edge_order: tuple[str, ...]) -> ImmutableGraphProject
     topology["edges"] = {edge_id: edge_values[edge_id] for edge_id in edge_order}
     topology["inbound_edge_ids"] = {"node-2": ["edge-2", "edge-1"]}
     topology["outbound_edge_ids"] = {"node-1": ["edge-2", "edge-1"]}
-    return ImmutableGraphProjection.model_validate(raw)
+    return GraphProjection.model_validate(raw)
 
 
 def test_topology_adjacency_integrity_is_independent_of_edge_map_layout() -> None:
@@ -535,9 +578,6 @@ def test_topology_adjacency_integrity_is_independent_of_edge_map_layout() -> Non
 
     validate_projection_integrity(first)
     validate_projection_integrity(second)
-
-    assert first.topology.inbound_edge_ids["node-2"] == ("edge-2", "edge-1")
-    assert second.topology.inbound_edge_ids["node-2"] == ("edge-2", "edge-1")
 
 
 def test_record_indexes_preserve_replay_order_independent_of_record_map_layout() -> None:
@@ -551,12 +591,14 @@ def test_record_indexes_preserve_replay_order_independent_of_record_map_layout()
                     "record_type": "file_state",
                     "producer_node_id": "node-1",
                     "task_region_id": "task-1",
+                    "acceptance_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 },
                 "a-record": {
                     "record_id": "a-record",
                     "record_type": "file_state",
                     "producer_node_id": "node-1",
                     "task_region_id": "task-1",
+                    "acceptance_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 },
             },
             "ids_by_node_port": {"node-1": {"file_state": ["z-record", "a-record"]}},
@@ -574,7 +616,7 @@ def test_record_indexes_preserve_replay_order_independent_of_record_map_layout()
         },
     }
 
-    projection = ImmutableGraphProjection.model_validate(raw)
+    projection = GraphProjection.model_validate(raw)
 
     validate_projection_integrity(projection)
     assert projection.records.ids_by_node_port["node-1"]["file_state"] == (
@@ -612,7 +654,7 @@ def test_record_indexes_reject_duplicate_missing_and_extra_record_ids(
     }
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        validate_projection_integrity(ImmutableGraphProjection.model_validate(raw))
+        validate_projection_integrity(GraphProjection.model_validate(raw))
 
     assert (expected_path, expected_reason) in {
         (diagnostic.path, diagnostic.reason) for diagnostic in raised.value.diagnostics
@@ -624,7 +666,7 @@ def test_record_indexes_reject_existing_node_without_canonical_indexes() -> None
     cast(dict[str, Any], raw["records"])["ids_by_node_port"]["node-2"] = {}
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        validate_projection_integrity(ImmutableGraphProjection.model_validate(raw))
+        validate_projection_integrity(GraphProjection.model_validate(raw))
 
     assert (
         "records.ids_by_node_port.node-2",
@@ -672,9 +714,9 @@ def test_record_indexes_reject_existing_node_without_canonical_indexes() -> None
 def test_topology_adjacency_rejects_duplicate_missing_and_extra_edge_ids(
     edge_ids: list[str], expected: set[tuple[str, str]]
 ) -> None:
-    raw = immutable_projection_to_checkpoint(_multi_edge_projection(("edge-1", "edge-2")))
+    raw = projection_to_checkpoint(_multi_edge_projection(("edge-1", "edge-2")))
     cast(dict[str, Any], raw["topology"])["inbound_edge_ids"] = {"node-2": edge_ids}
-    malformed = ImmutableGraphProjection.model_validate(raw)
+    malformed = GraphProjection.model_validate(raw)
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
         validate_projection_integrity(malformed)
@@ -685,12 +727,12 @@ def test_topology_adjacency_rejects_duplicate_missing_and_extra_edge_ids(
 
 
 def test_topology_adjacency_reports_the_same_invalid_id_at_each_tuple_location() -> None:
-    raw = immutable_projection_to_checkpoint(_multi_edge_projection(("edge-1", "edge-2")))
+    raw = projection_to_checkpoint(_multi_edge_projection(("edge-1", "edge-2")))
     cast(dict[str, Any], raw["topology"])["inbound_edge_ids"] = {
         "node-1": ["missing-edge"],
         "node-2": ["edge-2", "edge-1", "missing-edge"],
     }
-    malformed = ImmutableGraphProjection.model_validate(raw)
+    malformed = GraphProjection.model_validate(raw)
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
         validate_projection_integrity(malformed)
@@ -740,7 +782,7 @@ def test_every_static_resolver_policy_has_an_exact_public_failure_outcome(
             else case.concrete_path
         )
     malformed = cast(
-        ImmutableGraphProjection,
+        GraphProjection,
         _projection_replace(original, case.location, missing, rename_key=case.map_key),
     )
     kind = {
@@ -833,7 +875,7 @@ def test_checkpoint_reports_each_independent_invalid_reference(
     cursor[parts[-1]] = replacement
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     assert expected_path in {diagnostic.path for diagnostic in raised.value.diagnostics}
 
@@ -890,7 +932,7 @@ def test_represented_map_keys_preserve_concrete_reference_diagnostics(
     container[field] = replacement
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     assert {item.path: item.reason for item in raised.value.diagnostics}[expected_path] == (
         expected_reason
@@ -908,7 +950,7 @@ def test_integrity_reports_sorted_complete_diagnostics_without_repairing_input()
     before = deepcopy(raw)
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     diagnostics = raised.value.diagnostics
     assert tuple(diagnostic.path for diagnostic in diagnostics) == tuple(
@@ -921,18 +963,15 @@ def test_integrity_reports_sorted_complete_diagnostics_without_repairing_input()
     assert raw == before
 
 
-def test_node_runtime_candidate_resolves_to_candidate_entity_not_record() -> None:
+def test_node_runtime_candidate_may_name_a_planned_output_before_acceptance() -> None:
     raw = _checkpoint()
-    tasks = cast(dict[str, object], raw["tasks"])
-    task = cast(dict[str, object], tasks["task-1"])
-    task["candidates"] = [{"candidate_id": "candidate-1", "attempt_number": 1, "position": 1}]
     nodes = cast(dict[str, object], raw["nodes"])
     node = cast(dict[str, object], nodes["node-1"])
-    cast(dict[str, object], node["runtime"])["candidate_id"] = "candidate-1"
+    runtime = cast(dict[str, object], node.setdefault("runtime", {}))
+    runtime["candidate_id"] = "planned-candidate"
 
     assert (
-        immutable_projection_from_checkpoint(raw).nodes["node-1"].runtime.candidate_id
-        == "candidate-1"
+        projection_from_checkpoint(raw).nodes["node-1"].runtime.candidate_id == "planned-candidate"
     )
 
 
@@ -963,9 +1002,9 @@ def test_matching_candidate_record_is_a_reference_to_the_task_candidate() -> Non
         "producer_port": "candidate",
     }
 
-    assert immutable_projection_from_checkpoint(raw).records.by_id[
+    assert projection_from_checkpoint(raw).records.by_id["candidate-record-1"].record_id == (
         "candidate-record-1"
-    ].record_id == ("candidate-record-1")
+    )
 
 
 def test_candidate_record_must_reference_the_canonical_candidates_task() -> None:
@@ -998,7 +1037,7 @@ def test_candidate_record_must_reference_the_canonical_candidates_task() -> None
     }
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     assert {item.path: item.reason for item in raised.value.diagnostics}[
         "records.by_id.candidate-record-1.candidate_id"
@@ -1008,13 +1047,6 @@ def test_candidate_record_must_reference_the_canonical_candidates_task() -> None
 @pytest.mark.parametrize(
     ("mutate", "expected_path", "expected_reason"),
     [
-        (
-            lambda raw: cast(dict[str, object], raw["nodes"])["node-1"]["runtime"].update(
-                {"candidate_id": "missing-candidate"}
-            ),
-            "nodes.node-1.runtime.candidate_id",
-            "references missing candidate 'missing-candidate'",
-        ),
         (
             lambda raw: cast(dict[str, object], raw["tasks"])["task-2"].update(
                 {
@@ -1037,7 +1069,7 @@ def test_candidate_relations_resolve_only_to_unique_task_candidates(
     cast(object, mutate)(raw)
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     assert {item.path: item.reason for item in raised.value.diagnostics}[
         expected_path
@@ -1046,8 +1078,9 @@ def test_candidate_relations_resolve_only_to_unique_task_candidates(
 
 def test_oversight_candidate_may_reference_candidate_for_its_task() -> None:
     raw = _checkpoint()
-    cast(dict[str, Any], raw["governance"])["oversight_decisions_by_node"] = {
-        "node-1": {
+    governance = cast(dict[str, Any], raw["governance"])
+    governance["oversight_decisions_by_id"] = {
+        "oversight-1": {
             "node_id": "node-1",
             "decision": "accepted",
             "position": 1,
@@ -1055,8 +1088,42 @@ def test_oversight_candidate_may_reference_candidate_for_its_task() -> None:
             "candidate_id": "candidate-1",
         }
     }
+    governance["oversight_decision_id_by_node"] = {"node-1": "oversight-1"}
 
-    validate_projection_integrity(ImmutableGraphProjection.model_validate(raw))
+    validate_projection_integrity(GraphProjection.model_validate(raw))
+
+
+@pytest.mark.parametrize(
+    ("field", "aliases", "expected_reason"),
+    [
+        (
+            "approval_decision_id_by_node",
+            {"node-1": "missing-decision"},
+            "references missing approval decision 'missing-decision'",
+        ),
+        (
+            "authority_decision_id_by_node",
+            {"node-2": "authority-1"},
+            "must reference a decision for its node",
+        ),
+        (
+            "oversight_decision_id_by_node",
+            {"missing-node": "oversight-1"},
+            "references missing node 'missing-node'",
+        ),
+    ],
+)
+def test_decision_aliases_require_an_existing_same_node_canonical_decision(
+    field: str, aliases: dict[str, str], expected_reason: str
+) -> None:
+    raw = deepcopy(COMPLETE_PROJECTION_CHECKPOINT)
+    cast(dict[str, Any], raw["governance"])[field] = aliases
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        projection_from_checkpoint(raw)
+
+    path = f"governance.{field}.{next(iter(aliases))}"
+    assert {item.path: item.reason for item in raised.value.diagnostics}[path] == expected_reason
 
 
 @pytest.mark.parametrize(
@@ -1086,8 +1153,9 @@ def test_oversight_candidate_rejects_missing_ambiguous_or_cross_task_candidate(
             else []
         ),
     }
-    cast(dict[str, Any], raw["governance"])["oversight_decisions_by_node"] = {
-        "node-1": {
+    governance = cast(dict[str, Any], raw["governance"])
+    governance["oversight_decisions_by_id"] = {
+        "oversight-1": {
             "node_id": "node-1",
             "decision": "accepted",
             "position": 1,
@@ -1097,14 +1165,76 @@ def test_oversight_candidate_rejects_missing_ambiguous_or_cross_task_candidate(
             "candidate_id": candidate_id,
         }
     }
+    governance["oversight_decision_id_by_node"] = {"node-1": "oversight-1"}
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        validate_projection_integrity(ImmutableGraphProjection.model_validate(raw))
+        validate_projection_integrity(GraphProjection.model_validate(raw))
 
     reason = {item.path: item.reason for item in raised.value.diagnostics}[
-        "governance.oversight_decisions_by_node.node-1.candidate_id"
+        "governance.oversight_decisions_by_id.oversight-1.candidate_id"
     ]
     assert reason == expected_reason
+
+
+def test_checkpoint_round_trip_accepts_grade_for_static_routine_requirement() -> None:
+    raw = _checkpoint()
+    records = cast(dict[str, Any], raw["records"])
+    by_id = cast(dict[str, Any], records["by_id"])
+    by_id["routine-requirement-record"] = {
+        "record_id": "routine-requirement-record",
+        "record_type": "requirement_record",
+        "record_kind": "graph_record",
+        "producer_node_id": "node-1",
+        "port": "requirement",
+        "schema": "RequirementRecord",
+        "value": {
+            "id": "req-1",
+            "text": "A static routine requirement",
+            "source": "routine",
+            "version": "initial",
+        },
+    }
+    by_id["verification-report-record"] = {
+        "record_id": "verification-report-record",
+        "record_type": "verification_report",
+        "record_kind": "verification",
+        "producer_node_id": "node-1",
+        "candidate_id": "candidate-1",
+        "task_region_id": "task-1",
+        "outcome": "passed",
+        "value": {
+            "outcome": "passed",
+            "grades": [{"requirement_id": "req-1", "grade": "A"}],
+        },
+    }
+    cast(dict[str, Any], records["ids_by_node_port"])["node-1"].update(
+        {
+            "requirement": ["routine-requirement-record"],
+            "verification_report": ["verification-report-record"],
+        }
+    )
+    cast(dict[str, Any], records["summaries_by_id"]).update(
+        {
+            "routine-requirement-record": {
+                "record_id": "routine-requirement-record",
+                "record_type": "requirement_record",
+                "record_kind": "graph_record",
+                "schema": "RequirementRecord",
+                "producer_node_id": "node-1",
+                "producer_port": "requirement",
+            },
+            "verification-report-record": {
+                "record_id": "verification-report-record",
+                "record_type": "verification_report",
+                "record_kind": "verification",
+                "schema": "VerificationReport",
+                "producer_node_id": "node-1",
+                "producer_port": "verification_report",
+            },
+        }
+    )
+
+    assert projection_from_checkpoint(raw) == GraphProjection.model_validate(raw)
 
 
 @pytest.mark.parametrize(
@@ -1168,7 +1298,7 @@ def test_requirement_relations_enforce_parent_identity_and_grade_membership(
     cast(object, mutate)(raw)
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     assert {item.path: item.reason for item in raised.value.diagnostics}[
         expected_path
@@ -1184,7 +1314,7 @@ def test_secondary_indexes_reject_extra_empty_keys() -> None:
     cast(dict[str, object], topology["inbound_edge_ids"])["node-1"] = []
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     assert {diagnostic.path for diagnostic in raised.value.diagnostics} >= {
         "records.ids_by_node_port.node-1.unused",
@@ -1202,21 +1332,9 @@ def test_secondary_indexes_reject_extra_empty_keys() -> None:
             "references missing cleanup request 'missing-cleanup'",
         ),
         (
-            "nodes.node-1.spec.authority_request_record",
-            {
-                "record_id": "missing-authority-record",
-                "record_kind": "graph_record",
-                "record_type": "authority_request_record",
-                "producer_node_id": "node-1",
-                "port": "authority_request_record",
-                "schema": "AuthorityRequest",
-                "value": {
-                    "requested_authority": ["graph_write"],
-                    "target_node_id": "node-2",
-                    "reason": "needed",
-                },
-            },
-            "nodes.node-1.spec.authority_request_record.record_id",
+            "nodes.node-1.spec.authority_request_record_id",
+            "missing-authority-record",
+            "nodes.node-1.spec.authority_request_record_id",
             "references missing record 'missing-authority-record'",
         ),
     ],
@@ -1234,7 +1352,7 @@ def test_integrity_validates_record_and_node_envelope_cross_family_references(
     cursor[parts[-1]] = value
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     diagnostics = {item.path: item.reason for item in raised.value.diagnostics}
     assert diagnostics[expected_path] == expected_reason
@@ -1293,10 +1411,10 @@ def test_integrity_validates_record_and_node_envelope_cross_family_references(
             "must equal outer task key 'task-1'",
         ),
         (
-            "execution.callback_events_by_key.callback-1.idempotency_key",
+            "execution.callback_events_by_key.node-1\0callback-1.idempotency_key",
             "other-callback",
-            "execution.callback_events_by_key.callback-1.idempotency_key",
-            "must equal map key 'callback-1'",
+            "execution.callback_events_by_key.node-1\0callback-1.idempotency_key",
+            "must form composite map key 'node-1\\x00callback-1'",
         ),
     ],
 )
@@ -1315,7 +1433,7 @@ def test_integrity_reports_exact_cross_family_relation_diagnostics(
         cast(dict[str, object], raw["tasks"])["task-2"] = {"state": "active"}
 
     with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
-        immutable_projection_from_checkpoint(raw)
+        projection_from_checkpoint(raw)
 
     assert {item.path: item.reason for item in raised.value.diagnostics}[
         expected_path
@@ -1330,10 +1448,11 @@ def test_identifier_path_discovery_exactly_matches_reviewed_grouped_and_record_p
 
     catalog = projection_relation_policy_catalog()
     record_catalog = projection_record_relation_policy_catalog()
-    discovered = discover_projection_identifier_paths(ImmutableGraphProjection)
+    discovered = discover_projection_identifier_paths(GraphProjection)
 
-    assert discovered == set(catalog) | set(record_catalog)
-    assert projection_relation_policy_gaps(ImmutableGraphProjection) == frozenset()
+    non_graph_identifier_policies = {"usage.recorded_keys.*.key"}
+    assert discovered == (set(catalog) | set(record_catalog)) - non_graph_identifier_policies
+    assert projection_relation_policy_gaps(GraphProjection) == frozenset()
     assert {
         "records.by_id.*.value.artifact_id",
         "records.by_id.*.base_snapshot_id",
@@ -1573,19 +1692,21 @@ def test_runtime_dispatcher_matches_explicit_collection_member_wildcard() -> Non
     policies = {
         path: catalog[path]
         for path in (
-            "planning.accepted_patch_ids_by_node.*.*",
             "scheduling.ready_node_ids.*",
+            "topology.input_bindings.*.*.record_ids.*",
         )
     }
     calls = _ResolverCalls()
     dispatcher = _runtime_dispatcher(policies, frozenset(policies), calls)
 
     dispatcher.resolve_runtime("node", "scheduling.ready_node_ids[0]", "node-1")
-    dispatcher.resolve_runtime("record", "planning.accepted_patch_ids_by_node.key[0]", "record-1")
+    dispatcher.resolve_runtime(
+        "record", "topology.input_bindings.node-1.input.record_ids[0]", "record-1"
+    )
 
     assert calls.values == [
         ("node-1", "scheduling.ready_node_ids[0]"),
-        ("record-1", "planning.accepted_patch_ids_by_node.key[0]"),
+        ("record-1", "topology.input_bindings.node-1.input.record_ids[0]"),
     ]
 
 
@@ -1725,13 +1846,13 @@ def test_represented_map_keys_are_resolver_policies() -> None:
         "execution.cleanup_requests_by_id.*.key": "cleanup",
         "execution.environment_failures_by_task.*.key": "task",
         "execution.leases.*.key": "lease",
-        "governance.approval_decisions_by_node.*.key": "node",
-        "governance.authority_decisions_by_node.*.key": "node",
+        "governance.approval_decision_id_by_node.*.key": "node",
+        "governance.authority_decision_id_by_node.*.key": "node",
         "governance.configured_gates_by_task.*.key": "task",
         "governance.decision_requests_by_node.*.key": "node",
         "governance.gate_decisions_by_task.*.key": "task",
         "governance.node_gate_decisions.*.key": "node",
-        "governance.oversight_decisions_by_node.*.key": "node",
+        "governance.oversight_decision_id_by_node.*.key": "node",
         "governance.pending_appeals_by_node.*.key": "node",
         "planning.accepted_patch_ids_by_node.*.key": "node",
         "planning.generation_by_node.*.key": "node",
@@ -1745,7 +1866,6 @@ def test_represented_map_keys_are_resolver_policies() -> None:
         "requirements.support_by_id.*.key": "support",
         "topology.edges.*.key": "edge",
         "topology.input_bindings.*.key": "node",
-        "usage.recorded_keys.*.key": "node",
         "usage.tokens_by_node.*.key": "node",
         "verification.check_results_by_node.*.key": "node",
         "verification.failed_candidate_ids.*.key": "candidate",
@@ -1759,6 +1879,11 @@ def test_represented_map_keys_are_resolver_policies() -> None:
     assert {path: policy.family for path, policy in catalog.items() if path in expected} == expected
     assert all(catalog[path].validation == "resolver" for path in expected)
     assert expected.keys() <= projection_relation_validation_paths()
+    recorded_keys_policy = catalog["usage.recorded_keys.*.key"]
+    assert recorded_keys_policy.family == "external"
+    assert recorded_keys_policy.validation == "external"
+    assert "node-usage" in recorded_keys_policy.rationale
+    assert "usage.recorded_keys.*.key" not in projection_relation_validation_paths()
 
 
 def test_relation_policy_is_a_packaged_graph_resource() -> None:
@@ -1837,3 +1962,75 @@ def test_static_relation_policy_loader_rejects_invalid_checked_data(
 ) -> None:
     with pytest.raises(ValueError, match=message):
         load_projection_relation_policy(_write_policy(tmp_path, body))
+
+
+@pytest.mark.parametrize(
+    ("identity", "reason"),
+    [
+        (None, "must contain a lowercase 64-character SHA-256 acceptance identity"),
+        ("A" * 64, "must contain a lowercase 64-character SHA-256 acceptance identity"),
+        ("a" * 63, "must contain a lowercase 64-character SHA-256 acceptance identity"),
+    ],
+)
+def test_checkpoint_file_state_records_require_valid_acceptance_identity(
+    identity: str | None, reason: str
+) -> None:
+    raw = _checkpoint()
+    record = cast(dict[str, Any], cast(dict[str, Any], raw["records"])["by_id"])["record-1"]
+    if identity is None:
+        record.pop("acceptance_identity")
+    else:
+        record["acceptance_identity"] = identity
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        projection_from_checkpoint(raw)
+
+    assert any(
+        diagnostic.path == "records.by_id.record-1.acceptance_identity"
+        and diagnostic.reason == reason
+        for diagnostic in raised.value.diagnostics
+    )
+
+
+@pytest.mark.parametrize(
+    ("order", "reason"),
+    [
+        (None, "must have an input-binding port order entry"),
+        (["input", "input"], "must not repeat input-binding ports"),
+        (["other"], "must exactly contain input-binding ports for its node"),
+    ],
+)
+def test_checkpoint_input_binding_port_order_closes_over_binding_nodes(
+    order: list[str] | None, reason: str
+) -> None:
+    raw = projection_to_checkpoint(complete_projection_fixture())
+    topology = cast(dict[str, Any], raw["topology"])
+    port_order = cast(dict[str, Any], topology["input_binding_port_order"])
+    if order is None:
+        port_order.pop("node-2")
+    else:
+        port_order["node-2"] = order
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        projection_from_checkpoint(raw)
+
+    assert any(
+        diagnostic.path == "topology.input_binding_port_order.node-2"
+        and diagnostic.reason == reason
+        for diagnostic in raised.value.diagnostics
+    )
+
+
+def test_checkpoint_rejects_orphan_input_binding_port_order_entry() -> None:
+    raw = _checkpoint()
+    topology = cast(dict[str, Any], raw["topology"])
+    topology["input_binding_port_order"] = {"node-1": ["orphan"]}
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        projection_from_checkpoint(raw)
+
+    assert any(
+        diagnostic.path == "topology.input_binding_port_order.node-1"
+        and diagnostic.reason == "is not a canonical input-binding key"
+        for diagnostic in raised.value.diagnostics
+    )

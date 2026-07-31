@@ -123,10 +123,10 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "callback_accepted": _spec(
             "callback_accepted",
-            projection="execution_id lease_id node_id reason",
+            projection="execution_id idempotency_key lease_generation lease_id node_id payload reason",
             light="execution_id lease_generation lease_id node_id reason",
             summary="execution_id idempotency_key lease_generation lease_id node_id payload reason",
-            node_detail="execution_id lease_generation lease_id node_id reason",
+            node_detail="execution_id idempotency_key lease_generation lease_id node_id reason",
         ),
         "callback_duplicate_returned": _spec(
             "callback_duplicate_returned",
@@ -212,14 +212,14 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "graph_patch_accepted": _spec(
             "graph_patch_accepted",
-            projection="carryover_record_id session_id",
+            projection="carryover_record_id patch_id proposed_by_node_id session_id successor_planner_node_ids",
             light="patch_id proposed_by_node_id session_id successor_planner_node_ids",
             summary="actor_role patch_id proposed_by_node_id session_id successor_planner_node_ids",
             node_detail="session_id",
         ),
         "graph_patch_rejected": _spec(
             "graph_patch_rejected",
-            projection="reason",
+            projection="patch_id reason",
             light="patch_id proposed_by_node_id reason",
             summary="actor_role patch_id proposed_by_node_id reason rejection_reason",
             node_detail="reason",
@@ -232,7 +232,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
             projection="binding_policy bound_at_position edge_id record_bound_positions record_ids supersedes_record_id to_node_id to_port trigger",
             light="binding_policy bound_at_position edge_id record_bound_positions record_ids supersedes_record_id to_node_id to_port trigger",
             summary="binding_policy bound_at_position edge_id record_bound_positions record_ids supersedes_record_id to_node_id to_port trigger",
-            node_detail="binding_policy edge_id record_ids supersedes_record_id to_node_id to_port trigger",
+            node_detail="binding_policy bound_at_position edge_id record_ids supersedes_record_id to_node_id to_port trigger",
         ),
         "lease_expired": _same(
             "lease_expired", "execution_id expires_at generation lease_id node_id reason"
@@ -275,6 +275,13 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         "node_usage_recorded": _same(
             "node_usage_recorded",
             "cost_usd execution_id gen_ai_response_finish_reasons gen_ai_usage_cache_creation_input_tokens gen_ai_usage_cache_read_input_tokens gen_ai_usage_input_tokens gen_ai_usage_output_tokens gen_ai_usage_reasoning_output_tokens latency_ms model node_id node_kind node_role num_actions profile rate_missing usage_count usage_index usage_key",
+        ),
+        "outbox_requeued": _spec(
+            "outbox_requeued",
+            projection="",
+            light="",
+            summary="event_id graph_position kind operator outbox_id previous_attempts previous_last_error previous_status run_id",
+            node_detail="",
         ),
         "output_record_accepted": _spec(
             "output_record_accepted",

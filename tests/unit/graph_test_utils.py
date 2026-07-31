@@ -1,121 +1,14 @@
-from copy import deepcopy
 from datetime import datetime, timezone
-from collections.abc import Mapping, Sequence
-from typing import Any, cast
-
-from pydantic import BaseModel
-from pydantic_core import to_jsonable_python
+from typing import Any
 
 from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
     GraphCommandContext,
-    GraphProjection,
     PatchCommandContext,
     apply_command as apply_strict_command,
-    initial_projection,
-    projection_from_checkpoint,
-    projection_to_checkpoint,
 )
-
-
-def _fixture_checkpoint(projection: GraphProjection) -> dict[str, Any]:
-    try:
-        checkpoint = to_jsonable_python(projection_to_checkpoint(projection))
-    except (AttributeError, TypeError, ValueError):
-        checkpoint = to_jsonable_python(cast(dict[str, Any], projection))
-    if not isinstance(checkpoint, dict):
-        raise TypeError("projection checkpoint must be a mapping")
-    normalized = cast(dict[str, Any], checkpoint)
-    projection_from_checkpoint(normalized)
-    return normalized
-
-
-def _require_fixture_field(field: str) -> None:
-    if field not in initial_projection():
-        raise KeyError(f"unknown graph projection fixture field: {field}")
-
-
-def _normalize_fixture_value(value: object) -> Any:
-    if isinstance(value, BaseModel):
-        return value.model_copy(deep=True)
-    if isinstance(value, Mapping):
-        if any(not isinstance(key, str) for key in value):
-            raise TypeError("fixture mapping keys must contain only strings")
-        return {key: _normalize_fixture_value(item) for key, item in value.items()}
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
-        return [_normalize_fixture_value(item) for item in value]
-    return to_jsonable_python(value)
-
-
-def _fixture_projection(projection: GraphProjection) -> GraphProjection:
-    _fixture_checkpoint(projection)
-    return cast(GraphProjection, deepcopy(cast(dict[str, Any], projection)))
-
-
-def projection_fixture_replace(
-    projection: GraphProjection, field: str, value: object
-) -> GraphProjection:
-    _require_fixture_field(field)
-    replaced = _fixture_projection(projection)
-    cast(dict[str, Any], replaced)[field] = _normalize_fixture_value(value)
-    return replaced
-
-
-def projection_fixture_set(
-    projection: GraphProjection,
-    field: str,
-    keys: Sequence[str],
-    value: object,
-) -> GraphProjection:
-    _require_fixture_field(field)
-    if isinstance(keys, (str, bytes)) or not keys:
-        raise ValueError("fixture mapping keys must be a nonempty sequence of strings")
-    if any(not isinstance(key, str) for key in keys):
-        raise TypeError("fixture mapping keys must contain only strings")
-    replaced = _fixture_projection(projection)
-    root = cast(dict[str, Any], replaced)[field]
-    if not isinstance(root, Mapping):
-        raise TypeError(f"fixture field {field!r} must be a mapping")
-    replacement: dict[str, Any] = dict(root)
-    cast(dict[str, Any], replaced)[field] = replacement
-    current = replacement
-    for key in keys[:-1]:
-        nested = current.get(key)
-        if not isinstance(nested, Mapping):
-            raise TypeError(f"fixture key {key!r} must traverse a mapping")
-        cloned = dict(nested)
-        current[key] = cloned
-        current = cloned
-    current[keys[-1]] = _normalize_fixture_value(value)
-    return replaced
-
-
-def projection_fixture_update(
-    projection: GraphProjection, field: str, values: Mapping[str, object]
-) -> GraphProjection:
-    _require_fixture_field(field)
-    replaced = _fixture_projection(projection)
-    current = cast(dict[str, Any], replaced)[field]
-    if not isinstance(current, Mapping):
-        raise TypeError(f"fixture field {field!r} must be a mapping")
-    if not isinstance(values, Mapping):
-        raise TypeError("fixture update values must be a mapping")
-    cast(dict[str, Any], replaced)[field] = {**current, **_normalize_fixture_value(values)}
-    return replaced
-
-
-def projection_fixture_append(
-    projection: GraphProjection, field: str, value: object
-) -> GraphProjection:
-    _require_fixture_field(field)
-    replaced = _fixture_projection(projection)
-    current = cast(dict[str, Any], replaced)[field]
-    if not isinstance(current, list):
-        raise TypeError(f"fixture field {field!r} must be a list")
-    cast(dict[str, Any], replaced)[field] = [*current, _normalize_fixture_value(value)]
-    return replaced
 
 
 def command_context(

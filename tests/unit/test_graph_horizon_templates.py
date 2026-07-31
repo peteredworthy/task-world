@@ -4,14 +4,20 @@ from typing import Any
 
 import pytest
 
-from orchestrator.graph import PLANNER_OPS, PatchEnvelope, initial_projection, validate_patch
+from orchestrator.graph import (
+    PLANNER_OPS,
+    PatchEnvelope,
+    build_projection,
+    initial_projection,
+    validate_patch,
+)
 from orchestrator.graph import GraphProjection
 from orchestrator.graph_runtime import (
     HORIZON_REGION_PURPOSES,
     horizon_region_templates,
     instantiate_horizon_template,
 )
-from tests.unit.graph_test_utils import projection_fixture_set
+from tests.unit.graph_test_utils import event
 
 
 def test_horizon_templates_include_required_purposes_with_allowed_ops() -> None:
@@ -175,7 +181,11 @@ def _projection_for_template(purpose: str, region_id: str) -> GraphProjection:
     if upstream is None:
         return projection
     node_id, kind, role = upstream
-    projection = projection_fixture_set(projection, "node_kinds", (node_id,), kind)
-    projection = projection_fixture_set(projection, "node_roles", (node_id,), role)
-    projection = projection_fixture_set(projection, "node_states", (node_id,), "completed")
-    return projection
+    return build_projection(
+        [
+            event(
+                "node_created",
+                {"node_id": node_id, "kind": kind, "role": role, "state": "completed"},
+            )
+        ]
+    )

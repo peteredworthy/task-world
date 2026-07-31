@@ -10,12 +10,12 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     GraphProjection,
-    LeaseProjection,
-    initial_projection,
+    build_projection,
     reduce_event,
+    run_state,
     validate_callback,
 )
-from tests.unit.graph_test_utils import projection_fixture_replace
+from tests.unit.graph_test_utils import event
 
 
 def _projection(
@@ -24,11 +24,6 @@ def _projection(
     node_states: dict[str, str] | None = None,
     leases: dict[str, dict[str, Any]] | None = None,
 ) -> GraphProjection:
-    projection = initial_projection()
-    projection = projection_fixture_replace(projection, "run_state", run_state)
-    projection = projection_fixture_replace(
-        projection, "node_states", node_states or {"worker-1": "running"}
-    )
     raw_leases = leases or {
         "lease-1": {
             "lease_id": "lease-1",
@@ -39,12 +34,38 @@ def _projection(
             "base_snapshot_id": "snapshot-1",
         }
     }
-    projection = projection_fixture_replace(
-        projection,
-        "leases",
-        {lease_id: LeaseProjection.model_validate(lease) for lease_id, lease in raw_leases.items()},
+    events = []
+    if run_state is not None:
+        events.append(event("run_lifecycle_changed", {"to_state": run_state}, position=0))
+    events.extend(
+        event(
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": state},
+            position=index,
+        )
+        for index, (node_id, state) in enumerate(
+            (node_states or {"worker-1": "running"}).items(), start=len(events)
+        )
     )
-    return projection
+    for lease in raw_leases.values():
+        position = len(events)
+        events.append(
+            event(
+                "lease_granted",
+                {key: value for key, value in lease.items() if key != "state"},
+                position=position,
+            )
+        )
+        state = lease["state"]
+        if state != "active":
+            events.append(
+                event(f"lease_{state}", {"lease_id": lease["lease_id"]}, position=position + 1)
+            )
+    return build_projection(events)
+
+
+def test_projection_without_run_state_omits_lifecycle_event() -> None:
+    assert run_state(_projection(run_state=None)) is None
 
 
 def _request(
