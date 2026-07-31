@@ -1,13 +1,35 @@
+import ast
+from collections import deque
+from collections.abc import MutableMapping
 from pathlib import Path
 import subprocess
+from typing import Annotated, Literal
 
 import pytest
+import yaml
+from pydantic import ConfigDict, create_model
 
 from scripts.check_graph_projection_boundaries import (
     ALLOWED_STORAGE_READERS,
     check_projection_boundaries,
+    projection_annotation_violations,
+    projection_event_dispatch_types,
+    projected_record_owner_paths,
     has_projection_provenance_seed,
 )
+from orchestrator.graph import (
+    CANONICAL_EVENT_TYPES,
+    FrozenMap,
+    PROJECTION_NEUTRAL_EVENT_TYPES,
+    GraphProjection,
+    ProjectedCandidateRecord,
+    ProjectionModel,
+    RecordStore,
+)
+
+
+_ROOT = Path(__file__).parents[2]
+_GRAPH_ROOT = _ROOT / "src/orchestrator/graph"
 
 
 def test_boundary_guard_rejects_legacy_access_mutation_and_submodule_import(tmp_path: Path) -> None:
@@ -167,6 +189,36 @@ from orchestrator.graph.projection_queries import run_state
         "forbidden_graph_submodule_import",
         "forbidden_graph_submodule_import",
     ]
+
+
+def test_boundary_guard_rejects_relative_external_graph_submodule_import(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("from ..graph.projection_queries import run_state\n")
+
+    violations = check_projection_boundaries(tmp_path, paths=(source,))
+
+    assert [item.code for item in violations] == ["forbidden_graph_submodule_import"]
+
+
+def test_boundary_guard_rejects_relative_external_graph_public_import(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("from ..graph import run_state\n")
+
+    violations = check_projection_boundaries(tmp_path, paths=(source,))
+
+    assert [item.code for item in violations] == ["forbidden_graph_submodule_import"]
+
+
+def test_boundary_guard_rejects_relative_graph_package_import(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("from .. import graph as graph_api\n")
+
+    violations = check_projection_boundaries(tmp_path, paths=(source,))
+
+    assert [item.code for item in violations] == ["forbidden_graph_submodule_import"]
 
 
 def test_boundary_guard_applies_only_the_exact_physical_storage_allowlist(tmp_path: Path) -> None:
@@ -341,3 +393,523 @@ def mutate(projection: GraphProjection) -> None:
     violations = check_projection_boundaries(tmp_path, paths=(source,))
 
     assert any(item.code == "mutable_projection_operation" for item in violations)
+
+
+def test_graph_projection_has_no_legacy_typeddict_or_clone_helper() -> None:
+    projection_model_source = (_GRAPH_ROOT / "projection_models.py").read_text()
+    projection_source = (_GRAPH_ROOT / "projections.py").read_text()
+
+    assert "TypedDict" not in projection_model_source
+    assert "_clone_projection" not in projection_source
+
+
+def test_graph_projection_root_groups_are_exact() -> None:
+    assert tuple(GraphProjection.model_fields) == (
+        "lifecycle",
+        "nodes",
+        "tasks",
+        "topology",
+        "records",
+        "scheduling",
+        "planning",
+        "verification",
+        "governance",
+        "requirements",
+        "execution",
+        "usage",
+    )
+
+
+def test_projection_annotation_guard_accepts_only_recursive_immutable_forms() -> None:
+    class ImmutableChild(ProjectionModel):
+        value: Annotated[tuple[Literal["ready"], ...], "metadata"] = ()
+
+    class ImmutableRoot(ProjectionModel):
+        child: ImmutableChild = ImmutableChild()
+        index: FrozenMap[str, frozenset[str]] = FrozenMap()
+
+    assert not projection_annotation_violations(ImmutableRoot)
+    assert not projection_annotation_violations(GraphProjection)
+
+
+def test_projection_annotation_guard_does_not_trust_recursive_alias_by_identity() -> None:
+    checker_tree = ast.parse((_ROOT / "scripts/check_graph_projection_boundaries.py").read_text())
+    graph_imports = {
+        alias.name
+        for node in ast.walk(checker_tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "orchestrator.graph"
+        for alias in node.names
+    }
+
+    assert "FrozenJsonValue" not in graph_imports
+
+
+@pytest.mark.parametrize("annotation", (deque[str], MutableMapping[str, str], dict[str, str]))
+def test_projection_annotation_guard_rejects_mutable_or_unknown_containers(
+    annotation: object,
+) -> None:
+    MutableRoot = create_model("MutableRoot", __base__=ProjectionModel, value=(annotation, ...))
+
+    assert projection_annotation_violations(MutableRoot)
+
+
+def test_projection_annotation_guard_rejects_mutable_custom_class() -> None:
+    class MutableCustom:
+        value: str
+
+    class MutableRoot(ProjectionModel):
+        model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+        value: MutableCustom
+
+    assert projection_annotation_violations(MutableRoot)
+
+
+def test_projection_annotation_guard_rejects_recursive_generic_alias_mutation() -> None:
+    type MutableRecursive[Value] = Value | MutableRecursive[list[Value]]
+
+    class MutableRoot(ProjectionModel):
+        model_config = ConfigDict(frozen=True, defer_build=True)
+        value: MutableRecursive[str]
+
+    assert projection_annotation_violations(MutableRoot)
+
+
+def test_projected_record_owner_guard_allows_only_record_store_by_id() -> None:
+    assert projected_record_owner_paths(GraphProjection) == frozenset({"records.by_id"})
+    assert RecordStore.model_fields["by_id"].annotation is not None
+
+
+def test_projected_record_owner_guard_rejects_concrete_duplicate_owner() -> None:
+    class DuplicateOwner(ProjectionModel):
+        records: FrozenMap[str, ProjectedCandidateRecord] = FrozenMap()
+
+    assert projected_record_owner_paths(DuplicateOwner) == frozenset({"records"})
+
+
+def test_projected_record_owner_guard_checks_frozen_map_keys() -> None:
+    class DuplicateKeyOwner(ProjectionModel):
+        records: FrozenMap[ProjectedCandidateRecord, str] = FrozenMap()
+
+    assert projected_record_owner_paths(DuplicateKeyOwner) == frozenset({"records.key"})
+
+
+def test_projected_record_owner_guard_expands_specialized_pep695_aliases() -> None:
+    type OwnerAlias[Record] = FrozenMap[str, Record]
+
+    class DuplicateAliasOwner(ProjectionModel):
+        records: OwnerAlias[ProjectedCandidateRecord] = FrozenMap()
+
+    assert projected_record_owner_paths(DuplicateAliasOwner) == frozenset({"records"})
+
+
+def test_projected_record_owner_guard_checks_recursive_generic_alias_arguments() -> None:
+    type RecursiveOwner[Value] = Value | RecursiveOwner[ProjectedCandidateRecord]
+
+    class DuplicateRecursiveOwner(ProjectionModel):
+        model_config = ConfigDict(frozen=True, defer_build=True)
+        records: RecursiveOwner[str]
+
+    assert projected_record_owner_paths(DuplicateRecursiveOwner) == frozenset({"records"})
+
+
+def test_event_dispatch_guard_respects_branch_constraints() -> None:
+    source = """
+def reduce_event(state, event):
+    if event.event_type == "handled":
+        return reduce_family(state, event)
+    return state
+
+def reduce_family(state, event):
+    if event.event_type in {"family_a", "family_b"}:
+        return state
+    return state
+
+def unrelated():
+    return "unrelated_canonical_event"
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset({"handled"})
+
+
+def test_event_dispatch_guard_ignores_nested_function_literals() -> None:
+    source = """
+def reduce_event(state, event):
+    if event.event_type == "handled":
+        return state
+
+    def nested():
+        if event.event_type == "nested_only":
+            return state
+
+    return state
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset({"handled"})
+
+
+def test_event_dispatch_guard_ignores_helper_calls_without_dispatch_outcome() -> None:
+    source = """
+def reduce_event(state, event):
+    inspect_event(event)
+    if event.event_type == "handled":
+        return state
+    return state
+
+def inspect_event(event):
+    if event.event_type == "observed_only":
+        return "diagnostic"
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset({"handled"})
+
+
+def test_event_dispatch_guard_ignores_statically_unreachable_returns() -> None:
+    source = """
+def reduce_event(state, event):
+    if event.event_type == "handled":
+        return state
+    if event.event_type == "unreachable":
+        if False:
+            return state
+    raise ValueError
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset({"handled"})
+
+
+def test_event_dispatch_guard_ignores_statements_after_terminal_outcome() -> None:
+    source = """
+def reduce_event(state, event):
+    raise ValueError
+    if event.event_type == "after_raise":
+        return state
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_counts_only_literals_with_returning_paths() -> None:
+    source = """
+def reduce_event(state, event):
+    if event.event_type in {"partial_a", "partial_b"}:
+        if event.event_type == "partial_a":
+            return state
+    raise ValueError
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset({"partial_a"})
+
+
+def test_event_dispatch_guard_ignores_chained_event_comparisons() -> None:
+    source = """
+def reduce_event(state, event):
+    if event.event_type == "node_created" == "edge_created":
+        return state
+    raise ValueError
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_discarded_calls_inside_return_expression() -> None:
+    source = """
+def reduce_event(state, event):
+    return (inspect_event(event), state)[1]
+
+def inspect_event(event):
+    if event.event_type == "observed_only":
+        return "diagnostic"
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_negative_index_discarded_calls() -> None:
+    source = """
+def reduce_event(state, event):
+    return (inspect_event(event), state)[-1]
+
+def inspect_event(event):
+    if event.event_type == "observed_only":
+        return "diagnostic"
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+@pytest.mark.parametrize("index_setup", ("index = 1", "index = dynamic_index"))
+def test_event_dispatch_guard_fails_closed_for_unknown_sequence_index(
+    index_setup: str,
+) -> None:
+    source = f"""
+def reduce_event(state, event, dynamic_index):
+    {index_setup}
+    return (inspect_event(event), state)[index]
+
+def inspect_event(event):
+    if event.event_type == "observed_only":
+        return "diagnostic"
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_statically_unselected_expressions() -> None:
+    source = """
+def reduce_event(state, event):
+    return state if True else inspect_event(event)
+
+def inspect_event(event):
+    if event.event_type == "observed_only":
+        return "diagnostic"
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_statically_short_circuited_calls() -> None:
+    source = """
+def reduce_event(state, event):
+    return True or inspect_event(event)
+
+def inspect_event(event):
+    if event.event_type == "observed_only":
+        return "diagnostic"
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_unselected_mapping_values() -> None:
+    source = """
+def reduce_event(state, event):
+    return {"kept": state, "discarded": inspect_event(event)}["kept"]
+
+def inspect_event(event):
+    if event.event_type == "observed_only":
+        return "diagnostic"
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    (
+        "ignore(inspect_event(event), state)",
+        "(lambda ignored, state: state)(inspect_event(event), state)",
+        "_finalize_projection(inspect_event(event), state)",
+    ),
+)
+def test_event_dispatch_guard_ignores_discarded_call_arguments(wrapper: str) -> None:
+    source = f"""
+def reduce_event(state, event):
+    return {wrapper}
+
+def ignore(value, state):
+    return state
+
+def _finalize_projection(value, state):
+    return state
+
+def inspect_event(event):
+    if event.event_type == "observed_only":
+        return "diagnostic"
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_overwritten_helper_results() -> None:
+    source = """
+def reduce_event(state, event):
+    result = reduce_family(state, event)
+    result = None
+    if result is not None:
+        return result
+    raise ValueError
+
+def reduce_family(state, event):
+    if event.event_type == "ghost":
+        return state
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+@pytest.mark.parametrize(
+    "overwrite",
+    (
+        "if True:\n        result = None",
+        "if condition:\n        result = None\n    else:\n        result = None",
+    ),
+)
+def test_event_dispatch_guard_ignores_results_overwritten_on_every_branch(
+    overwrite: str,
+) -> None:
+    source = f"""
+def reduce_event(state, event, condition):
+    result = reduce_family(state, event)
+    {overwrite}
+    if result is not None:
+        return result
+    raise ValueError
+
+def reduce_family(state, event):
+    if event.event_type == "ghost":
+        return state
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+@pytest.mark.parametrize(
+    ("signature", "binding"),
+    (
+        ("state, event, reduce_family", ""),
+        ("state, event", "reduce_family = always_raises"),
+    ),
+)
+def test_event_dispatch_guard_ignores_shadowed_top_level_helpers(
+    signature: str,
+    binding: str,
+) -> None:
+    source = f"""
+def reduce_event({signature}):
+    {binding}
+    result = reduce_family(state, event)
+    if result is not None:
+        return result
+    raise ValueError
+
+def always_raises(state, event):
+    raise ValueError
+
+def reduce_family(state, event):
+    if event.event_type == "ghost":
+        return state
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_rebound_module_helpers() -> None:
+    source = """
+def reduce_event(state, event):
+    result = reduce_family(state, event)
+    if result is not None:
+        return result
+    raise ValueError
+
+def reduce_family(state, event):
+    if event.event_type == "ghost":
+        return state
+    return None
+
+def always_raises(state, event):
+    raise ValueError
+
+reduce_family = always_raises
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_decorated_helpers() -> None:
+    source = """
+def replace_with_raising(function):
+    return always_raises
+
+def reduce_event(state, event):
+    result = reduce_family(state, event)
+    if result is not None:
+        return result
+    raise ValueError
+
+@replace_with_raising
+def reduce_family(state, event):
+    if event.event_type == "ghost":
+        return state
+    return None
+
+def always_raises(state, event):
+    raise ValueError
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_chained_result_comparisons() -> None:
+    source = """
+def reduce_event(state, event):
+    result = reduce_family(state, event)
+    if result is not None is False:
+        return result
+    raise ValueError
+
+def reduce_family(state, event):
+    if event.event_type == "ghost":
+        return state
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_event_dispatch_guard_ignores_pattern_capture_shadowing() -> None:
+    source = """
+def reduce_event(state, event, value):
+    match value:
+        case reduce_family:
+            pass
+    result = reduce_family(state, event)
+    if result is not None:
+        return result
+    raise ValueError
+
+def reduce_family(state, event):
+    if event.event_type == "ghost":
+        return state
+    return None
+"""
+
+    assert projection_event_dispatch_types(source) == frozenset()
+
+
+def test_actual_event_dispatch_and_projection_neutral_events_cover_canonical_events() -> None:
+    projection_source = (_GRAPH_ROOT / "projections.py").read_text()
+
+    assert CANONICAL_EVENT_TYPES == (
+        projection_event_dispatch_types(projection_source) | PROJECTION_NEUTRAL_EVENT_TYPES
+    )
+
+
+def test_graph_projection_boundary_hook_is_permanent_and_exact() -> None:
+    repositories = yaml.safe_load((_ROOT / ".pre-commit-config.yaml").read_text())["repos"]
+    local_repository = next(
+        repository for repository in repositories if repository["repo"] == "local"
+    )
+    boundary_hooks = [
+        hook for hook in local_repository["hooks"] if hook["id"] == "graph-projection-boundaries"
+    ]
+
+    assert boundary_hooks == [
+        {
+            "id": "graph-projection-boundaries",
+            "name": "graph-projection-boundaries",
+            "entry": "uv run python scripts/check_graph_projection_boundaries.py",
+            "language": "system",
+            "pass_filenames": False,
+        }
+    ]

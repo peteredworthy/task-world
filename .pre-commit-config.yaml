@@ -21,6 +21,11 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: graph-projection-boundaries
+        name: graph-projection-boundaries
+        entry: uv run python scripts/check_graph_projection_boundaries.py
+        language: system
+        pass_filenames: false
       - id: pytest
         name: pytest
         entry: uv run pytest -x -n auto --dist worksteal --timeout=30
