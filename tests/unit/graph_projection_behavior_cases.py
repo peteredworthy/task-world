@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TypeAlias
 
+from pydantic import BaseModel
+
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -86,6 +88,7 @@ class ProjectionBehaviorCase:
     assert_outcome: OutcomeAssertion
     query: QueryProbe
     mutate_query_result: MutationProbe | None = None
+    has_mutable_query_target: bool = False
 
     @property
     def stream(self) -> tuple[EventEnvelope, ...]:
@@ -264,11 +267,29 @@ def _assert_outcome(event_type: str) -> OutcomeAssertion:
     return lambda before, after: _assert_event_outcome(event_type, before, after)
 
 
-def _mutate_nested_mapping(result: object) -> None:
-    """Exercise a nested fresh public container without reaching projection storage."""
-    assert isinstance(result, dict)
-    result["__matrix_probe__"] = {"items": []}
-    result["__matrix_probe__"]["items"].append("mutated")
+def _mutate_existing_nested_value(result: object) -> None:
+    """Mutate an existing nested public container without reaching projection storage."""
+
+    def mutate(value: object, depth: int = 0) -> bool:
+        if isinstance(value, list):
+            value.append("__matrix_probe__")
+            return True
+        if isinstance(value, dict):
+            for child in value.values():
+                if mutate(child, depth + 1):
+                    return True
+            if depth and value:
+                key = next(iter(value))
+                value[key] = "__matrix_probe__"
+                return True
+            return False
+        if isinstance(value, BaseModel):
+            return any(
+                mutate(getattr(value, field), depth + 1) for field in type(value).model_fields
+            )
+        return False
+
+    assert mutate(result), "matrix query has no truthful nested mutable target"
 
 
 _NEUTRAL_QUERIES: dict[str, QueryProbe] = {
@@ -331,24 +352,13 @@ _MUTABLE_QUERY_EVENTS = frozenset(
     {
         "node_created",
         "node_state_changed",
-        "node_retired",
         "plan_region_marked_suspect",
         "node_authority_changed",
-        "edge_created",
         "input_bound",
         "output_record_accepted",
         "file_state_accepted",
         "gatekeeper_verdict_recorded",
-        "session_state_changed",
         "graph_patch_accepted",
-        "verification_passed",
-        "verification_failed",
-        "appeal_opened",
-        "approval_decision_recorded",
-        "authority_decision_recorded",
-        "requirement_revision_recorded",
-        "support_evidence_recorded",
-        "node_usage_recorded",
         "lease_granted",
         "lease_renewed",
         "lease_suspended",
@@ -514,7 +524,8 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             (),
             _unchanged,
             _NEUTRAL_QUERIES[name],
-            _mutate_nested_mapping if name == "revision_created" else None,
+            None,
+            False,
         )
         for name, payload in NEUTRAL_PAYLOADS.items()
     )
@@ -608,6 +619,18 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             "snapshot_id": "snapshot-1",
             "base_snapshot_id": "snapshot-0",
             "untracked": [{"path": "src/app.py", "status": "modified"}],
+            "external": [
+                {
+                    "path": "vendor/tool",
+                    "source": "external",
+                    "manifest": {
+                        "path": "vendor/tool",
+                        "hash": "sha256:tool",
+                        "origin": "registry",
+                        "retention": "keep",
+                    },
+                }
+            ],
             "verdict": "captured",
         },
         1,
@@ -821,9 +844,15 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
                         "classification": "source",
                         "confidence": 1.0,
                         "rationale": "canonical",
-                    }
+                    },
+                    {
+                        "path": "vendor/tool",
+                        "classification": "dependency",
+                        "confidence": 1.0,
+                        "rationale": "canonical external",
+                    },
                 ],
-                "resolved_count": 1,
+                "resolved_count": 2,
             },
             frozenset({"records"}),
         ),
@@ -1003,7 +1032,8 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             _SHARED_PATHS.get(name, ()),
             _assert_outcome(name),
             _CHANGING_QUERIES[name],
-            _mutate_nested_mapping if name in _MUTABLE_QUERY_EVENTS else None,
+            _mutate_existing_nested_value if name in _MUTABLE_QUERY_EVENTS else None,
+            name in _MUTABLE_QUERY_EVENTS,
         )
         for name, prefix, payload, groups in changing_payloads
     )

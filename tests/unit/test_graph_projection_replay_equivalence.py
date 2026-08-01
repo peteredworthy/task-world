@@ -12,34 +12,39 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     FakeClock,
+    ProjectedExternalFileEntry,
+    ProjectedFileEntry,
+    ProjectedFileStateRecord,
     build_projection,
     initial_projection,
     projection_from_checkpoint,
     projection_to_checkpoint,
     reduce_event,
 )
-from tests.unit.graph_projection_behavior_cases import fold_events, replay_streams
+from tests.unit.graph_projection_behavior_cases import behavior_cases, fold_events, replay_streams
 
 
 STREAMS = replay_streams()
 
 
-@pytest.mark.parametrize(
-    ("name", "stream"),
-    STREAMS,
-    ids=[name for name, _stream in STREAMS],
-)
+@pytest.mark.parametrize("case", behavior_cases(), ids=lambda case: case.event_type)
 def test_matrix_streams_match_full_incremental_and_checkpoint_tail_replay_at_every_split(
-    name: str, stream: tuple[EventEnvelope, ...]
+    case,
 ) -> None:
+    stream = case.stream
     full = fold_events(stream)
+    full_query = case.query(full)
     for split in range(len(stream) + 1):
         prefix = fold_events(stream[:split])
-        assert fold_events(stream[split:], prefix) == full, (name, split)
+        incremental = fold_events(stream[split:], prefix)
+        assert incremental == full, (case.event_type, split)
+        assert case.query(incremental) == full_query, (case.event_type, split, "incremental")
 
         checkpoint = projection_to_checkpoint(prefix)
         restored = projection_from_checkpoint(deepcopy(checkpoint))
-        assert fold_events(stream[split:], restored) == full, (name, split)
+        checkpoint_tail = fold_events(stream[split:], restored)
+        assert checkpoint_tail == full, (case.event_type, split)
+        assert case.query(checkpoint_tail) == full_query, (case.event_type, split, "checkpoint")
 
 
 def test_gatekeeper_verdict_replay_after_checkpoint_preserves_projected_file_entry_type() -> None:
@@ -50,6 +55,24 @@ def test_gatekeeper_verdict_replay_after_checkpoint_preserves_projected_file_ent
     restored = projection_from_checkpoint(deepcopy(projection_to_checkpoint(prefix)))
 
     assert fold_events(stream[3:], restored) == full
+
+
+def test_canonical_gatekeeper_stream_preserves_ordinary_and_external_entry_subtypes() -> None:
+    stream = dict(STREAMS)["gatekeeper_verdict_recorded"]
+    direct = fold_events(stream)
+    direct_record = direct.records.by_id["file-state-1"]
+    assert isinstance(direct_record, ProjectedFileStateRecord)
+    assert type(direct_record.untracked[0]) is ProjectedFileEntry
+    assert type(direct_record.external[0]) is ProjectedExternalFileEntry
+
+    restored = projection_from_checkpoint(
+        deepcopy(projection_to_checkpoint(fold_events(stream[:3])))
+    )
+    replayed = fold_events(stream[3:], restored)
+    replayed_record = replayed.records.by_id["file-state-1"]
+    assert isinstance(replayed_record, ProjectedFileStateRecord)
+    assert type(replayed_record.untracked[0]) is ProjectedFileEntry
+    assert type(replayed_record.external[0]) is ProjectedExternalFileEntry
 
 
 def _fold(projection: Any, events: tuple[EventEnvelope, ...] | list[EventEnvelope]) -> Any:

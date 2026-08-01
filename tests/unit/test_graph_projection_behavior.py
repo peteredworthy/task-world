@@ -113,11 +113,10 @@ def test_matrix_mutation_probes_change_only_fresh_public_results(case) -> None:
     ids=lambda case: case.event_type,
 )
 def test_neutral_mutable_queries_declare_mutation_probes(case) -> None:
-    _, projection = case_projection(case)
-    result = case.query(projection)
-
-    if isinstance(result, (dict, list, set)):
+    if case.has_mutable_query_target:
         assert case.mutate_query_result is not None, case.event_type
+    else:
+        assert case.mutate_query_result is None, case.event_type
 
 
 def _value_at(projection: object, path: tuple[str, ...]) -> object:

@@ -705,11 +705,13 @@ def test_matrix_public_query_results_cannot_mutate_projection_storage(case) -> N
     _, projection = case_projection(case)
     checkpoint = deepcopy(projection_to_checkpoint(projection))
     original = case.query(projection)
+    original_copy = deepcopy(original)
 
     assert case.mutate_query_result is not None
     case.mutate_query_result(original)
 
     assert projection_to_checkpoint(projection) == checkpoint
+    assert case.query(projection) == original_copy
     case.assert_outcome(fold_events(case.prefix), projection)
 
 

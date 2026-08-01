@@ -25,7 +25,7 @@ from orchestrator.graph import (
 )
 from tests.unit.graph_projection_behavior_cases import (
     behavior_cases,
-    case_projection,
+    fold_events,
     replay_streams,
 )
 
@@ -266,8 +266,9 @@ def value_at(projection: GraphProjection, path: tuple[str, ...]) -> object:
 
 @pytest.mark.parametrize("case", behavior_cases(), ids=lambda case: case.event_type)
 def test_matrix_reduction_preserves_prior_generation_and_shares_only_unchanged_values(case) -> None:
-    before, after = case_projection(case)
+    before = fold_events(case.prefix)
     before_checkpoint = deepcopy(projection_to_checkpoint(before))
+    after = reduce_event(before, case.event)
 
     assert projection_to_checkpoint(before) == before_checkpoint
     for group in ROOT_GROUPS:
@@ -288,15 +289,17 @@ def test_matrix_replay_generations_keep_saved_checkpoints_and_identity_semantics
     generation = initial_projection()
     saved_generations: list[tuple[GraphProjection, dict[str, object]]] = []
     for event in stream:
-        before_checkpoint = projection_to_checkpoint(generation)
+        before_checkpoint = deepcopy(projection_to_checkpoint(generation))
+        saved_generations.append((generation, before_checkpoint))
         next_generation = reduce_event(generation, event)
         next_checkpoint = projection_to_checkpoint(next_generation)
         if next_checkpoint == before_checkpoint:
             assert next_generation is generation, (name, event.event_type)
         else:
             assert next_generation is not generation, (name, event.event_type)
-        saved_generations.append((next_generation, deepcopy(next_checkpoint)))
         generation = next_generation
+
+    saved_generations.append((generation, deepcopy(projection_to_checkpoint(generation))))
 
     for saved_generation, checkpoint in saved_generations:
         assert projection_to_checkpoint(saved_generation) == checkpoint, name
