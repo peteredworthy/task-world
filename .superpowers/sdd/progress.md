@@ -67,3 +67,10 @@ Task 5 grouped immutable models and projected records: complete (commits 5afb395
 Task 6 strict codec and integrity: complete (commits 0ab18ac3e..af6b56466; 358 focused tests in 4.82s; all review gates approved).
 Task 7 performance baselines and gates: complete (commits 69028f082..fc1b0dcd9; strict cross-cutover protocol/gates, fast 9.17s test loop, independently approved adaptive 7/3/1 sample schedule, and approved 10k pre-cutover baseline artifact).
 Task 8 immutable GraphProjection cutover: complete (fresh whole-task review approved; full suite 5700 passed and 3 skipped; 936-site generated migration closure with zero unresolved diagnostics; Ruff, format, Pyright, goldens, inventory, boundary, and module-import checks passed). The final uniform 2-warmup/7-run benchmark passed with no hard violations and visible scaling diagnostics in `/Users/peter/.local/share/opencode/tool-output/tool_fb9ba8a580012TpvIn420sfYW3`.
+
+## Plan: 2026-07-31-immutable-graph-projection-closure.md
+Workspace: `worktrees/immutable-graph-projection`
+Baseline: 5748 passed, 3 skipped; design and executable plan committed at 1588894c2.
+Task 1: complete (commits 1588894c2..2df8c3e44, review approved).
+Task 2: complete (commits 2df8c3e44..17caa2a28, review approved; final-review minors recorded in task report).
+Task 3: complete (commits 17caa2a28..b63b5ceb0, review approved; final-review minor: derive frozen query parameterization directly from matrix metadata).
