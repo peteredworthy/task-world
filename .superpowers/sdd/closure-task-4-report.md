@@ -301,3 +301,68 @@ modify `.superpowers/sdd/progress.md`.
   tests/unit/test_graph_projection_boundaries.py` — passed; Pyright reported
   0 errors, 0 warnings, and 0 information messages.
 - `.superpowers/sdd/progress.md` was not modified.
+
+## Final bounded-transfer review fixes
+
+### Corrections
+
+- Added ordered expression transfer for list, set, dict, and generator
+  comprehensions. Each generator evaluates its iterable before binding its
+  target, evaluates filters before the produced element/key/value, and keeps
+  comprehension captures scoped so they shadow rather than leak an outer
+  projection alias.
+- Added ordered `with` and `async with` transfer. Context expressions are
+  evaluated left-to-right, optional targets bind from their corresponding
+  context expression, body outcomes are retained, and entry/body exception
+  paths remain conservative.
+- Destructuring assignment now recognizes the exact
+  `GraphEventStore.load_projection_with_tail()` shape (including `await`) and
+  gives only tuple element zero projection provenance.
+- Loop transfer now sends zero-iteration, normal-exhaustion, and continue
+  paths into `else`; `break` paths bypass `else` and become normal exits.
+  Returned and raised outcomes remain separate.
+- Executable non-method class statements now run as one outcome sequence, so
+  statements after a terminal class-body raise are unreachable. Methods remain
+  isolated function transfers.
+- Full-state joins retain the finite union of exact origins, receiver types,
+  and function bindings, and union declared/runtime field candidates while
+  marking projection values possible where appropriate. No new origin is
+  manufactured and sibling-module resolution remains exact.
+- Attribute/subscript augmented assignment and deletion preserve an ordinary
+  projection receiver alias. Only a direct assignment/deletion of a declared
+  typed projection field invalidates that field's runtime provenance.
+- `try` now retains every body-raised outcome alongside handler outcomes;
+  unresolved exception types can be handled or unmatched, and both paths pass
+  through `finally`.
+- Chained assignment evaluates the RHS once, evaluates each assignment target
+  once in Python order, and binds each target once. This also preserves
+  stateful target/walrus effects without the prior nested all-target loop.
+
+### RED/GREEN evidence
+
+- RED: the nine new bounded-transfer regressions were run together before the
+  implementation. Six failed for the intended missing behavior: all four
+  comprehension forms, `with`/`async with` target binding, first tuple-item
+  producer binding, break-bypasses-else, terminal class-body reachability, and
+  joined ordinary receiver/origin state. The remaining three captured
+  pre-existing behavior while protecting the refined mutation, unmatched
+  exception, and chained-assignment contracts.
+- GREEN: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` —
+  **120 passed**.
+- Standalone guard: `uv run python scripts/check_graph_projection_boundaries.py`
+  — exited 0 with no output.
+- Static checks: `uv run ruff check
+  scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py`, `uv run ruff format --check
+  scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py`, and `uv run pyright
+  scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py` — passed; Pyright reported
+  0 errors, 0 warnings, and 0 information messages.
+
+### Concerns
+
+- The collector deliberately remains a bounded conservative interpreter:
+  unresolved branches and exception matching can retain an approved projection
+  as `possible`, but exact finite import origins are never widened. No public
+  API changed, and `.superpowers/sdd/progress.md` was not modified.

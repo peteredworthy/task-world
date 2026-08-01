@@ -1057,6 +1057,200 @@ def read(projection: GraphProjection, other: object, values: list[bool]) -> None
     ]
 
 
+def test_boundary_provenance_transfers_comprehension_scopes_and_accesses() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection) -> None:
+    [item["list"] for item in [projection] if item["list-if"]]
+    {item["set"] for item in [projection] if item["set-if"]}
+    {item["key"]: item["value"] for item in [projection] if item["dict-if"]}
+    (item["generator"] for item in [projection] if item["generator-if"])
+    [projection["shadowed"] for projection in [projection]]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "item['list']",
+        "item['list-if']",
+        "item['set']",
+        "item['set-if']",
+        "item['key']",
+        "item['value']",
+        "item['dict-if']",
+        "item['generator']",
+        "item['generator-if']",
+        "[projection]",
+    }
+
+
+def test_boundary_provenance_transfers_with_targets_and_body() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, context: object) -> None:
+    with projection as value, context as projection:
+        value["bound"]
+        projection["shadowed"]
+
+async def async_read(projection: GraphProjection, context: object) -> None:
+    async with context as projection:
+        projection["async-shadowed"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "value['bound']"
+    }
+
+
+def test_boundary_provenance_binds_only_first_load_projection_tuple_item() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphEventStore
+
+async def read(store: GraphEventStore) -> None:
+    projection, tail = await store.load_projection_with_tail()
+    projection["projection"]
+    tail["tail"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "projection['projection']"
+    }
+
+
+def test_boundary_provenance_loop_break_bypasses_else() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object, values: list[object]) -> None:
+    alias = other
+    for value in values:
+        alias = projection
+        break
+    else:
+        alias = other
+    alias["after-break"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("alias['after-break']", "possible"),
+    ]
+
+
+def test_boundary_provenance_skips_unreachable_executable_class_statements() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection, initial_projection
+
+class Holder:
+    projection: GraphProjection = initial_projection()
+    raise RuntimeError()
+    projection["unreachable"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert not [item for item in facts if item.expression == "projection['unreachable']"]
+
+
+def test_boundary_provenance_joins_exact_state_candidates_without_sibling_origins() -> None:
+    facts = projection_provenance(
+        """import orchestrator.graph
+import orchestrator.graph_runtime.controller
+from orchestrator.graph import GraphDispatchContext, GraphProjection
+
+def read(condition: bool, projection: GraphProjection, context: GraphDispatchContext) -> None:
+    if condition:
+        factory = orchestrator.graph.initial_projection
+        receiver = context
+        context.graph_projection = projection
+    else:
+        factory = orchestrator.graph.initial_projection
+        receiver = context
+        context.graph_projection = projection
+    factory()["factory"]
+    receiver.graph_projection["field"]
+    orchestrator.graph_runtime.controller.rebuild_projection([])["runtime"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "factory()['factory']",
+        "receiver.graph_projection['field']",
+        "orchestrator.graph_runtime.controller.rebuild_projection([])['runtime']",
+    }
+
+
+def test_boundary_provenance_keeps_ordinary_receiver_on_grouped_attribute_mutation() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object) -> None:
+    alias = projection
+    alias.records.by_id += other
+    alias["after-grouped-attribute"]
+    del alias.records.by_id
+    alias["after-grouped-delete"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "alias['after-grouped-attribute']",
+        "alias['after-grouped-delete']",
+    }
+
+
+def test_boundary_provenance_preserves_unmatched_raised_path_through_finally() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object) -> None:
+    alias = projection
+    try:
+        raise RuntimeError()
+    except ValueError:
+        alias = other
+    finally:
+        alias["unmatched-finally"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("alias['unmatched-finally']", "possible"),
+    ]
+
+
+def test_boundary_provenance_chained_assignment_evaluates_targets_once_in_order() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, values: dict[GraphProjection, object]) -> None:
+    alias = values[(key := projection)] = projection
+    alias["after-chain"]
+    key["walrus-once"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "alias['after-chain']",
+        "key['walrus-once']",
+    }
+
+
 @pytest.mark.parametrize(
     "method",
     (
