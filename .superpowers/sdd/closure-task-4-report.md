@@ -26,7 +26,7 @@ AST-only module independent of the one-time migration inventory.
 
 ## Verification
 
-- `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` — 86 passed.
+- Historical initial extraction evidence: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` — 86 passed.
 - `uv run python scripts/check_graph_projection_boundaries.py` — exited 0 with
   no output.
 - `uv run ruff check scripts/graph_projection_boundary_provenance.py scripts/check_graph_projection_boundaries.py tests/unit/test_graph_projection_boundaries.py` — passed.
@@ -58,3 +58,16 @@ modify `.superpowers/sdd/progress.md`.
 - GREEN: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` —
   90 passed; `uv run python scripts/check_graph_projection_boundaries.py` —
   exited 0 without output.
+
+## Follow-up review-fix evidence
+
+- Added RED coverage for executable class-body accesses and mutations, then
+  restored the forbidden-submodule regression to require both the permanent
+  import violation and all storage-access/mutation diagnostics.
+- Class bodies now visit assignments and expressions in a class-local scope;
+  methods retain isolated function scope with the owning class fields available
+  through `self`.
+- Current authoritative verification: `uv run pytest
+  tests/unit/test_graph_projection_boundaries.py -q` — 91 passed; `uv run
+  python scripts/check_graph_projection_boundaries.py` — exited 0 with no
+  output.

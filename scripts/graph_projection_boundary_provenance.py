@@ -140,6 +140,10 @@ class ProjectionProvenanceCollector:
                     in GRAPH_PROJECTION_TYPES | PROJECTION_FUNCTIONS | _PROJECTION_TYPE_ORIGINS
                 ):
                     scope.origins[name] = origin
+                elif origin == "orchestrator.graph.projections.GraphProjection":
+                    # The import boundary reports this forbidden spelling; retain
+                    # projection facts so it cannot hide storage violations.
+                    scope.origins[name] = "orchestrator.graph.GraphProjection"
 
     @staticmethod
     def _clear(name: str, scope: _Scope) -> None:
@@ -397,6 +401,8 @@ class ProjectionProvenanceCollector:
         for child in node.body:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._function(child, class_scope, node.name)
+            else:
+                self._visit_block([child], class_scope)
 
     def _visit_block(self, statements: list[ast.stmt], scope: _Scope) -> _Scope:
         for statement in statements:

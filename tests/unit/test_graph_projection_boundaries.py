@@ -57,7 +57,13 @@ def read(projection: GraphProjection, key: str) -> None:
             "src/orchestrator/graph/projections.py",
         }
     )
-    assert [violation.code for violation in violations] == ["forbidden_graph_submodule_import"]
+    assert [violation.code for violation in violations] == [
+        "forbidden_graph_submodule_import",
+        "legacy_projection_subscript",
+        "dynamic_projection_access",
+        "legacy_projection_subscript",
+        "mutable_projection_operation",
+    ]
 
 
 def test_boundary_guard_tracks_constructed_alias_and_attribute_projections(tmp_path: Path) -> None:
@@ -312,6 +318,10 @@ def test_boundary_provenance_has_no_migration_bookkeeping_vocabulary() -> None:
         "MigrationDisposition",
     ):
         assert retired_name not in source
+    assert not any(
+        forbidden in source.lower()
+        for forbidden in ("libcst", "yaml", "manifest", "disposition", "codemod")
+    )
 
 
 def test_boundary_provenance_uses_exact_origins_and_dotted_imports(tmp_path: Path) -> None:
@@ -409,6 +419,26 @@ def read(projection: GraphProjection) -> None:
         ("projection.records.by_id", "definite"),
         ("projection.records", "definite"),
         ("projection", "definite"),
+    ]
+
+
+def test_boundary_guard_traverses_executable_class_body(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphProjection, initial_projection
+
+class Holder:
+    projection: GraphProjection = initial_projection()
+    projection["class"]
+    projection.records.by_id.update({})
+"""
+    )
+
+    assert [item.code for item in check_projection_boundaries(tmp_path, paths=(source,))] == [
+        "legacy_projection_subscript",
+        "forbidden_grouped_storage_access",
+        "mutable_projection_operation",
     ]
 
 
