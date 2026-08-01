@@ -22,7 +22,11 @@ from pydantic import (
     model_validator,
 )
 
-from orchestrator.graph.models import AcceptedOutputRecordPayload, OUTPUT_RECORD_MODELS_BY_TYPE
+from orchestrator.graph.models import (
+    AcceptedOutputRecordPayload,
+    OUTPUT_RECORD_MODELS_BY_TYPE,
+    OutputRecord,
+)
 from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap, freeze_json
 
 
@@ -1040,9 +1044,9 @@ class ProjectedRecordBase(ProjectionModel):
         """Make every declared tuple independent before strict nested validation."""
 
         def freeze_sequences(item: object) -> object:
-            if isinstance(item, list):
+            if type(item) is list:
                 return tuple(freeze_sequences(child) for child in cast(list[object], item))
-            if isinstance(item, dict):
+            if type(item) is dict:
                 return {
                     key: freeze_sequences(child)
                     for key, child in cast(dict[object, object], item).items()
@@ -1448,6 +1452,35 @@ def project_record(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
     """Copy a validated accepted record into its immutable projection counterpart."""
     if not hasattr(record, "model_dump"):
         raise ValueError("unknown projected record discriminator")
+    if isinstance(record, OutputRecord):
+        payload = None if record.payload is None else _freeze_json_input(record.payload)
+        provenance = None if record.provenance is None else _freeze_json_input(record.provenance)
+        if (payload is not None and type(payload) is not FrozenMap) or (
+            provenance is not None and type(provenance) is not FrozenMap
+        ):
+            raise ValueError("record envelope JSON must be an object")
+        return ProjectedFanOutInputsRecord.model_construct(
+            _fields_set=set(record.model_fields_set),
+            record_id=record.record_id,
+            record_type="fan_out_inputs",
+            record_kind="output",
+            producer_node_id=record.producer_node_id,
+            port=record.port,
+            schema_=record.schema_,
+            value=cast(FrozenMap[str, FrozenJsonValue], _freeze_json_input(record.value)),
+            schema_version=record.schema_version,
+            producer_port=record.producer_port,
+            created_at=record.created_at,
+            graph_position=record.graph_position,
+            run_id=record.run_id,
+            payload=payload,
+            provenance=provenance,
+            candidate_id=record.candidate_id,
+            task_region_id=record.task_region_id,
+            attempt_number=record.attempt_number,
+            file_state_record_id=record.file_state_record_id,
+            file_state_record_ids=tuple(record.file_state_record_ids),
+        )
     payload = record.model_dump(
         mode="json",
         by_alias=True,

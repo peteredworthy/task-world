@@ -1055,12 +1055,10 @@ def insert_projected_record(
         node_ports = indexes.get(node_id, FrozenMap())
         ids = node_ports.get(port, ())
         indexes = map_set(indexes, node_id, map_set(node_ports, port, ids + (record.record_id,)))
-    return store.model_copy(
-        update={
-            "by_id": map_set(store.by_id, record.record_id, record),
-            "ids_by_node_port": indexes,
-            "summaries_by_id": map_set(store.summaries_by_id, record.record_id, summary),
-        }
+    return RecordStore.model_construct(
+        by_id=map_set(store.by_id, record.record_id, record),
+        ids_by_node_port=indexes,
+        summaries_by_id=map_set(store.summaries_by_id, record.record_id, summary),
     )
 
 
