@@ -75,3 +75,4 @@ Task 1: complete (commits 1588894c2..2df8c3e44, review approved).
 Task 2: complete (commits 2df8c3e44..17caa2a28, review approved; final-review minors recorded in task report).
 Task 3: complete (commits 17caa2a28..b63b5ceb0, review approved; final-review minor: derive frozen query parameterization directly from matrix metadata).
 Task 4: complete (commits a05e081b3..b87845e05, permanent AST provenance guard review approved with no findings).
+Task 5: complete (commits f4ebeae3f..d1d7b7a8e, direct 10,000-event gate and semantic fast path review approved with no findings).
