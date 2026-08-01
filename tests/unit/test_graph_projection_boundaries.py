@@ -693,6 +693,147 @@ class Holder:
     }
 
 
+def test_boundary_provenance_named_expressions_follow_order_and_short_circuit(
+    tmp_path: Path,
+) -> None:
+    source_text = """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object, condition: bool) -> None:
+    (alias := projection)["set"]
+    (alias := other)["kill"]
+    alias["after-kill"]
+    condition and (alias := projection)
+    alias["short-circuit"]
+"""
+    facts = projection_provenance(source_text, relative_path="src/orchestrator/runtime/consumer.py")
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("(alias := projection)['set']", "definite"),
+        ("alias['short-circuit']", "possible"),
+    ]
+
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(source_text)
+    assert [
+        (item.line, item.code) for item in check_projection_boundaries(tmp_path, paths=(source,))
+    ] == [
+        (4, "legacy_projection_subscript"),
+        (8, "legacy_projection_subscript"),
+    ]
+
+
+def test_boundary_provenance_try_receives_intermediate_raised_state_and_finally_paths() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection, GraphDispatchContext
+
+def read(projection: GraphProjection, other: object, condition: bool) -> None:
+    context: GraphDispatchContext
+    try:
+        context.graph_projection = projection
+        context.graph_projection = other
+    except RuntimeError:
+        handler = context.graph_projection
+    else:
+        normal = context.graph_projection
+    finally:
+        final = context.graph_projection
+    handler["handler"]
+    normal["else-only"]
+    final["finally"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    } == {
+        ("handler['handler']", "possible"),
+        ("final['finally']", "possible"),
+    }
+
+
+def test_boundary_provenance_joins_typed_receiver_and_field_runtime_state() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection, GraphDispatchContext
+
+def read(projection: GraphProjection, other: object, condition: bool) -> None:
+    if condition:
+        context: GraphDispatchContext
+        context.graph_projection = projection
+    else:
+        context: GraphDispatchContext
+        context.graph_projection = other
+    context.graph_projection["possible-field"]
+    context.graph_projection = projection
+    context.graph_projection["restored-field"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    } == {
+        ("context.graph_projection['possible-field']", "possible"),
+        ("context.graph_projection['restored-field']", "definite"),
+    }
+
+
+def test_boundary_provenance_requires_exact_module_subtree_imports_and_rejects_rebinding() -> None:
+    facts = projection_provenance(
+        """import orchestrator.graph
+import orchestrator.graph_runtime.controller
+
+def read() -> None:
+    orchestrator.graph.initial_projection()["graph"]
+    orchestrator.graph_runtime.controller.rebuild_projection([])["runtime"]
+    orchestrator = object()
+    orchestrator.graph.initial_projection()["rebound"]
+
+def sibling() -> None:
+    import orchestrator.graph
+    orchestrator.graph_runtime.controller.rebuild_projection([])["sibling"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "orchestrator.graph.initial_projection()['graph']",
+        "orchestrator.graph_runtime.controller.rebuild_projection([])['runtime']",
+    }
+
+
+def test_boundary_provenance_mutating_attribute_or_subscript_keeps_receiver_but_kills_field() -> (
+    None
+):
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection, GraphDispatchContext
+
+def read(projection: GraphProjection, other: object, context: GraphDispatchContext) -> None:
+    alias = projection
+    alias["item"] += 1
+    alias["after-subscript"]
+    context.graph_projection = projection
+    context.graph_projection += other
+    context.graph_projection["after-field-kill"]
+    context.graph_projection = projection
+    context.graph_projection["after-field-restore"]
+    del alias["item"]
+    alias["after-delete"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "alias['item']",
+        "alias['after-subscript']",
+        "context.graph_projection['after-field-restore']",
+        "alias['after-delete']",
+    }
+
+
 def test_boundary_guard_traverses_executable_class_body(tmp_path: Path) -> None:
     source = tmp_path / "src/orchestrator/runtime/consumer.py"
     source.parent.mkdir(parents=True)

@@ -174,3 +174,51 @@ modify `.superpowers/sdd/progress.md`.
   joins. This change does not expand the finite approved-origin tables or relax
   the boundary visitor's diagnostics. `.superpowers/sdd/progress.md` remains
   untouched.
+
+## Architecture reset: bounded forward-flow provenance
+
+### Root cause and correction
+
+- Repeated review gaps came from the collector's mutable statement walk: only
+  aliases participated in branch joins, child traversal was generic rather
+  than evaluation-ordered, and exact root imports could be extended into
+  unrelated siblings.
+- The collector now uses `_FlowState` as the single finite runtime state for
+  exact import bindings, projection aliases, receiver candidates, declared and
+  runtime field state, and function bindings. `_Outcomes` names normal,
+  raised, returned, broken, and continued control paths for the bounded
+  interpreter boundary. Static class declarations remain distinct from runtime
+  field provenance.
+- Expression handling records named expressions after their bind effect and
+  joins non-constant short-circuit alternatives. Field joins preserve possible
+  provenance without accepting foreign/broad origins. Attribute and subscript
+  mutation retain the receiver, while a typed field mutation kills only that
+  field until a trusted assignment restores it.
+- Import resolution now retains the exact authorized imported subtree beneath
+  a root, clears local root rebinding, and rejects a graph-only root used to
+  reach the runtime-controller sibling. No migration dependency or prohibited
+  migration vocabulary was introduced.
+
+### RED/GREEN evidence
+
+- RED: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` — 3
+  new contract failures demonstrated unjoined typed-field state, eager
+  short-circuit binding, and graph-root sibling authorization (102 passed,
+  3 failed).
+- Added focused contracts for direct/killing/short-circuit named expressions
+  with boundary diagnostics; intermediate try-handler/finally paths;
+  receiver/field set-kill joins; exact graph/runtime import subtrees and root
+  rebinding; and receiver-preserving attribute/subscript mutation with
+  typed-field-only invalidation.
+- GREEN: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` —
+  105 passed.
+- GREEN: `uv run python scripts/check_graph_projection_boundaries.py` —
+  exited 0 with no violations; Ruff check and format checks passed; Pyright
+  reported 0 errors, warnings, and information messages.
+
+### Remaining conservative boundary
+
+- At unresolved control-flow joins, approved provenance may remain `possible`
+  after an exact approved seed. The collector never broadens that result to an
+  unimported or foreign origin. `.superpowers/sdd/progress.md` was not
+  modified.
