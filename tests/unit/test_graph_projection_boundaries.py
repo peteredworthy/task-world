@@ -422,6 +422,143 @@ def read(projection: GraphProjection) -> None:
     ]
 
 
+def test_boundary_provenance_match_includes_no_match_and_exhaustive_paths() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object, value: object) -> None:
+    alias = projection
+    match value:
+        case "matched":
+            alias = other
+    alias["no-match"]
+    match value:
+        case _:
+            alias = other
+    alias["exhaustive-kill"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [(item.line, item.expression, item.certainty) for item in facts if item.line == 8] == [
+        (8, "alias['no-match']", "possible"),
+        (8, "alias", "possible"),
+    ]
+    assert not [item for item in facts if item.expression == "alias['exhaustive-kill']"]
+
+
+def test_boundary_provenance_match_captures_shadow_guards_and_bodies() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(
+    projection: GraphProjection,
+    match_star: GraphProjection,
+    match_rest: GraphProjection,
+    nested: GraphProjection,
+    klass: GraphProjection,
+    mapping: GraphProjection,
+    alternate: GraphProjection,
+    value: object,
+) -> None:
+    match value:
+        case "literal" if projection["unshadowed-guard"]:
+            pass
+        case [*match_star] if match_star["star-guard"]:
+            match_star["star-body"]
+        case {"rest": item, **match_rest} if match_rest["rest-guard"]:
+            match_rest["rest-body"]
+        case {"items": [nested]} if nested["nested-guard"]:
+            nested["nested-body"]
+        case Point(klass) if klass["class-guard"]:
+            klass["class-body"]
+        case {"item": mapping} if mapping["mapping-guard"]:
+            mapping["mapping-body"]
+        case (Point(alternate) | Other(alternate)) if alternate["or-guard"]:
+            alternate["or-body"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty)
+        for item in facts
+        if item.expression == "projection['unshadowed-guard']"
+    ] == [("projection['unshadowed-guard']", "definite")]
+    assert not [
+        item
+        for item in facts
+        if item.expression.endswith(("-guard']", "-body']"))
+        and item.expression != "projection['unshadowed-guard']"
+    ]
+
+
+def test_boundary_provenance_try_keeps_successful_projection_with_handlers() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object) -> None:
+    alias = other
+    try:
+        alias = projection
+    except RuntimeError:
+        alias = other
+    alias["try-success"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [(item.expression, item.certainty) for item in facts if item.line == 9] == [
+        ("alias['try-success']", "possible"),
+        ("alias", "possible"),
+    ]
+
+
+def test_boundary_provenance_try_applies_else_then_finally_to_each_path() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object) -> None:
+    alias = projection
+    try:
+        pass
+    except RuntimeError:
+        alias = other
+    else:
+        alias = other
+    finally:
+        preserved = alias
+    preserved["else-finally-kill"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert not [item for item in facts if item.expression == "preserved['else-finally-kill']"]
+
+
+def test_boundary_provenance_try_finally_propagates_every_outgoing_path() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object) -> None:
+    alias = other
+    try:
+        alias = projection
+    except RuntimeError:
+        alias = other
+    finally:
+        preserved = alias
+    preserved["finally-propagates"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [(item.expression, item.certainty) for item in facts if item.line == 11] == [
+        ("preserved['finally-propagates']", "possible"),
+        ("preserved", "possible"),
+    ]
+
+
 def test_boundary_guard_traverses_executable_class_body(tmp_path: Path) -> None:
     source = tmp_path / "src/orchestrator/runtime/consumer.py"
     source.parent.mkdir(parents=True)

@@ -77,6 +77,22 @@ def _target_names(node: ast.AST) -> tuple[str, ...]:
     return ()
 
 
+def _pattern_capture_names(pattern: ast.pattern) -> tuple[str, ...]:
+    names: list[str] = []
+    for node in ast.walk(pattern):
+        if isinstance(node, ast.MatchAs) and node.name is not None:
+            names.append(node.name)
+        elif isinstance(node, ast.MatchStar) and node.name is not None:
+            names.append(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest is not None:
+            names.append(node.rest)
+    return tuple(names)
+
+
+def _is_unconditional_pattern(pattern: ast.pattern) -> bool:
+    return isinstance(pattern, ast.MatchAs) and pattern.pattern is None
+
+
 class ProjectionProvenanceCollector:
     """Resolve only the finite origins that can reach storage-boundary checks."""
 
@@ -430,13 +446,20 @@ class ProjectionProvenanceCollector:
             elif isinstance(statement, ast.Match):
                 self._visit_expr(statement.subject, scope)
                 branches: list[_Scope] = []
+                has_unconditional_case = False
                 for case in statement.cases:
                     case_scope = scope.copy()
-                    for child in ast.walk(case.pattern):
-                        if isinstance(child, ast.MatchAs) and child.name is not None:
-                            self._clear(child.name, case_scope)
+                    for name in _pattern_capture_names(case.pattern):
+                        self._clear(name, case_scope)
+                    self._visit_expr(case.guard, case_scope)
                     branches.append(self._visit_block(case.body, case_scope))
-                scope = self._merge(scope, tuple(branches)) if branches else scope
+                    has_unconditional_case |= case.guard is None and _is_unconditional_pattern(
+                        case.pattern
+                    )
+                if branches:
+                    if not has_unconditional_case:
+                        branches.append(scope.copy())
+                    scope = self._merge(scope, tuple(branches))
             elif isinstance(statement, (ast.With, ast.AsyncWith)):
                 body_scope = scope.copy()
                 for item in statement.items:
@@ -446,15 +469,19 @@ class ProjectionProvenanceCollector:
                             self._clear(name, body_scope)
                 scope = self._merge(scope, (self._visit_block(statement.body, body_scope),))
             elif isinstance(statement, (ast.Try, ast.TryStar)):
-                self._visit_block(statement.body, scope.copy())
-                branches = []
+                try_scope = self._visit_block(statement.body, scope.copy())
+                successful_scope = self._visit_block(statement.orelse, try_scope.copy())
+                handler_input = self._merge(scope, (scope.copy(), try_scope))
+                branches = [successful_scope]
                 for handler in statement.handlers:
-                    handler_scope = scope.copy()
+                    handler_scope = handler_input.copy()
                     if handler.name is not None:
                         self._clear(handler.name, handler_scope)
                     branches.append(self._visit_block(handler.body, handler_scope))
-                branches.append(self._visit_block(statement.orelse, scope.copy()))
-                branches.append(self._visit_block(statement.finalbody, scope.copy()))
+                if statement.finalbody:
+                    branches = [
+                        self._visit_block(statement.finalbody, branch.copy()) for branch in branches
+                    ]
                 scope = self._merge(scope, tuple(branches))
             else:
                 self._visit_expr(statement, scope)
