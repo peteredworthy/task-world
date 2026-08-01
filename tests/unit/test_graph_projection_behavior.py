@@ -115,6 +115,9 @@ def test_matrix_mutation_probes_change_only_fresh_public_results(case) -> None:
 def test_neutral_mutable_queries_declare_mutation_probes(case) -> None:
     if case.has_mutable_query_target:
         assert case.mutate_query_result is not None, case.event_type
+        assert case.frozen_query_result_target is None, case.event_type
+    elif case.frozen_query_result_target is not None:
+        assert case.mutate_query_result is None, case.event_type
     else:
         assert case.mutate_query_result is None, case.event_type
 

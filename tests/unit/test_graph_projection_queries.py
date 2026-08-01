@@ -715,6 +715,56 @@ def test_matrix_public_query_results_cannot_mutate_projection_storage(case) -> N
     case.assert_outcome(fold_events(case.prefix), projection)
 
 
+@pytest.mark.parametrize(
+    "case",
+    tuple(
+        case
+        for case in behavior_cases()
+        if case.event_type
+        in {
+            "node_created",
+            "node_state_changed",
+            "plan_region_marked_suspect",
+            "node_authority_changed",
+            "edge_created",
+            "input_bound",
+            "output_record_accepted",
+            "file_state_accepted",
+            "gatekeeper_verdict_recorded",
+            "verification_passed",
+            "verification_failed",
+            "approval_decision_recorded",
+            "authority_decision_recorded",
+            "oversight_decision_recorded",
+            "requirement_revision_recorded",
+            "support_evidence_recorded",
+            "lease_granted",
+            "lease_renewed",
+            "lease_suspended",
+            "lease_revoked",
+            "lease_expired",
+            "lease_released",
+            "cleanup_requested",
+            "callback_accepted",
+        }
+    ),
+    ids=lambda case: case.event_type,
+)
+def test_matrix_frozen_public_query_results_reject_field_assignment(case) -> None:
+    _, projection = case_projection(case)
+    checkpoint = deepcopy(projection_to_checkpoint(projection))
+    original = case.query(projection)
+    original_copy = deepcopy(original)
+
+    assert case.frozen_query_result_target is not None
+    model, field = case.frozen_query_result_target(original)
+    with pytest.raises((ValidationError, AttributeError, TypeError)):
+        setattr(model, field, getattr(model, field))
+
+    assert projection_to_checkpoint(projection) == checkpoint
+    assert case.query(projection) == original_copy
+
+
 def test_exact_collection_views_preserve_shape_and_isolate_nested_values() -> None:
     projection = _query_projection()
 

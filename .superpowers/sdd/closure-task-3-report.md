@@ -155,3 +155,52 @@ uv run pytest tests/unit/test_graph_projection_behavior.py \
 Normal hooks passed for the review-fix implementation commit: Ruff, Ruff
 format, secret detection, Pyright, graph-projection boundaries, pytest,
 module-import checks, signal routing, UI lint, and UI typecheck.
+
+## Remaining-Blocker Evidence (2026-07-31)
+
+### Frozen Query RED/GREEN
+
+- Added the frozen-query assignment contract before adding its matrix metadata
+  and ran `uv run pytest tests/unit/test_graph_projection_queries.py -q`.
+  The new rows failed RED with `AttributeError: 'ProjectionBehaviorCase' object
+  has no attribute 'frozen_query_result_target'` for all 24 discovered frozen
+  public-model outputs.
+- Added `frozen_query_result_target` metadata that selects a real model field,
+  separates it from the existing mutable nested-data probe, and marks all
+  frozen public responses found by the matrix inventory: node creation views,
+  edge/binding/record/file-state views, verifier verdicts, approval/authority/
+  oversight decisions, requirement revisions, support evidence, leases,
+  cleanup requests, and callback events. The graph-patch list view remains the
+  matrix's mutable nested-data probe.
+- Each frozen row now attempts assignment to its actual returned model field
+  under `pytest.raises((ValidationError, AttributeError, TypeError))`, then
+  verifies the projection checkpoint and fresh response are unchanged.
+
+### External Subtype Removal RED/GREEN
+
+- Temporarily removed only the
+  `ProjectedExternalFileEntry` branch from `_resolved_file_entry()` without
+  committing that mutation, then ran exactly:
+
+  ```text
+  uv run pytest tests/unit/test_graph_projection_replay_equivalence.py::test_canonical_gatekeeper_stream_preserves_ordinary_and_external_entry_subtypes -q
+  ```
+
+  RED was the expected direct-path subtype failure:
+
+  ```text
+  AssertionError: assert <class '...ProjectedFileEntry'> is ProjectedExternalFileEntry
+  ```
+
+  specifically at `type(direct_record.external[0]) is
+  ProjectedExternalFileEntry`. This proves removal of the permanent branch is
+  caught before checkpoint-tail equality can mask the subtype loss.
+- Restored the `ProjectedExternalFileEntry` branch before committing, reran the
+  same command GREEN (`1 passed in 4.36s`), and verified
+  `git diff --exit-code -- src/orchestrator/graph/projections.py`; production
+  ended byte-for-byte unchanged.
+
+### Final Focused Verification
+
+The complete Task 3 focused command passed after the restored branch and
+frozen-query additions: `764 passed in 6.73s`.

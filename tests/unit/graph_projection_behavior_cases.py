@@ -75,6 +75,7 @@ ProjectionPath: TypeAlias = tuple[str, ...]
 OutcomeAssertion: TypeAlias = Callable[[GraphProjection, GraphProjection], None]
 QueryProbe: TypeAlias = Callable[[GraphProjection], object]
 MutationProbe: TypeAlias = Callable[[object], None]
+FrozenQueryResultTarget: TypeAlias = Callable[[object], tuple[BaseModel, str]]
 
 
 @dataclass(frozen=True)
@@ -89,6 +90,7 @@ class ProjectionBehaviorCase:
     query: QueryProbe
     mutate_query_result: MutationProbe | None = None
     has_mutable_query_target: bool = False
+    frozen_query_result_target: FrozenQueryResultTarget | None = None
 
     @property
     def stream(self) -> tuple[EventEnvelope, ...]:
@@ -292,6 +294,26 @@ def _mutate_existing_nested_value(result: object) -> None:
     assert mutate(result), "matrix query has no truthful nested mutable target"
 
 
+def _frozen_model_field(result: object) -> tuple[BaseModel, str]:
+    """Return an existing public frozen model and field for an assignment probe."""
+
+    if isinstance(result, BaseModel):
+        return result, next(iter(type(result).model_fields))
+    if isinstance(result, dict):
+        for value in result.values():
+            try:
+                return _frozen_model_field(value)
+            except LookupError:
+                continue
+    if isinstance(result, (list, tuple)):
+        for value in result:
+            try:
+                return _frozen_model_field(value)
+            except LookupError:
+                continue
+    raise LookupError("matrix query has no frozen model assignment target")
+
+
 _NEUTRAL_QUERIES: dict[str, QueryProbe] = {
     "agent_died": lambda state: lease_by_id(state, "lease-1"),
     "agent_dispatch_requested": lambda state: lease_by_id(state, "lease-1"),
@@ -350,15 +372,29 @@ _CHANGING_QUERIES: dict[str, QueryProbe] = {
 
 _MUTABLE_QUERY_EVENTS = frozenset(
     {
+        "graph_patch_accepted",
+    }
+)
+
+
+_FROZEN_QUERY_EVENTS = frozenset(
+    {
         "node_created",
         "node_state_changed",
         "plan_region_marked_suspect",
         "node_authority_changed",
+        "edge_created",
         "input_bound",
         "output_record_accepted",
         "file_state_accepted",
         "gatekeeper_verdict_recorded",
-        "graph_patch_accepted",
+        "verification_passed",
+        "verification_failed",
+        "approval_decision_recorded",
+        "authority_decision_recorded",
+        "oversight_decision_recorded",
+        "requirement_revision_recorded",
+        "support_evidence_recorded",
         "lease_granted",
         "lease_renewed",
         "lease_suspended",
@@ -526,6 +562,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             _NEUTRAL_QUERIES[name],
             None,
             False,
+            None,
         )
         for name, payload in NEUTRAL_PAYLOADS.items()
     )
@@ -1034,6 +1071,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             _CHANGING_QUERIES[name],
             _mutate_existing_nested_value if name in _MUTABLE_QUERY_EVENTS else None,
             name in _MUTABLE_QUERY_EVENTS,
+            _frozen_model_field if name in _FROZEN_QUERY_EVENTS else None,
         )
         for name, prefix, payload, groups in changing_payloads
     )
