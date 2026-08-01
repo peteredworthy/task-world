@@ -80,3 +80,78 @@ final verification and commit hooks.
   subtype preservation and conflict-message contract.
 - Confirmed existing exhaustive test suites remain in place.
 - Confirmed `.superpowers/sdd/progress.md` remains uncommitted.
+
+## Review-Fix Evidence (2026-07-31)
+
+### RED Against `58c1002c5`
+
+- Added a canonical gatekeeper subtype contract before changing the matrix
+  fixture and ran `uv run pytest tests/unit/test_graph_projection_replay_equivalence.py -q`.
+  It failed as expected with `IndexError: tuple index out of range` for
+  `direct_record.external[0]`: the prior canonical stream had no external
+  entry and therefore did not exercise the external subtype branch.
+- Strengthened query mutation probing to require an existing nested target.
+  The first run identified rows whose public outputs contained only scalars,
+  empty mappings, or frozen projection models; their probe attempts failed
+  with `matrix query has no truthful nested mutable target`. These rows are now
+  explicitly represented by `has_mutable_query_target=False`, rather than
+  receiving synthetic-key mutation probes.
+- The existing matrix generation test was corrected to snapshot before
+  reduction, and the duplicate-ID test now exposed the required stable-field,
+  node, and event diagnostics.
+
+### GREEN Changes
+
+- `test_matrix_reduction_preserves_prior_generation...` takes a deep checkpoint
+  before `reduce_event`; stream-level generation coverage saves the initial
+  projection immediately before its first reduction, every subsequent current
+  generation before reduction, and the final generation. This protects
+  one-event stream initial identity.
+- Query isolation captures a deep copy of the public response before mutation,
+  mutates an existing nested list/dict/model value only, verifies the projection
+  checkpoint, and verifies a fresh query is equal to the pre-mutation response.
+  The explicit `has_mutable_query_target` matrix metadata distinguishes scalar,
+  empty, and frozen-only responses from mutable public views.
+- Every split now remains associated with its `ProjectionBehaviorCase` and
+  compares that case's query result for full, incremental, and checkpoint-tail
+  projections. The public `replay_streams()` helper is preserved.
+- The canonical gatekeeper fixture now contains ordinary `untracked` and
+  manifest-backed `external` entries, each with a verdict. Direct and
+  checkpoint-tail tests assert `ProjectedFileEntry` and
+  `ProjectedExternalFileEntry` respectively. The existing production subtype
+  preservation implementation covers both branches; no additional production
+  change was required.
+- The duplicate node-ID representative checks the exception type and replay
+  phrase plus node (`worker-1`), stable field (`role`), and event (`event-2`)
+  diagnostics.
+
+### Files
+
+- `tests/unit/graph_projection_behavior_cases.py`
+- `tests/unit/test_graph_projection_behavior.py`
+- `tests/unit/test_graph_projection_duplicate_ids.py`
+- `tests/unit/test_graph_projection_immutability.py`
+- `tests/unit/test_graph_projection_queries.py`
+- `tests/unit/test_graph_projection_replay_equivalence.py`
+
+### Commit
+
+Review-fix implementation commit: `64b4a5941 test(graph): strengthen projection closure coverage`.
+
+### Final Verification
+
+```text
+uv run pytest tests/unit/test_graph_projection_behavior.py \
+  tests/unit/test_graph_projection_replay_equivalence.py \
+  tests/unit/test_graph_projection_immutability.py \
+  tests/unit/test_graph_projection_queries.py \
+  tests/unit/test_graph_projection_duplicate_ids.py \
+  tests/unit/test_graph_projection_codec.py \
+  tests/unit/test_graph_projection_integrity.py -q
+
+772 passed in 6.91s
+```
+
+Normal hooks passed for the review-fix implementation commit: Ruff, Ruff
+format, secret detection, Pyright, graph-projection boundaries, pytest,
+module-import checks, signal routing, UI lint, and UI typecheck.
