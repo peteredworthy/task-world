@@ -28,6 +28,7 @@ PROJECTION_FIELDS = {
     "GraphDispatchContext": frozenset({"graph_projection"}),
     "GraphProjectionCheckpoint": frozenset({"projection"}),
 }
+_UNKNOWN_ORIGIN = "<unknown>"
 _PROJECTION_TYPE_ORIGINS = frozenset(
     {
         "orchestrator.graph.GraphController",
@@ -57,13 +58,13 @@ class _FlowState:
     declarations are discovered separately and copied into function entries.
     """
 
-    origins: dict[str, str] = field(default_factory=dict)
+    origins: dict[str, frozenset[str]] = field(default_factory=dict)
     aliases: dict[str, Literal["definite", "possible"]] = field(default_factory=dict)
-    receiver_types: dict[str, str] = field(default_factory=dict)
+    receiver_types: dict[str, frozenset[str]] = field(default_factory=dict)
     fields: dict[str, frozenset[str]] = field(default_factory=dict)
     possible_fields: dict[str, frozenset[str]] = field(default_factory=dict)
     field_types: dict[str, frozenset[str]] = field(default_factory=dict)
-    functions: dict[str, str] = field(default_factory=dict)
+    functions: dict[str, frozenset[str]] = field(default_factory=dict)
 
     def copy(self) -> _FlowState:
         return _FlowState(
@@ -168,9 +169,7 @@ class ProjectionProvenanceCollector:
                     "orchestrator.graph",
                     "orchestrator.graph_runtime.controller",
                 }:
-                    scope.origins[name] = (
-                        item.name if previous is None else f"{previous}|{item.name}"
-                    )
+                    scope.origins[name] = frozenset({item.name}) | (previous or frozenset())
             return
         module = self._import_module(node)
         for item in node.names:
@@ -184,11 +183,11 @@ class ProjectionProvenanceCollector:
                     origin
                     in GRAPH_PROJECTION_TYPES | PROJECTION_FUNCTIONS | _PROJECTION_TYPE_ORIGINS
                 ):
-                    scope.origins[name] = origin
+                    scope.origins[name] = frozenset({origin})
                 elif origin == "orchestrator.graph.projections.GraphProjection":
                     # The import boundary reports this forbidden spelling; retain
                     # projection facts so it cannot hide storage violations.
-                    scope.origins[name] = "orchestrator.graph.GraphProjection"
+                    scope.origins[name] = frozenset({"orchestrator.graph.GraphProjection"})
 
     @staticmethod
     def _clear(name: str, scope: _FlowState) -> None:
@@ -200,16 +199,14 @@ class ProjectionProvenanceCollector:
         scope.field_types.pop(name, None)
         scope.functions.pop(name, None)
 
-    def _origin(self, node: ast.expr, scope: _FlowState) -> str | None:
+    def _origin(self, node: ast.expr, scope: _FlowState) -> frozenset[str]:
         if isinstance(node, ast.Name):
-            return scope.origins.get(node.id)
+            return scope.origins.get(node.id, frozenset())
         if isinstance(node, ast.Attribute):
             prefix = self._origin(node.value, scope)
-            if prefix is None:
-                return None
             approved = GRAPH_PROJECTION_TYPES | PROJECTION_FUNCTIONS | _PROJECTION_TYPE_ORIGINS
-            candidates: list[str] = []
-            for imported in prefix.split("|"):
+            candidates: set[str] = set()
+            for imported in prefix:
                 if isinstance(node.value, ast.Name) and imported.startswith(
                     f"{node.value.id}.{node.attr}"
                 ):
@@ -231,21 +228,23 @@ class ProjectionProvenanceCollector:
                     and (origin == candidate or origin.startswith(f"{candidate}."))
                     for origin in approved
                 ):
-                    candidates.append(candidate)
-            return "|".join(candidates) or None
-        return None
+                    candidates.add(candidate)
+            return frozenset(candidates)
+        return frozenset()
 
     def _annotation(self, node: ast.expr | None, scope: _FlowState) -> str | None:
         if node is None:
             return None
         origin = self._origin(node, scope)
-        if origin in GRAPH_PROJECTION_TYPES:
+        if origin and origin <= GRAPH_PROJECTION_TYPES:
             return "GraphProjection"
-        if origin in _PROJECTION_TYPE_ORIGINS:
-            return origin.rpartition(".")[2]
+        if origin and origin <= _PROJECTION_TYPE_ORIGINS and len(origin) == 1:
+            return next(iter(origin)).rpartition(".")[2]
         if isinstance(node, ast.Name):
             return (
-                scope.receiver_types.get(node.id) or scope.origins.get(node.id) or node.id
+                self._one_candidate(scope.receiver_types.get(node.id))
+                or self._one_candidate(scope.origins.get(node.id))
+                or node.id
                 if node.id in scope.fields
                 else None
             )
@@ -291,19 +290,27 @@ class ProjectionProvenanceCollector:
         if not isinstance(node, ast.Call):
             return None
         origin = self._origin(node.func, scope)
-        if origin in PROJECTION_FUNCTIONS:
-            return "definite"
-        if (
-            isinstance(node.func, ast.Name)
-            and scope.functions.get(node.func.id) == "GraphProjection"
+        if origin & PROJECTION_FUNCTIONS:
+            return "definite" if origin <= PROJECTION_FUNCTIONS else "possible"
+        if isinstance(node.func, ast.Name) and (
+            functions := scope.functions.get(node.func.id, frozenset())
         ):
-            return "definite"
+            if "GraphProjection" in functions:
+                return "definite" if functions == {"GraphProjection"} else "possible"
         if isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name):
-            receiver = scope.receiver_types.get(node.func.value.id)
-            shape = PROJECTION_METHODS.get((receiver or "", node.func.attr))
-            if shape == "value":
-                return "definite"
+            receivers = scope.receiver_types.get(node.func.value.id, frozenset())
+            producers = {
+                receiver
+                for receiver in receivers
+                if PROJECTION_METHODS.get((receiver, node.func.attr)) == "value"
+            }
+            if producers:
+                return "definite" if producers == receivers else "possible"
         return None
+
+    @staticmethod
+    def _one_candidate(candidates: frozenset[str] | None) -> str | None:
+        return next(iter(candidates)) if candidates is not None and len(candidates) == 1 else None
 
     @staticmethod
     def _field_is_declared(receiver: str, field_name: str, scope: _FlowState) -> bool:
@@ -346,6 +353,35 @@ class ProjectionProvenanceCollector:
         target.possible_fields = source.possible_fields
         target.field_types = source.field_types
         target.functions = source.functions
+
+    def _restore_names(self, target: _FlowState, outer: _FlowState, names: set[str]) -> None:
+        """Remove comprehension-local bindings while retaining evaluated effects."""
+        for name in names:
+            self._clear(name, target)
+            if name in outer.origins:
+                target.origins[name] = outer.origins[name]
+            if name in outer.aliases:
+                target.aliases[name] = outer.aliases[name]
+            if name in outer.receiver_types:
+                target.receiver_types[name] = outer.receiver_types[name]
+            if name in outer.fields:
+                target.fields[name] = outer.fields[name]
+            if name in outer.possible_fields:
+                target.possible_fields[name] = outer.possible_fields[name]
+            if name in outer.field_types:
+                target.field_types[name] = outer.field_types[name]
+            if name in outer.functions:
+                target.functions[name] = outer.functions[name]
+
+    @staticmethod
+    def _possible_state(state: _FlowState) -> _FlowState:
+        """Represent an unresolved exception-suppression continuation."""
+        possible = state.copy()
+        possible.aliases = {name: "possible" for name in possible.aliases}
+        possible.possible_fields = {
+            receiver: fields for receiver, fields in possible.fields.items()
+        }
+        return possible
 
     def _join_states(self, states: list[_FlowState]) -> _FlowState:
         if not states:
@@ -439,6 +475,7 @@ class ProjectionProvenanceCollector:
             return self._join_outcomes(outcomes)
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
             current = _Outcomes(normal=[state.copy()])
+            captured_names: set[str] = set()
             for generator in node.generators:
                 next_outcomes: list[_Outcomes] = []
                 for prior in current.normal:
@@ -447,6 +484,7 @@ class ProjectionProvenanceCollector:
                     for iterated in iterable.normal:
                         bound = iterated.copy()
                         for name in _target_names(generator.target):
+                            captured_names.add(name)
                             self._set_alias(name, generator.iter, bound)
                         conditions = _Outcomes(normal=[bound])
                         for condition in generator.ifs:
@@ -459,17 +497,30 @@ class ProjectionProvenanceCollector:
                             )
                         next_outcomes.append(conditions)
                 current = self._join_outcomes(next_outcomes)
-            values: tuple[ast.expr, ...]
-            if isinstance(node, ast.DictComp):
-                values = (node.key, node.value)
-            else:
-                values = (node.elt,)
-            results = [
-                self._evaluate_expression(value, item)
-                for item in current.normal
-                for value in values
-            ]
-            return self._join_outcomes([_Outcomes(raised=current.raised), *results])
+            results: list[_Outcomes] = [_Outcomes(raised=current.raised)]
+            for item in current.normal:
+                produced = (
+                    self._evaluate_expression(node.key, item)
+                    if isinstance(node, ast.DictComp)
+                    else _Outcomes(normal=[item])
+                )
+                if isinstance(node, ast.DictComp):
+                    results.append(_Outcomes(raised=produced.raised))
+                    produced = self._join_outcomes(
+                        [
+                            _Outcomes(raised=produced.raised),
+                            *[
+                                self._evaluate_expression(node.value, keyed)
+                                for keyed in produced.normal
+                            ],
+                        ]
+                    )
+                else:
+                    produced = self._evaluate_expression(node.elt, item)
+                for completed in produced.normal:
+                    self._restore_names(completed, state, captured_names)
+                results.append(produced)
+            return self._join_outcomes(results)
         current = _Outcomes(normal=[state])
         for child in self._expression_children(node):
             next_outcomes: list[_Outcomes] = []
@@ -508,8 +559,12 @@ class ProjectionProvenanceCollector:
             self._clear(target.id, state)
         else:
             self._set_alias(target.id, value, state)
-            if value is not None and (origin := self._origin(value, state)) is not None:
+            if value is not None and (origin := self._origin(value, state)):
                 state.origins[target.id] = origin
+            elif value is not None:
+                state.origins[target.id] = frozenset({_UNKNOWN_ORIGIN})
+        if isinstance(value, ast.Name) and value.id in state.functions:
+            state.functions[target.id] = state.functions[value.id]
         if annotation == "GraphProjection":
             state.aliases[target.id] = "definite"
         receiver = self._annotation_receiver(annotation)
@@ -528,9 +583,15 @@ class ProjectionProvenanceCollector:
             else None
         )
 
-    def _bind_receiver(self, name: str, receiver: str, state: _FlowState) -> None:
-        state.receiver_types[name] = receiver
-        fields = state.field_types.get(receiver, PROJECTION_FIELDS.get(receiver, frozenset()))
+    def _bind_receiver(self, name: str, receiver: str | frozenset[str], state: _FlowState) -> None:
+        receivers = frozenset({receiver}) if isinstance(receiver, str) else receiver
+        state.receiver_types[name] = receivers
+        fields = frozenset().union(
+            *(
+                state.field_types.get(item, PROJECTION_FIELDS.get(item, frozenset()))
+                for item in receivers
+            )
+        )
         state.field_types[name] = fields
         state.fields[name] = fields
 
@@ -542,9 +603,15 @@ class ProjectionProvenanceCollector:
             return None
         if not isinstance(call.func.value, ast.Name):
             return None
-        receiver = state.receiver_types.get(call.func.value.id)
-        shape = PROJECTION_METHODS.get((receiver or "", call.func.attr))
-        return "definite" if shape == "first_tuple_item" and index == 0 else None
+        receivers = state.receiver_types.get(call.func.value.id, frozenset())
+        producers = {
+            receiver
+            for receiver in receivers
+            if PROJECTION_METHODS.get((receiver, call.func.attr)) == "first_tuple_item"
+        }
+        if index != 0 or not producers:
+            return None
+        return "definite" if producers == receivers else "possible"
 
     def _evaluate_assignment_target(self, target: ast.expr, state: _FlowState) -> _Outcomes:
         if isinstance(target, ast.Name):
@@ -587,10 +654,11 @@ class ProjectionProvenanceCollector:
             return _Outcomes(normal=[state])
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             value = self._evaluate_expression(node.value, state)
-            normal = []
+            normal = value.normal
             raised = list(value.raised)
-            for current in value.normal:
-                for target in node.targets if isinstance(node, ast.Assign) else (node.target,):
+            for target in node.targets if isinstance(node, ast.Assign) else (node.target,):
+                following: list[_FlowState] = []
+                for current in normal:
                     target_outcome = self._evaluate_assignment_target(target, current)
                     raised.extend(target_outcome.raised)
                     for target_state in target_outcome.normal:
@@ -602,8 +670,9 @@ class ProjectionProvenanceCollector:
                             else None,
                             target_state,
                         )
-                        normal.append(target_state)
+                        following.append(target_state)
                         raised.append(target_state.copy())
+                normal = following
             return self._join_outcomes([_Outcomes(normal=normal, raised=raised)])
         if isinstance(node, ast.AugAssign):
             target = self._evaluate_expression(node.target, state)
@@ -708,7 +777,10 @@ class ProjectionProvenanceCollector:
                         next_outcomes.append(_Outcomes(normal=[entered], raised=[entered.copy()]))
                 current = self._join_outcomes(next_outcomes)
             bodies = [self._evaluate_block(node.body, entered) for entered in current.normal]
-            return self._join_outcomes([_Outcomes(raised=current.raised), *bodies])
+            suppressed = [self._possible_state(raised) for body in bodies for raised in body.raised]
+            return self._join_outcomes(
+                [_Outcomes(raised=current.raised, normal=suppressed), *bodies]
+            )
         if isinstance(node, ast.Match):
             subject = self._evaluate_expression(node.subject, state)
             branches: list[_Outcomes] = [_Outcomes(raised=subject.raised)]
@@ -793,9 +865,13 @@ class ProjectionProvenanceCollector:
             return None
         if not isinstance(value.func.value, ast.Name):
             return None
-        receiver = scope.receiver_types.get(value.func.value.id)
-        shape = PROJECTION_METHODS.get((receiver or "", value.func.attr))
-        return shape if shape in PROJECTION_FIELDS else None
+        receivers = scope.receiver_types.get(value.func.value.id, frozenset())
+        produced = {
+            shape
+            for receiver in receivers
+            if (shape := PROJECTION_METHODS.get((receiver, value.func.attr))) in PROJECTION_FIELDS
+        }
+        return self._one_candidate(frozenset(produced))
 
     def _merge(self, before: _FlowState, branches: tuple[_FlowState, ...]) -> _FlowState:
         """Join all finite runtime bindings, not only projection aliases."""
@@ -815,16 +891,11 @@ class ProjectionProvenanceCollector:
             keys = set().union(*(set(getattr(branch, attribute)) for branch in branches))
             for key in keys:
                 values = [getattr(branch, attribute).get(key) for branch in branches]
-                candidates = sorted(
-                    {
-                        candidate
-                        for value in values
-                        if value is not None
-                        for candidate in value.split("|")
-                    }
+                candidates = frozenset(
+                    candidate for value in values if value is not None for candidate in value
                 )
                 if candidates:
-                    target[key] = "|".join(candidates)
+                    target[key] = candidates
         merged.field_types.clear()
         field_type_keys = set().union(*(set(branch.field_types) for branch in branches))
         for key in field_type_keys:
@@ -855,7 +926,8 @@ class ProjectionProvenanceCollector:
     ) -> None:
         self._clear(node.name, scope)
         if not node.decorator_list:
-            scope.functions[node.name] = self._annotation(node.returns, scope) or ""
+            annotation = self._annotation(node.returns, scope)
+            scope.functions[node.name] = frozenset({annotation}) if annotation else frozenset()
         local = scope.copy()
         arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
         if node.args.vararg is not None:
@@ -872,7 +944,7 @@ class ProjectionProvenanceCollector:
                 | set(PROJECTION_FIELDS)
                 | set(scope.fields)
             ):
-                local.receiver_types[argument.arg] = annotation
+                local.receiver_types[argument.arg] = frozenset({annotation})
                 fields = scope.field_types.get(
                     annotation, PROJECTION_FIELDS.get(annotation, frozenset())
                 )
@@ -881,7 +953,7 @@ class ProjectionProvenanceCollector:
         if class_name is not None and node.args.args:
             receiver = node.args.args[0].arg
             fields = scope.field_types.get(class_name, frozenset())
-            local.receiver_types[receiver] = class_name
+            local.receiver_types[receiver] = frozenset({class_name})
             local.field_types[receiver] = fields
             local.fields[receiver] = fields
         self._function_depth += 1

@@ -1251,6 +1251,134 @@ def read(projection: GraphProjection, values: dict[GraphProjection, object]) -> 
     }
 
 
+def test_boundary_provenance_comprehension_targets_shadow_without_leaking() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, values: list[object]) -> None:
+    [projection["inside-shadow"] for projection in values]
+    projection["outer-after"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("projection['outer-after']", "definite"),
+    ]
+
+
+def test_boundary_provenance_joins_heterogeneous_approved_candidates() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import (
+    GraphController,
+    GraphDispatchContext,
+    GraphProjection,
+    GraphProjectionCheckpoint,
+    build_projection,
+    initial_projection,
+)
+
+def initial() -> GraphProjection:
+    return initial_projection()
+
+def build() -> GraphProjection:
+    return build_projection()
+
+def read(
+    condition: bool,
+    controller: GraphController,
+    context: GraphDispatchContext,
+    checkpoint: GraphProjectionCheckpoint,
+    other: object,
+) -> None:
+    if condition:
+        factory = initial_projection
+        local_factory = initial
+        receiver = context
+        mixed_factory = initial_projection
+    else:
+        factory = build_projection
+        local_factory = build
+        receiver = checkpoint
+        mixed_factory = other
+    factory()["approved-factories"]
+    local_factory()["approved-local-functions"]
+    receiver.graph_projection["approved-receiver"]
+    mixed_factory()["mixed-factories"]
+    controller.read_projection()["approved-controller"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("factory()['approved-factories']", "definite"),
+        ("local_factory()['approved-local-functions']", "definite"),
+        ("receiver.graph_projection['approved-receiver']", "possible"),
+        ("mixed_factory()['mixed-factories']", "possible"),
+        ("controller.read_projection()['approved-controller']", "definite"),
+    ]
+
+
+def test_boundary_provenance_chained_assignment_threads_first_target_state() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, values: dict[GraphProjection, object]) -> None:
+    values[(key := projection)] = alias = projection
+    key["first-target-walrus"]
+    alias["second-target"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "key['first-target-walrus']",
+        "alias['second-target']",
+    }
+
+
+def test_boundary_provenance_dict_comprehension_threads_key_state_to_value() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, values: list[object]) -> None:
+    {(alias := projection)["key"]: alias["value"] for _ in values}
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "(alias := projection)['key']",
+        "alias['value']",
+    }
+
+
+@pytest.mark.parametrize("prefix", ("with", "async with"))
+def test_boundary_provenance_with_body_raise_can_be_suppressed(prefix: str) -> None:
+    async_prefix = "async " if prefix == "async with" else ""
+    facts = projection_provenance(
+        f"""from orchestrator.graph import GraphProjection
+
+{async_prefix}def read(projection: GraphProjection, context: object) -> None:
+    alias = projection
+    {prefix} context:
+        raise RuntimeError()
+    alias["after-suppressed-raise"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("alias['after-suppressed-raise']", "possible"),
+    ]
+
+
 @pytest.mark.parametrize(
     "method",
     (

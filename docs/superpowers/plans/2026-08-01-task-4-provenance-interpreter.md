@@ -99,3 +99,59 @@ Append a section naming the architecture reset, each RED family and observed fai
 Run: `git add scripts/graph_projection_boundary_provenance.py tests/unit/test_graph_projection_boundaries.py .superpowers/sdd/closure-task-4-report.md docs/superpowers/plans/2026-08-01-task-4-provenance-interpreter.md && git commit -m "refactor(graph): model boundary provenance flow"`
 
 Expected: normal hooks pass and create one new commit.
+
+---
+
+### Task 4: Close bounded-interpreter review blockers
+
+**Files:**
+- Modify: `tests/unit/test_graph_projection_boundaries.py`
+- Modify: `scripts/graph_projection_boundary_provenance.py`
+- Modify: `.superpowers/sdd/closure-task-4-report.md`
+
+**Interfaces:**
+- Consumes: `_FlowState`, `_Outcomes`, `projection_provenance(source, relative_path=...)`.
+- Produces: scope-isolated comprehensions, finite candidate-set provenance joins,
+  Python-ordered chained assignment and dictionary-comprehension transfers, and
+  conservative `with`/`async with` exception suppression outcomes.
+
+- [x] **Step 1: Add review-blocker RED contracts**
+
+  Add direct source-level contracts proving: a comprehension target shadows a
+  `GraphProjection` parameter only inside the comprehension and the outer
+  access remains definite; approved factory/receiver/function candidates join
+  without string encoding and mixed approved/foreign candidates are possible;
+  a first chained-assignment target's walrus affects the second target; a dict
+  comprehension key walrus affects its value; and a body-raised `with` or
+  `async with` state can possibly continue after an unresolved exit method.
+
+- [x] **Step 2: Run and capture RED evidence**
+
+  Run: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q`
+
+  Expected: the added contracts fail specifically for leaking comprehension
+  state, heterogeneous pipe-string joins, target/value ordering, or dropped
+  suppressed-exception continuation.
+
+- [x] **Step 3: Implement the smallest transfer corrections**
+
+  Store exact origin, receiver, and function candidates as immutable finite
+  sets; compute definite provenance only when every candidate is approved.
+  Interpret comprehension bindings in a copied local state and return outer
+  state after the element expression. Evaluate chained targets sequentially,
+  assigning each completed target before evaluating the next. Evaluate dict
+  comprehension keys before values. Preserve every body-raised `with` outcome
+  and add a copy as a possible normal continuation after context exit.
+
+- [x] **Step 4: Run GREEN boundary and quality gates**
+
+  Run: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q && uv run python scripts/check_graph_projection_boundaries.py && uv run ruff check scripts/graph_projection_boundary_provenance.py tests/unit/test_graph_projection_boundaries.py && uv run ruff format --check scripts/graph_projection_boundary_provenance.py tests/unit/test_graph_projection_boundaries.py && uv run pyright scripts/graph_projection_boundary_provenance.py tests/unit/test_graph_projection_boundaries.py`
+
+  Expected: all commands pass, including all added contracts.
+
+- [x] **Step 5: Record evidence and commit normally**
+
+  Append exact RED/GREEN command outcomes, conservative-analysis limits, and
+  confirmation that `.superpowers/sdd/progress.md` was untouched to the Task 4
+  report. Stage only the implementation, tests, report, and this plan, then
+  run a normal `git commit` without amendment so configured hooks execute.

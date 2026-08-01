@@ -366,3 +366,54 @@ modify `.superpowers/sdd/progress.md`.
   unresolved branches and exception matching can retain an approved projection
   as `possible`, but exact finite import origins are never widened. No public
   API changed, and `.superpowers/sdd/progress.md` was not modified.
+
+## Review-blocker closure: scope, finite joins, and ordered transfers
+
+### Corrections
+
+- Comprehension generator targets now bind only in the temporary comprehension
+  state. The temporary bindings are restored to the enclosing state after the
+  produced expression, while effects from iterable evaluation and non-target
+  named expressions remain available conservatively.
+- Exact imports, receiver types, and local function return bindings now use
+  finite `frozenset` candidates rather than pipe-delimited strings. A call is
+  definite only when every candidate is an approved projection producer;
+  approved/unknown mixtures are possible, and exact-import subtree checks
+  still reject sibling paths.
+- Assignment transfer evaluates the RHS once, then evaluates and assigns every
+  target left-to-right, carrying each completed target state into the next.
+  Dictionary-comprehension key evaluation likewise feeds its resulting state
+  into value evaluation.
+- `with` and `async with` preserve body-raised outcomes and also retain a
+  downgraded possible-normal continuation because unresolved `__exit__` and
+  `__aexit__` methods may suppress the exception.
+
+### RED/GREEN evidence
+
+- RED: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` — 4
+  failures (122 passed): comprehension target leakage removed the later outer
+  access; heterogeneous approved factory/function joins were lost; and both
+  synchronous and asynchronous `with` body raises had no normal continuation.
+  The chained-target and dictionary-key/value contracts were added before the
+  implementation and protected sequencing that happened to be represented by
+  the prior mutable-state flow; the transfer code was still made explicitly
+  ordered so later outcome splitting cannot regress it.
+- GREEN: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` —
+  126 passed.
+- GREEN: `uv run python scripts/check_graph_projection_boundaries.py` — exited
+  0 with no output.
+- GREEN: `uv run ruff check scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py` — passed; `uv run ruff
+  format --check scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py` — passed; `uv run pyright
+  scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py` — 0 errors, 0 warnings, 0
+  information messages.
+
+### Conservative boundary
+
+- The interpreter does not resolve runtime iteration cardinality, dynamic
+  receiver methods, or context-manager exit return values. It retains approved
+  provenance as `possible` whenever a feasible candidate/path remains, but it
+  never turns an unimported sibling path into an approved origin.
+  `.superpowers/sdd/progress.md` was not modified.
