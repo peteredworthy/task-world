@@ -130,3 +130,47 @@ modify `.superpowers/sdd/progress.md`.
   where Python exception timing cannot be resolved statically, provenance may
   be reported as `possible` rather than omitted. This favors the permanent
   boundary guard's false-negative avoidance requirement.
+
+## Final origin-resolution and binding-state fix
+
+### Root cause and constrained implementation
+
+- Call and annotation provenance accepted a textual `ast.unparse()` spelling of
+  approved public paths. That let unimported dotted text seed provenance, while
+  the exact unaliased `import orchestrator.graph_runtime.controller` form was
+  not bound as an approved module root.
+- Scope field state also represented both a declaration and a current projected
+  value, so assigning foreign data to a typed field could leave stale
+  provenance. Named expressions did not update state, and augmented assignment
+  or deletion did not invalidate rebound aliases.
+- Provenance now comes only from finite, resolved import origins. Exact public
+  imports cover the graph module, its aliases, the controller module and its
+  aliases, and exact from-imports; root/module rebinding clears the associated
+  origin. No unimported or foreign dotted annotation/call is a seed.
+- `*args` and `**kwargs` use the same exact annotation resolution as ordinary
+  parameters. Named expressions evaluate their value then bind their target.
+  Augmented assignment and deletion clear name and typed-field provenance; a
+  subscript mutation intentionally retains the base projection provenance so
+  the permanent guard continues reporting every immutable-operation diagnostic.
+- Typed-field declarations are tracked separately from their current projection
+  value. Projection assignments retain/re-establish field provenance and
+  non-projection assignments or deletion clear it.
+
+### TDD and verification evidence
+
+- RED: `uv run pytest tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_resolves_only_exact_imported_dotted_origins tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_seeds_exactly_typed_variadics tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_applies_walrus_augassign_and_delete_bindings tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_clears_and_restores_typed_field_provenance -q` — 4 failed, respectively exposing textual/unbound dotted resolution, unseeded typed variadics, missing walrus/kill state, and stale typed fields.
+- GREEN: the same focused command — 4 passed after the constrained collector changes.
+- Broader boundary verification first exposed that clearing a base name after a
+  subscript mutation hid later immutable-operation diagnostics. The collector
+  now keeps the base provenance for subscript targets because that mutation does
+  not rebind the base value.
+- Final focused suite: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` — 100 passed.
+- Final standalone guard: `uv run python scripts/check_graph_projection_boundaries.py` — exited 0 with no output.
+- Static checks: `uv run ruff check scripts/graph_projection_boundary_provenance.py tests/unit/test_graph_projection_boundaries.py`, `uv run ruff format --check scripts/graph_projection_boundary_provenance.py tests/unit/test_graph_projection_boundaries.py`, and `uv run pyright scripts/graph_projection_boundary_provenance.py tests/unit/test_graph_projection_boundaries.py` — passed (Pyright: 0 errors).
+
+### Concerns
+
+- The collector remains deliberately conservative at unresolved control-flow
+  joins. This change does not expand the finite approved-origin tables or relax
+  the boundary visitor's diagnostics. `.superpowers/sdd/progress.md` remains
+  untouched.

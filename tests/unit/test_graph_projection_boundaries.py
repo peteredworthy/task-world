@@ -559,6 +559,140 @@ def read(projection: GraphProjection, other: object) -> None:
     ]
 
 
+def test_boundary_provenance_resolves_only_exact_imported_dotted_origins() -> None:
+    facts = projection_provenance(
+        """import orchestrator.graph
+import orchestrator.graph as graph
+import orchestrator.graph_runtime.controller
+import orchestrator.graph_runtime.controller as controller
+from orchestrator.graph import GraphProjection as Projection, initial_projection, reduce_event
+from orchestrator.graph_runtime.controller import rebuild_projection as rebuild
+
+def accepted(value: Projection, dotted: orchestrator.graph.GraphProjection) -> None:
+    value["parameter"]
+    dotted["dotted-annotation"]
+    orchestrator.graph.initial_projection()["root-import"]
+    graph.build_projection([])["module-alias"]
+    orchestrator.graph_runtime.controller.rebuild_projection([])["controller-import"]
+    controller.rebuild_projection([])["controller-alias"]
+    initial_projection()["from-import"]
+    reduce_event(None, None)["from-reduce-import"]
+    rebuild([])["from-controller-import"]
+
+def rejected(
+    unimported: unknown.graph.GraphProjection,
+    foreign: foreign.GraphProjection,
+) -> None:
+    unimported["unimported-annotation"]
+    foreign["foreign-annotation"]
+    unknown.graph.initial_projection()["unimported-call"]
+    foreign.initial_projection()["foreign-call"]
+
+def shadowed(orchestrator: object, graph: object, controller: object) -> None:
+    orchestrator.graph.initial_projection()["root-shadow"]
+    graph.initial_projection()["module-shadow"]
+    controller.rebuild_projection([])["controller-shadow"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "value['parameter']",
+        "dotted['dotted-annotation']",
+        "orchestrator.graph.initial_projection()['root-import']",
+        "graph.build_projection([])['module-alias']",
+        "orchestrator.graph_runtime.controller.rebuild_projection([])['controller-import']",
+        "controller.rebuild_projection([])['controller-alias']",
+        "initial_projection()['from-import']",
+        "reduce_event(None, None)['from-reduce-import']",
+        "rebuild([])['from-controller-import']",
+    }
+
+
+def test_boundary_provenance_seeds_exactly_typed_variadics() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection as Projection
+
+def accepted(*args: Projection, **kwargs: Projection) -> None:
+    args["typed-vararg"]
+    kwargs["typed-kwarg"]
+
+def rejected(*args: object, **kwargs: foreign.GraphProjection) -> None:
+    args["untyped-vararg"]
+    kwargs["foreign-kwarg"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "args['typed-vararg']",
+        "kwargs['typed-kwarg']",
+    }
+
+
+def test_boundary_provenance_applies_walrus_augassign_and_delete_bindings() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object) -> None:
+    (alias := projection)["walrus-set"]
+    alias["after-set"]
+    (alias := other)["walrus-kill"]
+    alias["after-kill"]
+    alias = projection
+    alias += other
+    alias["after-augassign"]
+    alias = projection
+    alias["item"] += 1
+    alias["after-subscript-augassign"]
+    alias = projection
+    del alias["item"]
+    alias["after-subscript-delete"]
+    alias = projection
+    del alias
+    alias["after-delete"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "(alias := projection)['walrus-set']",
+        "alias['after-set']",
+        "alias['item']",
+        "alias['after-subscript-augassign']",
+        "alias['after-subscript-delete']",
+    }
+
+
+def test_boundary_provenance_clears_and_restores_typed_field_provenance() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+class Holder:
+    projection: GraphProjection
+
+    def read(self, projection: GraphProjection, other: object) -> None:
+        self.projection = projection
+        self.projection["field-set"]
+        self.projection += other
+        self.projection["field-augassign"]
+        self.projection = projection
+        self.projection = other
+        self.projection["field-cleared"]
+        self.projection = projection
+        self.projection["field-restored"]
+        del self.projection
+        self.projection["field-deleted"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert {item.expression for item in facts if item.expression.endswith("]")} == {
+        "self.projection['field-set']",
+        "self.projection['field-restored']",
+    }
+
+
 def test_boundary_guard_traverses_executable_class_body(tmp_path: Path) -> None:
     source = tmp_path / "src/orchestrator/runtime/consumer.py"
     source.parent.mkdir(parents=True)

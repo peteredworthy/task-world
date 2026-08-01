@@ -55,6 +55,7 @@ class _Scope:
     aliases: dict[str, Literal["definite", "possible"]] = field(default_factory=dict)
     receiver_types: dict[str, str] = field(default_factory=dict)
     fields: dict[str, frozenset[str]] = field(default_factory=dict)
+    field_types: dict[str, frozenset[str]] = field(default_factory=dict)
     functions: dict[str, str] = field(default_factory=dict)
 
     def copy(self) -> _Scope:
@@ -63,6 +64,7 @@ class _Scope:
             dict(self.aliases),
             dict(self.receiver_types),
             dict(self.fields),
+            dict(self.field_types),
             dict(self.functions),
         )
 
@@ -139,8 +141,8 @@ class ProjectionProvenanceCollector:
                 self._clear(name, scope)
                 if item.name in {
                     "orchestrator.graph",
-                    "orchestrator.graph_runtime",
-                } or item.name.startswith("orchestrator.graph_runtime.controller."):
+                    "orchestrator.graph_runtime.controller",
+                }:
                     scope.origins[name] = item.name if item.asname is not None else name
             return
         module = self._import_module(node)
@@ -167,6 +169,7 @@ class ProjectionProvenanceCollector:
         scope.aliases.pop(name, None)
         scope.receiver_types.pop(name, None)
         scope.fields.pop(name, None)
+        scope.field_types.pop(name, None)
         scope.functions.pop(name, None)
 
     def _origin(self, node: ast.expr, scope: _Scope) -> str | None:
@@ -180,8 +183,6 @@ class ProjectionProvenanceCollector:
     def _annotation(self, node: ast.expr | None, scope: _Scope) -> str | None:
         if node is None:
             return None
-        if ast.unparse(node) == "orchestrator.graph.GraphProjection":
-            return "GraphProjection"
         origin = self._origin(node, scope)
         if origin in GRAPH_PROJECTION_TYPES:
             return "GraphProjection"
@@ -205,6 +206,8 @@ class ProjectionProvenanceCollector:
     def _certainty(self, node: ast.expr, scope: _Scope) -> Literal["definite", "possible"] | None:
         if isinstance(node, ast.Name):
             return scope.aliases.get(node.id)
+        if isinstance(node, ast.NamedExpr):
+            return self._certainty(node.value, scope)
         if isinstance(node, ast.Await):
             return self._certainty(node.value, scope)
         if isinstance(node, ast.Attribute):
@@ -218,7 +221,7 @@ class ProjectionProvenanceCollector:
         if not isinstance(node, ast.Call):
             return None
         origin = self._origin(node.func, scope)
-        if origin in PROJECTION_FUNCTIONS or ast.unparse(node.func) in PROJECTION_FUNCTIONS:
+        if origin in PROJECTION_FUNCTIONS:
             return "definite"
         if (
             isinstance(node.func, ast.Name)
@@ -232,8 +235,36 @@ class ProjectionProvenanceCollector:
                 return "definite"
         return None
 
+    @staticmethod
+    def _field_is_declared(receiver: str, field_name: str, scope: _Scope) -> bool:
+        return field_name in scope.field_types.get(receiver, frozenset())
+
+    def _set_field_alias(
+        self, receiver: str, field_name: str, value: ast.expr | None, scope: _Scope
+    ) -> bool:
+        if not self._field_is_declared(receiver, field_name, scope):
+            return False
+        fields = scope.fields.get(receiver, frozenset())
+        if value is not None and self._certainty(value, scope) is not None:
+            scope.fields[receiver] = fields | frozenset({field_name})
+        else:
+            scope.fields[receiver] = fields - frozenset({field_name})
+        return True
+
+    def _kill_target(self, target: ast.expr, scope: _Scope) -> None:
+        if isinstance(target, ast.Name):
+            self._clear(target.id, scope)
+        elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+            if not self._set_field_alias(target.value.id, target.attr, None, scope):
+                self._clear(target.value.id, scope)
+
     def _visit_expr(self, node: ast.AST | None, scope: _Scope) -> None:
         if node is None:
+            return
+        if isinstance(node, ast.NamedExpr):
+            self._visit_expr(node.value, scope)
+            if isinstance(node.target, ast.Name):
+                self._set_alias(node.target.id, node.value, scope)
             return
         if isinstance(node, ast.expr):
             certainty = self._certainty(node, scope)
@@ -308,14 +339,9 @@ class ProjectionProvenanceCollector:
                     return
         for target in targets:
             if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
-                if (
-                    target.attr in scope.fields.get(target.value.id, frozenset())
-                    and value is not None
-                ):
-                    if self._certainty(value, scope) is not None:
-                        scope.fields[target.value.id] = scope.fields[target.value.id] | frozenset(
-                            {target.attr}
-                        )
+                if self._set_field_alias(target.value.id, target.attr, value, scope):
+                    continue
+                self._clear(target.value.id, scope)
                 continue
             for name in _target_names(target):
                 annotation = (
@@ -340,11 +366,17 @@ class ProjectionProvenanceCollector:
                     scope.aliases[name] = "definite"
                 if annotation in {name for name, _ in PROJECTION_METHODS} | set(PROJECTION_FIELDS):
                     scope.receiver_types[name] = annotation
-                    scope.fields[name] = PROJECTION_FIELDS.get(annotation, frozenset())
+                    fields = scope.field_types.get(
+                        annotation, PROJECTION_FIELDS.get(annotation, frozenset())
+                    )
+                    scope.field_types[name] = fields
+                    scope.fields[name] = fields
                 typed = self._typed_producer(value, scope)
                 if typed is not None:
                     scope.receiver_types[name] = typed
-                    scope.fields[name] = PROJECTION_FIELDS.get(typed, frozenset())
+                    fields = scope.field_types.get(typed, PROJECTION_FIELDS.get(typed, frozenset()))
+                    scope.field_types[name] = fields
+                    scope.fields[name] = fields
 
     def _typed_producer(self, value: ast.expr | None, scope: _Scope) -> str | None:
         if isinstance(value, ast.Await):
@@ -380,7 +412,12 @@ class ProjectionProvenanceCollector:
         if not node.decorator_list:
             scope.functions[node.name] = self._annotation(node.returns, scope) or ""
         local = scope.copy()
-        for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
+        arguments = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        if node.args.vararg is not None:
+            arguments.append(node.args.vararg)
+        if node.args.kwarg is not None:
+            arguments.append(node.args.kwarg)
+        for argument in arguments:
             self._clear(argument.arg, local)
             annotation = self._annotation(argument.annotation, scope)
             if annotation == "GraphProjection":
@@ -391,15 +428,17 @@ class ProjectionProvenanceCollector:
                 | set(scope.fields)
             ):
                 local.receiver_types[argument.arg] = annotation
-                local.fields[argument.arg] = scope.fields.get(
+                fields = scope.field_types.get(
                     annotation, PROJECTION_FIELDS.get(annotation, frozenset())
                 )
+                local.field_types[argument.arg] = fields
+                local.fields[argument.arg] = fields
         if class_name is not None and node.args.args:
-            local.fields[node.args.args[0].arg] = scope.fields.get(class_name, frozenset())
-        if node.args.vararg is not None:
-            self._clear(node.args.vararg.arg, local)
-        if node.args.kwarg is not None:
-            self._clear(node.args.kwarg.arg, local)
+            receiver = node.args.args[0].arg
+            fields = scope.field_types.get(class_name, frozenset())
+            local.receiver_types[receiver] = class_name
+            local.field_types[receiver] = fields
+            local.fields[receiver] = fields
         self._visit_block(node.body, local)
 
     def _class(self, node: ast.ClassDef, scope: _Scope) -> None:
@@ -412,6 +451,7 @@ class ProjectionProvenanceCollector:
         }
         self._clear(node.name, scope)
         if fields:
+            scope.field_types[node.name] = frozenset(fields)
             scope.fields[node.name] = frozenset(fields)
         class_scope = scope.copy()
         for child in node.body:
@@ -426,6 +466,14 @@ class ProjectionProvenanceCollector:
                 self._bind_import(statement, scope)
             elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
                 self._assign(statement, scope)
+            elif isinstance(statement, ast.AugAssign):
+                self._visit_expr(statement.target, scope)
+                self._visit_expr(statement.value, scope)
+                self._kill_target(statement.target, scope)
+            elif isinstance(statement, ast.Delete):
+                for target in statement.targets:
+                    self._visit_expr(target, scope)
+                    self._kill_target(target, scope)
             elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._function(statement, scope)
             elif isinstance(statement, ast.ClassDef):
