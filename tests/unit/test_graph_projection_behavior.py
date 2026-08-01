@@ -107,6 +107,19 @@ def test_matrix_mutation_probes_change_only_fresh_public_results(case) -> None:
     assert projection_to_checkpoint(projection) == checkpoint
 
 
+@pytest.mark.parametrize(
+    "case",
+    tuple(case for case in CASES if case.event_type in PROJECTION_NEUTRAL_EVENT_TYPES),
+    ids=lambda case: case.event_type,
+)
+def test_neutral_mutable_queries_declare_mutation_probes(case) -> None:
+    _, projection = case_projection(case)
+    result = case.query(projection)
+
+    if isinstance(result, (dict, list, set)):
+        assert case.mutate_query_result is not None, case.event_type
+
+
 def _value_at(projection: object, path: tuple[str, ...]) -> object:
     value = projection
     for part in path:

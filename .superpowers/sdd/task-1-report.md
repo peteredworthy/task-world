@@ -155,3 +155,35 @@ None.
 ### Concerns
 
 - None. `light` and `node_detail` are intentionally compact, non-general-replay streams; callers that need to reduce arbitrary history continue to use `read_run()`, `read_run_projection()`, or `read_run_summary_rebuild()` as appropriate.
+
+---
+
+## Review Fix: Remaining Task 1 Matrix Corrections
+
+### RED evidence
+
+- Added a precondition assertion that the `node_retired` prefix is running, a direct producer/port index assertion for `output_record_accepted`, and a metadata test requiring mutation probes for mutable neutral query results.
+- `uv run pytest tests/unit/test_graph_projection_behavior.py -q` — **182 passed, 2 failed**. The failures were the expected `node_retired` planned-prefix assertion and the missing `revision_created` mutation probe.
+
+### GREEN evidence
+
+- Changed only the `node_retired` fixture prefix to a metadata-preserving running node and added the truthful `revision_created` nested-mapping mutation probe.
+- `uv run pytest tests/unit/test_graph_projection_behavior.py tests/unit/test_graph_projections.py tests/unit/test_graph_event_registry.py -q` — **212 passed**.
+- Focused Ruff check and format check passed.
+
+### Files
+
+- `tests/unit/graph_projection_behavior_cases.py`
+  - Uses a canonical running-node prefix for retirement.
+  - Verifies the accepted record under the exact public producer/port index.
+  - Supplies a mutation probe for the mutable neutral revision query.
+- `tests/unit/test_graph_projection_behavior.py`
+  - Fails closed when a mutable neutral query lacks a mutation probe.
+
+### Commit evidence
+
+- The report and the two focused test files were staged and committed together in one non-amending commit with normal commit hooks enabled.
+
+### Concerns
+
+- None.

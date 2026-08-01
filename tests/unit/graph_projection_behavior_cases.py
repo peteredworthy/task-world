@@ -134,7 +134,6 @@ def _unchanged(before: GraphProjection, after: GraphProjection) -> None:
 
 def _assert_event_outcome(event_type: str, before: GraphProjection, after: GraphProjection) -> None:
     """Assert the externally observable domain fact owned by one event type."""
-    del before
     if event_type == "run_lifecycle_changed":
         assert run_state(after) == "active"
     elif event_type == "node_created":
@@ -144,6 +143,7 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
         assert node_state(after, "worker-1") == "ready"
         assert "worker-1" in ready_nodes_view(after)
     elif event_type == "node_retired":
+        assert node_state(before, "worker-1") == "running"
         assert node_state(after, "worker-1") == "retired"
     elif event_type == "node_deferred":
         assert node_last_deferred_reason(after, "worker-1") == "waiting"
@@ -176,6 +176,10 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
         assert record.record_type == "fan_out_inputs"
         assert record.producer_node_id == "worker-1"
         assert record.port == "fan_out_inputs"
+        indexed = output_records_by_node_port_view(after)
+        assert set(indexed) == {"worker-1"}
+        assert set(indexed["worker-1"]) == {"fan_out_inputs"}
+        assert [item.record_id for item in indexed["worker-1"]["fan_out_inputs"]] == ["record-1"]
     elif event_type == "file_state_accepted":
         record = file_state_record(after, "file-state-1")
         assert record is not None
@@ -510,6 +514,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             (),
             _unchanged,
             _NEUTRAL_QUERIES[name],
+            _mutate_nested_mapping if name == "revision_created" else None,
         )
         for name, payload in NEUTRAL_PAYLOADS.items()
     )
@@ -518,6 +523,11 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
     worker = _event(
         "node_created",
         {"node_id": "worker-1", "kind": "worker", "state": "planned", "task_region_id": "task-1"},
+        0,
+    )
+    running_worker = _event(
+        "node_created",
+        {"node_id": "worker-1", "kind": "worker", "state": "running", "task_region_id": "task-1"},
         0,
     )
     sibling = _event(
@@ -691,7 +701,12 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             {"node_id": "worker-1", "new_state": "ready"},
             frozenset({"nodes", "scheduling"}),
         ),
-        ("node_retired", (worker, sibling), {"node_id": "worker-1"}, frozenset({"nodes"})),
+        (
+            "node_retired",
+            (running_worker, sibling),
+            {"node_id": "worker-1"},
+            frozenset({"nodes"}),
+        ),
         (
             "node_deferred",
             (worker, sibling),
