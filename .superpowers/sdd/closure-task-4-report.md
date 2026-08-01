@@ -222,3 +222,46 @@ modify `.superpowers/sdd/progress.md`.
   after an exact approved seed. The collector never broadens that result to an
   unimported or foreign origin. `.superpowers/sdd/progress.md` was not
   modified.
+
+## Outcome-transfer completion
+
+### Root cause and correction
+
+- The prior architecture-reset claim overstated the implementation: `_Outcomes`
+  was declared, but block transfer still returned one mutable state and generic
+  expression traversal could process nested syntax outside Python evaluation
+  order. In particular, raised states between a projection assignment and a
+  later kill were not delivered to handlers.
+- The active collector now evaluates expressions and statements through
+  `_Outcomes`. A block feeds only normal states into its next statement;
+  returned, raised, break, and continue outcomes bypass fallthrough.
+  Expression children are enumerated in Python order and every evaluated
+  operation retains a conservative post-operation raised state.
+- `try` sends every intermediate raised body state to handlers, sends only
+  normal body completion to `else`, and independently runs `finally` for
+  normal, raised, returned, broken, and continued paths. A terminating finally
+  replaces the incoming outcome; otherwise its normal completion preserves the
+  incoming kind. Loop joins include zero iteration, completed iteration,
+  break, and continue paths.
+
+### RED/GREEN evidence
+
+- RED: five new end-to-end guard contracts failed before the replacement:
+  pre-kill alias handler/finally provenance, the corresponding typed-field
+  provenance, dead statements after return/raise, finally set/kill propagation,
+  and zero/continue/break loop joins.
+- GREEN: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` —
+  110 passed.
+- GREEN: `uv run python scripts/check_graph_projection_boundaries.py` — exited
+  0 with no output.
+- GREEN: Ruff check and format checks passed; Pyright reported 0 errors, 0
+  warnings, and 0 information messages.
+
+### Conservative boundary and scope
+
+- The interpreter remains intentionally bounded: it joins unresolved runtime
+  branches and operation exceptions as `possible`, which may report an
+  additional boundary diagnostic but prevents a projection access from being
+  hidden. Exact approved origins, finite state/fact semantics, and the public
+  provenance API are unchanged. `.superpowers/sdd/progress.md` was not
+  modified.

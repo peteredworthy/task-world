@@ -899,6 +899,146 @@ def mutate(projection: GraphProjection, other: object, condition: bool, key: str
     ]
 
 
+def test_boundary_guard_retains_pre_kill_try_exception_provenance(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphProjection
+
+def may_raise() -> None:
+    pass
+
+def read(projection: GraphProjection, other: object) -> None:
+    alias = projection
+    try:
+        may_raise()
+        alias = other
+    except RuntimeError:
+        alias["handler"]
+    finally:
+        alias["final"]
+"""
+    )
+
+    assert [
+        (item.line, item.code) for item in check_projection_boundaries(tmp_path, paths=(source,))
+    ] == [
+        (12, "legacy_projection_subscript"),
+        (14, "legacy_projection_subscript"),
+    ]
+
+
+def test_boundary_guard_retains_pre_kill_typed_field_exception_provenance(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphDispatchContext, GraphProjection
+
+def may_raise() -> None:
+    pass
+
+def read(context: GraphDispatchContext, projection: GraphProjection, other: object) -> None:
+    try:
+        context.graph_projection = projection
+        may_raise()
+        context.graph_projection = other
+    except RuntimeError:
+        context.graph_projection["handler"]
+    finally:
+        context.graph_projection["final"]
+"""
+    )
+
+    assert [
+        (item.line, item.code) for item in check_projection_boundaries(tmp_path, paths=(source,))
+    ] == [
+        (12, "legacy_projection_subscript"),
+        (14, "legacy_projection_subscript"),
+    ]
+
+
+def test_boundary_guard_does_not_emit_provenance_after_return_or_raise(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphProjection
+
+def returned(projection: GraphProjection) -> None:
+    return
+    projection["after-return"]
+
+def raised(projection: GraphProjection) -> None:
+    raise RuntimeError()
+    projection["after-raise"]
+"""
+    )
+
+    assert not check_projection_boundaries(tmp_path, paths=(source,))
+
+
+def test_boundary_guard_finally_replaces_normal_and_raised_outcomes(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphProjection
+
+def may_raise() -> None:
+    pass
+
+def killed(projection: GraphProjection, other: object) -> None:
+    alias = projection
+    try:
+        may_raise()
+    except RuntimeError:
+        pass
+    finally:
+        alias = other
+    alias["after-kill"]
+
+def restored(other: object, projection: GraphProjection) -> None:
+    alias = other
+    try:
+        may_raise()
+    except RuntimeError:
+        pass
+    finally:
+        alias = projection
+    alias["after-set"]
+"""
+    )
+
+    assert [
+        (item.line, item.code) for item in check_projection_boundaries(tmp_path, paths=(source,))
+    ] == [
+        (24, "legacy_projection_subscript"),
+    ]
+
+
+def test_boundary_guard_joins_loop_zero_continue_and_break_paths(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object, values: list[bool]) -> None:
+    alias = other
+    for value in values:
+        if value:
+            alias = projection
+            continue
+        alias = projection
+        break
+    alias["after-loop"]
+"""
+    )
+
+    assert [
+        (item.line, item.code) for item in check_projection_boundaries(tmp_path, paths=(source,))
+    ] == [
+        (11, "legacy_projection_subscript"),
+    ]
+
+
 @pytest.mark.parametrize(
     "method",
     (

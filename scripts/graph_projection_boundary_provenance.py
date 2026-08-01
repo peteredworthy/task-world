@@ -130,7 +130,7 @@ class ProjectionProvenanceCollector:
         self._function_depth = 0
 
     def visit(self, tree: ast.Module) -> None:
-        self._visit_block(tree.body, _Scope())
+        self._evaluate_block(tree.body, _FlowState())
 
     def _position(self, node: ast.AST) -> tuple[int, int]:
         line = self.source_lines[node.lineno - 1]
@@ -331,6 +331,336 @@ class ProjectionProvenanceCollector:
         elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
             if not self._set_field_alias(target.value.id, target.attr, None, scope):
                 self._clear(target.value.id, scope)
+
+    @staticmethod
+    def _replace_state(target: _FlowState, source: _FlowState) -> None:
+        target.origins = source.origins
+        target.aliases = source.aliases
+        target.receiver_types = source.receiver_types
+        target.fields = source.fields
+        target.possible_fields = source.possible_fields
+        target.field_types = source.field_types
+        target.functions = source.functions
+
+    def _join_states(self, states: list[_FlowState]) -> _FlowState:
+        if not states:
+            return _FlowState()
+        return self._merge(states[0], tuple(states))
+
+    def _join_outcomes(self, outcomes: list[_Outcomes]) -> _Outcomes:
+        result = _Outcomes()
+        for name in ("normal", "raised", "returned", "broken", "continued"):
+            states = [state for outcome in outcomes for state in getattr(outcome, name)]
+            if states:
+                setattr(result, name, [self._join_states(states)])
+        return result
+
+    def _expression_children(self, node: ast.expr) -> tuple[ast.expr, ...]:
+        """Return evaluated children in Python evaluation order.
+
+        This deliberately enumerates expression families rather than using
+        ``ast.iter_child_nodes``: suites are statement transfers, never an
+        incidental side effect of a generic AST walk.
+        """
+        if isinstance(node, ast.Attribute):
+            return (node.value,)
+        if isinstance(node, ast.Subscript):
+            return (node.value, node.slice)
+        if isinstance(node, ast.Await | ast.UnaryOp):
+            return (node.value if isinstance(node, ast.Await) else node.operand,)
+        if isinstance(node, ast.BinOp | ast.Compare):
+            if isinstance(node, ast.BinOp):
+                return (node.left, node.right)
+            return (node.left, *node.comparators)
+        if isinstance(node, ast.Call):
+            return (node.func, *node.args, *(keyword.value for keyword in node.keywords))
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            return tuple(node.elts)
+        if isinstance(node, ast.Dict):
+            return tuple(
+                item for pair in zip(node.keys, node.values, strict=True) for item in pair if item
+            )
+        if isinstance(node, ast.JoinedStr):
+            return tuple(
+                value.value for value in node.values if isinstance(value, ast.FormattedValue)
+            )
+        if isinstance(node, ast.FormattedValue):
+            return (node.value, *(() if node.format_spec is None else (node.format_spec,)))
+        if isinstance(node, ast.Starred):
+            return (node.value,)
+        return ()
+
+    def _evaluate_expression(self, node: ast.expr | None, state: _FlowState) -> _Outcomes:
+        if node is None:
+            return _Outcomes(normal=[state])
+        if isinstance(node, ast.NamedExpr):
+            value = self._evaluate_expression(node.value, state)
+            normal: list[_FlowState] = []
+            for current in value.normal:
+                if isinstance(node.target, ast.Name):
+                    self._set_alias(node.target.id, node.value, current)
+                certainty = self._certainty(node, current)
+                if certainty is not None:
+                    self._record(node, certainty)
+                normal.append(current)
+            return _Outcomes(normal=normal, raised=value.raised)
+        if isinstance(node, ast.BoolOp):
+            current = self._evaluate_expression(node.values[0], state)
+            raised = list(current.raised)
+            normal = current.normal
+            for value in node.values[1:]:
+                next_normal: list[_FlowState] = []
+                for prior in normal:
+                    next_normal.append(prior.copy())  # short-circuit path
+                    evaluated = self._evaluate_expression(value, prior)
+                    next_normal.extend(evaluated.normal)
+                    raised.extend(evaluated.raised)
+                normal = [self._join_states(next_normal)] if next_normal else []
+            for current_state in normal:
+                certainty = self._certainty(node, current_state)
+                if certainty is not None:
+                    self._record(node, certainty)
+            return _Outcomes(normal=normal, raised=raised)
+        if isinstance(node, ast.IfExp):
+            test = self._evaluate_expression(node.test, state)
+            outcomes = [_Outcomes(raised=test.raised)]
+            for current in test.normal:
+                outcomes.extend(
+                    (
+                        self._evaluate_expression(node.body, current.copy()),
+                        self._evaluate_expression(node.orelse, current.copy()),
+                    )
+                )
+            return self._join_outcomes(outcomes)
+        current = _Outcomes(normal=[state])
+        for child in self._expression_children(node):
+            next_outcomes: list[_Outcomes] = []
+            for prior in current.normal:
+                next_outcomes.append(self._evaluate_expression(child, prior))
+            current = self._join_outcomes([_Outcomes(raised=current.raised), *next_outcomes])
+        for current_state in current.normal:
+            certainty = self._certainty(node, current_state)
+            if certainty is not None:
+                self._record(node, certainty)
+            # Any evaluated operation can throw after all preceding child effects.
+            current.raised.append(current_state.copy())
+        return current
+
+    def _assign_value(self, node: ast.Assign | ast.AnnAssign, state: _FlowState) -> None:
+        value = node.value
+        targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+        for target in targets:
+            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
+                if self._set_field_alias(target.value.id, target.attr, value, state):
+                    continue
+                self._clear(target.value.id, state)
+                continue
+            for name in _target_names(target):
+                annotation = (
+                    self._annotation(node.annotation, state)
+                    if isinstance(node, ast.AnnAssign)
+                    else None
+                )
+                local_return = (
+                    isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Name)
+                    and value.func.id in state.functions
+                )
+                if (
+                    isinstance(node, ast.AnnAssign) and annotation != "GraphProjection"
+                ) or local_return:
+                    self._clear(name, state)
+                else:
+                    self._set_alias(name, value, state)
+                if annotation == "GraphProjection":
+                    state.aliases[name] = "definite"
+                if annotation in {name for name, _ in PROJECTION_METHODS} | set(PROJECTION_FIELDS):
+                    state.receiver_types[name] = annotation
+                    fields = state.field_types.get(
+                        annotation, PROJECTION_FIELDS.get(annotation, frozenset())
+                    )
+                    state.field_types[name] = fields
+                    state.fields[name] = fields
+                typed = self._typed_producer(value, state)
+                if typed is not None:
+                    state.receiver_types[name] = typed
+                    fields = state.field_types.get(typed, PROJECTION_FIELDS.get(typed, frozenset()))
+                    state.field_types[name] = fields
+                    state.fields[name] = fields
+
+    def _evaluate_block(self, statements: list[ast.stmt], state: _FlowState) -> _Outcomes:
+        result = _Outcomes(normal=[state])
+        for statement in statements:
+            following: list[_Outcomes] = []
+            for current in result.normal:
+                following.append(self._evaluate_statement(statement, current))
+            transferred = self._join_outcomes(following)
+            result = _Outcomes(
+                normal=transferred.normal,
+                raised=[*result.raised, *transferred.raised],
+                returned=[*result.returned, *transferred.returned],
+                broken=[*result.broken, *transferred.broken],
+                continued=[*result.continued, *transferred.continued],
+            )
+        return self._join_outcomes([result])
+
+    def _evaluate_statement(self, node: ast.stmt, state: _FlowState) -> _Outcomes:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            self._bind_import(node, state)
+            return _Outcomes(normal=[state])
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = self._evaluate_expression(node.value, state)
+            normal = []
+            raised = list(value.raised)
+            for current in value.normal:
+                for target in node.targets if isinstance(node, ast.Assign) else (node.target,):
+                    target_outcome = self._evaluate_expression(target, current)
+                    raised.extend(target_outcome.raised)
+                    for target_state in target_outcome.normal:
+                        self._assign_value(node, target_state)
+                        normal.append(target_state)
+                        raised.append(target_state.copy())
+            return self._join_outcomes([_Outcomes(normal=normal, raised=raised)])
+        if isinstance(node, ast.AugAssign):
+            target = self._evaluate_expression(node.target, state)
+            outcomes: list[_Outcomes] = [_Outcomes(raised=target.raised)]
+            for current in target.normal:
+                value = self._evaluate_expression(node.value, current)
+                for result in value.normal:
+                    self._kill_target(node.target, result)
+                    value.raised.append(result.copy())
+                outcomes.append(value)
+            return self._join_outcomes(outcomes)
+        if isinstance(node, ast.Delete):
+            current = _Outcomes(normal=[state])
+            for target in node.targets:
+                next_outcomes = []
+                for prior in current.normal:
+                    evaluated = self._evaluate_expression(target, prior)
+                    for result in evaluated.normal:
+                        self._kill_target(target, result)
+                    next_outcomes.append(evaluated)
+                current = self._join_outcomes([_Outcomes(raised=current.raised), *next_outcomes])
+            return current
+        if isinstance(node, ast.Return):
+            value = self._evaluate_expression(node.value, state)
+            return _Outcomes(raised=value.raised, returned=value.normal)
+        if isinstance(node, ast.Raise):
+            value = self._evaluate_expression(node.exc, state)
+            return _Outcomes(raised=[*value.raised, *value.normal])
+        if isinstance(node, ast.Break):
+            return _Outcomes(broken=[state])
+        if isinstance(node, ast.Continue):
+            return _Outcomes(continued=[state])
+        if isinstance(node, ast.If):
+            test = self._evaluate_expression(node.test, state)
+            branches = [_Outcomes(raised=test.raised)]
+            for current in test.normal:
+                branches.extend(
+                    (
+                        self._evaluate_block(node.body, current.copy()),
+                        self._evaluate_block(node.orelse, current.copy()),
+                    )
+                )
+            return self._join_outcomes(branches)
+        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+            iterator = self._evaluate_expression(
+                node.iter if isinstance(node, (ast.For, ast.AsyncFor)) else node.test, state
+            )
+            branches = [_Outcomes(normal=iterator.normal, raised=iterator.raised)]
+            for current in iterator.normal:
+                body_state = current.copy()
+                if isinstance(node, (ast.For, ast.AsyncFor)):
+                    for name in _target_names(node.target):
+                        self._clear(name, body_state)
+                body = self._evaluate_block(node.body, body_state)
+                # zero iteration, completed iteration, break, and continue all reach the join.
+                branches.append(
+                    _Outcomes(
+                        normal=[current.copy(), *body.normal, *body.broken, *body.continued],
+                        raised=body.raised,
+                        returned=body.returned,
+                    )
+                )
+            joined = self._join_outcomes(branches)
+            if node.orelse:
+                else_outcomes = [
+                    self._evaluate_block(node.orelse, current) for current in joined.normal
+                ]
+                joined = self._join_outcomes(
+                    [_Outcomes(raised=joined.raised, returned=joined.returned), *else_outcomes]
+                )
+            return joined
+        if isinstance(node, ast.Match):
+            subject = self._evaluate_expression(node.subject, state)
+            branches: list[_Outcomes] = [_Outcomes(raised=subject.raised)]
+            unconditional = False
+            for current in subject.normal:
+                for case in node.cases:
+                    case_state = current.copy()
+                    for name in _pattern_capture_names(case.pattern):
+                        self._clear(name, case_state)
+                    guard = self._evaluate_expression(case.guard, case_state)
+                    branches.append(_Outcomes(raised=guard.raised))
+                    branches.extend(
+                        self._evaluate_block(case.body, guarded) for guarded in guard.normal
+                    )
+                    unconditional |= case.guard is None and _is_unconditional_pattern(case.pattern)
+                if not unconditional:
+                    branches.append(_Outcomes(normal=[current.copy()]))
+            return self._join_outcomes(branches)
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            body = self._evaluate_block(node.body, state.copy())
+            outgoing: list[_Outcomes] = []
+            if body.normal:
+                outgoing.extend(
+                    self._evaluate_block(node.orelse, current) for current in body.normal
+                )
+            for handler in node.handlers:
+                for raised in body.raised:
+                    handler_state = raised.copy()
+                    if handler.name is not None:
+                        self._clear(handler.name, handler_state)
+                    outgoing.append(self._evaluate_block(handler.body, handler_state))
+            if not node.handlers:
+                outgoing.append(_Outcomes(raised=body.raised))
+            joined = self._join_outcomes(
+                [
+                    *outgoing,
+                    _Outcomes(returned=body.returned, broken=body.broken, continued=body.continued),
+                ]
+            )
+            if not node.finalbody:
+                return joined
+            final_outcomes: list[_Outcomes] = []
+            for kind in ("normal", "raised", "returned", "broken", "continued"):
+                for current in getattr(joined, kind):
+                    final = self._evaluate_block(node.finalbody, current.copy())
+                    final_outcomes.append(
+                        _Outcomes(
+                            normal=final.normal if kind == "normal" else [],
+                            raised=[*final.raised, *(final.normal if kind == "raised" else [])],
+                            returned=[
+                                *final.returned,
+                                *(final.normal if kind == "returned" else []),
+                            ],
+                            broken=[*final.broken, *(final.normal if kind == "broken" else [])],
+                            continued=[
+                                *final.continued,
+                                *(final.normal if kind == "continued" else []),
+                            ],
+                        )
+                    )
+            return self._join_outcomes(final_outcomes)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            self._function(node, state)
+            return _Outcomes(normal=[state])
+        if isinstance(node, ast.ClassDef):
+            self._class(node, state)
+            return _Outcomes(normal=[state])
+        if isinstance(node, ast.Expr):
+            return self._evaluate_expression(node.value, state)
+        return _Outcomes(normal=[state])
 
     def _visit_expr(self, node: ast.AST | None, scope: _Scope) -> None:
         if node is None:
@@ -574,7 +904,7 @@ class ProjectionProvenanceCollector:
             local.fields[receiver] = fields
         self._function_depth += 1
         try:
-            self._visit_block(node.body, local)
+            self._evaluate_block(node.body, local)
         finally:
             self._function_depth -= 1
 
@@ -595,7 +925,9 @@ class ProjectionProvenanceCollector:
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 self._function(child, class_scope, node.name)
             else:
-                self._visit_block([child], class_scope)
+                outcomes = self._evaluate_block([child], class_scope)
+                if outcomes.normal:
+                    self._replace_state(class_scope, outcomes.normal[0])
 
     def _visit_block(self, statements: list[ast.stmt], scope: _Scope) -> _Scope:
         for statement in statements:
@@ -703,7 +1035,12 @@ def projection_provenance(
     tree = ast.parse(source, filename=relative_path)
     collector = ProjectionProvenanceCollector(source, relative_path)
     collector.visit(tree)
-    return tuple(sorted(collector.facts.values(), key=lambda item: (item.line, item.column)))
+    return tuple(
+        sorted(
+            collector.facts.values(),
+            key=lambda item: (item.line, item.column, -len(item.expression), item.expression),
+        )
+    )
 
 
 def projection_provenance_seed_tokens() -> frozenset[str]:
