@@ -1467,6 +1467,86 @@ def read(projection: GraphProjection, values: dict[GraphProjection, object]) -> 
     ]
 
 
+@pytest.mark.parametrize("prefix", ("with", "async with"))
+def test_boundary_provenance_nested_with_later_manager_failure_can_be_suppressed(
+    prefix: str,
+) -> None:
+    async_prefix = "async " if prefix == "async with" else ""
+    facts = projection_provenance(
+        f"""from orchestrator.graph import GraphProjection
+
+{async_prefix}def read(
+    projection: GraphProjection, suppressor: object, failing_manager: object
+) -> None:
+    alias = projection
+    {prefix} suppressor, failing_manager:
+        pass
+    alias["after-later-manager-failure"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [("alias['after-later-manager-failure']", "possible")]
+
+
+@pytest.mark.parametrize("prefix", ("with", "async with"))
+def test_boundary_provenance_copies_possible_suppressed_bindings(prefix: str) -> None:
+    async_prefix = "async " if prefix == "async with" else ""
+    facts = projection_provenance(
+        f"""from orchestrator.graph import (
+    GraphController,
+    GraphDispatchContext,
+    GraphProjection,
+    initial_projection,
+)
+
+def local_factory() -> GraphProjection:
+    return initial_projection()
+
+def may_raise() -> None:
+    raise RuntimeError()
+
+{async_prefix}def read(
+    projection: GraphProjection,
+    controller: GraphController,
+    context: GraphDispatchContext,
+    manager: object,
+) -> None:
+    {prefix} manager:
+        factory = initial_projection
+        receiver = controller
+        function = local_factory
+        alias = projection
+        holder = context
+        holder.graph_projection = projection
+        may_raise()
+    copied_factory = factory
+    copied_receiver = receiver
+    copied_function = function
+    copied_alias = alias
+    copied_holder = holder
+    copied_factory()["factory"]
+    copied_receiver.read_projection()["receiver"]
+    copied_function()["function"]
+    copied_alias["alias"]
+    copied_holder.graph_projection["field"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("copied_factory()['factory']", "possible"),
+        ("copied_receiver.read_projection()['receiver']", "possible"),
+        ("copied_function()['function']", "possible"),
+        ("copied_alias['alias']", "possible"),
+        ("copied_holder.graph_projection['field']", "possible"),
+    ]
+
+
 @pytest.mark.parametrize(
     "method",
     (

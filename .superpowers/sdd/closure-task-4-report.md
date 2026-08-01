@@ -463,3 +463,42 @@ modify `.superpowers/sdd/progress.md`.
   finite approved-origin tables. Candidate sets and the public provenance API
   are unchanged; only certainty is lowered on feasible suppression paths.
   `.superpowers/sdd/progress.md` was not modified.
+
+## Nested context-manager and possible-copy review fixes
+
+### Corrections
+
+- `with` and `async with` now track how many preceding context managers have
+  entered. A raised state while evaluating or entering a later manager remains
+  raised and also gains a possible normal continuation through every already
+  entered manager's unresolved exit method. The body keeps the same dual
+  raised/suppressed treatment.
+- `_assign_value()` now retains possibility markers when it copies exact
+  origins, local function candidates, typed receiver state, and runtime-field
+  state. Copies of suppressed values therefore remain possible; no possible
+  binding is upgraded to definite.
+- The finite approved origin tables and candidate-set semantics are unchanged.
+
+### TDD and verification evidence
+
+- RED: `uv run pytest
+  tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_nested_with_later_manager_failure_can_be_suppressed
+  tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_copies_possible_suppressed_bindings
+  -q` — **4 failed**. Both sync and async later-manager cases retained only the
+  definite normal path, and copied suppressed factory bindings were definite.
+- GREEN: the same focused command — **4 passed**.
+- Boundary suite: `uv run pytest tests/unit/test_graph_projection_boundaries.py
+  -q` — **134 passed**.
+- Full repository suite: `uv run pytest` — **6307 passed, 3 skipped** (the
+  existing `aiosqlite` Python 3.12 datetime-adapter deprecation warning was
+  emitted by three projector tests).
+- `uv run python scripts/check_graph_projection_boundaries.py`, `uv run ruff
+  check .`, `uv run ruff format --check .`, and `uv run pyright` — passed;
+  Pyright reported 0 errors, warnings, and information messages.
+
+### Conservative boundary
+
+- Context-manager exit return values remain unresolved, so every feasible
+  suppression path is intentionally reported as possible while its raised path
+  is preserved. This avoids hiding boundary access without widening approved
+  origins. `.superpowers/sdd/progress.md` was not modified.

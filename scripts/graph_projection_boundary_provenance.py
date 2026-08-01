@@ -610,10 +610,14 @@ class ProjectionProvenanceCollector:
             self._set_alias(target.id, value, state)
             if value is not None and (origin := self._origin(value, state)):
                 state.origins[target.id] = origin
+                if self._origin_is_possible(value, state):
+                    state.possible_origins.add(target.id)
             elif value is not None:
                 state.origins[target.id] = frozenset({_UNKNOWN_ORIGIN})
         if isinstance(value, ast.Name) and value.id in state.functions:
             state.functions[target.id] = state.functions[value.id]
+            if value.id in state.possible_functions:
+                state.possible_functions.add(target.id)
         if annotation == "GraphProjection":
             state.aliases[target.id] = "definite"
         receiver = self._annotation_receiver(annotation)
@@ -621,6 +625,11 @@ class ProjectionProvenanceCollector:
             self._bind_receiver(target.id, receiver, state)
         elif isinstance(value, ast.Name) and value.id in state.receiver_types:
             self._bind_receiver(target.id, state.receiver_types[value.id], state)
+            state.field_types[target.id] = state.field_types.get(value.id, frozenset())
+            state.fields[target.id] = state.fields.get(value.id, frozenset())
+            state.possible_fields[target.id] = state.possible_fields.get(value.id, frozenset())
+            if value.id in state.possible_receiver_types:
+                state.possible_receiver_types.add(target.id)
         elif (typed := self._typed_producer(value, state)) is not None:
             self._bind_receiver(target.id, typed, state)
 
@@ -858,21 +867,28 @@ class ProjectionProvenanceCollector:
             return joined
         if isinstance(node, (ast.With, ast.AsyncWith)):
             current = _Outcomes(normal=[state])
-            for item in node.items:
+            raised: list[_FlowState] = []
+            suppressed: list[_FlowState] = []
+            for entered_count, item in enumerate(node.items):
                 next_outcomes: list[_Outcomes] = []
                 for prior in current.normal:
                     context = self._evaluate_expression(item.context_expr, prior)
-                    next_outcomes.append(_Outcomes(raised=context.raised))
+                    raised.extend(context.raised)
+                    if entered_count:
+                        suppressed.extend(self._possible_state(path) for path in context.raised)
                     for entered in context.normal:
                         if item.optional_vars is not None:
                             self._assign_value(item.optional_vars, item.context_expr, None, entered)
-                        next_outcomes.append(_Outcomes(normal=[entered], raised=[entered.copy()]))
+                        entry_raised = entered.copy()
+                        raised.append(entry_raised)
+                        if entered_count:
+                            suppressed.append(self._possible_state(entry_raised))
+                        next_outcomes.append(_Outcomes(normal=[entered]))
                 current = self._join_outcomes(next_outcomes)
             bodies = [self._evaluate_block(node.body, entered) for entered in current.normal]
-            suppressed = [self._possible_state(raised) for body in bodies for raised in body.raised]
-            return self._join_outcomes(
-                [_Outcomes(raised=current.raised, normal=suppressed), *bodies]
-            )
+            raised.extend(path for body in bodies for path in body.raised)
+            suppressed.extend(self._possible_state(path) for body in bodies for path in body.raised)
+            return self._join_outcomes([_Outcomes(raised=raised, normal=suppressed), *bodies])
         if isinstance(node, ast.Match):
             subject = self._evaluate_expression(node.subject, state)
             branches: list[_Outcomes] = [_Outcomes(raised=subject.raised)]
