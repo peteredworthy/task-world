@@ -306,7 +306,6 @@ from orchestrator.graph.projection_models import (
     VerifierVerdictValue,
     OversightDecisionValue as ProjectionOversightDecisionValue,
     project_record,
-    project_validated_record_for_reducer,
 )
 from orchestrator.graph.projection_queries import (
     active_leases,
@@ -838,7 +837,6 @@ __all__ = [
     "project_planner_session",
     "project_ready_nodes",
     "project_record",
-    "project_validated_record_for_reducer",
     "project_requirement_freshness_facts",
     "project_residue_report",
     "project_run_state",

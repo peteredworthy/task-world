@@ -17,6 +17,10 @@
 - Both pytest defaults and the pre-commit pytest hook use two-worker
   `loadgroup`; the default full suite and all three grouped gate rows remain
   enabled.
+- `project_validated_record_for_reducer()` is an internal sibling import used
+  only by `projections.py`; it is not exported from `orchestrator.graph`.
+- Its native-JSON guard mirrors `freeze_json` depth rejection (>100), so deep
+  structures fall back to public normalization and validation.
 - Did not import or extend the historical benchmark, add a script/artifact/
   baseline/ratio/slow marker, add metadata, modify `progress.md`, or change the
   event mixes, threshold, warmup count, or timed-run count.

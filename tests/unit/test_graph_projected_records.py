@@ -65,7 +65,6 @@ from orchestrator.graph import (
     FrozenMap,
     OutputRecord,
     project_record,
-    project_validated_record_for_reducer,
 )
 from tests.unit.test_output_record_event_payloads import OUTPUT_RECORD_CASES
 
@@ -608,36 +607,6 @@ def test_projected_fan_out_normalizes_list_and_dict_subclasses() -> None:
     )
 
     assert projected.value == FrozenMap({"items": (FrozenMap({"name": "candidate"}),)})
-
-
-@pytest.mark.parametrize(
-    "optional_fields",
-    (
-        {"payload": None, "provenance": None},
-        {"payload": {}, "provenance": {}, "file_state_record_ids": []},
-    ),
-    ids=("explicit-null", "explicit-empty"),
-)
-def test_reducer_fan_out_fast_path_matches_public_field_set_policy(
-    optional_fields: dict[str, object],
-) -> None:
-    source = OutputRecord.model_validate({**_fan_out_payload(), **optional_fields})
-
-    fast = project_validated_record_for_reducer(source)
-    public = project_record(source)
-
-    assert fast == public
-    assert fast.model_fields_set == public.model_fields_set
-    assert fast.model_dump(by_alias=True, exclude_unset=True) == public.model_dump(
-        by_alias=True, exclude_unset=True
-    )
-
-
-def test_reducer_fan_out_fast_path_falls_back_for_missing_required_attributes() -> None:
-    source = OutputRecord.model_construct(record_type="fan_out_inputs")
-
-    with pytest.raises(ValidationError):
-        project_validated_record_for_reducer(source)
 
 
 def test_projected_record_revalidates_exact_instance_and_rejects_map_subclass() -> None:

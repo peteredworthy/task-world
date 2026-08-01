@@ -1465,7 +1465,9 @@ def project_record(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
     return cast(ProjectedRecord, _PROJECTED_RECORD_MODELS[record_type].model_validate(payload))
 
 
-def _is_native_json(value: object, *, active_ids: set[int] | None = None) -> bool:
+def _is_native_json(value: object, *, active_ids: set[int] | None = None, depth: int = 0) -> bool:
+    if depth > 100:
+        return False
     value_type = type(value)
     if value is None or value_type is bool or value_type is int or value_type is str:
         return True
@@ -1478,7 +1480,10 @@ def _is_native_json(value: object, *, active_ids: set[int] | None = None) -> boo
             return False
         current_active_ids.add(id(sequence))
         try:
-            return all(_is_native_json(item, active_ids=current_active_ids) for item in sequence)
+            return all(
+                _is_native_json(item, active_ids=current_active_ids, depth=depth + 1)
+                for item in sequence
+            )
         finally:
             current_active_ids.remove(id(sequence))
     if value_type is dict:
@@ -1489,7 +1494,8 @@ def _is_native_json(value: object, *, active_ids: set[int] | None = None) -> boo
         current_active_ids.add(id(dictionary))
         try:
             return all(
-                type(key) is str and _is_native_json(item, active_ids=current_active_ids)
+                type(key) is str
+                and _is_native_json(item, active_ids=current_active_ids, depth=depth + 1)
                 for key, item in dictionary.items()
             )
         finally:
