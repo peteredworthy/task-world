@@ -123,6 +123,14 @@ All passed (`pyright`: 0 errors, 0 warnings, 0 informations).
 
 ## Commit evidence
 
-The final commit is recorded after normal hooks complete. It includes exactly
-the matrix test, the authorized reducer cleanup, and this report; the
-pre-existing `.superpowers/sdd/progress.md` edit is excluded.
+Implementation commit:
+
+```text
+5020f4757 test(graph): cover flexible projection json matrix
+```
+
+Normal hooks passed: ruff, ruff format, secrets, pyright,
+graph-projection-boundaries, pytest, module-imports, signal-routing, ui-lint,
+and ui-typecheck (enum-drift skipped because no matching files). The commit
+includes exactly the matrix test, the authorized reducer cleanup, and this
+report; the pre-existing `.superpowers/sdd/progress.md` edit is excluded.
