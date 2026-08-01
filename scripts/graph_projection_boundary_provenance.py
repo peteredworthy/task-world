@@ -549,6 +549,14 @@ class ProjectionProvenanceCollector:
     def _evaluate_assignment_target(self, target: ast.expr, state: _FlowState) -> _Outcomes:
         if isinstance(target, ast.Name):
             return _Outcomes(normal=[state])
+        if isinstance(target, (ast.Tuple, ast.List)):
+            current = _Outcomes(normal=[state])
+            for child in target.elts:
+                evaluated = [
+                    self._evaluate_assignment_target(child, prior) for prior in current.normal
+                ]
+                current = self._join_outcomes([_Outcomes(raised=current.raised), *evaluated])
+            return current
         if isinstance(target, ast.Attribute):
             return self._evaluate_expression(target.value, state)
         if isinstance(target, ast.Subscript):
