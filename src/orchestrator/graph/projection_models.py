@@ -1500,6 +1500,8 @@ def _is_native_json(value: object, *, active_ids: set[int] | None = None) -> boo
 def _can_construct_validated_fan_out_record(record: AcceptedOutputRecordPayload) -> bool:
     if type(record) is not OutputRecord:
         return False
+    if any(field_name not in record.__dict__ for field_name in OutputRecord.model_fields):
+        return False
     if (
         record.record_type != "fan_out_inputs"
         or record.record_kind != "output"
@@ -1548,8 +1550,14 @@ def project_validated_record_for_reducer(record: AcceptedOutputRecordPayload) ->
     fan_out = cast(OutputRecord, record)
     payload = None if fan_out.payload is None else _freeze_json_input(fan_out.payload)
     provenance = None if fan_out.provenance is None else _freeze_json_input(fan_out.provenance)
+    fields_set = {
+        field_name
+        for field_name in fan_out.model_fields_set
+        if field_name in ProjectedFanOutInputsRecord.model_fields
+        and getattr(fan_out, field_name) is not None
+    }
     return ProjectedFanOutInputsRecord.model_construct(
-        _fields_set=set(fan_out.model_fields_set),
+        _fields_set=fields_set,
         record_id=fan_out.record_id,
         record_type="fan_out_inputs",
         record_kind="output",

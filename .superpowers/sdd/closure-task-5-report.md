@@ -10,19 +10,13 @@
     median must be strictly less than 1.0 second.
   - Validates unique event IDs, contiguous positions, replay equality, and public
     node/edge/accepted-record cardinalities.
-- Optimized only the profiled immutable record-reduction path:
-  - `ProjectedRecordBase.freeze_record_sequences()` uses exact built-in container
-    checks at its `model_dump(mode="json")` boundary.
-  - `insert_projected_record()` directly constructs the already-valid frozen
-    `RecordStore` replacement from persistent maps.
-  - `project_record()` has a validated `OutputRecord`/`fan_out_inputs` fast path
-    that freezes all open JSON fields and preserves `model_fields_set`, retaining
-    public `exclude_unset=True` serialization equivalence.
-- Updated `pyproject.toml` from xdist `worksteal`/automatic worker sizing to
-  four-worker `loadgroup`. The default full suite remains enabled; this makes
-  xdist honor the gate's group assignment while bounding concurrent CPU-bound
-  work, so its three required parameter rows share one worker rather than
-  competing with one another. The four-worker grouped normal hook run passed.
+- Public `project_record()` retains JSON-mode normalization and full destination
+  validation; `freeze_record_sequences()` retains `isinstance` subclass
+  normalization. Only the reducer helper may use the guarded
+  exact-native fan-out construct path after payload validation.
+- Both pytest defaults and the pre-commit pytest hook use two-worker
+  `loadgroup`; the default full suite and all three grouped gate rows remain
+  enabled.
 - Did not import or extend the historical benchmark, add a script/artifact/
   baseline/ratio/slow marker, add metadata, modify `progress.md`, or change the
   event mixes, threshold, warmup count, or timed-run count.
