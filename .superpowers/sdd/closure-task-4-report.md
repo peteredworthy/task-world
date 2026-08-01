@@ -38,3 +38,23 @@ Implementation self-review found no scope expansion, migration dependency, or
 weakened permanent boundary check. The controller owns independent review and
 progress-ledger completion; this implementation commit intentionally does not
 modify `.superpowers/sdd/progress.md`.
+
+## Review-fix evidence
+
+- Added RED regressions for exact public origins, dotted imports, class-method
+  traversal, binder isolation, branch kills/possible aliases, and colliding
+  expression facts. The initial focused run failed all four new regressions.
+- The AST collector now retains facts by source location **and expression**;
+  the boundary visitor matches the actual consumed AST expression rather than
+  accepting any fact sharing its start offset.
+- Imports and annotations now admit only the finite public graph origin tables;
+  non-approved graph submodule imports remain independently rejected by the
+  permanent import boundary check.
+- Class methods are traversed with their own scope and class field facts;
+  function variadics, lambdas, loop targets, and match captures clear inherited
+  aliases before their bodies are classified.
+- Branch merging now includes aliases killed in every branch, so pre-branch
+  aliases cannot leak through a complete overwrite.
+- GREEN: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` —
+  90 passed; `uv run python scripts/check_graph_projection_boundaries.py` —
+  exited 0 without output.

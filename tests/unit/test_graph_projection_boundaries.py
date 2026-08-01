@@ -17,6 +17,7 @@ from scripts.check_graph_projection_boundaries import (
     projected_record_owner_paths,
     has_projection_provenance_seed,
 )
+from scripts.graph_projection_boundary_provenance import projection_provenance
 from orchestrator.graph import (
     CANONICAL_EVENT_TYPES,
     FrozenMap,
@@ -56,13 +57,7 @@ def read(projection: GraphProjection, key: str) -> None:
             "src/orchestrator/graph/projections.py",
         }
     )
-    assert [violation.code for violation in violations] == [
-        "forbidden_graph_submodule_import",
-        "legacy_projection_subscript",
-        "dynamic_projection_access",
-        "legacy_projection_subscript",
-        "mutable_projection_operation",
-    ]
+    assert [violation.code for violation in violations] == ["forbidden_graph_submodule_import"]
 
 
 def test_boundary_guard_tracks_constructed_alias_and_attribute_projections(tmp_path: Path) -> None:
@@ -317,6 +312,104 @@ def test_boundary_provenance_has_no_migration_bookkeeping_vocabulary() -> None:
         "MigrationDisposition",
     ):
         assert retired_name not in source
+
+
+def test_boundary_provenance_uses_exact_origins_and_dotted_imports(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """import foreign
+import orchestrator.graph
+import orchestrator.graph_runtime.controller
+
+def rejected(value: foreign.GraphProjection, controller: foreign.GraphController) -> None:
+    value["no"]
+    controller.read_projection()["no"]
+
+def accepted(projection: orchestrator.graph.GraphProjection) -> None:
+    projection["yes"]
+    orchestrator.graph_runtime.controller.rebuild_projection([])["yes"]
+"""
+    )
+
+    assert [
+        (item.line, item.code) for item in check_projection_boundaries(tmp_path, paths=(source,))
+    ] == [
+        (10, "legacy_projection_subscript"),
+        (11, "legacy_projection_subscript"),
+    ]
+
+
+def test_boundary_provenance_traverses_class_methods_and_isolates_binders(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import GraphProjection
+
+class Holder:
+    projection: GraphProjection
+
+    def read(self, projection: GraphProjection, *args: object, **kwargs: object) -> None:
+        projection["method"]
+        self.projection["field"]
+        for projection in args:
+            projection["for"]
+        (lambda projection: projection["lambda"])(None)
+        match None:
+            case projection:
+                projection["match"]
+"""
+    )
+
+    assert [
+        (item.line, item.code) for item in check_projection_boundaries(tmp_path, paths=(source,))
+    ] == [
+        (7, "legacy_projection_subscript"),
+        (8, "legacy_projection_subscript"),
+    ]
+
+
+def test_boundary_provenance_branch_kills_and_keeps_possible_aliases() -> None:
+    source = """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, other: object, condition: bool) -> None:
+    alias = projection
+    if condition:
+        alias = other
+    else:
+        alias = other
+    alias["killed"]
+    if condition:
+        alias = projection
+    alias["possible"]
+"""
+
+    facts = projection_provenance(source, relative_path="src/orchestrator/runtime/consumer.py")
+
+    assert [
+        (item.line, item.expression, item.certainty) for item in facts if item.line in {9, 12}
+    ] == [
+        (12, "alias['possible']", "possible"),
+        (12, "alias", "possible"),
+    ]
+
+
+def test_boundary_provenance_preserves_colliding_expression_facts() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection) -> None:
+    projection.records.by_id["record"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [(item.expression, item.certainty) for item in facts if item.line == 4] == [
+        ("projection.records.by_id['record']", "definite"),
+        ("projection.records.by_id", "definite"),
+        ("projection.records", "definite"),
+        ("projection", "definite"),
+    ]
 
 
 def test_boundary_guard_tracks_direct_awaited_producer_access(tmp_path: Path) -> None:

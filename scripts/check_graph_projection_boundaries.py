@@ -643,7 +643,7 @@ class _BoundaryVisitor(ast.NodeVisitor):
     ) -> None:
         self.relative_path = relative_path
         self.source_lines = source.splitlines()
-        self.provenance = {(item.line, item.column): item for item in provenance}
+        self.provenance = {(item.line, item.column, item.expression) for item in provenance}
         self.violations: list[BoundaryViolation] = []
 
     def _add(self, node: ast.AST, code: str, message: str) -> None:
@@ -663,7 +663,7 @@ class _BoundaryVisitor(ast.NodeVisitor):
         column = len(
             self.source_lines[node.lineno - 1].encode("utf-8")[: node.col_offset].decode("utf-8")
         )
-        return (node.lineno, column) in self.provenance
+        return (node.lineno, column, ast.unparse(node)) in self.provenance
 
     def _resolved_import_module(self, node: ast.ImportFrom) -> str:
         if node.level == 0:

@@ -28,6 +28,14 @@ PROJECTION_FIELDS = {
     "GraphDispatchContext": frozenset({"graph_projection"}),
     "GraphProjectionCheckpoint": frozenset({"projection"}),
 }
+_PROJECTION_TYPE_ORIGINS = frozenset(
+    {
+        "orchestrator.graph.GraphController",
+        "orchestrator.graph.GraphEventStore",
+        "orchestrator.graph.GraphDispatchContext",
+        "orchestrator.graph.GraphProjectionCheckpoint",
+    }
+)
 
 
 class ProjectionProvenanceFact(BaseModel):
@@ -76,7 +84,7 @@ class ProjectionProvenanceCollector:
         self.source = source
         self.relative_path = relative_path
         self.source_lines = source.splitlines()
-        self.facts: dict[tuple[int, int], ProjectionProvenanceFact] = {}
+        self.facts: dict[tuple[int, int, str], ProjectionProvenanceFact] = {}
 
     def visit(self, tree: ast.Module) -> None:
         self._visit_block(tree.body, _Scope())
@@ -87,10 +95,11 @@ class ProjectionProvenanceCollector:
 
     def _record(self, node: ast.expr, certainty: Literal["definite", "possible"]) -> None:
         line, column = self._position(node)
-        self.facts[(line, column)] = ProjectionProvenanceFact(
+        expression = ast.unparse(node)
+        self.facts[(line, column, expression)] = ProjectionProvenanceFact(
             line=line,
             column=column,
-            expression=ast.unparse(node),
+            expression=expression,
             certainty=certainty,
         )
 
@@ -112,8 +121,11 @@ class ProjectionProvenanceCollector:
             for item in node.names:
                 name = item.asname or item.name.split(".")[0]
                 self._clear(name, scope)
-                if item.name in {"orchestrator.graph", "orchestrator.graph_runtime"}:
-                    scope.origins[name] = item.name
+                if item.name in {
+                    "orchestrator.graph",
+                    "orchestrator.graph_runtime",
+                } or item.name.startswith("orchestrator.graph_runtime.controller."):
+                    scope.origins[name] = item.name if item.asname is not None else name
             return
         module = self._import_module(node)
         for item in node.names:
@@ -123,9 +135,10 @@ class ProjectionProvenanceCollector:
             self._clear(name, scope)
             if module is not None:
                 origin = f"{module}.{item.name}"
-                if origin in GRAPH_PROJECTION_TYPES | PROJECTION_FUNCTIONS or origin.rpartition(
-                    "."
-                )[2] in {name for name, _ in PROJECTION_METHODS} | set(PROJECTION_FIELDS):
+                if (
+                    origin
+                    in GRAPH_PROJECTION_TYPES | PROJECTION_FUNCTIONS | _PROJECTION_TYPE_ORIGINS
+                ):
                     scope.origins[name] = origin
 
     @staticmethod
@@ -139,21 +152,27 @@ class ProjectionProvenanceCollector:
     def _origin(self, node: ast.expr, scope: _Scope) -> str | None:
         if isinstance(node, ast.Name):
             return scope.origins.get(node.id)
-        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
-            prefix = scope.origins.get(node.value.id)
+        if isinstance(node, ast.Attribute):
+            prefix = self._origin(node.value, scope)
             return f"{prefix}.{node.attr}" if prefix else None
         return None
 
     def _annotation(self, node: ast.expr | None, scope: _Scope) -> str | None:
         if node is None:
             return None
+        if ast.unparse(node) == "orchestrator.graph.GraphProjection":
+            return "GraphProjection"
         origin = self._origin(node, scope)
         if origin in GRAPH_PROJECTION_TYPES:
             return "GraphProjection"
-        if origin is not None:
+        if origin in _PROJECTION_TYPE_ORIGINS:
             return origin.rpartition(".")[2]
         if isinstance(node, ast.Name):
-            return scope.receiver_types.get(node.id) or scope.origins.get(node.id, node.id)
+            return (
+                scope.receiver_types.get(node.id) or scope.origins.get(node.id) or node.id
+                if node.id in scope.fields
+                else None
+            )
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
             members = {self._annotation(node.left, scope), self._annotation(node.right, scope)}
             return (
@@ -179,7 +198,7 @@ class ProjectionProvenanceCollector:
         if not isinstance(node, ast.Call):
             return None
         origin = self._origin(node.func, scope)
-        if origin in PROJECTION_FUNCTIONS:
+        if origin in PROJECTION_FUNCTIONS or ast.unparse(node.func) in PROJECTION_FUNCTIONS:
             return "definite"
         if (
             isinstance(node.func, ast.Name)
@@ -200,6 +219,37 @@ class ProjectionProvenanceCollector:
             certainty = self._certainty(node, scope)
             if certainty is not None:
                 self._record(node, certainty)
+        if isinstance(node, ast.Lambda):
+            local = scope.copy()
+            for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
+                self._clear(argument.arg, local)
+            if node.args.vararg is not None:
+                self._clear(node.args.vararg.arg, local)
+            if node.args.kwarg is not None:
+                self._clear(node.args.kwarg.arg, local)
+            self._visit_expr(node.body, local)
+            return
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            local = scope.copy()
+            for generator in node.generators:
+                self._visit_expr(generator.iter, local)
+                for name in _target_names(generator.target):
+                    self._clear(name, local)
+                for condition in generator.ifs:
+                    self._visit_expr(condition, local)
+            self._visit_expr(node.elt, local)
+            return
+        if isinstance(node, ast.DictComp):
+            local = scope.copy()
+            for generator in node.generators:
+                self._visit_expr(generator.iter, local)
+                for name in _target_names(generator.target):
+                    self._clear(name, local)
+                for condition in generator.ifs:
+                    self._visit_expr(condition, local)
+            self._visit_expr(node.key, local)
+            self._visit_expr(node.value, local)
+            return
         for child in ast.iter_child_nodes(node):
             self._visit_expr(child, scope)
 
@@ -258,7 +308,11 @@ class ProjectionProvenanceCollector:
                     and isinstance(value.func, ast.Name)
                     and value.func.id in scope.functions
                 )
-                if annotation not in {None, "GraphProjection"} or local_return:
+                if (
+                    isinstance(node, ast.AnnAssign)
+                    and annotation != "GraphProjection"
+                    or local_return
+                ):
                     self._clear(name, scope)
                 else:
                     self._set_alias(name, value, scope)
@@ -285,7 +339,7 @@ class ProjectionProvenanceCollector:
 
     def _merge(self, before: _Scope, branches: tuple[_Scope, ...]) -> _Scope:
         merged = before.copy()
-        names = set().union(*(set(branch.aliases) for branch in branches))
+        names = set(before.aliases).union(*(set(branch.aliases) for branch in branches))
         for name in names:
             values = [branch.aliases.get(name) for branch in branches]
             if all(value == "definite" for value in values):
@@ -296,7 +350,12 @@ class ProjectionProvenanceCollector:
                 merged.aliases.pop(name, None)
         return merged
 
-    def _function(self, node: ast.FunctionDef | ast.AsyncFunctionDef, scope: _Scope) -> None:
+    def _function(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        scope: _Scope,
+        class_name: str | None = None,
+    ) -> None:
         self._clear(node.name, scope)
         if not node.decorator_list:
             scope.functions[node.name] = self._annotation(node.returns, scope) or ""
@@ -315,6 +374,12 @@ class ProjectionProvenanceCollector:
                 local.fields[argument.arg] = scope.fields.get(
                     annotation, PROJECTION_FIELDS.get(annotation, frozenset())
                 )
+        if class_name is not None and node.args.args:
+            local.fields[node.args.args[0].arg] = scope.fields.get(class_name, frozenset())
+        if node.args.vararg is not None:
+            self._clear(node.args.vararg.arg, local)
+        if node.args.kwarg is not None:
+            self._clear(node.args.kwarg.arg, local)
         self._visit_block(node.body, local)
 
     def _class(self, node: ast.ClassDef, scope: _Scope) -> None:
@@ -328,6 +393,10 @@ class ProjectionProvenanceCollector:
         self._clear(node.name, scope)
         if fields:
             scope.fields[node.name] = frozenset(fields)
+        class_scope = scope.copy()
+        for child in node.body:
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._function(child, class_scope, node.name)
 
     def _visit_block(self, statements: list[ast.stmt], scope: _Scope) -> _Scope:
         for statement in statements:
@@ -344,6 +413,43 @@ class ProjectionProvenanceCollector:
                 body = self._visit_block(statement.body, scope.copy())
                 otherwise = self._visit_block(statement.orelse, scope.copy())
                 scope = self._merge(scope, (body, otherwise))
+            elif isinstance(statement, (ast.For, ast.AsyncFor)):
+                self._visit_expr(statement.iter, scope)
+                body_scope = scope.copy()
+                for name in _target_names(statement.target):
+                    self._clear(name, body_scope)
+                body = self._visit_block(statement.body, body_scope)
+                otherwise = self._visit_block(statement.orelse, scope.copy())
+                scope = self._merge(scope, (body, otherwise))
+            elif isinstance(statement, ast.Match):
+                self._visit_expr(statement.subject, scope)
+                branches: list[_Scope] = []
+                for case in statement.cases:
+                    case_scope = scope.copy()
+                    for child in ast.walk(case.pattern):
+                        if isinstance(child, ast.MatchAs) and child.name is not None:
+                            self._clear(child.name, case_scope)
+                    branches.append(self._visit_block(case.body, case_scope))
+                scope = self._merge(scope, tuple(branches)) if branches else scope
+            elif isinstance(statement, (ast.With, ast.AsyncWith)):
+                body_scope = scope.copy()
+                for item in statement.items:
+                    self._visit_expr(item.context_expr, scope)
+                    if item.optional_vars is not None:
+                        for name in _target_names(item.optional_vars):
+                            self._clear(name, body_scope)
+                scope = self._merge(scope, (self._visit_block(statement.body, body_scope),))
+            elif isinstance(statement, (ast.Try, ast.TryStar)):
+                self._visit_block(statement.body, scope.copy())
+                branches = []
+                for handler in statement.handlers:
+                    handler_scope = scope.copy()
+                    if handler.name is not None:
+                        self._clear(handler.name, handler_scope)
+                    branches.append(self._visit_block(handler.body, handler_scope))
+                branches.append(self._visit_block(statement.orelse, scope.copy()))
+                branches.append(self._visit_block(statement.finalbody, scope.copy()))
+                scope = self._merge(scope, tuple(branches))
             else:
                 self._visit_expr(statement, scope)
                 nested = [
