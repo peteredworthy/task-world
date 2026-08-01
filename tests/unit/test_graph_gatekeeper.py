@@ -10,6 +10,7 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
+    file_state_record,
     initial_projection,
     project_gatekeeper_report,
     project_pattern_library,
@@ -392,7 +393,8 @@ def test_record_gatekeeper_verdicts_secret_requests_cleanup_and_marks_projection
     assert cleanup.payload["authority"] == "gatekeeper"
 
     projection = _project([*events, *emitted])
-    record = projection["file_state_records"]["file-state-1"]
+    record = file_state_record(projection, "file-state-1")
+    assert record is not None
     assert record.compromised is True
     assert record.superseded_pending is True
     assert record.compromised_paths == ["residue.txt"]

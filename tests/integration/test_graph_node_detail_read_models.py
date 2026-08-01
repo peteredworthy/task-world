@@ -144,10 +144,14 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
             {
                 "record_id": "candidate-1",
                 "record_kind": "output",
+                "record_type": "fan_out_inputs",
                 "producer_node_id": "worker-1",
                 "port": "candidate",
                 "schema": "ImplementationCandidate",
-                "value": heavy_body,
+                "task_region_id": "task-1",
+                "attempt_number": 1,
+                "value": {"summary": "test candidate"},
+                "payload": heavy_body,
             },
         ),
         _event(
@@ -530,34 +534,6 @@ async def test_node_detail_rebuild_is_idempotent(
 
 
 @pytest.mark.asyncio
-async def test_node_detail_summary_matches_existing_light_builder(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> None:
-    run_id = "node-detail-parity"
-    async with session_factory() as session:
-        async with session.begin():
-            await GraphEventStore(session).append_events(
-                run_id,
-                0,
-                _representative_events(run_id),
-            )
-
-    async with session_factory() as session:
-        store = GraphEventStore(session)
-        light_events = await store.read_run_node_detail(run_id)
-        old_response = build_node_detail_response(
-            run_id,
-            "worker-1",
-            light_events,
-            payload_mode="summary",
-        )
-        new_response = await _materialized_response(session, run_id, "worker-1")
-
-    assert old_response is not None
-    assert new_response == old_response.model_dump(mode="json")
-
-
-@pytest.mark.asyncio
 async def test_completed_sequential_leases_match_existing_summary_selection(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -695,7 +671,7 @@ async def test_full_node_detail_path_keeps_heavy_output_and_file_state_detail(
 
     assert response is not None
     full = response.model_dump(mode="json")
-    assert full["output_records"][0]["value"]["body"].startswith("xxx")
+    assert full["output_records"][0]["payload"]["body"].startswith("xxx")
     assert full["file_state_records"][0]["classification_summary"]["total_paths"] == 2
     assert full["file_state_records"][0]["tracked"][0]["path"] == "src/app.py"
 

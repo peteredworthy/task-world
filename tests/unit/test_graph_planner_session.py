@@ -8,7 +8,14 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
+    bound_record_ids,
     initial_projection,
+    input_binding_for_port,
+    lease_by_id,
+    node_state,
+    planner_session,
+    projection_from_checkpoint,
+    projection_to_checkpoint,
     project_planner_session,
     reduce_event,
 )
@@ -36,7 +43,7 @@ def test_successor_inherits_session_id() -> None:
     )
 
     projection = _project(events)
-    assert projection["planner_sessions"]["planner-1"] == "session-1"
+    assert planner_session(projection, "planner-1") == "session-1"
     assert lease.payload["session_id"] == "session-1"
     assert lease.payload["generation"] == 2
 
@@ -64,10 +71,11 @@ def test_resume_emits_new_generation_same_session() -> None:
     lease = _only(scheduled, "lease_granted", "planner-0")
     assert lease.payload["session_id"] == "session-1"
     assert lease.payload["generation"] == 2
-    assert (
-        _project([*events, *_append(events, scheduled)])["leases"]["lease-planner-0"].state
-        == "released"
+    released_lease = lease_by_id(
+        _project([*events, *_append(events, scheduled)]), "lease-planner-0"
     )
+    assert released_lease is not None
+    assert released_lease.state == "released"
 
 
 def test_session_does_not_grant_authority() -> None:
@@ -85,11 +93,11 @@ def test_session_does_not_grant_authority() -> None:
     projection = _project([*events, *_append(events, callback)])
     assert callback[0].event_type == "command_rejected"
     assert "payload [extra_forbidden]" in str(callback[0].payload["reason"])
-    assert projection["node_states"]["planner-0"] == "running"
+    assert node_state(projection, "planner-0") == "running"
 
 
 def test_carryover_binds_as_optional_input() -> None:
-    events = _events_with_active_planner()
+    events = _events_with_active_planner(include_carryover=True)
     patch = _apply(
         events,
         "submit_patch",
@@ -101,9 +109,10 @@ def test_carryover_binds_as_optional_input() -> None:
     )
     projection = _project([*events, *_append(events, patch)])
 
-    assert projection["input_bindings"]["planner-1"]["session_carryover"].record_ids == [
-        "summary-carryover-1"
-    ]
+    assert projection_from_checkpoint(projection_to_checkpoint(projection)) == projection
+    assert bound_record_ids(projection, "planner-1", "session_carryover") == (
+        "summary-carryover-1",
+    )
     created = _only(patch, "node_created", "planner-1")
     carryover_port = next(
         raw_port
@@ -119,7 +128,7 @@ def test_carryover_binds_as_optional_input() -> None:
         patch_command_context(events, proposed_by_node_id="planner-0", actor_role="planner"),
     )
     without_projection = _project([*events, *_append(events, without_carryover)])
-    assert "session_carryover" not in without_projection["input_bindings"].get("planner-2", {})
+    assert input_binding_for_port(without_projection, "planner-2", "session_carryover") is None
     scheduled = _apply(
         [*events, *_append(events, without_carryover)],
         "schedule_tick",
@@ -128,8 +137,55 @@ def test_carryover_binds_as_optional_input() -> None:
     assert _only(scheduled, "lease_granted", "planner-2").payload["generation"] == 2
 
 
-def test_project_planner_session() -> None:
+def test_carryover_rejects_unknown_record_without_creating_successor() -> None:
     events = _events_with_active_planner()
+
+    patch = _apply(
+        events,
+        "submit_patch",
+        {
+            **_patch_payload(events, "planner-0", _region_ops("planner-1")),
+            "carryover_record_id": "unknown-carryover",
+        },
+        patch_command_context(events, proposed_by_node_id="planner-0", actor_role="planner"),
+    )
+
+    assert [event.event_type for event in patch] == ["graph_patch_rejected"]
+    assert patch[0].payload["reason"] == "unknown_carryover_record_id:unknown-carryover"
+
+
+def test_carryover_rejects_unknown_record_without_successor() -> None:
+    events = _events_with_active_planner()
+
+    patch = _apply(
+        events,
+        "submit_patch",
+        {
+            **_patch_payload(
+                events,
+                "planner-0",
+                [
+                    {
+                        "op": "create_node",
+                        "node": {
+                            "node_id": "summarizer-1",
+                            "kind": "summarizer",
+                            "state": "planned",
+                        },
+                    }
+                ],
+            ),
+            "carryover_record_id": "unknown-carryover",
+        },
+        patch_command_context(events, proposed_by_node_id="planner-0", actor_role="planner"),
+    )
+
+    assert [event.event_type for event in patch] == ["graph_patch_rejected"]
+    assert patch[0].payload["reason"] == "unknown_carryover_record_id:unknown-carryover"
+
+
+def test_project_planner_session() -> None:
+    events = _events_with_active_planner(include_carryover=True)
     patch = _apply(
         events,
         "submit_patch",
@@ -169,45 +225,64 @@ def test_project_planner_session() -> None:
     }
 
 
-def _events_with_active_planner() -> list[EventEnvelope]:
-    return _with_positions(
-        [
-            _event("run_lifecycle_changed", {"to_state": "active"}),
-            _event("node_created", {"node_id": "root", "kind": "root", "state": "completed"}),
+def _events_with_active_planner(*, include_carryover: bool = False) -> list[EventEnvelope]:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}),
+        _event("node_created", {"node_id": "root", "kind": "root", "state": "completed"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-0",
+                "kind": "planner",
+                "role": "planner",
+                "state": "running",
+                "generation_index": 0,
+                "session_id": "session-1",
+            },
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "planner-0",
+                "lease_id": "lease-planner-0",
+                "generation": 1,
+                "execution_id": "exec-planner-0",
+                "base_snapshot_id": "snapshot-0",
+                "session_id": "session-1",
+            },
+        ),
+        _event(
+            "session_state_changed",
+            {
+                "session_id": "session-1",
+                "state": "attached",
+                "node_id": "planner-0",
+                "lease_generation": 1,
+                "carryover_record_id": None,
+            },
+        ),
+    ]
+    if include_carryover:
+        events.append(
             _event(
-                "node_created",
+                "output_record_accepted",
                 {
-                    "node_id": "planner-0",
-                    "kind": "planner",
-                    "role": "planner",
-                    "state": "running",
-                    "generation_index": 0,
-                    "session_id": "session-1",
+                    "record_id": "summary-carryover-1",
+                    "record_kind": "output",
+                    "record_type": "analysis_summary",
+                    "producer_node_id": "planner-0",
+                    "port": "planning_summary",
+                    "schema": "AnalysisSummary",
+                    "value": {
+                        "summary": "Carry this planning context forward.",
+                        "source_record_ids": [],
+                        "lossy": False,
+                        "omitted_details": [],
+                    },
                 },
-            ),
-            _event(
-                "lease_granted",
-                {
-                    "node_id": "planner-0",
-                    "lease_id": "lease-planner-0",
-                    "generation": 1,
-                    "execution_id": "exec-planner-0",
-                    "base_snapshot_id": "snapshot-0",
-                    "session_id": "session-1",
-                },
-            ),
-            _event(
-                "session_state_changed",
-                {
-                    "session_id": "session-1",
-                    "state": "attached",
-                    "node_id": "planner-0",
-                    "lease_generation": 1,
-                    "carryover_record_id": None,
-                },
-            ),
-        ]
-    )
+            )
+        )
+    return _with_positions(events)
 
 
 def _region_ops(successor_id: str) -> list[dict[str, Any]]:

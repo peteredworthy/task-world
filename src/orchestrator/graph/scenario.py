@@ -10,6 +10,12 @@ from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
 from orchestrator.graph.command_models import GraphCommandContext
 from orchestrator.graph.projections import initial_projection, reduce_event
 from orchestrator.graph.store import InMemoryEventStore
+from orchestrator.graph.projection_queries import (
+    leases_view,
+    node_states_view,
+    run_state,
+    task_states_view,
+)
 
 
 @dataclass(frozen=True)
@@ -76,11 +82,12 @@ def run_scenario(
     for event in events:
         projection = reduce_event(projection, event)
     projection_snapshot: dict[str, str] = {}
-    if projection["run_state"] is not None:
-        projection_snapshot["run_state"] = projection["run_state"]
-    projection_snapshot.update(projection["node_states"])
-    projection_snapshot.update(projection["task_states"])
-    for lease_id, lease in projection["leases"].items():
+    current_run_state = run_state(projection)
+    if current_run_state is not None:
+        projection_snapshot["run_state"] = current_run_state
+    projection_snapshot.update(node_states_view(projection))
+    projection_snapshot.update(task_states_view(projection))
+    for lease_id, lease in leases_view(projection).items():
         projection_snapshot[lease_id] = lease.state
     failures.extend(
         _check_then_projection(scenario.get("then_projection", {}), projection_snapshot)

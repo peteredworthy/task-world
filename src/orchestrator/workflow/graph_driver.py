@@ -21,6 +21,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktree
 from orchestrator.graph import (
+    run_state as query_run_state,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -33,7 +34,7 @@ from orchestrator.graph import (
     project_graph_projection_snapshot,
     project_run_state,
 )
-from orchestrator.graph.commands import Clock, IdGenerator
+from orchestrator.graph import Clock, IdGenerator
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -135,7 +136,7 @@ async def apply_graph_cancel_until_terminal(
 
     for attempt in range(4):
         projection = await controller.read_projection(run_id)
-        run_state = projection["run_state"]
+        run_state = query_run_state(projection)
         if run_state is None or run_state in {"cancelled", "completed", "failed"}:
             return
 

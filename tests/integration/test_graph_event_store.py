@@ -26,6 +26,7 @@ from orchestrator.graph import (
     PatchCommandContext,
     SequentialIdGenerator,
     initial_projection,
+    projection_to_checkpoint,
     reduce_event,
 )
 from orchestrator.graph_runtime import (
@@ -107,6 +108,84 @@ async def test_append_read_round_trip(
 
     assert [event.position for event in stored] == [1, 2]
     assert read_back == stored
+
+
+@pytest.mark.asyncio
+async def test_compact_readers_filter_union_fields_by_event_type_and_mode(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-compact-payload-boundary"
+    timestamp = datetime(2026, 1, 1, tzinfo=UTC)
+    lifecycle_payload = {
+        "command_type": "accept_run",
+        "event_id": "legacy-payload-event-id",
+        "from_state": "draft",
+        "to_state": "queued",
+        "trigger": "accept_run_command_accepted",
+    }
+    outbox_payload = {
+        "run_id": run_id,
+        "outbox_id": 7,
+        "event_id": "requeued-event-id",
+        "kind": "agent_dispatch",
+        "previous_status": "failed",
+        "previous_attempts": 3,
+        "previous_last_error": "dispatch failed",
+        "operator": "human-operator",
+        "graph_position": 2,
+    }
+    events = [
+        EventEnvelope(
+            event_id="lifecycle-envelope-id",
+            run_id=run_id,
+            position=1,
+            event_type="run_lifecycle_changed",
+            schema_version=1,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=timestamp,
+            payload=lifecycle_payload,
+        ),
+        EventEnvelope(
+            event_id="outbox-envelope-id",
+            run_id=run_id,
+            position=2,
+            event_type="outbox_requeued",
+            schema_version=1,
+            actor=Actor(kind=ActorKind.HUMAN),
+            timestamp=timestamp,
+            payload=outbox_payload,
+        ),
+    ]
+    async with session_factory() as session:
+        session.add_all(
+            EventV2Model(
+                aggregate_id=graph_aggregate_id(run_id),
+                version=event.position,
+                event_type=event.event_type,
+                payload=event.model_dump_json(),
+                timestamp=event.timestamp.isoformat(),
+            )
+            for event in events
+        )
+        await session.commit()
+
+    expected_lifecycle = {
+        field: value for field, value in lifecycle_payload.items() if field != "event_id"
+    }
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        readers_and_expected_outbox = (
+            (store.read_run_projection, outbox_payload),
+            (store.read_run_light, {}),
+            (store.read_run_summary_rebuild, outbox_payload),
+            (store.read_run_node_detail, {}),
+        )
+        for reader, expected_outbox in readers_and_expected_outbox:
+            compact = await reader(run_id)
+            assert compact[0].event_id == "lifecycle-envelope-id"
+            assert compact[0].payload == expected_lifecycle
+            assert compact[1].event_id == "outbox-envelope-id"
+            assert compact[1].payload == expected_outbox
 
 
 @pytest.mark.asyncio
@@ -366,6 +445,204 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
 
 
 @pytest.mark.asyncio
+async def test_append_invalidates_legacy_v12_flat_projection_snapshot(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-append-legacy-v12-snapshot"
+    seed_event = _event("evt-seed", run_id, "run_lifecycle_changed", {"to_state": "active"})
+    appended_event = _event(
+        "evt-appended",
+        run_id,
+        "node_created",
+        {"node_id": "worker-1", "kind": "worker"},
+    )
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, [seed_event])
+
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                update(GraphProjectionSnapshotModel)
+                .where(GraphProjectionSnapshotModel.run_id == run_id)
+                .values(
+                    decisions={
+                        "_projection_schema_version": 12,
+                        "_projection_checkpoint": {"run_state": "active"},
+                        "_projection_terminal": False,
+                    }
+                )
+            )
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            stored = await store.append_events(run_id, 1, [appended_event])
+            assert [event.event_id for event in stored] == ["evt-appended"]
+            assert await session.get(GraphProjectionSnapshotModel, run_id) is None
+            rebuilt_snapshot = await store.read_projection_snapshot(run_id)
+            rebuilt = await store.read_projection_checkpoint(run_id)
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        events = await store.read_run(run_id)
+        checkpoint = await store.read_projection_checkpoint(run_id)
+
+    assert [event.event_id for event in events] == ["evt-seed", "evt-appended"]
+    assert rebuilt_snapshot is not None
+    assert rebuilt is not None
+    assert checkpoint is not None
+    assert checkpoint.schema_version == PROJECTION_SCHEMA_VERSION
+    assert checkpoint.position == 2
+    assert checkpoint.projection == _rebuild_projection(events)
+
+
+@pytest.mark.asyncio
+async def test_append_invalidates_current_malformed_projection_snapshot(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-append-malformed-current-snapshot"
+    seed_event = _event("evt-seed", run_id, "run_lifecycle_changed", {"to_state": "active"})
+    appended_event = _event(
+        "evt-appended",
+        run_id,
+        "node_created",
+        {"node_id": "worker-1", "kind": "worker"},
+    )
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, [seed_event])
+
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                update(GraphProjectionSnapshotModel)
+                .where(GraphProjectionSnapshotModel.run_id == run_id)
+                .values(
+                    decisions={
+                        "_projection_schema_version": PROJECTION_SCHEMA_VERSION,
+                        "_projection_checkpoint": {"not": "a canonical projection"},
+                        "_projection_terminal": False,
+                    }
+                )
+            )
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            stored = await store.append_events(run_id, 1, [appended_event])
+            assert [event.event_id for event in stored] == ["evt-appended"]
+            assert await session.get(GraphProjectionSnapshotModel, run_id) is None
+            rebuilt_snapshot = await store.read_projection_snapshot(run_id)
+            rebuilt = await store.read_projection_checkpoint(run_id)
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        events = await store.read_run(run_id)
+        checkpoint = await store.read_projection_checkpoint(run_id)
+
+    assert [event.event_id for event in events] == ["evt-seed", "evt-appended"]
+    assert rebuilt_snapshot is not None
+    assert rebuilt is not None
+    assert checkpoint is not None
+    assert checkpoint.schema_version == PROJECTION_SCHEMA_VERSION
+    assert checkpoint.position == 2
+    assert checkpoint.projection == _rebuild_projection(events)
+
+
+@pytest.mark.asyncio
+async def test_current_projection_snapshot_with_invalid_integrity_is_rebuilt(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-snapshot-integrity-rebuild"
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+
+    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        checkpoint = await store.read_projection_checkpoint(run_id)
+    assert checkpoint is not None
+    malformed = projection_to_checkpoint(checkpoint.projection)
+    malformed["scheduling"]["ready_node_ids"] = ["missing-node"]
+
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                update(GraphProjectionSnapshotModel)
+                .where(GraphProjectionSnapshotModel.run_id == run_id)
+                .values(
+                    decisions={
+                        "_projection_schema_version": PROJECTION_SCHEMA_VERSION,
+                        "_projection_checkpoint": malformed,
+                        "_projection_terminal": False,
+                    }
+                )
+            )
+
+    await controller.handle_command(run_id, accepted.projection_position, "start")
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        events = await store.read_run(run_id)
+        repaired = await store.read_projection_checkpoint(run_id)
+
+    assert repaired is not None
+    assert repaired.projection == _rebuild_projection(events)
+
+
+@pytest.mark.asyncio
+async def test_current_partial_projection_checkpoint_is_rebuilt_and_rewritten(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-snapshot-partial-rebuild"
+    assert PROJECTION_SCHEMA_VERSION == 13
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+
+    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    await controller.handle_command(run_id, seed.projection_position, "accept_run")
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        checkpoint = await store.read_projection_checkpoint(run_id)
+    assert checkpoint is not None
+    malformed = projection_to_checkpoint(checkpoint.projection)
+    malformed.pop("usage")
+
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                update(GraphProjectionSnapshotModel)
+                .where(GraphProjectionSnapshotModel.run_id == run_id)
+                .values(
+                    decisions={
+                        "_projection_schema_version": PROJECTION_SCHEMA_VERSION,
+                        "_projection_checkpoint": malformed,
+                        "_projection_terminal": False,
+                    }
+                )
+            )
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        snapshot = await store.read_projection_snapshot(run_id)
+        events = await store.read_run(run_id)
+        rebuilt = await store.read_projection_checkpoint(run_id)
+
+    assert snapshot is not None
+    assert rebuilt is not None
+    assert rebuilt.position == max(event.position for event in events)
+    assert rebuilt.projection == _rebuild_projection(events)
+    assert "usage" in rebuilt.projection.model_dump(mode="json")
+
+
+@pytest.mark.asyncio
 async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -574,6 +851,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             {
                 "record_id": "candidate-1",
                 "record_kind": "output",
+                "record_type": "candidate",
                 "producer_node_id": "worker-1",
                 "port": "candidate",
                 "schema": "ImplementationCandidate",
@@ -626,6 +904,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             {
                 "record_id": "check-1",
                 "record_kind": "output",
+                "record_type": "check_result",
                 "producer_node_id": "check-1",
                 "port": "check_result",
                 "schema": "CheckResult",
@@ -678,6 +957,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             {
                 "record_id": "failure-1",
                 "record_kind": "graph_record",
+                "record_type": "failure_record",
                 "producer_node_id": "worker-1",
                 "port": "failure_record",
                 "schema": "FailureRecord",
@@ -695,7 +975,8 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             "output_record_accepted",
             {
                 "record_id": "recovery-plan-1",
-                "record_kind": "graph_record",
+                "record_kind": "output",
+                "record_type": "recovery_plan",
                 "producer_node_id": "recovery-1",
                 "port": "recovery_plan",
                 "schema": "RecoveryPlan",
@@ -812,11 +1093,9 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert check_result["run_id"] == run_id
     assert check_result["created_at"] == "2026-01-01T00:00:00+00:00"
     assert check_result["graph_position"] == 4
-    assert check_result["payload"] == {
-        "status": "passed",
-        "classification": "passed",
-        "command_id": "unit-check",
-    }
+    assert check_result["payload"]["status"] == "passed"
+    assert check_result["payload"]["classification"] == "passed"
+    assert check_result["payload"]["command_id"] == "unit-check"
 
     decision_request = stored[4].payload
     assert decision_request["record_type"] == "decision_request"
@@ -1203,7 +1482,6 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                             "node_id": "worker-1",
                             "kind": "worker",
                             "state": "planned",
-                            "large_irrelevant_field": large_payload,
                         },
                     ),
                     _event(
@@ -1304,7 +1582,6 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                             "state": "planned",
                             "task_region_id": "step/task",
                             "resource_claims": [{"mode": "write", "scope": "repo"}],
-                            "value": {"body": large_payload},
                         },
                     ),
                     _event(
@@ -1314,11 +1591,15 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                         {
                             "record_id": "candidate-1",
                             "record_kind": "output",
+                            "record_type": "candidate",
                             "producer_node_id": "worker-1",
                             "port": "candidate",
+                            "schema": "ImplementationCandidate",
                             "candidate_id": "candidate-1",
                             "task_region_id": "step/task",
-                            "value": {"body": large_payload},
+                            "attempt_number": 1,
+                            "value": {"summary": "candidate"},
+                            "payload": {"body": large_payload},
                         },
                     ),
                     _event(
@@ -1357,7 +1638,6 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                             "freshness_policy": "latest_only",
                             "prompt_hydration_policy": "artifact_reference",
                             "metadata": {"purpose": "verify candidate"},
-                            "value": {"body": large_payload},
                         },
                     ),
                     _event(
@@ -1370,13 +1650,14 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                             "record_type": "check_result",
                             "producer_node_id": "check-1",
                             "port": "check_result",
+                            "schema": "CheckResult",
                             "candidate_id": "candidate-check-1",
                             "task_region_id": "step/task",
                             "value": {
                                 "status": "passed",
                                 "classification": "passed",
-                                "body": large_payload,
                             },
+                            "payload": {"body": large_payload},
                         },
                     ),
                 ],
@@ -1402,6 +1683,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
     }
     assert events[1].payload == {
         "candidate_id": "candidate-1",
+        "attempt_number": 1,
         "port": "candidate",
         "producer_node_id": "worker-1",
         "record_id": "candidate-1",

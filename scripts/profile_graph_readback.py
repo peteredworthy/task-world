@@ -73,7 +73,17 @@ def _event(event_id: str, event_type: str, payload: dict[str, Any], index: int) 
 
 def _synthetic_events(event_count: int, heavy_every: int, payload_kb: int) -> list[EventEnvelope]:
     events = [
-        _event("profile-run-active", "run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "profile-run-active",
+            "run_lifecycle_changed",
+            {
+                "command_type": "profile_seed",
+                "from_state": "draft",
+                "to_state": "active",
+                "trigger": "profile",
+            },
+            0,
+        ),
         _event(
             "profile-root",
             "node_created",

@@ -1,18 +1,23 @@
 """Unit tests for pure graph patch validation."""
 
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
-from orchestrator.graph.models import (
+from orchestrator.graph import ResourceClaimProjection
+from orchestrator.graph import (
     Actor,
     ActorKind,
-    EdgeProjection,
     EventEnvelope,
     PatchEnvelope,
     PatchOp,
 )
-from orchestrator.graph.patch_validator import PatchValidationResult, validate_patch
-from orchestrator.graph.projections import GraphProjection, initial_projection
+from orchestrator.graph import (
+    PatchValidationResult,
+    resource_claim_dicts,
+    validate_patch,
+)
+from orchestrator.graph import GraphProjection, build_projection, initial_projection
+from tests.unit.graph_test_utils import event
 
 
 def _patch(
@@ -56,20 +61,27 @@ def _projection(
     edges: dict[str, dict[str, Any]] | None = None,
     resource_claims: dict[str, list[dict[str, Any]]] | None = None,
 ) -> GraphProjection:
-    projection = initial_projection()
-    if node_states is not None:
-        projection["node_states"] = node_states
-    if node_kinds is not None:
-        projection["node_kinds"] = node_kinds
-    if node_roles is not None:
-        projection["node_roles"] = node_roles
-    if edges is not None:
-        projection["edges"] = {
-            edge_id: EdgeProjection.model_validate(edge) for edge_id, edge in edges.items()
-        }
-    if resource_claims is not None:
-        cast(dict[str, Any], projection)["resource_claims"] = resource_claims
-    return projection
+    node_ids = set(node_states or {}) | set(node_kinds or {}) | set(node_roles or {})
+    node_ids.update(resource_claims or {})
+    events = [
+        event(
+            "node_created",
+            {
+                "node_id": node_id,
+                "kind": (node_kinds or {}).get(node_id, "worker"),
+                "role": (node_roles or {}).get(node_id),
+                "state": (node_states or {}).get(node_id, "planned"),
+                "resource_claims": (resource_claims or {}).get(node_id, []),
+            },
+            position=index,
+        )
+        for index, node_id in enumerate(sorted(node_ids))
+    ]
+    events.extend(
+        event("edge_created", edge, position=len(events) + index)
+        for index, edge in enumerate((edges or {}).values())
+    )
+    return build_projection(events)
 
 
 def _validate(
@@ -916,17 +928,19 @@ def test_gap_planner_can_submit_no_op_patch() -> None:
 
 
 def test_gap_planner_no_op_allowed_when_classified_gap_successor_waits() -> None:
-    projection = initial_projection()
-    projection["edges"]["edge-gap-to-corrective"] = EdgeProjection.model_validate(
-        {
-            "edge_id": "edge-gap-to-corrective",
-            "from_node_id": "planner-1",
-            "from_port": "gap_classification",
-            "to_node_id": "worker-corrective",
-            "to_port": "classified_gap",
-            "required": True,
-            "dependency_type": "input_binding",
-        }
+    projection = _projection(
+        node_kinds={"planner-1": "planner", "worker-corrective": "worker"},
+        edges={
+            "edge-gap-to-corrective": {
+                "edge_id": "edge-gap-to-corrective",
+                "from_node_id": "planner-1",
+                "from_port": "gap_classification",
+                "to_node_id": "worker-corrective",
+                "to_port": "classified_gap",
+                "required": True,
+                "dependency_type": "input_binding",
+            }
+        },
     )
 
     result = _validate(_patch([]), projection=projection, actor_role="gap_planner")
@@ -1064,6 +1078,12 @@ def test_set_resource_claims_escalation_rejected() -> None:
     assert not result.accepted
     assert result.rejection_reason is not None
     assert "resource claim escalation" in result.rejection_reason
+
+
+def test_resource_claim_dicts_accepts_read_only_sequence() -> None:
+    claim = ResourceClaimProjection(mode="read", scope="repo")
+
+    assert resource_claim_dicts((claim,)) == [claim.model_dump()]
 
 
 def test_set_resource_claims_narrowing_accepted() -> None:

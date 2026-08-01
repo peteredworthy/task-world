@@ -19,7 +19,6 @@
 - name: worker_leased_to_running
   given_events:
     - node_created: {node_id: worker-3, kind: worker, state: leased}
-    - callback_accepted: {node_id: worker-3}
     - node_state_changed: {node_id: worker-3, new_state: running, trigger: agent_start_accepted}
   when_command: null
   then_events: []
@@ -27,9 +26,9 @@
 
 - name: worker_running_to_completed
   given_events:
-    - node_created: {node_id: worker-4, kind: worker, state: running}
-    - output_record_accepted: {record_id: candidate-1, record_kind: output, record_type: candidate, producer_node_id: worker-4, port: candidate, schema: ImplementationCandidate, candidate_id: candidate-1, value: {summary: completed candidate}}
-    - file_state_accepted: {record_id: file-state-candidate-1, record_kind: file_state, record_type: file_state, producer_node_id: worker-4, port: file_state, schema: FileStateRecord, snapshot_id: S1, candidate_id: candidate-1}
+    - node_created: {node_id: worker-4, kind: worker, state: running, task_region_id: task-worker-4}
+    - output_record_accepted: {record_id: candidate-1, record_kind: output, record_type: candidate, producer_node_id: worker-4, port: candidate, schema: ImplementationCandidate, task_region_id: task-worker-4, candidate_id: candidate-1, attempt_number: 1, value: {summary: completed candidate}}
+    - file_state_accepted: {record_id: file-state-candidate-1, record_kind: file_state, record_type: file_state, producer_node_id: worker-4, port: file_state, schema: FileStateRecord, snapshot_id: S1, task_region_id: task-worker-4, candidate_id: candidate-1}
     - node_state_changed: {node_id: worker-4, new_state: completed, trigger: output_callback_accepted}
   when_command: null
   then_events: []
@@ -56,7 +55,6 @@
 - name: worker_running_to_failed
   given_events:
     - node_created: {node_id: worker-7, kind: worker, state: running}
-    - callback_accepted: {node_id: worker-7}
     - node_state_changed: {node_id: worker-7, new_state: failed, trigger: accepted_failure}
   when_command: null
   then_events: []

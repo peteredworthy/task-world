@@ -49,6 +49,7 @@ from orchestrator.graph.contracts import (
     input_port_contract,
     merge_bound_record_ids,
     output_port_contract,
+    validate_edge_payload,
     validate_output_record,
 )
 from orchestrator.graph.event_registry import (
@@ -99,6 +100,7 @@ from orchestrator.graph.models import (
     PatchOp,
     PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
+    RequirementRecord,
     RequirementRevisionPayload,
     SupportEvidencePayload,
     VerificationResultProjection,
@@ -119,6 +121,52 @@ from orchestrator.graph.scheduler import (
     claims_conflict,
     evaluate_readiness,
     schedule,
+)
+from orchestrator.graph.projection_queries import (
+    node_failed_candidates_view,
+    node_pending_appeals_view,
+    node_preconditions_view,
+    accepted_graph_patches_by_node_view,
+    accepted_no_successor_patches_by_node_view,
+    accepted_output_records_by_node_port_view,
+    accepted_record_summaries_by_id_view,
+    active_requirement_versions_view,
+    check_results_view,
+    cleanup_applied_ids_view,
+    cleanup_requested_events_view,
+    completion_decision_passed,
+    edges_view,
+    failed_verification_candidate_ids_view,
+    failed_verification_results_by_record_id_view,
+    file_state_records_view,
+    input_bindings_view,
+    last_deferred_reasons_view,
+    latest_routine_snapshot_record,
+    leases_view,
+    node_attempts_view,
+    node_command_definitions_view,
+    node_creation_positions_view,
+    node_gate_decisions_view,
+    node_kinds_view,
+    node_resource_claims_view,
+    node_roles_view,
+    node_states_view,
+    node_task_regions_view,
+    output_record_payloads_view,
+    output_records_by_node_port_view,
+    passed_verification_candidate_ids_view,
+    passed_verification_results_by_record_id_view,
+    planner_generation_budget,
+    planner_generations_view,
+    planner_sessions_view,
+    ready_nodes_view,
+    recorded_node_usage_keys_view,
+    recovery_nodes_by_record_id_view,
+    retry_not_before_by_node_view,
+    run_state as query_run_state,
+    task_candidates_view,
+    task_states_view,
+    verifier_verdicts_view,
 )
 
 
@@ -261,7 +309,7 @@ def _apply_lifecycle_command(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
-    current_state = projection["run_state"] or "draft"
+    current_state = query_run_state(projection) or "draft"
     if command_type == "fail":
         if current_state in NONTERMINAL_RUN_STATES:
             return [
@@ -334,7 +382,7 @@ def _apply_lifecycle_command(
 
 
 def _has_passed_completion_decision(projection: GraphProjection) -> bool:
-    return projection["completion_decision_passed"]
+    return completion_decision_passed(projection)
 
 
 def _lifecycle_completion_decision_event(
@@ -369,10 +417,10 @@ def _apply_record_heartbeat(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     lease_id = payload.lease_id
-    lease = projection["leases"].get(lease_id)
+    lease = leases_view(projection).get(lease_id)
     if lease is None:
         return [_command_rejected(make_event, "record_heartbeat", f"unknown lease: {lease_id}")]
-    if projection["run_state"] != "active":
+    if query_run_state(projection) != "active":
         return [_command_rejected(make_event, "record_heartbeat", "run_not_active")]
     if lease.state != "active":
         return [
@@ -426,7 +474,7 @@ def _apply_record_node_usage(
     events: list[EventEnvelope] = []
     for usage_index, usage in enumerate(payload.usage):
         usage_key = f"{payload.execution_id}:{usage_index}"
-        if usage_key in projection["recorded_node_usage_keys"]:
+        if usage_key in recorded_node_usage_keys_view(projection):
             continue
         event_payload = NodeUsageRecordedPayload(
             node_id=payload.node_id,
@@ -450,7 +498,7 @@ def _cancel_active_lease_events(
     trigger: Any,
 ) -> list[EventEnvelope]:
     output: list[EventEnvelope] = []
-    for lease_id, lease in sorted(projection["leases"].items()):
+    for lease_id, lease in sorted(leases_view(projection).items()):
         if lease.state not in {"active", "suspended"}:
             continue
         node_id = lease.node_id
@@ -472,7 +520,7 @@ def _cancel_active_lease_events(
             make_event("lease_revoked", _typed_lease_event_payload("lease_revoked", revoke_payload))
         )
 
-        node_state = projection["node_states"].get(node_id)
+        node_state = node_states_view(projection).get(node_id)
         if node_state not in {"completed", "failed", "cancelled", "retired"}:
             output.append(
                 make_event(
@@ -496,7 +544,7 @@ def _apply_evaluate_final_gate(
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
     node_id = payload.node_id
-    if projection["node_kinds"].get(node_id) != "final_gate":
+    if node_kinds_view(projection).get(node_id) != "final_gate":
         return [_command_rejected(make_event, "evaluate_final_gate", "node is not a final_gate")]
 
     blockers = final_invariant_blockers_for_events(
@@ -545,7 +593,7 @@ def _apply_evaluate_join(
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
     node_id = payload.node_id
-    if projection["node_kinds"].get(node_id) != "join":
+    if node_kinds_view(projection).get(node_id) != "join":
         return [_command_rejected(make_event, "evaluate_join", "node is not a join")]
 
     source_record_ids = _join_source_record_ids(projection, node_id)
@@ -582,7 +630,7 @@ def _apply_evaluate_join(
 
 
 def _join_source_record_ids(projection: GraphProjection, node_id: str) -> list[str]:
-    bindings = projection["input_bindings"].get(node_id, {})
+    bindings = input_bindings_view(projection).get(node_id, {})
     output: list[str] = []
     for _, binding in sorted(bindings.items()):
         for record_id in binding.record_ids:
@@ -621,7 +669,7 @@ def _release_active_node_leases(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     output: list[EventEnvelope] = []
-    for lease_id, lease in sorted(projection["leases"].items()):
+    for lease_id, lease in sorted(leases_view(projection).items()):
         if lease.node_id != node_id or lease.state not in {"active", "suspended"}:
             continue
         payload: dict[str, Any] = {
@@ -643,7 +691,7 @@ def _apply_seed_compiled_events(
     run_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    if projection["node_states"] or projection["edges"] or projection["input_bindings"]:
+    if node_states_view(projection) or edges_view(projection) or input_bindings_view(projection):
         return [
             _command_rejected(make_event, "seed_compiled_events", "run topology already seeded")
         ]
@@ -911,7 +959,7 @@ def _apply_callback_command(
 
 
 def _lease_node_id(projection: GraphProjection, lease_id: str) -> str | None:
-    lease = projection["leases"].get(lease_id)
+    lease = leases_view(projection).get(lease_id)
     if lease is None:
         return None
     node_id = lease.node_id
@@ -976,11 +1024,11 @@ def _file_state_authority_conflict(
     raw_records = request.payload.get("output_records") if request.payload is not None else None
     if not isinstance(raw_records, list):
         return None
-    lease = projection["leases"].get(request.lease_id)
+    lease = leases_view(projection).get(request.lease_id)
     if lease is None:
         return None
     node_id = _lease_node_id(projection, request.lease_id) or request.node_id
-    if projection["node_kinds"].get(node_id) != "worker":
+    if node_kinds_view(projection).get(node_id) != "worker":
         return None
     raw_claims = lease.resource_claims
     write_claims: list[ResourceClaim] = []
@@ -1089,10 +1137,10 @@ def _output_record_contract_conflict(
         typed_raw_records,
         expected_producer_node_id,
     )
-    node_kind = projection["node_kinds"].get(expected_producer_node_id)
+    node_kind = node_kinds_view(projection).get(expected_producer_node_id)
     if not isinstance(node_kind, str):
         return f"output records produced by unknown node: {expected_producer_node_id}"
-    node_role = projection["node_roles"].get(expected_producer_node_id)
+    node_role = node_roles_view(projection).get(expected_producer_node_id)
     typed_role = node_role if isinstance(node_role, str) else None
     for index, raw_record in enumerate(typed_raw_records):
         if not isinstance(raw_record, dict):
@@ -1477,7 +1525,7 @@ def _verification_record_conflict(
                 code="invalid_verification_record",
                 message=f"verification record at index {index} is invalid",
             )
-        if projection["node_kinds"].get(expected_producer_node_id) != "verifier":
+        if node_kinds_view(projection).get(expected_producer_node_id) != "verifier":
             return f"verification record at index {index} was not produced by a verifier"
         candidate_id = record.candidate_id
         if not _candidate_is_bound_to_verifier(projection, expected_producer_node_id, candidate_id):
@@ -1487,6 +1535,18 @@ def _verification_record_conflict(
             )
         if not record.value.grades:
             return f"verification record at index {index} missing grades"
+        represented_requirement_ids = set(active_requirement_versions_view(projection))
+        represented_requirement_ids.update(
+            item.value.id
+            for item in output_record_payloads_view(projection).values()
+            if isinstance(item, RequirementRecord) and item.value.source == "routine"
+        )
+        for grade in record.value.grades:
+            if grade.requirement_id not in represented_requirement_ids:
+                return (
+                    f"verification record at index {index} grades unrepresented requirement: "
+                    f"{grade.requirement_id}"
+                )
         record_payload = record.model_dump(mode="json")
         citation_conflict = _evaluated_record_citation_conflict(
             projection,
@@ -1509,10 +1569,10 @@ def _required_output_record_conflict(
     if not successful_completion:
         return None
 
-    node_kind = projection["node_kinds"].get(expected_producer_node_id)
+    node_kind = node_kinds_view(projection).get(expected_producer_node_id)
     if not isinstance(node_kind, str):
         return f"output records produced by unknown node: {expected_producer_node_id}"
-    node_role = projection["node_roles"].get(expected_producer_node_id)
+    node_role = node_roles_view(projection).get(expected_producer_node_id)
     typed_role = node_role if isinstance(node_role, str) else None
     contract = DEFAULT_NODE_CONTRACTS.contract_for(node_kind, typed_role)
     if contract is None:
@@ -1578,7 +1638,7 @@ def _accepted_verification_record_events(
     payload = record.model_dump(mode="json")
     outcome = record.outcome
     event_type = "verification_passed" if outcome == "passed" else "verification_failed"
-    task_region_id = projection["node_task_regions"].get(expected_producer_node_id)
+    task_region_id = node_task_regions_view(projection).get(expected_producer_node_id)
     evidence = payload.get("evidence")
     evidence_rows: list[dict[str, Any]] = []
     if isinstance(evidence, dict):
@@ -1616,7 +1676,7 @@ def _candidate_is_bound_to_verifier(
     verifier_node_id: str,
     candidate_id: str,
 ) -> bool:
-    binding = projection["input_bindings"].get(verifier_node_id, {}).get("candidate_under_test")
+    binding = input_bindings_view(projection).get(verifier_node_id, {}).get("candidate_under_test")
     if binding is None:
         return False
     return candidate_id in binding.record_ids
@@ -2028,7 +2088,7 @@ def _file_state_record_ids_for_candidate_records(
 ) -> list[str]:
     wanted = set(candidate_record_ids)
     output: list[str] = []
-    for candidates in projection["task_candidates"].values():
+    for candidates in task_candidates_view(projection).values():
         for candidate in candidates:
             candidate_id = candidate.candidate_id
             if candidate_id not in wanted:
@@ -2036,7 +2096,7 @@ def _file_state_record_ids_for_candidate_records(
             output.extend(candidate.file_state_record_ids)
     if output:
         return _unique_record_ids(output)
-    for record in projection["file_state_records"].values():
+    for record in file_state_records_view(projection).values():
         candidate_id = _candidate_id_from_payload(record)
         if candidate_id in wanted:
             output.append(record.record_id)
@@ -2048,7 +2108,7 @@ def _bound_record_ids_for_ports(
     node_id: str,
     ports: tuple[str, ...],
 ) -> list[str]:
-    bindings = projection["input_bindings"].get(node_id, {})
+    bindings = input_bindings_view(projection).get(node_id, {})
     output: list[str] = []
     for port in ports:
         binding = bindings.get(port)
@@ -2077,7 +2137,7 @@ def _input_bound_events_for_record(
     output: list[EventEnvelope] = []
     # Output records are facts produced by the leased node. Edges are the only
     # authority for routing those facts into downstream required inputs.
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         if edge.dependency_type != "input_binding":
             continue
         if not _projection_edge_accepts_producer(projection, edge, producer_node_id):
@@ -2126,7 +2186,7 @@ def _existing_bound_record_ids(
     to_node_id: str,
     to_port: str,
 ) -> list[str]:
-    binding = projection["input_bindings"].get(to_node_id, {}).get(to_port)
+    binding = input_bindings_view(projection).get(to_node_id, {}).get(to_port)
     if binding is None:
         return []
     return list(binding.record_ids)
@@ -2138,10 +2198,10 @@ def _target_port_contract_for_edge(
 ) -> PortContract | None:
     to_node_id = edge.to_node_id
     to_port = edge.to_port
-    target_kind = projection["node_kinds"].get(to_node_id)
+    target_kind = node_kinds_view(projection).get(to_node_id)
     if target_kind is None:
         return None
-    target_role = projection["node_roles"].get(to_node_id)
+    target_role = node_roles_view(projection).get(to_node_id)
     target_contract = DEFAULT_NODE_CONTRACTS.contract_for(target_kind, target_role)
     if target_contract is None:
         return None
@@ -2156,7 +2216,7 @@ def _apply_patch_command(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     actor_role = context.actor_role
-    run_state = projection["run_state"]
+    run_state = query_run_state(projection)
     if run_state is not None and run_state != "active":
         return [
             _command_rejected(
@@ -2283,8 +2343,31 @@ def _apply_patch_command(
             )
         ]
 
-    parent_session_id = projection["planner_sessions"].get(patch.proposed_by_node_id)
+    parent_session_id = planner_sessions_view(projection).get(patch.proposed_by_node_id)
     carryover_record_id = payload.carryover_record_id
+    carryover_edge_payload: dict[str, Any] | None = None
+    if carryover_record_id is not None:
+        carryover_error: str | None = None
+        if carryover_record_id not in accepted_record_summaries_by_id_view(projection):
+            carryover_error = f"unknown_carryover_record_id:{carryover_record_id}"
+        elif successor_planner_node_ids:
+            carryover_edge_payload, carryover_error = _carryover_binding_edge_payload(
+                projection,
+                carryover_record_id,
+                successor_planner_node_ids[0],
+            )
+        if carryover_error is not None:
+            return [
+                make_event(
+                    "graph_patch_rejected",
+                    _patch_rejected_payload(
+                        patch,
+                        actor_role,
+                        reason=carryover_error,
+                        read_set_diff=None,
+                    ),
+                )
+            ]
     output = [
         make_event(
             "graph_patch_accepted",
@@ -2313,15 +2396,18 @@ def _apply_patch_command(
             )
         )
     if carryover_record_id is not None and successor_planner_node_ids:
+        assert carryover_edge_payload is not None
+        output.append(make_event("edge_created", carryover_edge_payload))
         output.append(
             make_event(
                 "input_bound",
                 {
-                    "edge_id": f"edge-session-carryover-{successor_planner_node_ids[0]}",
+                    "edge_id": carryover_edge_payload["edge_id"],
                     "to_node_id": successor_planner_node_ids[0],
                     "to_port": "session_carryover",
                     "record_ids": [carryover_record_id],
                     "bound_at_position": 0,
+                    "binding_policy": carryover_edge_payload["binding_policy"],
                 },
             )
         )
@@ -2381,9 +2467,9 @@ def _planner_budget_rejection(
     projection: GraphProjection,
     patch: PatchEnvelope,
 ) -> dict[str, int] | None:
-    parent_generation = projection["planner_generations"].get(patch.proposed_by_node_id, 0)
+    parent_generation = planner_generations_view(projection).get(patch.proposed_by_node_id, 0)
     attempted_generation = parent_generation + 1
-    budget = projection["planner_generation_budget"]
+    budget = planner_generation_budget(projection)
     if attempted_generation <= budget:
         return None
     return {"budget": budget, "count": attempted_generation}
@@ -2402,13 +2488,13 @@ def _apply_schedule_tick(
     expired_lease_ids = _expired_active_lease_ids(projection, clock.now())
     active_claims = [
         _claim_from_dict(claim)
-        for lease in projection["leases"].values()
+        for lease in leases_view(projection).values()
         if lease.state == "active" and lease.lease_id not in expired_lease_ids
         for claim in lease.resource_claims
     ]
     active_lease_node_ids = [
         str(lease.node_id)
-        for lease in projection["leases"].values()
+        for lease in leases_view(projection).values()
         if lease.state == "active"
         and lease.lease_id not in expired_lease_ids
         and lease.node_id is not None
@@ -2420,7 +2506,7 @@ def _apply_schedule_tick(
     }
     nodes: list[NodeScheduleInfo] = []
     readied_node_ids: set[str] = set()
-    for node_id, node_state in projection["node_states"].items():
+    for node_id, node_state in node_states_view(projection).items():
         if node_id in retiring_node_ids:
             continue
         if node_state not in {"planned", "blocked", "ready"}:
@@ -2439,14 +2525,14 @@ def _apply_schedule_tick(
         readiness_node = replace(node, state="planned") if node_state == "ready" else node
         ready, reason = evaluate_readiness(
             readiness_node,
-            projection["run_state"] or "draft",
+            query_run_state(projection) or "draft",
             active_lease_node_ids,
             active_claims,
         )
         if not ready:
             dead_input = _dead_input_from_readiness(node, reason)
             if dead_input is not None:
-                if projection.get("last_deferred_reasons", {}).get(node_id) != reason:
+                if last_deferred_reasons_view(projection).get(node_id) != reason:
                     output.append(
                         make_event(
                             "dead_input_detected",
@@ -2481,14 +2567,14 @@ def _apply_schedule_tick(
         nodes.append(replace(node, state="ready"))
     decision = schedule(
         nodes,
-        projection["run_state"] or "draft",
+        query_run_state(projection) or "draft",
         active_claims,
         current_graph_position,
         max_grants=payload.max_grants,
     )
     lease_seconds = payload.lease_seconds
     for node_id in decision.selected:
-        claims = projection["node_resource_claims"].get(node_id, [])
+        claims = node_resource_claims_view(projection).get(node_id, [])
         lease_id = payload.lease_ids.get(node_id) or id_gen.next_id("lease")
         base_snapshot_id = _base_snapshot_id_for_node(projection, payload, node_id)
         if base_snapshot_id is None:
@@ -2561,7 +2647,7 @@ def _append_node_deferred_if_changed(
     reason: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> None:
-    if projection.get("last_deferred_reasons", {}).get(node_id) == reason:
+    if last_deferred_reasons_view(projection).get(node_id) == reason:
         return
     output.append(make_event("node_deferred", {"node_id": node_id, "reason": reason}))
 
@@ -2587,7 +2673,7 @@ def _apply_reconcile(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     del events, payload
-    run_state = projection["run_state"]
+    run_state = query_run_state(projection)
     if run_state in TERMINAL_RUN_STATES:
         return [_command_rejected(make_event, "reconcile", f"terminal run: {run_state}")]
     return _repair_events(projection, make_event)
@@ -2736,7 +2822,7 @@ def _repair_events(
 def _active_lease_node_ids(projection: GraphProjection) -> list[str]:
     return [
         str(lease.node_id)
-        for lease in projection["leases"].values()
+        for lease in leases_view(projection).values()
         if lease.state == "active" and lease.node_id is not None
     ]
 
@@ -2773,15 +2859,15 @@ def _failed_check_recovery_events(
     *,
     record_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
-    if projection["run_state"] != "active":
+    if query_run_state(projection) != "active":
         return []
     if active_lease_node_ids:
         return []
     if any(
-        state in {"planned", "blocked", "ready"} for state in projection["node_states"].values()
+        state in {"planned", "blocked", "ready"} for state in node_states_view(projection).values()
     ):
         return []
-    if not any(state != "accepted" for state in projection["task_states"].values()):
+    if not any(state != "accepted" for state in task_states_view(projection).values()):
         return []
 
     routine_snapshot = _latest_routine_snapshot_record(projection)
@@ -2793,7 +2879,7 @@ def _failed_check_recovery_events(
         if record_ids is not None and failed_check["record_id"] not in record_ids:
             continue
         recovery_node_id = _failed_check_recovery_node_id(failed_check)
-        if recovery_node_id in projection["node_states"]:
+        if recovery_node_id in node_states_view(projection):
             continue
         if _has_existing_failed_check_recovery(projection, failed_check):
             continue
@@ -2869,11 +2955,11 @@ def _failed_verification_recovery_events(
     *,
     record_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
-    if projection["run_state"] != "active":
+    if query_run_state(projection) != "active":
         return []
-    if active_lease_node_ids or projection["ready_nodes"]:
+    if active_lease_node_ids or ready_nodes_view(projection):
         return []
-    if not any(state != "accepted" for state in projection["task_states"].values()):
+    if not any(state != "accepted" for state in task_states_view(projection).values()):
         return []
 
     routine_snapshot = _latest_routine_snapshot_record(projection)
@@ -2885,7 +2971,7 @@ def _failed_verification_recovery_events(
         if record_ids is not None and verification["record_id"] not in record_ids:
             continue
         recovery_node_id = _failed_verification_recovery_node_id(verification)
-        if recovery_node_id in projection["node_states"]:
+        if recovery_node_id in node_states_view(projection):
             continue
         if _has_existing_failed_verification_recovery(projection, verification):
             continue
@@ -2953,9 +3039,9 @@ def _failed_verification_recovery_events(
 
 
 def _current_failed_verification_results(projection: GraphProjection) -> list[dict[str, str]]:
-    passed_candidates = projection["passed_verification_candidate_ids"]
+    passed_candidates = passed_verification_candidate_ids_view(projection)
     current: list[dict[str, str]] = []
-    for verification in projection["failed_verification_results_by_record_id"].values():
+    for verification in failed_verification_results_by_record_id_view(projection).values():
         verification_dict = _verification_result_dict(verification)
         if verification_dict is None:
             continue
@@ -2989,14 +3075,14 @@ def _superseded_by_later_regional_pass(
     if failed_position is None:
         return False
     failed_record_id = verification.get("record_id")
-    for passed in projection["passed_verification_results_by_record_id"].values():
+    for passed in passed_verification_results_by_record_id_view(projection).values():
         passed_dict = _verification_result_dict(passed)
         if passed_dict is None:
             continue
         if passed_dict.get("record_id") == failed_record_id:
             continue
         candidate_id = passed_dict.get("candidate_id")
-        verdict = projection["verifier_verdicts"].get(candidate_id or "")
+        verdict = verifier_verdicts_view(projection).get(candidate_id or "")
         if verdict is not None and verdict.verdict != "passed":
             # The candidate's latest verdict is a failure; not a supersession.
             continue
@@ -3019,7 +3105,7 @@ def _verification_task_region(
         return task_region_id
     node_id = verification.get("node_id")
     if isinstance(node_id, str) and node_id:
-        return projection["node_task_regions"].get(node_id)
+        return node_task_regions_view(projection).get(node_id)
     return None
 
 
@@ -3038,7 +3124,7 @@ def _candidate_verdict_position(
 ) -> int | None:
     if not isinstance(candidate_id, str) or not candidate_id:
         return None
-    verdict = projection["verifier_verdicts"].get(candidate_id)
+    verdict = verifier_verdicts_view(projection).get(candidate_id)
     if verdict is None:
         return None
     return verdict.position
@@ -3051,9 +3137,9 @@ def _passed_verification_terminalization_events(
     *,
     record_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
-    if projection["run_state"] != "active":
+    if query_run_state(projection) != "active":
         return []
-    if active_lease_node_ids or projection["ready_nodes"]:
+    if active_lease_node_ids or ready_nodes_view(projection):
         return []
 
     output: list[EventEnvelope] = []
@@ -3089,13 +3175,13 @@ def _passed_check_terminalization_events(
     *,
     check_node_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
-    if projection["run_state"] != "active":
+    if query_run_state(projection) != "active":
         return []
-    if active_lease_node_ids or projection["ready_nodes"]:
+    if active_lease_node_ids or ready_nodes_view(projection):
         return []
 
     output: list[EventEnvelope] = []
-    for check_node_id, result in sorted(projection["check_results"].items()):
+    for check_node_id, result in sorted(check_results_view(projection).items()):
         if check_node_ids is not None and check_node_id not in check_node_ids:
             continue
         if result.status not in {"passed", "pass", "ok"}:
@@ -3112,16 +3198,16 @@ def _no_successor_recovery_terminal_failure_events(
     *,
     recovery_node_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
-    if projection["run_state"] != "active":
+    if query_run_state(projection) != "active":
         return []
-    if active_lease_node_ids or projection["ready_nodes"]:
+    if active_lease_node_ids or ready_nodes_view(projection):
         return []
     if any(
         state in {"planned", "blocked", "ready", "leased", "running", "suspended"}
-        for state in projection["node_states"].values()
+        for state in node_states_view(projection).values()
     ):
         return []
-    if not any(state != "accepted" for state in projection["task_states"].values()):
+    if not any(state != "accepted" for state in task_states_view(projection).values()):
         return []
 
     terminal = _completed_no_successor_recovery(
@@ -3177,7 +3263,7 @@ def _completed_no_successor_recovery(
             node_id = recovery["node_id"]
             if recovery_node_ids is not None and node_id not in recovery_node_ids:
                 continue
-            if projection["node_states"].get(node_id) != "completed":
+            if node_states_view(projection).get(node_id) != "completed":
                 continue
             patch_id = _accepted_no_successor_patch_id(projection, node_id)
             if patch_id is None:
@@ -3210,12 +3296,12 @@ def _recovery_nodes_by_record_id(
             }
             for recovery in recoveries
         ]
-        for record_id, recoveries in projection["recovery_nodes_by_record_id"].items()
+        for record_id, recoveries in recovery_nodes_by_record_id_view(projection).items()
     }
 
 
 def _accepted_no_successor_patch_id(projection: GraphProjection, node_id: str) -> str | None:
-    patch_ids = projection["accepted_no_successor_patches_by_node"].get(node_id, [])
+    patch_ids = accepted_no_successor_patches_by_node_view(projection).get(node_id, [])
     return patch_ids[-1] if patch_ids else None
 
 
@@ -3230,16 +3316,16 @@ def _recovery_created_executable_successors(
     edge to a later-created non-planner node means the recovery produced real
     work — not a dead end — even though successor_planner_node_ids was empty.
     """
-    recovery_position = projection["node_creation_positions"].get(recovery_node_id, 0)
-    for edge in projection["edges"].values():
+    recovery_position = node_creation_positions_view(projection).get(recovery_node_id, 0)
+    for edge in edges_view(projection).values():
         if edge.from_node_id != recovery_node_id:
             continue
         to_node_id = edge.to_node_id
-        if to_node_id not in projection["node_kinds"]:
+        if to_node_id not in node_kinds_view(projection):
             continue
-        if projection["node_kinds"].get(to_node_id) == "planner":
+        if node_kinds_view(projection).get(to_node_id) == "planner":
             continue
-        if projection["node_creation_positions"].get(to_node_id, 0) < recovery_position:
+        if node_creation_positions_view(projection).get(to_node_id, 0) < recovery_position:
             continue
         return True
     return False
@@ -3260,14 +3346,14 @@ def _recovery_lineage_superseded(
     reachable = _downstream_node_ids(projection, recovery_node_id)
     if not reachable:
         return False
-    for verification in projection["passed_verification_results_by_record_id"].values():
+    for verification in passed_verification_results_by_record_id_view(projection).values():
         if verification.node_id not in reachable:
             continue
         candidate_id = verification.candidate_id
-        verdict = projection["verifier_verdicts"].get(candidate_id or "")
+        verdict = verifier_verdicts_view(projection).get(candidate_id or "")
         if verdict is None or verdict.verdict == "passed":
             return True
-    for check_node_id, result in projection["check_results"].items():
+    for check_node_id, result in check_results_view(projection).items():
         if check_node_id not in reachable:
             continue
         if result.status in {"passed", "pass", "ok"}:
@@ -3277,7 +3363,7 @@ def _recovery_lineage_superseded(
 
 def _downstream_node_ids(projection: GraphProjection, start_node_id: str) -> set[str]:
     adjacency: dict[str, set[str]] = {}
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         source = edge.from_node_id
         target = edge.to_node_id
         adjacency.setdefault(source, set()).add(target)
@@ -3374,7 +3460,7 @@ def _would_create_directed_cycle(
     if from_node_id == to_node_id:
         return True
     adjacency: dict[str, set[str]] = {}
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         source = edge.from_node_id
         target = edge.to_node_id
         adjacency.setdefault(source, set()).add(target)
@@ -3394,15 +3480,15 @@ def _would_create_directed_cycle(
 
 def _has_final_invariant_check(projection: GraphProjection) -> bool:
     return any(
-        kind == "check" and projection["node_roles"].get(node_id) == "invariant_gate"
-        for node_id, kind in projection["node_kinds"].items()
+        kind == "check" and node_roles_view(projection).get(node_id) == "invariant_gate"
+        for node_id, kind in node_kinds_view(projection).items()
     )
 
 
 def _current_passed_verification_results(projection: GraphProjection) -> list[dict[str, str]]:
-    failed_candidates = projection["failed_verification_candidate_ids"]
+    failed_candidates = failed_verification_candidate_ids_view(projection)
     current: list[dict[str, str]] = []
-    for verification in projection["passed_verification_results_by_record_id"].values():
+    for verification in passed_verification_results_by_record_id_view(projection).values():
         verification_dict = _verification_result_dict(verification)
         if verification_dict is None:
             continue
@@ -3416,14 +3502,14 @@ def _final_checks_waiting_for_verification_evidence(
     projection: GraphProjection,
 ) -> list[str]:
     waiting: list[str] = []
-    for node_id, kind in sorted(projection["node_kinds"].items()):
+    for node_id, kind in sorted(node_kinds_view(projection).items()):
         if kind != "check":
             continue
-        if projection["node_roles"].get(node_id) != "invariant_gate":
+        if node_roles_view(projection).get(node_id) != "invariant_gate":
             continue
-        if projection["node_states"].get(node_id) not in {"planned", "blocked", "ready"}:
+        if node_states_view(projection).get(node_id) not in {"planned", "blocked", "ready"}:
             continue
-        if "verification_evidence" in projection["input_bindings"].get(node_id, {}):
+        if "verification_evidence" in input_bindings_view(projection).get(node_id, {}):
             continue
         waiting.append(node_id)
     return waiting
@@ -3434,7 +3520,7 @@ def _has_verification_evidence_edge(
     verifier_node_id: str,
     check_node_id: str,
 ) -> bool:
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         if edge.from_node_id != verifier_node_id:
             continue
         if edge.from_port != "verification_report":
@@ -3451,7 +3537,7 @@ def _unreachable_failure_branch_node_ids(
     passed_verifier_node_id: str,
 ) -> list[str]:
     roots: list[str] = []
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         if edge.from_node_id != passed_verifier_node_id:
             continue
         if edge.from_port != "verification_report":
@@ -3469,7 +3555,7 @@ def _unreachable_check_failure_branch_node_ids(
     passed_check_node_id: str,
 ) -> list[str]:
     roots: list[str] = []
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         if edge.from_node_id != passed_check_node_id:
             continue
         if edge.from_port != "check_result":
@@ -3494,7 +3580,7 @@ def _downstream_retirable_node_ids(
         if node_id in seen:
             continue
         seen.add(node_id)
-        state = projection["node_states"].get(node_id)
+        state = node_states_view(projection).get(node_id)
         if state in terminal_states or state is None:
             continue
         if _is_final_invariant_check(projection, node_id):
@@ -3502,7 +3588,7 @@ def _downstream_retirable_node_ids(
         output.append(node_id)
         downstream = [
             edge.to_node_id
-            for edge in projection["edges"].values()
+            for edge in edges_view(projection).values()
             if edge.from_node_id == node_id and edge.dependency_type != "state_dependency"
         ]
         for downstream_node_id in reversed(downstream):
@@ -3512,15 +3598,15 @@ def _downstream_retirable_node_ids(
 
 def _is_final_invariant_check(projection: GraphProjection, node_id: str) -> bool:
     return (
-        projection["node_kinds"].get(node_id) == "check"
-        and projection["node_roles"].get(node_id) == "invariant_gate"
+        node_kinds_view(projection).get(node_id) == "check"
+        and node_roles_view(projection).get(node_id) == "invariant_gate"
     )
 
 
 def _is_gap_planner(projection: GraphProjection, node_id: str) -> bool:
     return (
-        projection["node_kinds"].get(node_id) == "gap_planner"
-        or projection["node_roles"].get(node_id) == "gap_planner"
+        node_kinds_view(projection).get(node_id) == "gap_planner"
+        or node_roles_view(projection).get(node_id) == "gap_planner"
     )
 
 
@@ -3543,7 +3629,7 @@ def _retire_node_events(
     node_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    if projection["node_states"].get(node_id) in {"completed", "failed", "cancelled", "retired"}:
+    if node_states_view(projection).get(node_id) in {"completed", "failed", "cancelled", "retired"}:
         return []
     return [
         make_event(
@@ -3569,7 +3655,7 @@ def _has_existing_failed_verification_recovery(
     verification: dict[str, str],
 ) -> bool:
     node_id = verification["node_id"]
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         if edge.from_node_id != node_id:
             continue
         if edge.from_port != "verification_report":
@@ -3577,10 +3663,10 @@ def _has_existing_failed_verification_recovery(
         if edge.to_port != "verification_evidence":
             continue
         to_node_id = edge.to_node_id
-        if projection["node_states"].get(to_node_id) in {"cancelled", "failed", "retired"}:
+        if node_states_view(projection).get(to_node_id) in {"cancelled", "failed", "retired"}:
             continue
-        if projection["node_kinds"].get(to_node_id) == "planner" and (
-            projection["node_roles"].get(to_node_id) == "gap_planner"
+        if node_kinds_view(projection).get(to_node_id) == "planner" and (
+            node_roles_view(projection).get(to_node_id) == "gap_planner"
         ):
             return True
     return False
@@ -3588,7 +3674,7 @@ def _has_existing_failed_verification_recovery(
 
 def _current_failed_check_results(projection: GraphProjection) -> list[dict[str, str]]:
     failed: list[dict[str, str]] = []
-    for node_id, result in sorted(projection["check_results"].items()):
+    for node_id, result in sorted(check_results_view(projection).items()):
         status = result.status
         if status in {"passed", "pass", "ok"}:
             continue
@@ -3603,12 +3689,12 @@ def _current_failed_check_results(projection: GraphProjection) -> list[dict[str,
         if isinstance(task_region_id, str) and task_region_id:
             check_result["task_region_id"] = task_region_id
         failed.append(check_result)
-    for node_id, ports in sorted(projection["accepted_output_records_by_node_port"].items()):
-        if projection["node_kinds"].get(node_id) != "check":
+    for node_id, ports in sorted(accepted_output_records_by_node_port_view(projection).items()):
+        if node_kinds_view(projection).get(node_id) != "check":
             continue
-        if projection["node_states"].get(node_id) in {"cancelled", "retired"}:
+        if node_states_view(projection).get(node_id) in {"cancelled", "retired"}:
             continue
-        if node_id in projection["check_results"]:
+        if node_id in check_results_view(projection):
             continue
         for accepted_record in ports.get("failure_record", []):
             record_id = accepted_record.get("record_id")
@@ -3625,7 +3711,7 @@ def _current_failed_check_results(projection: GraphProjection) -> list[dict[str,
             }
             task_region_id = payload_data.get("task_region_id")
             if not isinstance(task_region_id, str) or not task_region_id:
-                task_region_id = projection["node_task_regions"].get(node_id)
+                task_region_id = node_task_regions_view(projection).get(node_id)
             if isinstance(task_region_id, str) and task_region_id:
                 check_result["task_region_id"] = task_region_id
             failed.append(check_result)
@@ -3640,7 +3726,7 @@ def _has_existing_failed_check_recovery(
     source_port = (
         "failure_record" if failed_check.get("record_type") == "failure_record" else "check_result"
     )
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         if edge.from_node_id != node_id:
             continue
         if edge.from_port != source_port:
@@ -3648,17 +3734,17 @@ def _has_existing_failed_check_recovery(
         if edge.to_port != "verification_evidence":
             continue
         to_node_id = edge.to_node_id
-        if projection["node_states"].get(to_node_id) in {"cancelled", "failed", "retired"}:
+        if node_states_view(projection).get(to_node_id) in {"cancelled", "failed", "retired"}:
             continue
-        if projection["node_kinds"].get(to_node_id) == "planner" and (
-            projection["node_roles"].get(to_node_id) == "gap_planner"
+        if node_kinds_view(projection).get(to_node_id) == "planner" and (
+            node_roles_view(projection).get(to_node_id) == "gap_planner"
         ):
             return True
     return False
 
 
 def _latest_routine_snapshot_record(projection: GraphProjection) -> dict[str, str] | None:
-    record = projection.get("latest_routine_snapshot_record")
+    record = latest_routine_snapshot_record(projection)
     if record is not None:
         return {
             "record_id": record.record_id,
@@ -3666,7 +3752,7 @@ def _latest_routine_snapshot_record(projection: GraphProjection) -> dict[str, st
             "port": record.port,
         }
     latest: dict[str, str] | None = None
-    for summary in projection["accepted_record_summaries_by_id"].values():
+    for summary in accepted_record_summaries_by_id_view(projection).values():
         record_id = summary.get("record_id")
         producer_node_id = summary.get("producer_node_id")
         port = summary.get("producer_port")
@@ -3720,7 +3806,7 @@ def _base_snapshot_id_for_node(
     if payload.base_snapshot_id:
         return payload.base_snapshot_id
 
-    bindings = projection["input_bindings"].get(node_id, {})
+    bindings = input_bindings_view(projection).get(node_id, {})
     for port in ("base_snapshot", "root_snapshot", "routine_snapshot"):
         binding = bindings.get(port)
         record_ids = binding.record_ids if binding is not None else None
@@ -3736,7 +3822,7 @@ def _retry_backoff_deferred_reason(
     node_id: str,
     now: datetime,
 ) -> str | None:
-    retry_not_before = projection["retry_not_before_by_node"].get(node_id)
+    retry_not_before = retry_not_before_by_node_view(projection).get(node_id)
     if retry_not_before is None:
         return None
     try:
@@ -3755,7 +3841,7 @@ def _planner_session_id(
 ) -> str | None:
     if not _is_chain_planner(projection, node_id):
         return None
-    session_id = projection["planner_sessions"].get(node_id)
+    session_id = planner_sessions_view(projection).get(node_id)
     if isinstance(session_id, str):
         return session_id
     return id_gen.next_id("session")
@@ -3764,10 +3850,10 @@ def _planner_session_id(
 def _next_lease_generation(projection: GraphProjection, node_id: str) -> int:
     if not _is_chain_planner(projection, node_id):
         return 1
-    session_id = projection["planner_sessions"].get(node_id)
+    session_id = planner_sessions_view(projection).get(node_id)
     generations = [
         lease.generation
-        for lease in projection["leases"].values()
+        for lease in leases_view(projection).values()
         if session_id is not None
         and lease.session_id == session_id
         and lease.generation is not None
@@ -3776,7 +3862,7 @@ def _next_lease_generation(projection: GraphProjection, node_id: str) -> int:
 
 
 def _session_carryover_record_id(projection: GraphProjection, node_id: str) -> str | None:
-    binding = projection["input_bindings"].get(node_id, {}).get("session_carryover")
+    binding = input_bindings_view(projection).get(node_id, {}).get("session_carryover")
     if binding is None:
         return None
     if not binding.record_ids:
@@ -3793,7 +3879,7 @@ def _planner_session_state_event(
 ) -> EventEnvelope | None:
     if not _is_chain_planner(projection, node_id):
         return None
-    session_id = projection["planner_sessions"].get(node_id)
+    session_id = planner_sessions_view(projection).get(node_id)
     if not isinstance(session_id, str):
         return None
     payload = PlannerSessionStateChangedPayload.model_validate(
@@ -3813,8 +3899,8 @@ def _planner_session_state_event(
 
 def _is_chain_planner(projection: GraphProjection, node_id: str) -> bool:
     return (
-        projection["node_kinds"].get(node_id) == "planner"
-        and projection["node_roles"].get(node_id) == "planner"
+        node_kinds_view(projection).get(node_id) == "planner"
+        and node_roles_view(projection).get(node_id) == "planner"
     )
 
 
@@ -3828,7 +3914,7 @@ def _apply_acknowledge_start(
     lease_generation = payload.lease_generation
     execution_id = payload.execution_id
 
-    lease = projection["leases"].get(lease_id)
+    lease = leases_view(projection).get(lease_id)
     if lease is None:
         return [_command_rejected(make_event, "acknowledge_start", "unknown lease")]
     if lease.state != "active":
@@ -3860,7 +3946,7 @@ def _apply_agent_died(
 ) -> list[EventEnvelope]:
     lease_id = payload.lease_id
 
-    lease = projection["leases"].get(lease_id)
+    lease = leases_view(projection).get(lease_id)
     if lease is None:
         return [_command_rejected(make_event, "agent_died", "unknown lease")]
     if lease.state != "active":
@@ -3991,7 +4077,7 @@ def _apply_agent_died(
         ]
 
     max_attempts = payload.max_attempts
-    attempt_number = projection["node_attempts"].get(node_id, 0)
+    attempt_number = node_attempts_view(projection).get(node_id, 0)
     if max_attempts > 0 and attempt_number >= max_attempts:
         return [
             make_event("agent_died", event_payload),
@@ -4177,9 +4263,9 @@ def _recovery_plan_record_payload(
 
 def _non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str) -> bool:
     return (
-        projection["node_kinds"].get(node_id) == "planner"
-        and projection["node_roles"].get(node_id) != "gap_planner"
-        and bool(projection.get("accepted_graph_patches_by_node", {}).get(node_id))
+        node_kinds_view(projection).get(node_id) == "planner"
+        and node_roles_view(projection).get(node_id) != "gap_planner"
+        and bool(accepted_graph_patches_by_node_view(projection).get(node_id))
     )
 
 
@@ -4241,7 +4327,7 @@ def _apply_record_decision(
     if not _node_exists(projection, node_id):
         return [_command_rejected(make_event, "record_decision", f"unknown target node: {node_id}")]
 
-    node_kind = projection["node_kinds"].get(node_id)
+    node_kind = node_kinds_view(projection).get(node_id)
     if decision_type == "authority" and node_kind != "authority_request":
         return [
             _command_rejected(
@@ -4259,13 +4345,13 @@ def _apply_record_decision(
             )
         ]
 
-    node_state = projection["node_states"].get(node_id)
+    node_state = node_states_view(projection).get(node_id)
     if node_state in {"completed", "failed", "cancelled", "retired"}:
         return [
             _command_rejected(make_event, "record_decision", f"terminal target node: {node_state}")
         ]
 
-    run_state = projection["run_state"]
+    run_state = query_run_state(projection)
     if run_state in {"cancelled", "failed"}:
         return [_command_rejected(make_event, "record_decision", f"terminal run: {run_state}")]
 
@@ -4284,7 +4370,7 @@ def _apply_record_decision(
         "record_id": payload.record_id,
     }
     event_payload = {key: value for key, value in event_payload.items() if value is not None}
-    task_region_id = projection["node_task_regions"].get(node_id)
+    task_region_id = node_task_regions_view(projection).get(node_id)
     if task_region_id is not None:
         event_payload.setdefault("task_region_id", task_region_id)
 
@@ -4361,7 +4447,7 @@ def _decision_output_record(
     event_payload: dict[str, Any],
     decision_type: Any,
 ) -> dict[str, Any] | None:
-    node_kind = projection["node_kinds"].get(node_id)
+    node_kind = node_kinds_view(projection).get(node_id)
     if decision_type == "authority" or node_kind == "authority_request":
         record_type = "authority_decision"
         port = "authority_decision"
@@ -4404,7 +4490,7 @@ def _apply_record_gatekeeper_verdicts(
 ) -> list[EventEnvelope]:
     record_id = payload.file_state_record_id
 
-    record = projection["file_state_records"].get(record_id)
+    record = file_state_records_view(projection).get(record_id)
     if record is None:
         return [
             _command_rejected(
@@ -4523,7 +4609,7 @@ def _apply_record_cleanup_applied(
         ]
 
     record_id = requested_payload.get("file_state_record_id")
-    if not isinstance(record_id, str) or record_id not in projection["file_state_records"]:
+    if not isinstance(record_id, str) or record_id not in file_state_records_view(projection):
         return [
             _command_rejected(
                 make_event,
@@ -4531,7 +4617,7 @@ def _apply_record_cleanup_applied(
                 f"unknown cleanup file_state record: {record_id}",
             )
         ]
-    compromised_record = projection["file_state_records"][record_id]
+    compromised_record = file_state_records_view(projection)[record_id]
     requested_snapshot_id = requested_payload.get("snapshot_id")
     compromised_snapshot_id = compromised_record.snapshot_id
     if requested_snapshot_id != compromised_snapshot_id:
@@ -4636,7 +4722,7 @@ def _apply_record_support_evidence(
     requirement_id = payload.requirement_id
     requirement_version_id = payload.requirement_version_id
     if requirement_version_id is None:
-        requirement_version_id = projection["active_requirement_versions"].get(requirement_id)
+        requirement_version_id = active_requirement_versions_view(projection).get(requirement_id)
     if not isinstance(requirement_version_id, str) or not requirement_version_id:
         return [
             _command_rejected(
@@ -4664,11 +4750,11 @@ def _cleanup_requested_event(
     projection: GraphProjection,
     cleanup_id: str,
 ) -> CleanupRequestedProjection | None:
-    return projection["cleanup_requested_events"].get(cleanup_id)
+    return cleanup_requested_events_view(projection).get(cleanup_id)
 
 
 def _cleanup_applied_exists(projection: GraphProjection, cleanup_id: str) -> bool:
-    return projection["cleanup_applied_ids"].get(cleanup_id) is True
+    return cleanup_applied_ids_view(projection).get(cleanup_id) is True
 
 
 def _cleanup_secret_paths(payload: dict[str, Any]) -> set[str]:
@@ -4774,20 +4860,92 @@ def _request_record_events_for_node(
         output.append(make_event("output_record_accepted", record_payload))
         record_id = record_payload["record_id"]
         node_id = record_payload["producer_node_id"]
+        target_contract = DEFAULT_NODE_CONTRACTS.contract_for(
+            str(node_payload["kind"]),
+            node_payload.get("role") if isinstance(node_payload.get("role"), str) else None,
+        )
+        assert target_contract is not None
+        port_contract = input_port_contract(target_contract, to_port)
+        assert port_contract is not None
+        edge_payload = {
+            "edge_id": f"edge-{record_id}-to-{node_id}-{to_port}",
+            "from_node_id": node_id,
+            "from_port": record_payload["port"],
+            "to_node_id": node_id,
+            "to_port": to_port,
+            "required": port_contract.required,
+            "dependency_type": "input_binding",
+            "accepted_record_selector": {
+                "record_type": record_payload["record_type"],
+                "schema": record_payload["schema"],
+            },
+            "binding_policy": binding_policy(None, port_contract),
+        }
+        output.append(make_event("edge_created", edge_payload))
         output.append(
             make_event(
                 "input_bound",
                 {
-                    "edge_id": f"edge-{record_id}-to-{node_id}-{to_port}",
+                    "edge_id": edge_payload["edge_id"],
                     "to_node_id": node_id,
                     "to_port": to_port,
                     "record_ids": [record_id],
                     "bound_at_position": 0,
-                    "binding_policy": "bind_latest",
+                    "binding_policy": edge_payload["binding_policy"],
                 },
             )
         )
     return output
+
+
+def _carryover_binding_edge_payload(
+    projection: GraphProjection,
+    record_id: str,
+    successor_node_id: str,
+) -> tuple[dict[str, Any] | None, str | None]:
+    summary = accepted_record_summaries_by_id_view(projection).get(record_id)
+    if summary is None:
+        return None, f"unknown_carryover_record_id:{record_id}"
+    source_node_id = summary.get("producer_node_id")
+    source_port = summary.get("producer_port")
+    record_type = summary.get("record_type")
+    schema = summary.get("schema")
+    if (
+        not isinstance(source_node_id, str)
+        or not isinstance(source_port, str)
+        or not isinstance(record_type, str)
+        or not isinstance(schema, str)
+    ):
+        return None, f"invalid_carryover_record_id:{record_id}"
+    source_kind = node_kinds_view(projection).get(source_node_id)
+    source_role = node_roles_view(projection).get(source_node_id)
+    target_contract = DEFAULT_NODE_CONTRACTS.contract_for("planner", "planner")
+    if source_kind is None or target_contract is None:
+        return None, f"invalid_carryover_record_id:{record_id}"
+    target_port = input_port_contract(target_contract, "session_carryover")
+    if target_port is None:
+        return None, f"invalid_carryover_record_id:{record_id}"
+    edge_payload = {
+        "edge_id": f"edge-session-carryover-{successor_node_id}",
+        "from_node_id": source_node_id,
+        "from_port": source_port,
+        "to_node_id": successor_node_id,
+        "to_port": "session_carryover",
+        "required": target_port.required,
+        "dependency_type": "input_binding",
+        "accepted_record_selector": {"record_type": record_type, "schema": schema},
+        "binding_policy": binding_policy(None, target_port),
+    }
+    edge_error = validate_edge_payload(
+        edge_payload,
+        source_kind=source_kind,
+        source_role=source_role,
+        target_kind="planner",
+        target_role="planner",
+    )
+    if edge_error is not None:
+        return None, f"invalid_carryover_record_id:{record_id}:{edge_error}"
+    return edge_payload, None
 
 
 def _request_record_bindings_for_node(
@@ -5084,7 +5242,7 @@ def _expired_lease_events(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     expired: list[EventEnvelope] = []
-    for lease in projection["leases"].values():
+    for lease in leases_view(projection).values():
         if not _lease_is_expired(lease, now):
             continue
         node_id = lease.node_id
@@ -5137,7 +5295,9 @@ def _expired_lease_events(
 
 def _expired_active_lease_ids(projection: GraphProjection, now: datetime) -> set[str]:
     return {
-        lease.lease_id for lease in projection["leases"].values() if _lease_is_expired(lease, now)
+        lease.lease_id
+        for lease in leases_view(projection).values()
+        if _lease_is_expired(lease, now)
     }
 
 
@@ -5159,44 +5319,45 @@ def _node_schedule_info(
     upstream_node_ids = {edge.from_node_id for edge in required_edges}
     return NodeScheduleInfo(
         node_id=node_id,
-        kind=projection["node_kinds"].get(node_id, "worker"),
-        state=projection["node_states"][node_id],
+        kind=node_kinds_view(projection).get(node_id, "worker"),
+        state=node_states_view(projection)[node_id],
         priority=payload.priorities.get(node_id, 0),
         region_order=payload.region_order.get(node_id, 0),
         creation_position=_node_creation_position(projection, node_id),
         resource_claims=[
-            _claim_from_dict(claim) for claim in projection["node_resource_claims"].get(node_id, [])
+            _claim_from_dict(claim)
+            for claim in node_resource_claims_view(projection).get(node_id, [])
         ],
         required_edges=required_edges,
-        satisfied_input_ports=set(projection["input_bindings"].get(node_id, {})),
+        satisfied_input_ports=set(input_bindings_view(projection).get(node_id, {})),
         upstream_states={
-            upstream_node_id: projection["node_states"][upstream_node_id]
+            upstream_node_id: node_states_view(projection)[upstream_node_id]
             for upstream_node_id in upstream_node_ids
-            if upstream_node_id in projection["node_states"]
+            if upstream_node_id in node_states_view(projection)
         },
         upstream_kinds={
-            upstream_node_id: projection["node_kinds"][upstream_node_id]
+            upstream_node_id: node_kinds_view(projection)[upstream_node_id]
             for upstream_node_id in upstream_node_ids
-            if upstream_node_id in projection["node_kinds"]
+            if upstream_node_id in node_kinds_view(projection)
         },
         upstream_pending_appeals={
             upstream_node_id
             for upstream_node_id in upstream_node_ids
-            if projection["node_pending_appeals"].get(upstream_node_id) is True
+            if node_pending_appeals_view(projection).get(upstream_node_id) is True
         },
         gate_decisions={
             gate_node_id: decision
-            for gate_node_id, decision in projection["node_gate_decisions"].items()
+            for gate_node_id, decision in node_gate_decisions_view(projection).items()
             if gate_node_id in upstream_node_ids
         },
-        failed_candidate_id=projection["node_failed_candidates"].get(node_id),
-        preconditions=projection["node_preconditions"].get(node_id, []),
-        command_definition_present=node_id in projection["node_command_definitions"],
+        failed_candidate_id=node_failed_candidates_view(projection).get(node_id),
+        preconditions=node_preconditions_view(projection).get(node_id, []),
+        command_definition_present=node_id in node_command_definitions_view(projection),
     )
 
 
 def _node_creation_position(projection: GraphProjection, node_id: str) -> int:
-    return projection["node_creation_positions"].get(node_id, 0)
+    return node_creation_positions_view(projection).get(node_id, 0)
 
 
 def _required_edges_for_node(
@@ -5204,7 +5365,7 @@ def _required_edges_for_node(
     node_id: str,
 ) -> list[InputEdgeInfo]:
     edges: list[InputEdgeInfo] = []
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         if edge.to_node_id != node_id:
             continue
         edges.append(
@@ -5253,7 +5414,7 @@ def _command_rejected(
 
 
 def _node_exists(projection: GraphProjection, node_id: str) -> bool:
-    return node_id in projection["node_states"] or node_id in projection["node_kinds"]
+    return node_id in node_states_view(projection) or node_id in node_kinds_view(projection)
 
 
 def _op_payload(op: PatchOp) -> dict[str, Any]:
@@ -5315,7 +5476,7 @@ def _input_bound_events_for_edge(
         edge_payload,
         typed_from_node_id,
     ):
-        records_by_port = projection["output_records_by_node_port"].get(producer_node_id, {})
+        records_by_port = output_records_by_node_port_view(projection).get(producer_node_id, {})
         for record in records_by_port.get(typed_from_port, []):
             record_payload = record.model_dump(mode="json")
             record_id = record_payload.get("record_id")
@@ -5354,11 +5515,11 @@ def _projection_edge_accepts_producer(
     if edge.from_node_id != "*":
         return False
     if edge.from_node_kind is not None and (
-        projection["node_kinds"].get(producer_node_id) != edge.from_node_kind
+        node_kinds_view(projection).get(producer_node_id) != edge.from_node_kind
     ):
         return False
     if edge.from_node_role is not None and (
-        projection["node_roles"].get(producer_node_id) != edge.from_node_role
+        node_roles_view(projection).get(producer_node_id) != edge.from_node_role
     ):
         return False
     return True
@@ -5377,13 +5538,13 @@ def _edge_payload_accepts_producer(
     expected_kind = edge.get("from_node_kind")
     if (
         isinstance(expected_kind, str)
-        and projection["node_kinds"].get(producer_node_id) != expected_kind
+        and node_kinds_view(projection).get(producer_node_id) != expected_kind
     ):
         return False
     expected_role = edge.get("from_node_role")
     if (
         isinstance(expected_role, str)
-        and projection["node_roles"].get(producer_node_id) != expected_role
+        and node_roles_view(projection).get(producer_node_id) != expected_role
     ):
         return False
     return True
@@ -5398,7 +5559,7 @@ def _edge_backfill_producer_node_ids(
         return [from_node_id]
     return [
         node_id
-        for node_id in sorted(projection["node_kinds"])
+        for node_id in sorted(node_kinds_view(projection))
         if _edge_payload_accepts_producer(projection, edge, node_id)
     ]
 

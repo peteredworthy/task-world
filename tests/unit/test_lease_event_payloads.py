@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.graph import (
+    leases_view,
     FakeClock,
     LeaseGrantedPayload,
     LeaseRenewedPayload,
@@ -54,8 +55,8 @@ def test_lease_reducer_projects_canonical_fields() -> None:
             ),
         ]
     )
-    assert projection["leases"]["lease-1"].task_region_id == "task-1"
-    assert projection["leases"]["lease-1"].kind == "worker"
+    assert leases_view(projection)["lease-1"].task_region_id == "task-1"
+    assert leases_view(projection)["lease-1"].kind == "worker"
     assert LeaseRenewedPayload.model_validate({"lease_id": "lease-1"}).lease_id == "lease-1"
 
 

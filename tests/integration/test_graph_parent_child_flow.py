@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    Actor,
+    ActorKind,
     EventEnvelope,
     GraphCommandContext,
     PatchCommandContext,
@@ -47,7 +49,29 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
     try:
         await _seed_parent_child_run(controller, run_id)
         events = await _read_events(session_factory, run_id)
-        events = await _complete_node(session_factory, controller, run_id, "planner-parent", events)
+        events = await _complete_node(
+            session_factory,
+            controller,
+            run_id,
+            "planner-parent",
+            events,
+            output_records=[
+                {
+                    "record_id": "parent-summary-one",
+                    "record_kind": "output",
+                    "record_type": "analysis_summary",
+                    "producer_node_id": "planner-parent",
+                    "port": "planning_summary",
+                    "schema": "AnalysisSummary",
+                    "value": {
+                        "summary": "Parent planning context for child one.",
+                        "source_record_ids": [],
+                        "lossy": False,
+                        "omitted_details": [],
+                    },
+                }
+            ],
+        )
         events = await _command(
             session_factory,
             controller,
@@ -57,7 +81,7 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
                 events,
                 "patch-child-one",
                 _region_ops("one", "planner-child-two"),
-                carryover_record_id="summary-one",
+                carryover_record_id="parent-summary-one",
             ),
             _patch_context(run_id, "planner-parent"),
         )
@@ -86,7 +110,7 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
             "child-one",
             "child-two",
         ]
-        assert project_planner_session(events)["carryover_record_id"] == "summary-one"
+        assert project_planner_session(events)["carryover_record_id"] == "parent-summary-one"
         assert {event.run_id for event in events} == {run_id}
         assert not any(_contains_legacy_child_artifact(event.payload) for event in events)
 
@@ -168,6 +192,42 @@ async def _seed_parent_child_run(controller: GraphController, run_id: str) -> No
         ],
     )
     compiled = compile_routine(routine, FixedClock(), SequentialIds(), run_id=run_id)
+    compiled.extend(
+        [
+            EventEnvelope(
+                event_id="requirement-node-R-1",
+                run_id=run_id,
+                position=len(compiled) + 1,
+                event_type="node_created",
+                schema_version=1,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FixedClock().now(),
+                payload={"node_id": "requirement-R-1", "kind": "requirement", "state": "completed"},
+            ),
+            EventEnvelope(
+                event_id="requirement-record-R-1",
+                run_id=run_id,
+                position=len(compiled) + 2,
+                event_type="output_record_accepted",
+                schema_version=1,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FixedClock().now(),
+                payload={
+                    "record_id": "requirement-R-1",
+                    "record_kind": "graph_record",
+                    "record_type": "requirement_record",
+                    "producer_node_id": "requirement-R-1",
+                    "port": "requirement",
+                    "schema": "RequirementRecord",
+                    "value": {
+                        "id": "R-1",
+                        "text": "Parent-child flow requirement",
+                        "source": "routine",
+                    },
+                },
+            ),
+        ]
+    )
     await controller.handle_command(
         run_id,
         0,
@@ -186,6 +246,8 @@ async def _complete_node(
     run_id: str,
     node_id: str,
     events: list[EventEnvelope],
+    *,
+    output_records: list[dict[str, Any]] | None = None,
 ) -> list[EventEnvelope]:
     events = await _command(
         session_factory,
@@ -213,7 +275,7 @@ async def _complete_node(
         controller,
         run_id,
         "submit_callback",
-        _callback_payload(node_id, lease, []),
+        _callback_payload(node_id, lease, output_records or []),
         _context(run_id),
     )
 
@@ -332,6 +394,7 @@ async def _drive_region(
                 {
                     "record_id": f"summary-{prefix}",
                     "record_kind": "output",
+                    "record_type": "analysis_summary",
                     "producer_node_id": verifier_id,
                     "port": "region_summary",
                     "schema": "RegionSummary",

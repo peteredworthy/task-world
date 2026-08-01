@@ -133,25 +133,30 @@ def test_build_node_detail_filters_by_node_id() -> None:
             {
                 "record_id": "out-a",
                 "record_kind": "output",
+                "record_type": "candidate",
                 "producer_node_id": "node-a",
                 "task_region_id": "task-a",
+                "candidate_id": "candidate-a",
+                "value": {"summary": "candidate A"},
             },
         ),
         _event(
             "output_record_accepted",
             {
                 "record_id": "out-b",
-                "record_kind": "graph_record",
+                "record_kind": "output",
+                "record_type": "candidate",
                 "producer_node_id": "node-b",
                 "task_region_id": "task-b",
+                "candidate_id": "candidate-b",
+                "value": {"summary": "candidate B"},
             },
         ),
         _event(
             "file_state_accepted",
             {
-                "path": "README.md",
                 "producer_node_id": "node-a",
-                "state": "unchanged",
+                "tracked": [{"path": "README.md", "status": "unchanged"}],
             },
         ),
         _event(
@@ -175,7 +180,7 @@ def test_build_node_detail_filters_by_node_id() -> None:
     assert len(detail.output_records) == 1
     assert detail.output_records[0]["record_id"] == "out-a"
     assert len(detail.file_state_records) == 1
-    assert detail.file_state_records[0]["path"] == "README.md"
+    assert detail.file_state_records[0]["tracked"] == [{"path": "README.md", "status": "unchanged"}]
     assert [e.event_id for e in detail.events] == [
         "node_created-event",
         "node_state_changed-event",

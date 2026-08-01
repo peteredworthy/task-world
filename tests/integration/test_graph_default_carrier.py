@@ -264,10 +264,11 @@ def _driver(
     *,
     repo: Path,
     dispatch_order: list[str],
+    ids: SequentialIds | None = None,
     on_agent_output: Any = None,
 ) -> GraphRunDriver:
     clock = FixedClock()
-    ids = SequentialIds()
+    ids = ids or SequentialIds()
     agents = {
         "planner": CompletingAgent(),
         "worker": CompletingAgent(),
@@ -421,6 +422,7 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
         _auto_verify_routine(),
         _checklist_gate_routine(),
     ]
+    ids = SequentialIds()
 
     for routine in routines:
         repo = tmp_path / f"repo-{routine.id}"
@@ -429,9 +431,9 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
         await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
         dispatch_order: list[str] = []
 
-        outcome = await _driver(session_factory, repo=repo, dispatch_order=dispatch_order).run(
-            run_id
-        )
+        outcome = await _driver(
+            session_factory, repo=repo, dispatch_order=dispatch_order, ids=ids
+        ).run(run_id)
         events = await _events(session_factory, run_id)
 
         assert outcome.completed is True

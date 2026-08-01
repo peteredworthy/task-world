@@ -151,7 +151,11 @@ task-world/
 │   │   ├── contracts.py       # Typed node/port contract registry
 │   │   ├── macros.py          # Planner-facing macro expansion to low-level patch ops
 │   │   ├── patch_validator.py # Pure graph patch validation
-│   │   ├── projections.py     # Event-sourced graph projections/read models
+│   │   ├── projection_collections.py # FrozenMap and persistent update primitives
+│   │   ├── projection_models.py # Frozen grouped GraphProjection and projected records
+│   │   ├── projection_queries.py # Public, copy-out projection query boundary
+│   │   ├── projection_codec.py # Strict checkpoint codec and referential validation
+│   │   ├── projections.py     # Event reducer and projection policy/read models
 │   │   └── scheduler.py       # Pure readiness and lease scheduling helpers
 │   │
 │   ├── graph_runtime/         # Effectful graph runtime bridge
@@ -384,6 +388,33 @@ The remaining `workflow/delegation/` code is generic fan-out task bookkeeping,
 not the super-parent carrier. Delegation command fencing, idempotency records,
 result records, and review blockers are recorded through `DelegationRecorder`,
 which wraps the immutable `DelegationState` value object.
+
+### Immutable Graph Projection
+
+`GraphProjection` is a schema-13, grouped, deeply immutable read model. Its
+root groups and every reachable projection model are frozen; dynamic indexes use
+`FrozenMap`, ordered collections use tuples, and reducers make persistent
+updates with `model_copy`/`map_set` rather than mutation. `RecordStore.by_id`
+is the sole owner of complete projected records; other groups retain identifiers
+or summaries.
+
+Only `projection_models.py`, `projection_collections.py`,
+`projection_queries.py`, `projection_codec.py`, and `projections.py` may read
+physical grouped storage. Modules outside the graph package import query
+functions and types from `orchestrator.graph`, never a graph submodule. Query functions own storage
+access and return immutable values or fresh public copies.
+
+Checkpoints are disposable accelerators. A checkpoint is read only when its
+stored `_projection_schema_version` is exactly 13 and strict codec/integrity
+validation succeeds; missing, malformed, or version-mismatched checkpoints are
+rebuilt from the durable event stream. The permanent
+`graph-projection-boundaries` pre-commit hook rejects storage-boundary and
+public-import violations. Executable closure evidence is the canonical event
+behavior matrix, every-split incremental and checkpoint-tail replay,
+model-derived flexible-JSON checkpoint coverage, and direct performance tests.
+The direct performance gate replays each 10,000-event scenario after one warmup,
+uses three samples, asserts exact behavior cardinality, and requires a median
+under one second.
 
 ---
 

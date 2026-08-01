@@ -246,7 +246,17 @@ All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_
 
 **Event sourcing for recovery.** SQL events are canonical for normal writes. JSONL is a secondary sink and an empty-DB bootstrap source; reconstruct from history on startup.
 
-**Graph projection models are frozen.** Every Pydantic model stored inside a `GraphProjection` (`EdgeProjection`, `LeaseProjection`, `NodeCreationProjection`, all `TypedRecordBase` records, …) sets `frozen=True`. `_clone_projection` therefore shares model instances between successive projection states instead of deep-copying them, which is what keeps `reduce_event` linear rather than quadratic. Reducers must never mutate a model in place — build a replacement with `model_copy(update={...})` and assign it back into the projection dict. Do not remove `frozen=True` to make an in-place assignment work; the deep copies it would force back cost ~27x on replay.
+**Graph projections are grouped and deeply immutable.** Schema-13 `GraphProjection`
+uses frozen Pydantic groups, `FrozenMap` dynamic indexes, recursively frozen JSON,
+and tuples for ordered values. Reducers must never mutate a reachable value:
+create replacement models with `model_copy(update={...})` and persistent maps with
+`map_set`, `map_delete`, or `map_update`, preserving unchanged group identity.
+`RecordStore.by_id` is the sole full-record owner; other groups store IDs or
+summaries. Physical grouped storage is limited to
+`projection_models.py`, `projection_collections.py`, `projection_queries.py`,
+`projection_codec.py`, and `projections.py`; modules outside the graph package
+import public queries/types through `orchestrator.graph`. The permanent
+`graph-projection-boundaries` hook enforces this boundary.
 
 **Import from module top-level only.** Never reach into a module's sub-packages from outside that module. Import from the public API the module exposes via its `__init__.py`:
 - CORRECT: `from orchestrator.config import discover_routines`
@@ -254,7 +264,11 @@ All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_
 - CORRECT: `from orchestrator.runners import AgentService`
 - WRONG:   `from orchestrator.runners.profiles.service import AgentService`
 
-The 9 top-level modules are: `api`, `cli`, `config`, `db`, `envfiles`, `git`, `runners`, `state`, `workflow`. Code within the same module may use direct sub-module imports to avoid circular imports. If a symbol you need is not yet exported from the module `__init__.py`, add it there — do not bypass the public API.
+The 10 top-level modules are: `api`, `cli`, `config`, `db`, `envfiles`, `git`,
+`graph`, `runners`, `state`, and `workflow`. Code within the same module may use
+direct sub-module imports to avoid circular imports. If a symbol you need is not
+yet exported from the module `__init__.py`, add it there — do not bypass the
+public API.
 
 ## Handling Errors and Failing Checks
 
@@ -287,6 +301,20 @@ Integration tests requiring credentials use `@pytest.mark.skipif(not os.getenv("
 It is a dev-loop accelerator, not a merge gate — `make test` stays the gate, and pre-commit still runs the full suite. Two constraints are baked into the target: testmon cannot run under `pytest-xdist`, and it silently disables selection when `-m` is passed, so the target clears the default `addopts` and raises the timeout to 180s to absorb coverage-tracing overhead. Run `make test-changed-reset` after dependency upgrades or if selection looks wrong.
 
 Key test fixtures: `tmp_dir` (temp directory), `fixed_time` (deterministic datetime), `in_memory_db` (SQLite `:memory:`), `routine_repo` (git repo with test routines).
+
+For immutable graph-projection changes, use the focused pure behavior,
+flexible-JSON, every-split replay, immutability, query, duplicate-ID, codec,
+integrity, boundary, and direct-performance test files. The permanent
+`uv run python scripts/check_graph_projection_boundaries.py` command and its
+pre-commit hook enforce the storage and public-import boundary. During edit
+loops, use focused tests or `make test-changed`; commit hooks run the default
+suite once, so a separate pre-commit full run immediately before committing is
+redundant.
+
+Copyable focused pure-projection command (the ten current closure files):
+```bash
+uv run pytest tests/unit/test_graph_projection_behavior.py tests/unit/test_graph_projection_flexible_json.py tests/unit/test_graph_projection_replay_equivalence.py tests/unit/test_graph_projection_immutability.py tests/unit/test_graph_projection_queries.py tests/unit/test_graph_projection_duplicate_ids.py tests/unit/test_graph_projection_codec.py tests/unit/test_graph_projection_integrity.py tests/unit/test_graph_projection_boundaries.py tests/unit/test_graph_projection_performance.py
+```
 
 ### Unit / Integration boundary rules
 

@@ -453,15 +453,17 @@ async def test_activity_includes_graph_rejected_command_verifier_and_blocker_fac
                     "candidate_id": "candidate-1",
                     "task_region_id": "step-1/task-1",
                     "record_id": "verification-1",
-                    "evidence": "raw verifier narrative is not copied",
+                    "outcome": "failed",
+                    "evidence": [{"detail": "raw verifier narrative is not copied"}],
                     "value": {
+                        "outcome": "failed",
                         "grades": [
                             {
                                 "requirement_id": "req-1",
                                 "grade": "C",
                                 "reason": "missing regression coverage",
                             }
-                        ]
+                        ],
                     },
                 },
             ),
@@ -576,10 +578,16 @@ async def test_graph_activity_summaries_preserve_filtering_and_pagination(
                 "event-verification-passed",
                 "verification_passed",
                 {
+                    "node_id": "verifier-1",
                     "verifier_node_id": "verifier-1",
                     "candidate_id": "candidate-1",
                     "task_region_id": "step-1/task-1",
-                    "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+                    "record_id": "verification-1",
+                    "outcome": "passed",
+                    "value": {
+                        "outcome": "passed",
+                        "grades": [{"requirement_id": "req-1", "grade": "A"}],
+                    },
                 },
             ),
         ],

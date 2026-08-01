@@ -131,6 +131,15 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
     final_blockers = await _get_json(client, f"/api/runs/{run_id}/graph/final-blockers")
 
     assert [event["position"] for event in events] == list(range(1, len(events) + 1))
+    verification_report = next(
+        event["payload"]
+        for event in events
+        if event["event_type"] == "output_record_accepted"
+        and event["payload"]["record_id"] == "verification-1"
+    )
+    assert verification_report["value"]["grades"] == [
+        {"requirement_id": "fr03-verification-requirement", "grade": "A"}
+    ]
     assert summarizer["contract"]["node_type"] == "summarizer"
     assert summarizer["contract"]["handler_type"] == "agent"
     assert summarizer["contract"]["input_ports"]["source_records"]["cardinality"] == "many"
@@ -191,8 +200,8 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
     assert summarizer_edge["binding"]["binding_policy"] == "bind_all"
     assert summarizer_edge["binding"]["record_ids"] == ["candidate-1", "candidate-2"]
     assert summarizer_edge["binding"]["record_bound_positions"] == {
-        "candidate-1": 17,
-        "candidate-2": 18,
+        "candidate-1": 20,
+        "candidate-2": 21,
     }
 
     join_edge = next(edge for edge in topology["edges"] if edge["edge_id"] == "edge-candidate-join")
@@ -304,6 +313,32 @@ async def _seed_fr03_base_events(
                 ),
                 _event(
                     run_id,
+                    "node_created",
+                    {
+                        "node_id": "requirement-fr03-verification",
+                        "kind": "requirement",
+                        "state": "completed",
+                    },
+                ),
+                _event(
+                    run_id,
+                    "output_record_accepted",
+                    {
+                        "record_id": "requirement-fr03-verification",
+                        "record_kind": "graph_record",
+                        "record_type": "requirement_record",
+                        "producer_node_id": "requirement-fr03-verification",
+                        "port": "requirement",
+                        "schema": "RequirementRecord",
+                        "value": {
+                            "id": "fr03-verification-requirement",
+                            "text": "FR-03 verification evidence is complete.",
+                            "source": "routine",
+                        },
+                    },
+                ),
+                _event(
+                    run_id,
                     "output_record_accepted",
                     {
                         "record_id": "candidate-1",
@@ -313,6 +348,7 @@ async def _seed_fr03_base_events(
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
                         "candidate_id": "candidate-1",
+                        "task_region_id": "task-fr03",
                         "value": {"summary": "first candidate"},
                     },
                 ),
@@ -327,6 +363,7 @@ async def _seed_fr03_base_events(
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
                         "candidate_id": "candidate-2",
+                        "task_region_id": "task-fr03",
                         "value": {"summary": "second candidate"},
                     },
                 ),
@@ -335,14 +372,23 @@ async def _seed_fr03_base_events(
                     "output_record_accepted",
                     {
                         "record_id": "verification-1",
-                        "record_kind": "output",
+                        "record_kind": "verification",
                         "record_type": "verification_report",
                         "producer_node_id": "verifier-source",
                         "port": "verification_report",
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-1",
+                        "task_region_id": "task-fr03",
                         "outcome": "failed",
-                        "value": {"outcome": "failed", "grades": []},
+                        "value": {
+                            "outcome": "failed",
+                            "grades": [
+                                {
+                                    "requirement_id": "fr03-verification-requirement",
+                                    "grade": "A",
+                                }
+                            ],
+                        },
                     },
                 ),
             ],

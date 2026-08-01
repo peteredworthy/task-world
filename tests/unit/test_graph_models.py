@@ -6,7 +6,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph import GradeRow, StoredArtifactRef
-from orchestrator.graph.models import (
+from orchestrator.graph import (
     Actor,
     ActorKind,
     AnalysisSummaryValue,
@@ -748,6 +748,21 @@ def test_record_selector_round_trips_canonical_verification_selector() -> None:
         "schema": "VerificationReport",
         "outcome": "failed",
     }
+
+
+@pytest.mark.parametrize(
+    ("record_type", "schema"),
+    (
+        ("decision_request", "DecisionRequest"),
+        ("authority_request_record", "AuthorityRequest"),
+    ),
+)
+def test_record_selector_round_trips_request_record_selectors(
+    record_type: str, schema: str
+) -> None:
+    selector = RecordSelector.model_validate({"record_type": record_type, "schema": schema})
+
+    assert selector.model_dump(mode="json") == {"record_type": record_type, "schema": schema}
 
 
 @pytest.mark.parametrize(

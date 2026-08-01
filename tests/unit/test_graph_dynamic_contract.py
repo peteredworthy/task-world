@@ -14,9 +14,10 @@ from typing import Any
 import pytest
 
 from orchestrator.graph import node_contract_summary
-from orchestrator.graph.models import EdgeProjection, PatchEnvelope, PatchOp
-from orchestrator.graph.patch_validator import validate_patch
-from orchestrator.graph.projections import GraphProjection, initial_projection
+from orchestrator.graph import PatchEnvelope, PatchOp, build_projection
+from orchestrator.graph import validate_patch
+from orchestrator.graph import GraphProjection, initial_projection
+from tests.unit.graph_test_utils import event
 
 
 def _patch(ops: list[dict[str, Any]], *, proposed_by: str = "planner-1") -> PatchEnvelope:
@@ -30,24 +31,30 @@ def _patch(ops: list[dict[str, Any]], *, proposed_by: str = "planner-1") -> Patc
 
 
 def _projection_with_classified_gap_successor(gap_node_id: str) -> GraphProjection:
-    projection = initial_projection()
-    projection["edges"] = {
-        "edge-gap-corrective": EdgeProjection.model_validate(
-            {
-                "edge_id": "edge-gap-corrective",
-                "from_node_id": gap_node_id,
-                "from_port": "classified_gap",
-                "to_node_id": "worker-corrective",
-                "to_port": "classified_gap",
-                "required": True,
-                "accepted_record_selector": {
-                    "record_type": "gap_classification",
-                    "schema": "GapClassification",
+    return build_projection(
+        [
+            event(
+                "node_created", {"node_id": gap_node_id, "kind": "planner", "role": "gap_planner"}
+            ),
+            event("node_created", {"node_id": "worker-corrective", "kind": "worker"}, position=1),
+            event(
+                "edge_created",
+                {
+                    "edge_id": "edge-gap-corrective",
+                    "from_node_id": gap_node_id,
+                    "from_port": "classified_gap",
+                    "to_node_id": "worker-corrective",
+                    "to_port": "classified_gap",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "gap_classification",
+                        "schema": "GapClassification",
+                    },
                 },
-            }
-        )
-    }
-    return projection
+                position=2,
+            ),
+        ]
+    )
 
 
 def test_agent_contracts_allow_runtime_file_state_output() -> None:

@@ -6,15 +6,31 @@ import json
 from typing import TYPE_CHECKING, Any, cast
 
 from orchestrator.artifacts import ArtifactStore, StoredArtifactRef
-from orchestrator.graph import DEFAULT_NODE_CONTRACTS, EventEnvelope, GraphProjection
-from orchestrator.graph.command_bindings import resolve_check_command_definition
-from orchestrator.graph.models import (
+from orchestrator.graph import (
+    planner_generation_budget,
+    planner_generations_view,
+    edges_view,
+    environment_failures_view,
+    file_state_records_view,
+    input_bindings_view,
+    node_kinds_view,
+    node_states_view,
+    node_task_regions_view,
+    planner_session_carryovers_view,
+    planner_sessions_view,
+    ready_nodes_view,
+    DEFAULT_NODE_CONTRACTS,
+    EventEnvelope,
+    GraphProjection,
+)
+from orchestrator.graph import resolve_check_command_definition
+from orchestrator.graph import (
     FileStateRecord,
     GapClassificationRecord,
     InputBindingProjection,
 )
-from orchestrator.graph.patch_validator import PLANNER_OPS
-from orchestrator.graph.projections import project_planner_freshness_packet
+from orchestrator.graph import PLANNER_OPS
+from orchestrator.graph import project_planner_freshness_packet
 from orchestrator.graph_runtime.horizon_templates import horizon_region_templates
 
 if TYPE_CHECKING:
@@ -285,7 +301,7 @@ def _prompt_sections_for_context(context: GraphDispatchContext) -> list[str]:
 
 
 def _prompt_summary_input_ports(context: GraphDispatchContext) -> dict[str, list[str]]:
-    bindings = context.graph_projection["input_bindings"].get(context.node_id, {})
+    bindings = input_bindings_view(context.graph_projection).get(context.node_id, {})
     input_ports: dict[str, list[str]] = {}
     for port, binding in sorted(bindings.items()):
         input_ports[port] = list(binding.record_ids)
@@ -461,7 +477,7 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
     events = sorted(context.graph_events, key=lambda event: event.position)
     node = context.node_payload
     current_position = max((event.position for event in events), default=0)
-    generation_index = projection["planner_generations"].get(context.node_id)
+    generation_index = planner_generations_view(projection).get(context.node_id)
 
     frontier = _planner_frontier(projection, events, context)
     evidence = _planner_evidence(context, projection, events)
@@ -475,12 +491,12 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
         "active_intent": {
             "title": node.get("title", context.node_id),
             "context": node.get("task_context", ""),
-            "task_region_id": projection["node_task_regions"].get(context.node_id),
+            "task_region_id": node_task_regions_view(projection).get(context.node_id),
         },
         "current_graph_position": current_position,
         "planner_generation": {
             "index": generation_index,
-            "budget": projection["planner_generation_budget"],
+            "budget": planner_generation_budget(projection),
         },
         "bound_requirements": list(context.requirements),
         "frontier": frontier,
@@ -549,12 +565,12 @@ def _planner_frontier(
     events: list[EventEnvelope],
     context: GraphDispatchContext,
 ) -> dict[str, list[dict[str, Any]] | list[str]]:
-    ready_nodes = sorted(projection["ready_nodes"])
+    ready_nodes = sorted(ready_nodes_view(projection))
     deferred_reasons = _planner_deferred_reasons(events)
 
     blocked_nodes: list[dict[str, Any]] = []
-    for node_id in sorted(projection["node_states"]):
-        node_state = projection["node_states"].get(node_id, "")
+    for node_id in sorted(node_states_view(projection)):
+        node_state = node_states_view(projection).get(node_id, "")
         if node_state == "ready":
             continue
         reason = deferred_reasons.get(node_id)
@@ -602,7 +618,7 @@ def _gap_analysis_obligations(
     obligations: list[dict[str, Any]] = []
     terminal_states = {"completed", "failed", "cancelled", "retired"}
 
-    for edge_id, edge in sorted(projection["edges"].items()):
+    for edge_id, edge in sorted(edges_view(projection).items()):
         if not edge.required:
             continue
         if edge.from_node_id != context.node_id:
@@ -611,9 +627,9 @@ def _gap_analysis_obligations(
             continue
         to_node_id = edge.to_node_id
         to_port = edge.to_port
-        if projection["node_states"].get(to_node_id) in terminal_states:
+        if node_states_view(projection).get(to_node_id) in terminal_states:
             continue
-        if to_port in projection["input_bindings"].get(to_node_id, {}):
+        if to_port in input_bindings_view(projection).get(to_node_id, {}):
             continue
         obligations.append(
             {
@@ -633,9 +649,9 @@ def _gap_analysis_obligations(
     for node_id, reason in sorted(deferred_reasons.items()):
         if reason != "missing_required_input:verification_evidence":
             continue
-        if projection["node_states"].get(node_id) in terminal_states:
+        if node_states_view(projection).get(node_id) in terminal_states:
             continue
-        if projection["node_kinds"].get(node_id) != "check":
+        if node_kinds_view(projection).get(node_id) != "check":
             continue
         obligations.append(
             {
@@ -656,7 +672,7 @@ def _planner_evidence(
     projection: GraphProjection,
     events: list[EventEnvelope],
 ) -> dict[str, Any]:
-    bindings = projection["input_bindings"].get(context.node_id, {})
+    bindings = input_bindings_view(projection).get(context.node_id, {})
     output_records: dict[str, dict[str, Any]] = {}
     for event in events:
         if event.event_type != "output_record_accepted":
@@ -677,13 +693,13 @@ def _planner_evidence(
             if not isinstance(raw_record_id, str):
                 continue
 
-            if raw_record_id in projection["file_state_records"]:
+            if raw_record_id in file_state_records_view(projection):
                 records.append(
                     _hydrated_bound_record(
                         record_id=raw_record_id,
                         record_kind="file_state",
                         record_payload=_compact_file_state_record(
-                            projection["file_state_records"][raw_record_id]
+                            file_state_records_view(projection)[raw_record_id]
                         ),
                         hydration_policy=hydration_policy,
                     )
@@ -741,7 +757,7 @@ def _hydration_policy_for_binding(
     edge_id = binding.edge_id
     if not isinstance(edge_id, str):
         return "structured_json"
-    edge = projection["edges"].get(edge_id)
+    edge = edges_view(projection).get(edge_id)
     if edge is None:
         return "structured_json"
     policy = edge.prompt_hydration_policy
@@ -885,10 +901,10 @@ def _planner_outstanding_failures(
     context: GraphDispatchContext,
     projection: GraphProjection,
 ) -> list[dict[str, Any]]:
-    task_region_id = projection["node_task_regions"].get(context.node_id)
+    task_region_id = node_task_regions_view(projection).get(context.node_id)
     failures: list[dict[str, Any]] = []
 
-    for region_id, failure in projection["environment_failures"].items():
+    for region_id, failure in environment_failures_view(projection).items():
         if task_region_id is not None and task_region_id != region_id:
             continue
         entry = failure.model_dump(mode="json")
@@ -902,10 +918,10 @@ def _planner_session_carryover_record(
     context: GraphDispatchContext,
     projection: GraphProjection,
 ) -> str | None:
-    session_id = projection["planner_sessions"].get(context.node_id)
+    session_id = planner_sessions_view(projection).get(context.node_id)
     if not isinstance(session_id, str):
         return None
-    carryover = projection["planner_session_carryovers"].get(session_id)
+    carryover = planner_session_carryovers_view(projection).get(session_id)
     if carryover is None:
         return None
     return str(carryover)
@@ -1304,12 +1320,12 @@ def _file_state_record_ids_for_task_region(context: GraphDispatchContext) -> lis
     if not isinstance(task_region_id, str):
         return []
     output: list[str] = []
-    for record_id, record in context.graph_projection["file_state_records"].items():
+    for record_id, record in file_state_records_view(context.graph_projection).items():
         record_region_id = record.task_region_id
         if not isinstance(record_region_id, str):
             producer_node_id = record.producer_node_id
             if isinstance(producer_node_id, str):
-                record_region_id = context.graph_projection["node_task_regions"].get(
+                record_region_id = node_task_regions_view(context.graph_projection).get(
                     producer_node_id
                 )
         if record_region_id != task_region_id:
@@ -1324,7 +1340,7 @@ def _bound_record_ids_for_ports(
     context: GraphDispatchContext,
     ports: tuple[str, ...],
 ) -> list[str]:
-    bindings = context.graph_projection["input_bindings"].get(context.node_id, {})
+    bindings = input_bindings_view(context.graph_projection).get(context.node_id, {})
     output: list[str] = []
     for port in ports:
         binding = bindings.get(port)

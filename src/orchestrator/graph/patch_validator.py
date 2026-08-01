@@ -1,5 +1,6 @@
 """Pure graph patch validation helpers."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 import posixpath
 from typing import Any, cast
@@ -11,6 +12,13 @@ from orchestrator.graph.models import (
     EventEnvelope,
     PatchEnvelope,
     normalize_record_selector,
+)
+from orchestrator.graph.projection_queries import (
+    edges_view,
+    node_kinds_view,
+    node_roles_view,
+    node_states_view,
+    resource_claims_for_node,
 )
 from orchestrator.graph.projections import GraphProjection
 
@@ -141,7 +149,7 @@ def validate_patch(
             if (
                 actor_role == "gap_planner"
                 and isinstance(node_id, str)
-                and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}
+                and node_kinds_view(projection).get(node_id) in {"worker", "verifier", "check"}
             ):
                 return PatchValidationResult(
                     accepted=False,
@@ -149,7 +157,7 @@ def validate_patch(
                 )
             if (
                 isinstance(node_id, str)
-                and projection["node_states"].get(node_id) in RUNNING_STATES
+                and node_states_view(projection).get(node_id) in RUNNING_STATES
             ):
                 return PatchValidationResult(
                     accepted=False,
@@ -255,7 +263,7 @@ def _validate_typed_topology(
             edge_id = op.get("edge_id")
             if not isinstance(edge_id, str) or not edge_id:
                 return "create_edge requires edge_id"
-            if edge_id in seen_edge_ids or edge_id in projection["edges"]:
+            if edge_id in seen_edge_ids or edge_id in edges_view(projection):
                 return f"duplicate edge id: {edge_id}"
             seen_edge_ids.add(edge_id)
 
@@ -310,7 +318,7 @@ def _register_created_node(
     node_id = node.get("node_id")
     if not isinstance(node_id, str) or not node_id:
         return missing_message
-    if node_id in seen_node_ids or node_id in projection["node_kinds"]:
+    if node_id in seen_node_ids or node_id in node_kinds_view(projection):
         return f"duplicate node id: {node_id}"
     seen_node_ids.add(node_id)
     kind = node.get("kind")
@@ -338,10 +346,10 @@ def _node_contract_identity(
     created = created_nodes.get(node_id)
     if created is not None:
         return created
-    kind = projection["node_kinds"].get(node_id)
+    kind = node_kinds_view(projection).get(node_id)
     if not isinstance(kind, str):
         return None
-    role = projection.get("node_roles", {}).get(node_id)
+    role = node_roles_view(projection).get(node_id)
     return (kind, role if isinstance(role, str) else None)
 
 
@@ -391,7 +399,7 @@ def _validate_no_forbidden_cycles(
     adjacency: dict[str, set[str]] = {}
     patch_nodes: set[str] = set()
 
-    for edge in projection["edges"].values():
+    for edge in edges_view(projection).values():
         source = edge.from_node_id
         target = edge.to_node_id
         adjacency.setdefault(source, set()).add(target)
@@ -521,7 +529,7 @@ def _validate_no_poisoned_final_invariant_edges(
 ) -> str | None:
     created_nodes = _created_nodes_by_id(ops)
     edge_ops = [op for op in ops if op.get("op") == "create_edge"]
-    existing_edges = projection["edges"].values()
+    existing_edges = edges_view(projection).values()
 
     for edge in edge_ops:
         if not _is_required_passed_verification_edge(edge):
@@ -575,7 +583,7 @@ def _node_kind_role(
             kind if isinstance(kind, str) else None,
             role if isinstance(role, str) else None,
         )
-    return projection["node_kinds"].get(node_id), projection["node_roles"].get(node_id)
+    return node_kinds_view(projection).get(node_id), node_roles_view(projection).get(node_id)
 
 
 def _is_required_passed_verification_edge(edge: dict[str, Any]) -> bool:
@@ -745,7 +753,7 @@ def _op_resource_claim_dicts(op: dict[str, Any]) -> list[dict[str, Any]]:
     ``create_gate``, ``create_appeal`` via ``node``; ``create_revision_attempt`` via
     ``worker_node``/``verifier_node``).
     """
-    claims = list(_resource_claim_dicts(op.get("resource_claims")))
+    claims = list(resource_claim_dicts(op.get("resource_claims")))
     for node_key in ("node", "worker_node", "verifier_node"):
         node = op.get(node_key)
         if not isinstance(node, dict):
@@ -753,7 +761,7 @@ def _op_resource_claim_dicts(op: dict[str, Any]) -> list[dict[str, Any]]:
         authority = cast(dict[str, Any], node).get("authority")
         if isinstance(authority, dict):
             claims.extend(
-                _resource_claim_dicts(cast(dict[str, Any], authority).get("resource_claims"))
+                resource_claim_dicts(cast(dict[str, Any], authority).get("resource_claims"))
             )
     return claims
 
@@ -827,7 +835,7 @@ def _resource_claim_escalation_reason(
     if existing_rank is None:
         return None
 
-    for claim in _resource_claim_dicts(op.get("resource_claims")):
+    for claim in resource_claim_dicts(op.get("resource_claims")):
         mode = claim.get("mode")
         requested_rank = MODE_RANK.get(mode) if isinstance(mode, str) else None
         if requested_rank is not None and requested_rank > existing_rank:
@@ -836,34 +844,22 @@ def _resource_claim_escalation_reason(
 
 
 def _existing_resource_claim_rank(projection: GraphProjection, node_id: str) -> int | None:
-    projection_data = cast(dict[str, Any], projection)
-    candidate_sources = (
-        projection_data.get("resource_claims"),
-        projection_data.get("node_resource_claims"),
-    )
-    for source in candidate_sources:
-        if not isinstance(source, dict):
-            continue
-        typed_source = cast(dict[str, Any], source)
-        raw_claims = typed_source.get(node_id)
-        ranks = [
-            rank
-            for claim in _resource_claim_dicts(raw_claims)
-            if isinstance(claim.get("mode"), str)
-            for rank in [MODE_RANK.get(claim["mode"])]
-            if rank is not None
-        ]
-        if ranks:
-            return max(ranks)
-    return None
+    ranks = [
+        rank
+        for claim in resource_claim_dicts(resource_claims_for_node(projection, node_id))
+        if isinstance(claim.get("mode"), str)
+        for rank in [MODE_RANK.get(claim["mode"])]
+        if rank is not None
+    ]
+    return max(ranks) if ranks else None
 
 
-def _resource_claim_dicts(raw_claims: Any) -> list[dict[str, Any]]:
-    if not isinstance(raw_claims, list):
+def resource_claim_dicts(raw_claims: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_claims, Sequence):
         return []
 
     claims: list[dict[str, Any]] = []
-    for claim in cast(list[Any], raw_claims):
+    for claim in cast(Sequence[Any], raw_claims):
         if isinstance(claim, dict):
             claims.append(cast(dict[str, Any], claim))
         else:

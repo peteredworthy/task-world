@@ -5,6 +5,12 @@ from typing import Any, cast
 
 from orchestrator.graph.models import EventEnvelope, LeaseProjection
 from orchestrator.graph.projections import GraphProjection
+from orchestrator.graph.projection_queries import (
+    callback_idempotency_events_view,
+    leases_view,
+    node_states_view,
+    run_state as query_run_state,
+)
 
 
 @dataclass(frozen=True)
@@ -66,7 +72,7 @@ def validate_callback(
     if idempotency_result is not None:
         return idempotency_result
 
-    lease = projection["leases"].get(request.lease_id)
+    lease = leases_view(projection).get(request.lease_id)
     if lease is None:
         return _rejected_stale("unknown lease")
 
@@ -94,7 +100,7 @@ def validate_callback(
     if lease_state == "released":
         return _rejected_stale("lease released, use idempotency key")
 
-    run_state = projection["run_state"]
+    run_state = query_run_state(projection)
     if run_state in _TERMINAL_RUN_STATES:
         return _rejected_stale(f"run {run_state}")
 
@@ -109,7 +115,7 @@ def validate_callback(
             return expired_result
         accepting_late_expired_lease = True
 
-    node_state = projection["node_states"].get(request.node_id)
+    node_state = node_states_view(projection).get(request.node_id)
     if (
         request.is_mutating
         and node_state in _TERMINAL_NODE_STATES
@@ -138,7 +144,7 @@ def _validate_expired_lease_callback(
         return _rejected_stale("lease expired and redispatched")
     if not _lease_expiry_recorded(events, request.lease_id, request.node_id):
         return _rejected_stale("lease expired")
-    node_state = projection["node_states"].get(request.node_id)
+    node_state = node_states_view(projection).get(request.node_id)
     if node_state == "running" or _latest_node_failure_is_lease_expiry(events, request.node_id):
         return CallbackValidationResult(
             outcome=CallbackOutcome.ACCEPTED,
@@ -152,7 +158,7 @@ def _has_replacement_active_lease(
     request_lease_id: str,
     node_id: str,
 ) -> bool:
-    for lease_id, lease in projection["leases"].items():
+    for lease_id, lease in leases_view(projection).items():
         if lease_id == request_lease_id:
             continue
         if lease.node_id != node_id:
@@ -196,7 +202,7 @@ def _validate_idempotency(
     events: list[EventEnvelope],
 ) -> CallbackValidationResult | None:
     if not _has_full_event_history(events):
-        projected = projection.get("callback_idempotency_events", {}).get(
+        projected = callback_idempotency_events_view(projection).get(
             _callback_idempotency_projection_key(request.node_id, request.idempotency_key)
         )
         if projected is not None and projected.event_type == "callback_accepted":

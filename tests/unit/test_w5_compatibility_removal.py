@@ -3,7 +3,12 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from orchestrator.graph import GraphPatchAcceptedPayload, NodeStateChangedPayload, build_projection
+from orchestrator.graph import (
+    accepted_output_records_by_node_port_view,
+    GraphPatchAcceptedPayload,
+    NodeStateChangedPayload,
+    build_projection,
+)
 from orchestrator.graph import (
     EdgeProjection,
     InputBindingProjection,
@@ -46,45 +51,43 @@ def test_historical_compatibility_symbols_are_absent() -> None:
         assert symbol not in source
 
 
-def test_output_replay_requires_exact_record_type_discriminator() -> None:
-    projection = build_projection(
-        [
-            event(
-                "output_record_accepted",
-                {
-                    "record_id": "summary-1",
-                    "record_kind": "output",
-                    "producer_node_id": "summarizer-1",
-                    "port": "opaque_summary",
-                    "schema": "OpaqueSummary",
-                    "value": {"summary": "missing discriminator"},
-                },
-            )
-        ]
-    )
-
-    assert projection["accepted_output_records_by_node_port"] == {}
+def test_output_replay_rejects_missing_record_type_discriminator() -> None:
+    with pytest.raises(ValidationError):
+        build_projection(
+            [
+                event(
+                    "output_record_accepted",
+                    {
+                        "record_id": "summary-1",
+                        "record_kind": "output",
+                        "producer_node_id": "summarizer-1",
+                        "port": "opaque_summary",
+                        "schema": "OpaqueSummary",
+                        "value": {"summary": "missing discriminator"},
+                    },
+                )
+            ]
+        )
 
 
 def test_output_replay_rejects_unknown_nonempty_discriminator() -> None:
-    projection = build_projection(
-        [
-            event(
-                "output_record_accepted",
-                {
-                    "record_id": "future-1",
-                    "record_kind": "output",
-                    "record_type": "future_record",
-                    "producer_node_id": "worker-1",
-                    "port": "future_output",
-                    "schema": "FutureRecord",
-                    "value": {"body": "unsupported"},
-                },
-            )
-        ]
-    )
-
-    assert projection["accepted_output_records_by_node_port"] == {}
+    with pytest.raises(ValidationError):
+        build_projection(
+            [
+                event(
+                    "output_record_accepted",
+                    {
+                        "record_id": "future-1",
+                        "record_kind": "output",
+                        "record_type": "future_record",
+                        "producer_node_id": "worker-1",
+                        "port": "future_output",
+                        "schema": "FutureRecord",
+                        "value": {"body": "unsupported"},
+                    },
+                )
+            ]
+        )
 
 
 @pytest.mark.parametrize("record_type", ["fan_out_inputs"])
@@ -106,7 +109,7 @@ def test_output_replay_accepts_each_explicit_generic_discriminator(record_type: 
         ]
     )
 
-    records = projection["accepted_output_records_by_node_port"]
+    records = accepted_output_records_by_node_port_view(projection)
     assert records["fanout-reader-1"]["reader_output"][0]["record_id"] == "fan-out-1"
 
 
@@ -163,7 +166,7 @@ def test_named_dynamic_node_created_fields_remain_open() -> None:
 
 
 @pytest.mark.parametrize("nested_key", ["value", "grade"])
-def test_verification_record_rejects_unknown_nested_fields(nested_key: str) -> None:
+def test_verification_replay_rejects_unknown_nested_fields(nested_key: str) -> None:
     grade: dict[str, object] = {"requirement_id": "R-1", "grade": "A"}
     value: dict[str, object] = {
         "outcome": "passed",
@@ -173,23 +176,22 @@ def test_verification_record_rejects_unknown_nested_fields(nested_key: str) -> N
         value["future"] = True
     else:
         grade["future"] = True
-    projection = build_projection(
-        [
-            event(
-                "output_record_accepted",
-                {
-                    "record_id": "verification-1",
-                    "record_kind": "verification",
-                    "record_type": "verification_report",
-                    "producer_node_id": "verifier-1",
-                    "port": "verification_report",
-                    "schema": "VerificationReport",
-                    "candidate_id": "candidate-1",
-                    "outcome": "passed",
-                    "value": value,
-                },
-            )
-        ]
-    )
-
-    assert projection["accepted_output_records_by_node_port"] == {}
+    with pytest.raises(ValidationError):
+        build_projection(
+            [
+                event(
+                    "output_record_accepted",
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "record_type": "verification_report",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "outcome": "passed",
+                        "value": value,
+                    },
+                )
+            ]
+        )

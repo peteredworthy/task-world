@@ -7,9 +7,9 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     FakeClock,
+    build_projection,
     project_lease_view,
     project_scheduler_view,
-    projection_from_checkpoint,
 )
 
 
@@ -148,16 +148,7 @@ def test_lease_view_reports_active_and_suspended() -> None:
 
 def test_projection_lease_view_filters_partial_leases_like_event_replay() -> None:
     events = [_event("lease_suspended", {"lease_id": "lease-suspended-without-grant"}, 1)]
-    projection = projection_from_checkpoint(
-        {
-            "leases": {
-                "lease-suspended-without-grant": {
-                    "lease_id": "lease-suspended-without-grant",
-                    "state": "suspended",
-                }
-            }
-        }
-    )
+    projection = build_projection(events)
 
     expected = {"active": [], "suspended": []}
 

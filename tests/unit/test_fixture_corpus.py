@@ -8,12 +8,17 @@ import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
-from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
-from orchestrator.graph.command_models import GraphCommandContext, PatchCommandContext
-from orchestrator.graph.models import EventEnvelope
-from orchestrator.graph.projections import build_projection, projection_to_checkpoint
-from orchestrator.graph.scenario import run_scenario
-from orchestrator.graph.store import InMemoryEventStore
+from orchestrator.graph import FakeClock, SequentialIdGenerator
+from orchestrator.graph import GraphCommandContext, PatchCommandContext
+from orchestrator.graph import EventEnvelope
+from orchestrator.graph import (
+    build_projection,
+    projection_from_checkpoint,
+    projection_to_checkpoint,
+    reduce_event,
+)
+from orchestrator.graph import run_scenario
+from orchestrator.graph import InMemoryEventStore
 from orchestrator.graph_runtime.store import GraphEventStore, graph_aggregate_id
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
@@ -103,6 +108,29 @@ def test_pure_projection_fixtures_do_not_echo_events() -> None:
         assert not scenario.get("then_events"), (
             f"{path.name}::{scenario['name']} has echo-style then_events"
         )
+
+
+def test_every_fixture_stream_matches_incremental_and_checkpointed_replay_at_every_split() -> None:
+    for path, scenario in _all_scenarios():
+        result = run_scenario(
+            scenario,
+            _command_context(scenario),
+            InMemoryEventStore(),
+            FakeClock(),
+            SequentialIdGenerator(),
+        )
+        assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
+        events = result.events_produced
+        full = build_projection(events)
+        for split in range(len(events) + 1):
+            prefix = build_projection(events[:split])
+            incremental = prefix
+            checkpointed = projection_from_checkpoint(projection_to_checkpoint(prefix))
+            for event in events[split:]:
+                incremental = reduce_event(incremental, event)
+                checkpointed = reduce_event(checkpointed, event)
+            assert incremental == full, f"{path.name}::{scenario['name']} split {split}"
+            assert checkpointed == full, f"{path.name}::{scenario['name']} split {split}"
 
 
 @pytest.mark.asyncio

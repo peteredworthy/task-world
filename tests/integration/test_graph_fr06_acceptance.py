@@ -483,6 +483,7 @@ def _candidate(record_id: str, summary: str) -> dict[str, Any]:
         "producer_node_id": "worker-1",
         "port": "candidate",
         "schema": "ImplementationCandidate",
+        "task_region_id": "task-fr06",
         "value": {"summary": summary},
     }
 

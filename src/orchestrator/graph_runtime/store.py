@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, cast
 
+from pydantic import ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,14 +25,23 @@ from orchestrator.db import (
     resolve_default_journal_path_from_session,
 )
 from orchestrator.graph import (
+    node_states_view,
+    ready_nodes_view,
+    task_states_view,
+    run_state as query_run_state,
     Actor,
     ActorKind,
+    checkpoint_schema_is_current,
     EventEnvelope,
+    EVENT_PAYLOAD_SPECS,
     GraphProjection,
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
     LIGHT_GRAPH_PAYLOAD_FIELDS,
     NODE_DETAIL_PAYLOAD_FIELDS,
     PROJECTION_SCHEMA_VERSION,
+    ProjectionCheckpointCodecError,
+    ProjectionCheckpointIntegrityError,
+    RetentionMode,
     NodeUsageRecordedPayload,
     SUMMARY_REBUILD_PAYLOAD_FIELDS,
     initial_projection,
@@ -448,6 +458,7 @@ class GraphEventStore:
             run_id,
             from_position,
             LIGHT_GRAPH_PAYLOAD_FIELDS,
+            "light",
         )
 
     async def read_run_summary_rebuild(
@@ -460,6 +471,7 @@ class GraphEventStore:
             run_id,
             from_position,
             SUMMARY_REBUILD_PAYLOAD_FIELDS,
+            "summary",
             include_nested_value_fallbacks=False,
         )
 
@@ -473,6 +485,7 @@ class GraphEventStore:
             run_id,
             from_position,
             GRAPH_PROJECTION_PAYLOAD_FIELDS,
+            "projection",
             include_nested_value_fallbacks=False,
         )
 
@@ -486,6 +499,7 @@ class GraphEventStore:
             run_id,
             from_position,
             NODE_DETAIL_PAYLOAD_FIELDS,
+            "node_detail",
         )
 
     async def _read_run_extracting_fields(
@@ -493,11 +507,20 @@ class GraphEventStore:
         run_id: str,
         from_position: int,
         fields: tuple[str, ...],
+        retention_mode: RetentionMode,
         *,
         include_nested_value_fallbacks: bool = True,
     ) -> list[EventEnvelope]:
         payload_selects = [
-            func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
+            func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(
+                f"__payload_{field}"
+            )
+            for field in fields
+        ]
+        payload_type_selects = [
+            func.json_type(EventV2Model.payload, f"$.payload.{field}").label(
+                f"__payload_type_{field}"
+            )
             for field in fields
         ]
         nested_payload_selects = [
@@ -529,6 +552,7 @@ class GraphEventStore:
                 func.json_extract(EventV2Model.payload, "$.causation_id").label("causation_id"),
                 func.json_extract(EventV2Model.payload, "$.correlation_id").label("correlation_id"),
                 *payload_selects,
+                *payload_type_selects,
                 *nested_payload_selects,
             )
             .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
@@ -538,10 +562,16 @@ class GraphEventStore:
 
         events: list[EventEnvelope] = []
         for row in result.mappings():
+            event_type = str(row["event_type"])
+            retained_fields = getattr(EVENT_PAYLOAD_SPECS[event_type], retention_mode)
             payload = {
-                field: _json_extract_payload_value(field, row[field])
-                for field in fields
-                if row.get(field) is not None
+                field: _json_extract_payload_value(field, row[f"__payload_{field}"])
+                for field in retained_fields
+                if row.get(f"__payload_{field}") is not None
+                or (
+                    row.get(f"__payload_type_{field}") == "null"
+                    and EVENT_PAYLOAD_SPECS[event_type].model.model_fields[field].is_required()
+                )
             }
             if (
                 include_nested_value_fallbacks
@@ -592,7 +622,7 @@ class GraphEventStore:
                     event_id=str(row.get("event_id") or f"graph-event-{row['version']}"),
                     run_id=run_id,
                     position=int(row["version"]),
-                    event_type=str(row["event_type"]),
+                    event_type=event_type,
                     schema_version=1,
                     actor=Actor(kind=ActorKind.CONTROLLER),
                     causation_id=(
@@ -673,9 +703,16 @@ class GraphEventStore:
         """Read a valid full-projection checkpoint without forcing a rebuild."""
         row = await self._session.get(GraphProjectionSnapshotModel, run_id)
         schema_version = _projection_schema_version_from_snapshot_row(row)
-        if row is None or schema_version != PROJECTION_SCHEMA_VERSION:
+        if row is None or not checkpoint_schema_is_current(schema_version):
             return None
-        projection = _projection_from_snapshot_row(row)
+        try:
+            projection = _projection_from_snapshot_row(row)
+        except (
+            ValidationError,
+            ProjectionCheckpointCodecError,
+            ProjectionCheckpointIntegrityError,
+        ):
+            return None
         if projection is None:
             return None
         return GraphProjectionCheckpoint(
@@ -745,12 +782,23 @@ class GraphEventStore:
             if snapshot is not None:
                 await self.delete_read_models(run_id)
             return
-        if (
+        rebuild_required = (
             snapshot is None
             or snapshot.position != current
-            or _projection_schema_version_from_snapshot_row(snapshot) != PROJECTION_SCHEMA_VERSION
-            or _projection_from_snapshot_row(snapshot) is None
-        ):
+            or not checkpoint_schema_is_current(
+                _projection_schema_version_from_snapshot_row(snapshot)
+            )
+        )
+        if not rebuild_required:
+            try:
+                rebuild_required = _projection_from_snapshot_row(snapshot) is None
+            except (
+                ValidationError,
+                ProjectionCheckpointCodecError,
+                ProjectionCheckpointIntegrityError,
+            ):
+                rebuild_required = True
+        if rebuild_required:
             await self.rebuild_read_models(run_id)
 
     async def ensure_node_detail_summaries(self, run_id: str) -> None:
@@ -853,22 +901,38 @@ class GraphEventStore:
         if not events:
             return
         row = await self._session.get(GraphProjectionSnapshotModel, run_id)
-        projection = _projection_from_snapshot_row(row)
-        if row is None and expected_position == 0:
-            projection = initial_projection()
-        elif (
-            row is None
-            or row.position != expected_position
-            or _projection_schema_version_from_snapshot_row(row) != PROJECTION_SCHEMA_VERSION
-            or projection is None
-        ):
-            await self._session.execute(
-                delete(GraphProjectionSnapshotModel).where(
-                    GraphProjectionSnapshotModel.run_id == run_id
+        projection: GraphProjection | None = (
+            initial_projection() if row is None and expected_position == 0 else None
+        )
+        if projection is None:
+            invalid_cache = (
+                row is None
+                or row.position != expected_position
+                or not checkpoint_schema_is_current(
+                    _projection_schema_version_from_snapshot_row(row)
                 )
             )
-            await self._session.flush()
-            return
+            if not invalid_cache:
+                try:
+                    projection = _projection_from_snapshot_row(row)
+                except (
+                    ValidationError,
+                    ProjectionCheckpointCodecError,
+                    ProjectionCheckpointIntegrityError,
+                ):
+                    invalid_cache = True
+            if not invalid_cache:
+                invalid_cache = projection is None
+            if not invalid_cache:
+                assert projection is not None
+            else:
+                await self._session.execute(
+                    delete(GraphProjectionSnapshotModel).where(
+                        GraphProjectionSnapshotModel.run_id == run_id
+                    )
+                )
+                await self._session.flush()
+                return
         for event in events:
             projection = reduce_event(projection, event)
         await self.persist_projection_snapshot(
@@ -1272,11 +1336,11 @@ def _assign_projection_snapshot(
 ) -> None:
     row.run_id = run_id
     row.position = position
-    row.run_state = projection["run_state"]
-    row.node_states = dict(projection["node_states"])
-    row.task_states = dict(projection["task_states"])
+    row.run_state = query_run_state(projection)
+    row.node_states = dict(node_states_view(projection))
+    row.task_states = dict(task_states_view(projection))
     row.leases = project_leases([], projection=projection)
-    row.ready_nodes = list(projection["ready_nodes"])
+    row.ready_nodes = list(ready_nodes_view(projection))
     row.scheduler = dict(project_scheduler_view([], projection=projection))
     row.lease_view = dict(project_lease_view([], projection=projection))
     if events is None:
@@ -1327,7 +1391,7 @@ def _decisions_with_projection_checkpoint(
         **decisions,
         _CHECKPOINT_SCHEMA_VERSION_KEY: PROJECTION_SCHEMA_VERSION,
         _CHECKPOINT_PROJECTION_KEY: projection_to_checkpoint(projection),
-        _CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),
+        _CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(query_run_state(projection)),
     }
 
 
@@ -1672,9 +1736,8 @@ def _is_callback_history_event(event: EventEnvelope) -> bool:
 
 
 def _node_detail_light_event(event: EventEnvelope) -> EventEnvelope:
-    payload = {
-        key: value for key, value in event.payload.items() if key in NODE_DETAIL_PAYLOAD_FIELDS
-    }
+    retained_fields = EVENT_PAYLOAD_SPECS[event.event_type].node_detail
+    payload = {key: value for key, value in event.payload.items() if key in retained_fields}
     value = event.payload.get("value")
     if _is_verification_report_payload(event.payload) and isinstance(value, dict):
         typed_value = cast(dict[str, Any], value)

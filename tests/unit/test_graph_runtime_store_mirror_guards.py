@@ -30,7 +30,7 @@ import typing
 
 from pydantic import BaseModel, RootModel
 
-import orchestrator.graph.models as graph_models
+import orchestrator.graph as graph_models
 from orchestrator.graph import (
     AuthorityDecisionValue,
     AuthorityRequestValue,

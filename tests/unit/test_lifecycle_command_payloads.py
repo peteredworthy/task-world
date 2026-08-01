@@ -7,12 +7,12 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.graph import Actor, ActorKind
-from orchestrator.graph.command_models import (
+from orchestrator.graph import (
     CompleteCommand,
     GraphCommandContext,
     RecordHeartbeatCommand,
 )
-from orchestrator.graph.commands import COMMAND_SPECS
+from orchestrator.graph import COMMAND_SPECS
 
 
 EXPECTED_COMMANDS = {

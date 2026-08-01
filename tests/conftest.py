@@ -124,7 +124,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--run-slow",
         action="store_true",
         default=False,
-        help="Run tests marked @pytest.mark.slow (real LLM agents, costs money)",
+        help="Run tests marked @pytest.mark.slow (external tools or deterministic repository-wide analyses)",
     )
     parser.addoption(
         "--run-e2e",

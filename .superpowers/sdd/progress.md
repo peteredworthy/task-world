@@ -33,3 +33,47 @@ Task 15 findings 2/3 remediation: complete (typed action transition variants, ex
 Task 16: complete (deterministic blocker-first review projection and non-promoting feedback import; isolated review-tool coverage passed).
 Task 17: complete (offline Phase 3 reality/capability checkpoint, generated review index, and local feedback controls; review-tool and E2E coverage passed).
 Task 18: complete-blocked (final Phase 3 publication; one final child snapshot hashes the validator and foundation integration test and declares generated status manifests; human settlement remains required for Q-5, Q-4, Q-1, Q-2, and Q-3).
+
+## Plan: 2026-07-26-immutable-graph-projection.md
+Workspace: `worktrees/immutable-graph-projection`
+Baseline: 4851 passed, 3 skipped, 3 pre-existing aiosqlite warnings.
+Task 1a: complete (commits cff9e1c69..f3e1e3108, review clean).
+Task 1b: complete (collector review fixes, focused suite 24 passed; full suite 4876 passed, 3 skipped).
+Task 1c: complete (provenance analysis and deterministic diagnostic artifact reviewed clean).
+Task 2: complete (commits f167e800b..4048e5f2c, replay/public behavior goldens and independent FR17 parity reviewed clean).
+Task 3a: complete (commits 5bd12d499..f4e28df92, strict migration lifecycle and exact dispositions reviewed clean).
+Task 3b: complete (commits d3c67902d..19d1cc2c5, node/task/topology/binding/lease query domains reviewed clean).
+Task 3c: complete (commits 7be43203e..dffe7eb50, remaining production query domains reviewed clean; deferred inventory exactly 151 verification_recovery and 349 test_fixture at that revision).
+Task 3d: complete (commits cb7969aca..b34f065c7, all 151 verification_recovery sites closed; independent review approved).
+Task 3e1: complete (commits 747aa7af2..9bf79d973, inventory-driven operation stream/CST anchoring/structural grouping; independent review approved).
+Task 3e2b1: complete (commits d0ed226bb..fbe7f3ce5, fail-closed reviewed/deferred/pending planning boundary over all 803 current sites; independent review approved).
+Task 3e2b2a: complete (commits 94d098388..33fea5f8b, collector-owned exact call/physical evidence and compiler mismatch matrices; independent evidence review approved).
+Task 3e2b2: complete (commits 8d4e4ec0f..53ab48a4c, finite neutral/core/generated-fixture structural planning with exact 803-site closure; independent policy review approved).
+Task test-speed: complete (commits da1b43f68..a7c545a70, default suite 94.72s and explicit migration gate 115.18s; independent review approved).
+Task 3e2c1a: complete (commits da077bea1..8016d2714, shared source reanchoring and 187 nonoverlapping composition actions covering all 201 reviewed transform IDs; independent review approved).
+Task 3e2c1b: complete (203 exact recipes removed 226 physical read IDs across 11 consumer files; zero non-core/non-fixture physical reads, zero pending/query transforms; independent review approved and migration gate 11/11 passed).
+Task 3e2 fixture migration: complete (100 fixture reads and 71 fixture mutations mechanically migrated; 410+ neutral fixture flows structurally classified; zero physical fixture reads/mutations, handoffs, pending sites, or persisted deferred identities; independent review approved).
+Task 3e whole-tree migration contract: complete (commits 9c8c75364..5ddb28da8, historical/current sites closed; independent review approved).
+Task 3f boundary provenance/performance and closure: complete (commits 1c2be7963..359983dde, exact boundary evidence, fast guards, zero violations, no migration count edit traps; all review waves approved).
+
+## Session execution constraints
+
+- Tests assert observable contracts and failure behavior, not implementation helpers, generated counts, validator recomputations, or internal layout.
+- Implementer subagents run only bounded focused tests; the controller runs long gates once per final change set.
+- Repeated checks must have practical measured cycle time and regression coverage.
+
+Task 4 immutable collections: complete (commit 8aeedcdc0; independent review approved; thaw-result isolation follow-up implemented).
+Task 5 grouped immutable models and projected records: complete (commits 5afb395ab..d07263d68; all bounded review gates approved).
+Task 6 strict codec and integrity: complete (commits 0ab18ac3e..af6b56466; 358 focused tests in 4.82s; all review gates approved).
+Task 7 performance baselines and gates: complete (commits 69028f082..fc1b0dcd9; strict cross-cutover protocol/gates, fast 9.17s test loop, independently approved adaptive 7/3/1 sample schedule, and approved 10k pre-cutover baseline artifact).
+Task 8 immutable GraphProjection cutover: complete (fresh whole-task review approved; full suite 5700 passed and 3 skipped; 936-site generated migration closure with zero unresolved diagnostics; Ruff, format, Pyright, goldens, inventory, boundary, and module-import checks passed). The final uniform 2-warmup/7-run benchmark passed with no hard violations and visible scaling diagnostics in `/Users/peter/.local/share/opencode/tool-output/tool_fb9ba8a580012TpvIn420sfYW3`.
+
+## Plan: 2026-07-31-immutable-graph-projection-closure.md
+Workspace: `worktrees/immutable-graph-projection`
+Baseline: 5748 passed, 3 skipped; design and executable plan committed at 1588894c2.
+Task 1: complete (commits 1588894c2..2df8c3e44, review approved).
+Task 2: complete (commits 2df8c3e44..17caa2a28, review approved; final-review minors recorded in task report).
+Task 3: complete (commits 17caa2a28..b63b5ceb0, review approved; final-review minor: derive frozen query parameterization directly from matrix metadata).
+Task 4: complete (commits a05e081b3..b87845e05, permanent AST provenance guard review approved with no findings).
+Task 5: complete (commits f4ebeae3f..d1d7b7a8e, direct 10,000-event gate and semantic fast path review approved with no findings).
+Task 6: complete (commits 8027a275e..589a60a23, retirement review approved; final-review minors: narrow broad `inventory` substring guard and consider copyable focused paths in AGENTS guidance).

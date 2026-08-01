@@ -216,6 +216,15 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         "summarizer-1": summarizer["prompt_summary"],
         "gap-planner-1": gap_planner["prompt_summary"],
     }
+    verification_report = next(
+        event["payload"]
+        for event in gap_events
+        if event["event_type"] == "output_record_accepted"
+        and event["payload"]["record_id"] == "verification-source"
+    )
+    assert verification_report["value"]["grades"] == [
+        {"requirement_id": "fr09-verification-requirement", "grade": "A"}
+    ]
     assert (
         summarizer["callback_history"][0]["payload"]["prompt_summary"]
         == summarizer["prompt_summary"]
@@ -395,6 +404,32 @@ async def _seed_fr09_base_events(
                 ),
                 _event(
                     run_id,
+                    "node_created",
+                    {
+                        "node_id": "requirement-fr09-verification",
+                        "kind": "requirement",
+                        "state": "completed",
+                    },
+                ),
+                _event(
+                    run_id,
+                    "output_record_accepted",
+                    {
+                        "record_id": "requirement-fr09-verification",
+                        "record_kind": "graph_record",
+                        "record_type": "requirement_record",
+                        "producer_node_id": "requirement-fr09-verification",
+                        "port": "requirement",
+                        "schema": "RequirementRecord",
+                        "value": {
+                            "id": "fr09-verification-requirement",
+                            "text": "FR-09 verification evidence is complete.",
+                            "source": "routine",
+                        },
+                    },
+                ),
+                _event(
+                    run_id,
                     "output_record_accepted",
                     {
                         "record_id": "candidate-source",
@@ -404,6 +439,7 @@ async def _seed_fr09_base_events(
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
                         "candidate_id": "candidate-source",
+                        "task_region_id": "task-fr09",
                         "value": {"summary": "candidate for summarizer"},
                     },
                 ),
@@ -418,8 +454,17 @@ async def _seed_fr09_base_events(
                         "port": "verification_report",
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-source",
+                        "task_region_id": "task-fr09",
                         "outcome": "failed",
-                        "value": {"outcome": "failed", "grades": []},
+                        "value": {
+                            "outcome": "failed",
+                            "grades": [
+                                {
+                                    "requirement_id": "fr09-verification-requirement",
+                                    "grade": "A",
+                                }
+                            ],
+                        },
                     },
                 ),
             ],

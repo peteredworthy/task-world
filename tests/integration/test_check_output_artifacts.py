@@ -196,13 +196,25 @@ async def _run_check(
         _event(
             run_id,
             7,
+            "edge_created",
+            {
+                "edge_id": "edge-verification-check",
+                "from_node_id": "verifier-1",
+                "from_port": "verification_report",
+                "to_node_id": "check-1",
+                "to_port": "verification_evidence",
+            },
+        ),
+        _event(
+            run_id,
+            8,
             "input_bound",
             {
                 "edge_id": "edge-verification-check",
                 "to_node_id": "check-1",
                 "to_port": "verification_evidence",
                 "record_ids": ["verification-1"],
-                "bound_at_position": 7,
+                "bound_at_position": 8,
             },
         ),
     ]

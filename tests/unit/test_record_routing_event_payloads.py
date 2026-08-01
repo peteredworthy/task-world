@@ -86,7 +86,7 @@ def test_verification_event_model_rejects_contradictory_nested_outcome(
     ("event_type", "outcome"),
     [("verification_passed", "failed"), ("verification_failed", "passed")],
 )
-def test_verification_replay_ignores_contradictory_outcome(
+def test_verification_replay_rejects_contradictory_outcome(
     event_type: str,
     outcome: str,
 ) -> None:
@@ -108,11 +108,8 @@ def test_verification_replay_ignores_contradictory_outcome(
         },
     )
 
-    projection = reduce_event(initial_projection(), event)
-
-    assert projection["verifier_verdicts"] == {}
-    assert projection["passed_verification_candidate_ids"] == []
-    assert projection["failed_verification_candidate_ids"] == {}
+    with pytest.raises(ValidationError):
+        reduce_event(initial_projection(), event)
 
 
 def test_sparse_input_bound_serialization_preserves_explicit_empty_fields() -> None:

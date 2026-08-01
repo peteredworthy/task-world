@@ -14,6 +14,7 @@ from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    file_state_records_view,
     GatekeeperTaxonomy,
     initial_projection,
     project_gatekeeper_report,
@@ -395,8 +396,8 @@ async def test_gatekeeper_secret_verdict_scrubs_compromised_snapshot(
     projection = initial_projection()
     for event in events:
         projection = reduce_event(projection, event)
-    original_record = projection["file_state_records"][original.payload["record_id"]]
-    superseding_record = projection["file_state_records"][superseding.payload["record_id"]]
+    original_record = file_state_records_view(projection)[original.payload["record_id"]]
+    superseding_record = file_state_records_view(projection)[superseding.payload["record_id"]]
     assert original_record.compromised is True
     assert original_record.superseded_pending is False
     assert original_record.superseded_by_record_id == superseding.payload["record_id"]

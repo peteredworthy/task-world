@@ -11,6 +11,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     compile_routine,
     initial_projection,
+    node_kind,
     project_planner_chain,
     reduce_event,
 )
@@ -22,7 +23,7 @@ def test_parent_child_routine_compiles_to_planner_chain() -> None:
     projection = _project(events)
     planner = _node_event(events, "planner-parent")
 
-    assert projection["node_kinds"]["planner-parent"] == "planner"
+    assert node_kind(projection, "planner-parent") == "planner"
     assert planner.payload["planner_chain"] == {
         "source": "legacy_parent_child",
         "regions": [
@@ -74,9 +75,11 @@ def test_child_order_is_chain_order() -> None:
         if event.event_type == "node_deferred"
         and event.payload.get("node_id") == "planner-child-two"
     ]
-    assert all(
-        payload["reason"] == "missing_required_input:region_summary" for payload in child_deferrals
-    )
+    assert len(child_deferrals) == 1
+    assert child_deferrals[0]["reason"] in {
+        "missing_required_input:accepted_file_state",
+        "missing_required_input:region_summary",
+    }
 
     events = _drive_region_to_accepted(events, "one")
     scheduled = _apply(
@@ -179,6 +182,31 @@ def _compile_active_parent_child() -> list[EventEnvelope]:
     return [
         *_with_positions([_event("run_lifecycle_changed", {"to_state": "active"})]),
         *[event.model_copy(update={"position": event.position + 1}) for event in events],
+        *_with_positions(
+            [
+                _event(
+                    "node_created",
+                    {"node_id": "requirement-R-1", "kind": "requirement", "state": "completed"},
+                ),
+                _event(
+                    "output_record_accepted",
+                    {
+                        "record_id": "requirement-R-1",
+                        "record_kind": "graph_record",
+                        "record_type": "requirement_record",
+                        "producer_node_id": "requirement-R-1",
+                        "port": "requirement",
+                        "schema": "RequirementRecord",
+                        "value": {
+                            "id": "R-1",
+                            "text": "Parent-child translation requirement",
+                            "source": "routine",
+                        },
+                    },
+                ),
+            ],
+            start=len(events) + 2,
+        ),
     ]
 
 
@@ -499,9 +527,10 @@ def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
     )
 
 
-def _with_positions(events: list[EventEnvelope]) -> list[EventEnvelope]:
+def _with_positions(events: list[EventEnvelope], *, start: int = 1) -> list[EventEnvelope]:
     return [
-        event.model_copy(update={"position": index}) for index, event in enumerate(events, start=1)
+        event.model_copy(update={"position": index})
+        for index, event in enumerate(events, start=start)
     ]
 
 

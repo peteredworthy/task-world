@@ -2,6 +2,8 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.graph import (
+    node_allowed_actions_view,
+    node_preconditions_view,
     FakeClock,
     NodeAuthorityChangedPayload,
     NodeStateChangedPayload,
@@ -43,17 +45,21 @@ def test_authority_reducer_reads_direct_fields() -> None:
     projection = build_projection(
         [
             event(
+                "node_created",
+                {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+            ),
+            event(
                 "node_authority_changed",
                 {
                     "node_id": "worker-1",
                     "allowed_actions": ["submit_output"],
                     "preconditions": ["inputs_bound"],
                 },
-            )
+            ),
         ]
     )
-    assert projection["node_allowed_actions"]["worker-1"] == ["submit_output"]
-    assert projection["node_preconditions"]["worker-1"] == ["inputs_bound"]
+    assert node_allowed_actions_view(projection)["worker-1"] == ["submit_output"]
+    assert node_preconditions_view(projection)["worker-1"] == ["inputs_bound"]
     assert NodeAuthorityChangedPayload.model_validate({"node_id": "worker-1"}).node_id == "worker-1"
 
 

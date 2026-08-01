@@ -108,6 +108,7 @@ __all__ = [
     "build_final_invariant_blockers_response",
     "build_graph_regions_response",
     "build_graph_topology_response",
+    "build_scheduler_view_response",
     "get_codex_models_fn",
     "get_artifact_store_resolver",
     "get_artifact_garbage_collector",
@@ -146,6 +147,7 @@ _GRAPH_ROUTER_SYMBOLS = {
     "build_graph_projection_response",
     "build_graph_regions_response",
     "build_graph_topology_response",
+    "build_scheduler_view_response",
     "build_scheduler_view_response_from_snapshot",
     "build_node_detail_response",
     "build_node_detail_response_from_summary",
@@ -194,6 +196,12 @@ def build_graph_topology_response(*args: Any, **kwargs: Any) -> Any:
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
     return _graph_router.build_graph_topology_response(*args, **kwargs)
+
+
+def build_scheduler_view_response(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.build_scheduler_view_response(*args, **kwargs)
 
 
 def is_clarification_pause_reason(*args: Any, **kwargs: Any) -> Any:

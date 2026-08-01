@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from orchestrator.graph import (
     PLANNER_OPS,
     Actor,
@@ -266,7 +268,13 @@ def _graph_events() -> list[EventEnvelope]:
                 "producer_node_id": "worker-1",
                 "port": "region_summary",
                 "schema": "RegionSummary",
-                "value": {"text": "region-1 summary"},
+                "record_type": "analysis_summary",
+                "value": {
+                    "summary": "region-1 summary",
+                    "source_record_ids": ["file-state-1"],
+                    "lossy": False,
+                    "omitted_details": [],
+                },
             },
             13,
         ),
@@ -362,12 +370,17 @@ def test_planner_packet_includes_generation_frontier_evidence_and_rejections() -
     assert packet["evidence"]["session_carryover_record_id"] == "carryover-1"
     failures = packet["evidence"]["outstanding_failures"]
     assert len(failures) == 1
-    assert failures[0]["position"] == 14
-    assert failures[0]["classification"] == "tool_error"
-    assert failures[0]["reason"] == "check tool error while running: check command"
-    assert failures[0]["node_id"] == "worker-1"
-    assert failures[0]["task_region_id"] == "region-1"
-    assert failures[0]["record_kind"] == "output"
+    assert failures[0] == {
+        "position": 14,
+        "node_id": "worker-1",
+        "classification": "tool_error",
+        "reason": "check tool error while running: check command",
+        "task_region_id": "region-1",
+        "record_id": "check-region-1",
+        "command_text": "check command",
+        "stderr_tail": "",
+        "exit_code": None,
+    }
     assert packet["open_planner_proposals"] == []
     assert packet["accepted_planner_patches"] == [
         {
@@ -468,7 +481,7 @@ def test_planner_packet_includes_requirement_freshness_facts() -> None:
     }
 
 
-def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance() -> None:
+def test_planner_packet_deterministic_ordering_and_projection_neutral_event_tolerance() -> None:
     base_events = _graph_events()
     base_context = _planner_context(base_events)
     base_packet = _planner_packet(base_context)
@@ -503,12 +516,47 @@ def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance() -> 
         == shuffled_packet["frontier"]["blocked_or_deferred_nodes"]
     )
 
-    with_unknown = [
+    with_projection_neutral_event = [
         *shuffled_events,
-        _event("mystery_signal", {"text": "noise"}, -1),
+        _event(
+            "outbox_requeued",
+            {
+                "run_id": "run-planner-packet",
+                "outbox_id": 1,
+                "event_id": "event-1",
+                "kind": "dispatch",
+                "previous_status": "failed",
+                "previous_attempts": 1,
+                "previous_last_error": "transient failure",
+                "operator": "test",
+                "graph_position": 16,
+            },
+            -1,
+        ),
     ]
-    noisy_context = _planner_context(with_unknown)
+    noisy_context = _planner_context(with_projection_neutral_event)
     assert _planner_packet(noisy_context) == shuffled_packet
+
+
+def test_projection_rejects_unknown_event_type() -> None:
+    unknown_event = EventEnvelope(
+        event_id="event-unknown",
+        run_id="run-planner-packet",
+        position=1,
+        event_type="mystery_signal",
+        schema_version=1,
+        actor=Actor(kind=ActorKind.SCHEDULER),
+        causation_id="test",
+        correlation_id=None,
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        payload={"text": "deliberately noncanonical"},
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="unsupported graph projection event type: 'mystery_signal'",
+    ):
+        _projection([unknown_event])
 
 
 def test_prompt_routing_for_planner_worker_and_verifier() -> None:

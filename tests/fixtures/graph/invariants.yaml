@@ -48,6 +48,7 @@
     - node_created: {node_id: producer-invariant-4b, kind: worker, state: completed}
     - node_created: {node_id: successor-invariant-4b, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-4b, from_node_id: producer-invariant-4b, from_port: candidate, to_node_id: successor-invariant-4b, to_port: candidate, required: true}
+    - output_record_accepted: {record_id: candidate-invariant-4b, record_kind: output, record_type: candidate, producer_node_id: producer-invariant-4b, port: candidate, schema: ImplementationCandidate, task_region_id: task-invariant-4b, candidate_id: candidate-invariant-4b, attempt_number: 1, value: {summary: invariant candidate}}
     - input_bound: {edge_id: edge-invariant-4b, to_node_id: successor-invariant-4b, to_port: candidate, record_ids: [candidate-invariant-4b], bound_at_position: 0}
   when_command: {schedule_tick: {base_snapshot_id: S0}}
   then_events:
@@ -57,10 +58,11 @@
 
 - name: invariant_retired_nodes_cannot_run
   given_events:
+    - node_created: {node_id: retired-invariant-5, kind: worker, state: planned}
     - node_state_changed: {node_id: retired-invariant-5, new_state: retired}
     - lease_granted: {node_id: retired-invariant-5, lease_id: lease-retired-5, generation: 1}
   when_command:
-    submit_callback: {node_id: retired-invariant-5, execution_id: exec-5, lease_id: lease-retired-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-5, payload_hash: hash-5}
+    submit_callback: {node_id: retired-invariant-5, execution_id: exec-5, lease_id: lease-retired-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 3, idempotency_key: key-5, payload_hash: hash-5}
   then_events:
     - callback_rejected_stale: {node_id: retired-invariant-5}
   then_projection: {retired-invariant-5: retired}
@@ -81,8 +83,11 @@
 
 - name: invariant_verification_failure_preserves_builder
   given_events:
+    - node_created: {node_id: builder-invariant-7, kind: worker, state: planned, task_region_id: task-invariant-7}
     - node_state_changed: {node_id: builder-invariant-7, new_state: completed}
     - output_record_accepted: {record_id: candidate-invariant-7, record_kind: output, record_type: candidate, producer_node_id: builder-invariant-7, port: candidate, schema: ImplementationCandidate, task_region_id: task-invariant-7, candidate_id: candidate-invariant-7, attempt_number: 1, value: {summary: test candidate}}
+    - node_created: {node_id: verifier-invariant-7, kind: verifier, state: planned, task_region_id: task-invariant-7}
+    - output_record_accepted: {record_id: verification-candidate-invariant-7, record_kind: verification, record_type: verification_report, producer_node_id: verifier-invariant-7, port: verification_report, schema: VerificationReport, task_region_id: task-invariant-7, candidate_id: candidate-invariant-7, outcome: failed, value: {outcome: failed, grades: []}}
     - verification_failed: {node_id: verifier-invariant-7, verifier_node_id: verifier-invariant-7, candidate_id: candidate-invariant-7, record_id: verification-candidate-invariant-7, outcome: failed, evidence: [], value: {outcome: failed, grades: []}}
     - node_state_changed: {node_id: verifier-invariant-7, new_state: running}
   command_context: {proposed_by_node_id: planner-invariant-7, actor_role: planner}
@@ -111,7 +116,8 @@
     - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
     - node_created: {node_id: gate-invariant-9, kind: gate, state: completed}
     - node_created: {node_id: successor-invariant-9, kind: worker, state: blocked}
-    - edge_created: {edge_id: edge-invariant-9, from_node_id: gate-invariant-9, from_port: decision, to_node_id: successor-invariant-9, to_port: approval, required: true}
+    - output_record_accepted: {record_id: approval-invariant-9, record_kind: output, record_type: decision_record, producer_node_id: gate-invariant-9, port: decision_record, schema: DecisionRecord, value: {decision: deferred, decision_type: approval, decider: fixture-controller}}
+    - edge_created: {edge_id: edge-invariant-9, from_node_id: gate-invariant-9, from_port: decision_record, to_node_id: successor-invariant-9, to_port: approval, required: true}
     - input_bound: {edge_id: edge-invariant-9, to_node_id: successor-invariant-9, to_port: approval, record_ids: [approval-invariant-9], bound_at_position: 0}
   when_command: {schedule_tick: {base_snapshot_id: S0}}
   then_events:
@@ -127,7 +133,8 @@
     - node_created: {node_id: gate-invariant-9b, kind: gate, state: completed}
     - approval_decision_recorded: {decision_type: approval, node_id: gate-invariant-9b, decision: approved, decider: fixture-controller}
     - node_created: {node_id: successor-invariant-9b, kind: worker, state: blocked}
-    - edge_created: {edge_id: edge-invariant-9b, from_node_id: gate-invariant-9b, from_port: decision, to_node_id: successor-invariant-9b, to_port: approval, required: true}
+    - output_record_accepted: {record_id: approval-invariant-9b, record_kind: output, record_type: decision_record, producer_node_id: gate-invariant-9b, port: decision_record, schema: DecisionRecord, value: {decision: approved, decision_type: approval, decider: fixture-controller}}
+    - edge_created: {edge_id: edge-invariant-9b, from_node_id: gate-invariant-9b, from_port: decision_record, to_node_id: successor-invariant-9b, to_port: approval, required: true}
     - input_bound: {edge_id: edge-invariant-9b, to_node_id: successor-invariant-9b, to_port: approval, record_ids: [approval-invariant-9b], bound_at_position: 0}
   when_command: {schedule_tick: {base_snapshot_id: S0}}
   then_events:

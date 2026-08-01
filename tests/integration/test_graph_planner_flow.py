@@ -10,6 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    Actor,
+    ActorKind,
     EventEnvelope,
     GraphCommandContext,
     PatchCommandContext,
@@ -151,6 +153,42 @@ async def _seed_planner_run(controller: GraphController, run_id: str, *, budget:
         steps=[StepConfig(id="Plan", kind="planner", title="Plan")],
     )
     compiled = compile_routine(routine, FixedClock(), SequentialIds(), run_id=run_id)
+    compiled.extend(
+        [
+            EventEnvelope(
+                event_id="requirement-node-R-1",
+                run_id=run_id,
+                position=len(compiled) + 1,
+                event_type="node_created",
+                schema_version=1,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FixedClock().now(),
+                payload={"node_id": "requirement-R-1", "kind": "requirement", "state": "completed"},
+            ),
+            EventEnvelope(
+                event_id="requirement-record-R-1",
+                run_id=run_id,
+                position=len(compiled) + 2,
+                event_type="output_record_accepted",
+                schema_version=1,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FixedClock().now(),
+                payload={
+                    "record_id": "requirement-R-1",
+                    "record_kind": "graph_record",
+                    "record_type": "requirement_record",
+                    "producer_node_id": "requirement-R-1",
+                    "port": "requirement",
+                    "schema": "RequirementRecord",
+                    "value": {
+                        "id": "R-1",
+                        "text": "Planner flow requirement",
+                        "source": "routine",
+                    },
+                },
+            ),
+        ]
+    )
     await controller.handle_command(
         run_id,
         0,

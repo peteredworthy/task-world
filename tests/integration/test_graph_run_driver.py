@@ -510,6 +510,34 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
             5,
             "node_created",
             {
+                "node_id": "requirement-req-1",
+                "kind": "requirement",
+                "state": "completed",
+            },
+        ),
+        _graph_event(
+            run_id,
+            6,
+            "output_record_accepted",
+            {
+                "record_id": "requirement-req-1",
+                "record_kind": "graph_record",
+                "record_type": "requirement_record",
+                "producer_node_id": "requirement-req-1",
+                "port": "requirement",
+                "schema": "RequirementRecord",
+                "value": {
+                    "id": "req-1",
+                    "text": "Final check requirement",
+                    "source": "routine",
+                },
+            },
+        ),
+        _graph_event(
+            run_id,
+            7,
+            "node_created",
+            {
                 "node_id": "verifier-1",
                 "kind": "verifier",
                 "role": "verifier",
@@ -519,7 +547,7 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         ),
         _graph_event(
             run_id,
-            6,
+            8,
             "output_record_accepted",
             {
                 "record_id": "verification-1",
@@ -530,23 +558,30 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "task_region_id": "region-implementation",
-                "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+                "outcome": "passed",
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "req-1", "grade": "A"}],
+                },
             },
         ),
         _graph_event(
             run_id,
-            7,
+            9,
             "verification_passed",
             {
                 "node_id": "verifier-1",
                 "record_id": "verification-1",
                 "task_region_id": "region-implementation",
-                "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "req-1", "grade": "A"}],
+                },
             },
         ),
         _graph_event(
             run_id,
-            8,
+            10,
             "node_created",
             {
                 "node_id": "check-final",
@@ -559,14 +594,31 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         ),
         _graph_event(
             run_id,
-            9,
+            11,
+            "edge_created",
+            {
+                "edge_id": "edge-verifier-check",
+                "from_node_id": "verifier-1",
+                "from_port": "verification_report",
+                "to_node_id": "check-final",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                },
+            },
+        ),
+        _graph_event(
+            run_id,
+            12,
             "input_bound",
             {
                 "edge_id": "edge-verifier-check",
                 "to_node_id": "check-final",
                 "to_port": "verification_evidence",
                 "record_ids": ["verification-1"],
-                "bound_at_position": 9,
+                "bound_at_position": 12,
             },
         ),
     ]
@@ -614,9 +666,8 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         for event in final_events
     )
     assert project_task_states(final_events)["region-final-invariant"] == "accepted"
-    assert outcome.completed is False
-    assert outcome.blocked_reason is not None
-    assert "ready node(s) not dispatched" not in outcome.blocked_reason
+    assert outcome.completed is True
+    assert outcome.blocked_reason is None
 
 
 @pytest.mark.asyncio

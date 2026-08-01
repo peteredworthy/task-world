@@ -1935,7 +1935,7 @@ async def get_graph_health(
         await service.get_run(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
-    events = await graph_store.read_run_light(run_id)
+    events = await graph_store.read_run_projection(run_id)
     return build_graph_health_response(run_id, events)
 
 
@@ -2165,8 +2165,9 @@ async def get_graph_scheduler_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> SchedulerViewResponse:
-    events = await graph_store.read_run_light(run_id)
-    return build_scheduler_view_response(run_id, events)
+    snapshot = await graph_store.read_projection_snapshot(run_id)
+    await graph_store.commit_read_model_changes()
+    return build_scheduler_view_response_from_snapshot(run_id, snapshot)
 
 
 @router.get(
@@ -2178,8 +2179,9 @@ async def get_graph_decision_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> DecisionViewResponse:
-    events = await graph_store.read_run_light(run_id)
-    return build_decision_view_response(run_id, events)
+    snapshot = await graph_store.read_projection_snapshot(run_id)
+    await graph_store.commit_read_model_changes()
+    return build_decision_view_response_from_snapshot(run_id, snapshot)
 
 
 @router.post(
@@ -2226,7 +2228,7 @@ async def record_graph_decision(
         raise HTTPException(status_code=409, detail=str(reason))
 
     response_events = list(result.events)
-    events = await graph_store.read_run_light(run_id)
+    events = await graph_store.read_run_projection(run_id)
     if project_run_state(events) == "active":
         schedule_result = await controller.handle_command(
             run_id,
@@ -2244,13 +2246,13 @@ async def record_graph_decision(
             ),
         )
         response_events.extend(schedule_result.events)
-        events = await graph_store.read_run_light(run_id)
+    snapshot = await graph_store.read_projection_snapshot(run_id)
     await graph_store.commit_read_model_changes()
     return RecordGraphDecisionResponse(
         run_id=run_id,
-        graph_position=len(events),
+        graph_position=snapshot.position if snapshot is not None else 0,
         events=[_event_to_response(event) for event in response_events],
-        decision_view=build_decision_view_response(run_id, events),
+        decision_view=build_decision_view_response_from_snapshot(run_id, snapshot),
     )
 
 

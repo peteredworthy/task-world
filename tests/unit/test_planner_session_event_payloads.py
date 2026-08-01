@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.graph import (
+    planner_session_carryovers_view,
     FakeClock,
     PlannerSessionStateChangedPayload,
     SequentialIdGenerator,
@@ -50,7 +51,7 @@ def test_planner_session_reducer_preserves_explicit_null_carryover() -> None:
             )
         ]
     )
-    assert projection["planner_session_carryovers"]["session-1"] is None
+    assert planner_session_carryovers_view(projection)["session-1"] is None
 
 
 def test_planner_callback_producer_matches_typed_session_payload_json() -> None:

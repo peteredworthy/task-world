@@ -19,9 +19,19 @@ from orchestrator.config.enums import GateType
 from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
+    GraphProjection,
     SequentialIdGenerator,
     compile_routine,
+    configured_gates,
+    edges_view,
     initial_projection,
+    input_bindings_view,
+    node_attempt,
+    node_candidate_id,
+    node_command_definitions_view,
+    node_kinds_view,
+    node_task_regions_view,
+    planner_generation_budget,
     reduce_event,
 )
 from tests.unit.graph_test_utils import apply_command, command_context
@@ -31,8 +41,8 @@ def test_routine_maps_to_root_and_routine_snapshot_record_node() -> None:
     events = _compile(_minimal_routine())
     projection = _project(events)
 
-    assert projection["node_kinds"]["root"] == "root"
-    assert projection["node_kinds"]["routine-snapshot"] == "artifact"
+    assert node_kinds_view(projection)["root"] == "root"
+    assert node_kinds_view(projection)["routine-snapshot"] == "artifact"
     root_record = _accepted_record(events, "run-context")
     assert root_record.payload["record_type"] == "run_context"
     assert root_record.payload["port"] == "run_context"
@@ -78,17 +88,19 @@ def test_step_maps_to_grouping_metadata_and_sequential_task_region_edges() -> No
 
     events = _compile(routine)
     projection = _project(events)
+    node_kinds = node_kinds_view(projection)
+    task_regions = node_task_regions_view(projection)
 
-    assert "step-S-01" not in projection["node_kinds"]
-    assert "step-S-02" not in projection["node_kinds"]
-    assert projection["node_task_regions"]["worker-s-01-t-01"] == "S-01/T-01"
-    assert projection["node_task_regions"]["worker-s-02-t-02"] == "S-02/T-02"
+    assert "step-S-01" not in node_kinds
+    assert "step-S-02" not in node_kinds
+    assert task_regions["worker-s-01-t-01"] == "S-01/T-01"
+    assert task_regions["worker-s-02-t-02"] == "S-02/T-02"
     assert any(
         edge.from_node_id == "worker-s-01-t-01"
         and edge.to_node_id == "worker-s-02-t-02"
         and edge.to_port == "prior_step_completion"
         and edge.dependency_type == "state_dependency"
-        for edge in projection["edges"].values()
+        for edge in edges_view(projection).values()
     )
 
 
@@ -96,10 +108,10 @@ def test_task_maps_to_task_region_projection_and_worker_node() -> None:
     events = _compile(_minimal_routine())
     projection = _project(events)
 
-    assert projection["node_kinds"]["worker-s-01-t-01"] == "worker"
-    assert projection["node_task_regions"]["worker-s-01-t-01"] == "S-01/T-01"
-    assert projection["node_attempts"]["worker-s-01-t-01"] == 1
-    assert projection["node_candidates"]["worker-s-01-t-01"] == "candidate-s-01-t-01-1"
+    assert node_kinds_view(projection)["worker-s-01-t-01"] == "worker"
+    assert node_task_regions_view(projection)["worker-s-01-t-01"] == "S-01/T-01"
+    assert node_attempt(projection, "worker-s-01-t-01") == 1
+    assert node_candidate_id(projection, "worker-s-01-t-01") == "candidate-s-01-t-01-1"
 
 
 def test_worker_write_claims_are_scoped_to_declared_artifacts() -> None:
@@ -193,8 +205,8 @@ def test_requirements_map_to_requirement_nodes_and_bound_edges_to_worker_and_ver
     projection = _project(events)
 
     requirement_id = "requirement-s-01-t-01-r-01"
-    assert projection["node_kinds"][requirement_id] == "requirement"
-    assert projection["node_kinds"]["verifier-s-01-t-01"] == "verifier"
+    assert node_kinds_view(projection)[requirement_id] == "requirement"
+    assert node_kinds_view(projection)["verifier-s-01-t-01"] == "verifier"
     requirement_event = _node_event(events, requirement_id)
     assert requirement_event.payload["outputs"][0]["schema"] == "RequirementRecord"
     assert requirement_event.payload["requirement"] == {
@@ -224,14 +236,14 @@ def test_requirements_map_to_requirement_nodes_and_bound_edges_to_worker_and_ver
         },
     }
     requirement_edges = [
-        edge for edge in projection["edges"].values() if edge.from_node_id == requirement_id
+        edge for edge in edges_view(projection).values() if edge.from_node_id == requirement_id
     ]
     assert {edge.to_node_id for edge in requirement_edges} == {
         "worker-s-01-t-01",
         "verifier-s-01-t-01",
     }
     for edge in requirement_edges:
-        assert edge.to_port in projection["input_bindings"][edge.to_node_id]
+        assert edge.to_port in input_bindings_view(projection)[edge.to_node_id]
 
 
 def test_auto_verify_maps_to_one_check_node_per_item() -> None:
@@ -257,13 +269,15 @@ def test_auto_verify_maps_to_one_check_node_per_item() -> None:
         "check-s-01-t-01-auto_verify-lint",
         "check-s-01-t-01-auto_verify-unit",
     ]
+    command_definitions = node_command_definitions_view(projection)
+    edges = edges_view(projection)
     for check_id in check_ids:
-        assert projection["node_command_definitions"][check_id]["tail_lines"] == 7
+        assert command_definitions[check_id]["tail_lines"] == 7
         assert any(
             edge.from_node_id == "worker-s-01-t-01"
             and edge.to_node_id == check_id
             and edge.to_port == "candidate_under_test"
-            for edge in projection["edges"].values()
+            for edge in edges.values()
         )
 
 
@@ -290,7 +304,7 @@ def test_auto_verify_cmd_resolves_run_config_placeholders() -> None:
     )
     projection = _project(events)
 
-    definitions = projection["node_command_definitions"]
+    definitions = node_command_definitions_view(projection)
     assert definitions["check-s-01-t-01-auto_verify-spec-exists"]["cmd"] == "test -f docs/spec.md"
     # Placeholders without a matching run-config key stay literal.
     assert definitions["check-s-01-t-01-auto_verify-unresolved"]["cmd"] == "echo {{unknown_key}}"
@@ -308,12 +322,12 @@ def test_verifier_rubric_maps_to_verifier_node() -> None:
     events = _compile(routine)
     projection = _project(events)
 
-    assert projection["node_kinds"]["verifier-s-01-t-01"] == "verifier"
+    assert node_kinds_view(projection)["verifier-s-01-t-01"] == "verifier"
     assert any(
         edge.from_node_id == "worker-s-01-t-01"
         and edge.to_node_id == "verifier-s-01-t-01"
         and edge.to_port == "candidate_under_test"
-        for edge in projection["edges"].values()
+        for edge in edges_view(projection).values()
     )
 
 
@@ -333,7 +347,7 @@ def test_verifier_and_checks_get_optional_file_state_consumption_edge() -> None:
 
     file_state_edges = [
         edge
-        for edge in projection["edges"].values()
+        for edge in edges_view(projection).values()
         if edge.from_node_id == "worker-s-01-t-01"
         and edge.from_port == "file_state"
         and edge.to_port == "file_state"
@@ -364,16 +378,18 @@ def test_human_approval_gate_maps_to_gate_node_only_when_configured() -> None:
     events = _compile(routine)
     projection = _project(events)
 
-    assert projection["node_kinds"]["gate-s-01"] == "gate"
-    assert projection["configured_gates"]["S-01/T-01"]["gate-s-01"] is True
-    gate_edges = [edge for edge in projection["edges"].values() if edge.from_node_id == "gate-s-01"]
+    assert node_kinds_view(projection)["gate-s-01"] == "gate"
+    assert configured_gates(projection, "S-01/T-01") == ("gate-s-01",)
+    gate_edges = [
+        edge for edge in edges_view(projection).values() if edge.from_node_id == "gate-s-01"
+    ]
     assert len(gate_edges) == 1
     assert gate_edges[0].to_node_id == "worker-s-01-t-01"
-    assert "approval" in projection["input_bindings"]["worker-s-01-t-01"]
+    assert "approval" in input_bindings_view(projection)["worker-s-01-t-01"]
 
     no_gate_projection = _project(_compile(_minimal_routine()))
     assert _node_ids_by_kind(no_gate_projection, "gate") == []
-    assert "approval" not in no_gate_projection["input_bindings"].get("worker-s-01-t-01", {})
+    assert "approval" not in input_bindings_view(no_gate_projection).get("worker-s-01-t-01", {})
 
 
 def test_context_dependency_maps_to_bound_input_edge() -> None:
@@ -389,19 +405,20 @@ def test_context_dependency_maps_to_bound_input_edge() -> None:
     projection = _project(events)
 
     context_id = "context-s-01-t-01-0-plan"
-    assert projection["node_kinds"][context_id] == "artifact"
+    assert node_kinds_view(projection)[context_id] == "artifact"
     assert any(
         edge.from_node_id == context_id
         and edge.to_node_id == "worker-s-01-t-01"
         and edge.to_port == "context_0"
-        for edge in projection["edges"].values()
+        for edge in edges_view(projection).values()
     )
-    assert "context_0" in projection["input_bindings"]["worker-s-01-t-01"]
+    bindings = input_bindings_view(projection)
+    assert "context_0" in bindings["worker-s-01-t-01"]
     artifact_record = _accepted_record(events, "artifact-reference-s-01-t-01-0")
     assert artifact_record.payload["record_type"] == "artifact_reference"
     assert artifact_record.payload["producer_node_id"] == context_id
     assert artifact_record.payload["value"]["uri"] == "docs/plan.md"
-    assert projection["input_bindings"]["worker-s-01-t-01"]["context_0"].record_ids == [
+    assert bindings["worker-s-01-t-01"]["context_0"].record_ids == [
         "artifact-reference-s-01-t-01-0"
     ]
 
@@ -423,23 +440,23 @@ def test_fan_out_maps_to_reader_template_and_distinct_synthesis_join_template() 
     events = _compile(routine)
     projection = _project(events)
 
-    assert projection["node_kinds"]["fanout-reader-s-01-t-01"] == "planner"
+    assert node_kinds_view(projection)["fanout-reader-s-01-t-01"] == "planner"
     assert _node_event(events, "fanout-reader-s-01-t-01").payload["role"] == "fan_out_reader"
-    assert projection["node_kinds"]["fanout-join-s-01-t-01"] == "planner"
+    assert node_kinds_view(projection)["fanout-join-s-01-t-01"] == "planner"
     assert _node_event(events, "fanout-join-s-01-t-01").payload["role"] == "fan_out_join"
-    assert projection["node_kinds"]["worker-s-01-t-01"] == "worker"
+    assert node_kinds_view(projection)["worker-s-01-t-01"] == "worker"
     assert _node_event(events, "worker-s-01-t-01").payload["role"] == "builder"
     assert any(
         edge.from_node_id == "fanout-reader-s-01-t-01"
         and edge.to_node_id == "fanout-join-s-01-t-01"
         and edge.to_port == "reader_outputs"
-        for edge in projection["edges"].values()
+        for edge in edges_view(projection).values()
     )
     assert any(
         edge.from_node_id == "fanout-join-s-01-t-01"
         and edge.to_node_id == "worker-s-01-t-01"
         and edge.to_port == "fan_out_inputs"
-        for edge in projection["edges"].values()
+        for edge in edges_view(projection).values()
     )
 
 
@@ -447,7 +464,7 @@ def test_minimal_single_task_graph_has_exact_minimum_executable_node_set_and_sch
     events = _compile(_minimal_routine())
     projection = _project(events)
 
-    assert projection["node_kinds"] == {
+    assert node_kinds_view(projection) == {
         "root": "root",
         "routine-snapshot": "artifact",
         "worker-s-01-t-01": "worker",
@@ -476,11 +493,11 @@ def test_compile_planner_step_seeds_chain_head() -> None:
     events = _compile(routine)
     projection = _project(events)
 
-    assert projection["planner_generation_budget"] == 3
-    assert projection["node_kinds"]["planner-plan"] == "planner"
+    assert planner_generation_budget(projection) == 3
+    assert node_kinds_view(projection)["planner-plan"] == "planner"
     assert _node_event(events, "planner-plan").payload["role"] == "planner"
     assert _node_event(events, "planner-plan").payload["generation_index"] == 0
-    assert projection["input_bindings"]["planner-plan"]["routine_snapshot"].record_ids == [
+    assert input_bindings_view(projection)["planner-plan"]["routine_snapshot"].record_ids == [
         "routine-snapshot-record"
     ]
 
@@ -537,6 +554,35 @@ def test_dynamic_graph_feature_run_inputs_seed_planner_context() -> None:
     assert snapshot["dynamic_feature"] == dynamic_feature
 
 
+def test_dynamic_feature_inputs_compile_canonical_acceptance_requirement() -> None:
+    routine = RoutineConfig(
+        id="dynamic-graph-feature",
+        name="Dynamic Feature",
+        steps=[StepConfig(id="S-01", kind="planner", title="Plan dynamic feature execution graph")],
+    )
+
+    events = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        run_id="run-1",
+        run_config={"acceptance_command": "uv run pytest tests/smoke -q"},
+    )
+
+    requirement_nodes = [
+        event
+        for event in events
+        if event.event_type == "node_created" and event.payload.get("kind") == "requirement"
+    ]
+    assert len(requirement_nodes) == 1
+    requirement_node = requirement_nodes[0]
+    assert requirement_node.payload["node_id"] == "requirement-dynamic-feature-acceptance"
+    assert requirement_node.payload["requirement"]["id"] == "dynamic_feature_acceptance"
+    accepted = _accepted_record(events, "requirement-dynamic-feature-acceptance")
+    assert accepted.payload == requirement_node.payload["requirement_record"]
+    assert accepted.payload["value"]["id"] == "dynamic_feature_acceptance"
+
+
 def test_compile_without_planner_unchanged() -> None:
     events = _compile(_minimal_routine())
 
@@ -557,9 +603,9 @@ def test_events_replay_cleanly_into_expected_projection() -> None:
     events = _compile(_minimal_routine())
     projection = _project(events)
 
-    assert len(projection["node_kinds"]) == 3
-    assert len(projection["edges"]) == 1
-    assert projection["input_bindings"]["worker-s-01-t-01"]["routine_snapshot"].record_ids == [
+    assert len(node_kinds_view(projection)) == 3
+    assert len(edges_view(projection)) == 1
+    assert input_bindings_view(projection)["worker-s-01-t-01"]["routine_snapshot"].record_ids == [
         "routine-snapshot-record"
     ]
 
@@ -812,9 +858,9 @@ def _accepted_record(events: list[EventEnvelope], record_id: str) -> EventEnvelo
     raise AssertionError(f"missing output_record_accepted event for {record_id}")
 
 
-def _node_ids_by_kind(projection: Any, kind: str) -> list[str]:
+def _node_ids_by_kind(projection: GraphProjection, kind: str) -> list[str]:
     return sorted(
-        node_id for node_id, node_kind in projection["node_kinds"].items() if node_kind == kind
+        node_id for node_id, node_kind in node_kinds_view(projection).items() if node_kind == kind
     )
 
 

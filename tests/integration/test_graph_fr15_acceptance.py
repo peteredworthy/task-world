@@ -17,7 +17,7 @@ from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import file_state_records_view, Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -204,9 +204,9 @@ async def test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable(
 
     raw_events = await _read_events(session_factory, run_id)
     projection = rebuild_projection(raw_events)
-    original = projection["file_state_records"][record_id]
+    original = file_state_records_view(projection)[record_id]
     superseding_id = str(original.superseded_by_record_id)
-    superseding = projection["file_state_records"][superseding_id]
+    superseding = file_state_records_view(projection)[superseding_id]
     new_ref = f"refs/orchestrator/snapshots/{superseding.snapshot_id}"
     public_events = await _get_json(client, f"/api/runs/{run_id}/graph/events?payload_mode=full")
     node = await _get_json(

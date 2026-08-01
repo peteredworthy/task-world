@@ -9,6 +9,7 @@ from orchestrator.graph import (
     EVENT_PAYLOAD_MODELS,
     EXTERNAL_EVENT_TYPES,
     INTERNAL_EVENT_TYPES_BY_PRODUCER,
+    PROJECTION_NEUTRAL_EVENT_TYPES,
     RETIRED_EVENT_TYPES,
     validate_emitted_event_type,
     validate_event_ownership,
@@ -44,9 +45,15 @@ def test_every_canonical_event_type_has_a_payload_model() -> None:
     assert CANONICAL_EVENT_TYPES == EVENT_PAYLOAD_MODELS.keys()
 
 
+def test_outbox_requeue_audit_event_is_canonical_and_projection_neutral() -> None:
+    assert "outbox_requeued" in CANONICAL_EVENT_TYPES
+    assert "outbox_requeued" in EVENT_PAYLOAD_MODELS
+    assert "outbox_requeued" in PROJECTION_NEUTRAL_EVENT_TYPES
+
+
 def test_replay_only_event_types_are_not_canonical() -> None:
     assert not REMOVED_EVENT_TYPES & CANONICAL_EVENT_TYPES
-    assert EXTERNAL_EVENT_TYPES == frozenset({"lease_suspended"})
+    assert EXTERNAL_EVENT_TYPES == frozenset({"lease_suspended", "outbox_requeued"})
 
 
 def test_graph_fixtures_only_use_canonical_events() -> None:

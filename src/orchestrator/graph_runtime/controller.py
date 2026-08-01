@@ -31,7 +31,7 @@ from orchestrator.db import (
     is_retriable_sqlite_write_conflict,
     retry_committed_secondary_output,
 )
-from orchestrator.graph.commands import Clock, IdGenerator
+from orchestrator.graph import Clock, IdGenerator
 from orchestrator.graph_runtime.errors import StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
 from orchestrator.graph_runtime.store import GraphEventStore

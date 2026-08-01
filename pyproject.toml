@@ -23,6 +23,7 @@ dependencies = [
     "openhands-tools>=1.10.0",
     "python-dotenv>=1.0.0",
     "graphifyy>=0.4.2",
+    "immutables>=0.21,<1",
 ]
 
 [project.optional-dependencies]
@@ -53,15 +54,18 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/orchestrator"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/orchestrator/graph/_projection_relation_policy.yaml" = "orchestrator/graph/_projection_relation_policy.yaml"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-n auto --dist worksteal --timeout=30 -m 'not slow and not e2e'"
+addopts = "-n 2 --dist loadgroup --timeout=30 -m 'not slow and not e2e'"
 timeout = 30
 markers = [
-    "slow: tests that invoke real external tools (LLMs, Docker, CLI agents)",
+    "slow: tests that invoke real external tools or deterministic repository-wide static/migration analyses (LLMs, Docker, CLI agents)",
     "e2e: end-to-end tests that run the orchestrator through real process or network boundaries",
 ]
 filterwarnings = [
