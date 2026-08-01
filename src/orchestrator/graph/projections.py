@@ -1459,12 +1459,6 @@ def _decision_value(payload: object, value_type: type[object], position: int) ->
     raw = cast(Any, payload).model_dump(mode="json")
     fields = cast(Any, value_type).model_fields
     value = {key: raw[key] for key in fields if key in raw}
-    if value.get("scope") is not None:
-        value["scope"] = freeze_json(value["scope"])
-    if value_type is OversightDecisionValue and value.get("decider") is not None:
-        decider = value["decider"]
-        if not isinstance(decider, str):
-            value["decider"] = freeze_json(decider)
     if "position" in fields:
         value["position"] = position
     return cast(Any, value_type).model_validate(value)
