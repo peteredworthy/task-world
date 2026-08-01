@@ -12,21 +12,30 @@ from orchestrator.graph import (
     EventEnvelope,
     GraphProjection,
     accepted_graph_patch_ids,
+    accepted_graph_patches_by_node_view,
     active_requirement_version,
     approval_decision,
+    approval_decisions_view,
     authority_decision,
+    authority_decisions_view,
     bound_record_ids,
+    callback_idempotency_events_view,
     callback_idempotency_event,
     cleanup_applied,
     cleanup_request,
+    cleanup_requested_events_view,
     edge_by_id,
+    edges_view,
     failed_verification_candidate_ids,
     failed_verification_result,
     file_state_record,
+    file_state_records_view,
+    input_bindings_view,
     initial_projection,
     lease_by_id,
     leases_view,
     node_allowed_actions,
+    node_creation_payloads_view,
     node_creation_position,
     node_exists,
     node_gate_decision,
@@ -36,21 +45,27 @@ from orchestrator.graph import (
     node_retry_not_before,
     node_resource_claims_view,
     node_state,
+    node_states_view,
     node_usage_recorded,
     output_record_payload,
+    output_records_by_node_port_view,
     oversight_decision,
     passed_verification_candidate_ids,
     passed_verification_result,
     planner_session_state,
+    planner_sessions_view,
     projection_to_checkpoint,
     ready_nodes_view,
     reduce_event,
     requirement_revision,
+    requirement_revisions_view,
     run_state,
     support_evidence,
+    support_evidence_view,
     task_state,
     tokens_by_node_view,
     verifier_verdict,
+    verifier_verdicts_view,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
 
@@ -245,6 +260,157 @@ def _assert_outcome(event_type: str) -> OutcomeAssertion:
     return lambda before, after: _assert_event_outcome(event_type, before, after)
 
 
+def _mutate_nested_mapping(result: object) -> None:
+    """Exercise a nested fresh public container without reaching projection storage."""
+    assert isinstance(result, dict)
+    result["__matrix_probe__"] = {"items": []}
+    result["__matrix_probe__"]["items"].append("mutated")
+
+
+_NEUTRAL_QUERIES: dict[str, QueryProbe] = {
+    "agent_died": lambda state: lease_by_id(state, "lease-1"),
+    "agent_dispatch_requested": lambda state: lease_by_id(state, "lease-1"),
+    "callback_duplicate_returned": lambda state: callback_idempotency_event(state, "callback-1"),
+    "callback_rejected_conflict": lambda state: callback_idempotency_event(state, "callback-1"),
+    "callback_rejected_stale": lambda state: callback_idempotency_event(state, "callback-1"),
+    "command_recorded": lambda state: run_state(state),
+    "command_rejected": lambda state: run_state(state),
+    "dead_input_detected": lambda state: bound_record_ids(state, "worker-1", "input"),
+    "file_state_rejected": lambda state: file_state_record(state, "rejected-file-state"),
+    "gatekeeper_cost_recorded": lambda state: file_state_record(state, "file-state-1"),
+    "graph_patch_rejected": lambda state: accepted_graph_patch_ids(state, "planner-1"),
+    "heartbeat_recorded": lambda state: lease_by_id(state, "lease-1"),
+    "outbox_requeued": lambda state: run_state(state),
+    "revision_created": lambda state: node_creation_payloads_view(state),
+}
+
+
+_CHANGING_QUERIES: dict[str, QueryProbe] = {
+    "run_lifecycle_changed": lambda state: run_state(state),
+    "node_created": lambda state: node_creation_payloads_view(state),
+    "node_state_changed": lambda state: node_creation_payloads_view(state),
+    "node_retired": lambda state: node_states_view(state),
+    "node_deferred": lambda state: node_last_deferred_reason(state, "worker-1"),
+    "node_ready": lambda state: node_last_deferred_reason(state, "worker-1"),
+    "runtime_retry_scheduled": lambda state: node_retry_not_before(state, "worker-1"),
+    "plan_region_marked_suspect": lambda state: node_creation_payloads_view(state),
+    "node_authority_changed": lambda state: node_creation_payloads_view(state),
+    "edge_created": lambda state: edges_view(state),
+    "input_bound": lambda state: input_bindings_view(state),
+    "output_record_accepted": lambda state: output_records_by_node_port_view(state),
+    "file_state_accepted": lambda state: file_state_records_view(state),
+    "gatekeeper_verdict_recorded": lambda state: file_state_records_view(state),
+    "session_state_changed": lambda state: planner_sessions_view(state),
+    "graph_patch_accepted": lambda state: accepted_graph_patches_by_node_view(state),
+    "verification_passed": lambda state: verifier_verdicts_view(state),
+    "verification_failed": lambda state: verifier_verdicts_view(state),
+    "appeal_opened": lambda state: node_pending_appeals_view(state),
+    "approval_decision_recorded": lambda state: approval_decisions_view(state),
+    "authority_decision_recorded": lambda state: authority_decisions_view(state),
+    "oversight_decision_recorded": lambda state: oversight_decision(state, "oversight-1"),
+    "requirement_revision_recorded": lambda state: requirement_revisions_view(state),
+    "support_evidence_recorded": lambda state: support_evidence_view(state),
+    "node_usage_recorded": lambda state: tokens_by_node_view(state),
+    "lease_granted": lambda state: leases_view(state),
+    "lease_renewed": lambda state: leases_view(state),
+    "lease_suspended": lambda state: leases_view(state),
+    "lease_revoked": lambda state: leases_view(state),
+    "lease_expired": lambda state: leases_view(state),
+    "lease_released": lambda state: leases_view(state),
+    "cleanup_requested": lambda state: cleanup_requested_events_view(state),
+    "cleanup_applied": lambda state: cleanup_applied(state, "cleanup-1"),
+    "callback_accepted": lambda state: callback_idempotency_events_view(state),
+}
+
+
+_MUTABLE_QUERY_EVENTS = frozenset(
+    {
+        "node_created",
+        "node_state_changed",
+        "node_retired",
+        "plan_region_marked_suspect",
+        "node_authority_changed",
+        "edge_created",
+        "input_bound",
+        "output_record_accepted",
+        "file_state_accepted",
+        "gatekeeper_verdict_recorded",
+        "session_state_changed",
+        "graph_patch_accepted",
+        "verification_passed",
+        "verification_failed",
+        "appeal_opened",
+        "approval_decision_recorded",
+        "authority_decision_recorded",
+        "requirement_revision_recorded",
+        "support_evidence_recorded",
+        "node_usage_recorded",
+        "lease_granted",
+        "lease_renewed",
+        "lease_suspended",
+        "lease_revoked",
+        "lease_expired",
+        "lease_released",
+        "cleanup_requested",
+        "callback_accepted",
+    }
+)
+
+
+_REPLACED_PATHS: dict[str, tuple[ProjectionPath, ...]] = {
+    "run_lifecycle_changed": (("lifecycle",),),
+    "node_state_changed": (("nodes", "worker-1"),),
+    "node_retired": (("nodes", "worker-1"),),
+    "node_deferred": (("nodes", "worker-1"),),
+    "node_ready": (("nodes", "worker-1"),),
+    "runtime_retry_scheduled": (("nodes", "worker-1"),),
+    "plan_region_marked_suspect": (("nodes", "worker-1"),),
+    "node_authority_changed": (("nodes", "worker-1"),),
+    "gatekeeper_verdict_recorded": (("records", "by_id", "file-state-1"),),
+    "verification_passed": (("tasks", "task-1"),),
+    "verification_failed": (("tasks", "task-1"),),
+    "lease_renewed": (("execution", "leases", "lease-1"),),
+    "lease_suspended": (("execution", "leases", "lease-1"),),
+    "lease_revoked": (("execution", "leases", "lease-1"),),
+    "lease_expired": (("execution", "leases", "lease-1"),),
+    "lease_released": (("execution", "leases", "lease-1"),),
+}
+
+
+_SHARED_PATHS: dict[str, tuple[ProjectionPath, ...]] = {
+    "node_state_changed": (("nodes", "sibling-1"),),
+    "node_retired": (("nodes", "sibling-1"),),
+    "node_deferred": (("nodes", "sibling-1"),),
+    "node_ready": (("nodes", "sibling-1"),),
+    "runtime_retry_scheduled": (("nodes", "sibling-1"),),
+    "plan_region_marked_suspect": (("nodes", "sibling-1"),),
+    "node_authority_changed": (("nodes", "sibling-1"),),
+    "edge_created": (("nodes", "source-1"),),
+    "input_bound": (("nodes", "source-1"),),
+    "output_record_accepted": (("nodes", "worker-1"),),
+    "file_state_accepted": (("nodes", "worker-1"),),
+    "gatekeeper_verdict_recorded": (("nodes", "worker-1"),),
+    "graph_patch_accepted": (("nodes", "planner-1"),),
+    "verification_passed": (("nodes", "worker-1"),),
+    "verification_failed": (("nodes", "worker-1"),),
+    "appeal_opened": (("nodes", "worker-1"),),
+    "approval_decision_recorded": (("nodes", "gate-1"),),
+    "authority_decision_recorded": (("nodes", "authority-1"),),
+    "oversight_decision_recorded": (("nodes", "oversight-1"),),
+    "support_evidence_recorded": (("nodes", "worker-1"),),
+    "node_usage_recorded": (("nodes", "worker-1"),),
+    "lease_granted": (("nodes", "worker-1"),),
+    "lease_renewed": (("nodes", "worker-1"),),
+    "lease_suspended": (("nodes", "worker-1"),),
+    "lease_revoked": (("nodes", "worker-1"),),
+    "lease_expired": (("nodes", "worker-1"),),
+    "lease_released": (("nodes", "worker-1"),),
+    "cleanup_requested": (("nodes", "worker-1"),),
+    "cleanup_applied": (("nodes", "worker-1"),),
+    "callback_accepted": (("nodes", "worker-1"),),
+}
+
+
 NEUTRAL_PAYLOADS: dict[str, dict[str, object]] = {
     "agent_died": {"lease_id": "lease-1", "node_id": "worker-1", "reason": "agent_exit"},
     "agent_dispatch_requested": {
@@ -343,7 +509,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             (),
             (),
             _unchanged,
-            lambda state: projection_to_checkpoint(state),
+            _NEUTRAL_QUERIES[name],
         )
         for name, payload in NEUTRAL_PAYLOADS.items()
     )
@@ -353,6 +519,9 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         "node_created",
         {"node_id": "worker-1", "kind": "worker", "state": "planned", "task_region_id": "task-1"},
         0,
+    )
+    sibling = _event(
+        "node_created", {"node_id": "sibling-1", "kind": "worker", "state": "planned"}, 1
     )
     planner = _event(
         "node_created",
@@ -518,26 +687,30 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         ),
         (
             "node_state_changed",
-            (worker,),
+            (worker, sibling),
             {"node_id": "worker-1", "new_state": "ready"},
             frozenset({"nodes", "scheduling"}),
         ),
-        ("node_retired", (worker,), {"node_id": "worker-1"}, frozenset({"nodes"})),
+        ("node_retired", (worker, sibling), {"node_id": "worker-1"}, frozenset({"nodes"})),
         (
             "node_deferred",
-            (worker,),
+            (worker, sibling),
             {"node_id": "worker-1", "reason": "waiting"},
             frozenset({"nodes"}),
         ),
         (
             "node_ready",
-            (worker, _event("node_deferred", {"node_id": "worker-1", "reason": "waiting"}, 1)),
+            (
+                worker,
+                sibling,
+                _event("node_deferred", {"node_id": "worker-1", "reason": "waiting"}, 2),
+            ),
             {"node_id": "worker-1"},
             frozenset({"nodes"}),
         ),
         (
             "runtime_retry_scheduled",
-            (worker,),
+            (worker, sibling),
             {
                 "node_id": "worker-1",
                 "lease_id": "lease-1",
@@ -550,13 +723,13 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         ),
         (
             "plan_region_marked_suspect",
-            (worker,),
+            (worker, sibling),
             {"node_id": "worker-1", "reason": "requirement_changed"},
             frozenset({"nodes"}),
         ),
         (
             "node_authority_changed",
-            (worker,),
+            (worker, sibling),
             {
                 "node_id": "worker-1",
                 "allowed_actions": ["write"],
@@ -811,10 +984,11 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             prefix,
             _event(name, payload, len(prefix) + 1),
             groups,
-            tuple((group,) for group in sorted(groups)),
-            (),
+            _REPLACED_PATHS.get(name, ()),
+            _SHARED_PATHS.get(name, ()),
             _assert_outcome(name),
-            lambda state: projection_to_checkpoint(state),
+            _CHANGING_QUERIES[name],
+            _mutate_nested_mapping if name in _MUTABLE_QUERY_EVENTS else None,
         )
         for name, prefix, payload, groups in changing_payloads
     )

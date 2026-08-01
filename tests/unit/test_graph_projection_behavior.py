@@ -1,3 +1,5 @@
+from copy import deepcopy
+
 import pytest
 from pydantic import ValidationError
 
@@ -62,3 +64,51 @@ def test_unsupported_event_name_still_fails_loudly() -> None:
     )
     with pytest.raises(ValueError, match="unsupported graph projection event type"):
         reduce_event(initial_projection(), unsupported)
+
+
+@pytest.mark.parametrize(
+    "case",
+    tuple(case for case in CASES if case.changed_groups and case.prefix),
+    ids=lambda case: case.event_type,
+)
+def test_matrix_metadata_names_replaced_values_and_shared_siblings(case) -> None:
+    before, after = case_projection(case)
+
+    assert case.shared_paths, case.event_type
+
+    for path in case.replaced_paths:
+        assert _value_at(before, path) is not _value_at(after, path), (case.event_type, path)
+    for path in case.shared_paths:
+        assert _value_at(before, path) is _value_at(after, path), (case.event_type, path)
+
+
+@pytest.mark.parametrize("case", CASES, ids=lambda case: case.event_type)
+def test_matrix_queries_are_event_specific_public_probes(case) -> None:
+    _, projection = case_projection(case)
+
+    assert case.query(projection) != projection_to_checkpoint(projection), case.event_type
+
+
+@pytest.mark.parametrize(
+    "case",
+    tuple(case for case in CASES if case.mutate_query_result is not None),
+    ids=lambda case: case.event_type,
+)
+def test_matrix_mutation_probes_change_only_fresh_public_results(case) -> None:
+    _, projection = case_projection(case)
+    checkpoint = projection_to_checkpoint(projection)
+    result = case.query(projection)
+    original = deepcopy(result)
+
+    assert case.mutate_query_result is not None
+    case.mutate_query_result(result)
+
+    assert result != original, case.event_type
+    assert projection_to_checkpoint(projection) == checkpoint
+
+
+def _value_at(projection: object, path: tuple[str, ...]) -> object:
+    value = projection
+    for part in path:
+        value = getattr(value, part) if hasattr(value, part) else value[part]
+    return value
