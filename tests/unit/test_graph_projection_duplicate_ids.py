@@ -487,20 +487,12 @@ def test_file_state_duplicate_is_idempotent_after_derived_enrichment(
 ) -> None:
     first = _file_state(position=8)
     duplicate = _file_state(position=10)
+    enriched = build_projection([_node(position=7), first, enrichment])
 
-    projection = build_projection([first, enrichment, duplicate])
-
-    assert file_state_record(projection, "file-state-1") is not None
-
-
-def test_file_state_acceptance_identity_survives_checkpoint_round_trip() -> None:
-    first = _file_state(position=8)
-    enriched = build_projection([_node(position=7), first, _gatekeeper_verdict(position=9)])
+    assert reduce_event(enriched, duplicate) is enriched
 
     restored = projection_from_checkpoint(projection_to_checkpoint(enriched))
-    replayed = reduce_event(restored, _file_state(position=10))
-
-    assert file_state_record(replayed, "file-state-1") is not None
+    assert reduce_event(restored, duplicate) is restored
 
 
 def test_direct_file_state_insert_computes_identity_and_rejects_conflicting_missing_identity() -> (

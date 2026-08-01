@@ -82,11 +82,15 @@ def test_matrix_metadata_names_replaced_values_and_shared_siblings(case) -> None
         assert _value_at(before, path) is _value_at(after, path), (case.event_type, path)
 
 
-@pytest.mark.parametrize("case", CASES, ids=lambda case: case.event_type)
+@pytest.mark.parametrize(
+    "case",
+    tuple(case for case in CASES if case.changed_groups),
+    ids=lambda case: case.event_type,
+)
 def test_matrix_queries_are_event_specific_public_probes(case) -> None:
-    _, projection = case_projection(case)
+    before, after = case_projection(case)
 
-    assert case.query(projection) != projection_to_checkpoint(projection), case.event_type
+    assert case.query(before) != case.query(after), case.event_type
 
 
 @pytest.mark.parametrize(
