@@ -5,6 +5,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.slow
+
 
 _PRODUCTION_ROOT = Path(__file__).parents[2] / "src" / "orchestrator"
 

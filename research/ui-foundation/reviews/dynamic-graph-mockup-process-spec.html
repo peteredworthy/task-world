@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="en" data-depth="standard" data-topic="all">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dynamic graph mockup process · interactive spec</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #192724;
+      --muted: #5d6b66;
+      --paper: #f5f2e9;
+      --surface: #fffdf7;
+      --line: #cbc3b2;
+      --green: #164f46;
+      --green-soft: #dce9e3;
+      --orange: #a33f22;
+      --orange-soft: #f6dfd3;
+      --blue: #315f7d;
+      --blue-soft: #dde9f0;
+      --violet: #715486;
+      --violet-soft: #ece3f1;
+      --shadow: 0 12px 30px rgba(25, 39, 36, .09);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-padding-top: 7.5rem; }
+    body { margin: 0; line-height: 1.55; }
+    button, summary { font: inherit; }
+    button { cursor: pointer; }
+    a { color: inherit; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
+    .shell { max-width: 92rem; margin: auto; padding: 0 clamp(1rem, 3vw, 3rem) 5rem; }
+    .masthead {
+      margin: 1.25rem auto 0;
+      padding: clamp(1.4rem, 4vw, 3.2rem);
+      border-radius: 1.25rem;
+      color: #f8f5ec;
+      background: var(--green);
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+    .masthead::after {
+      content: "";
+      position: absolute;
+      width: 20rem;
+      height: 20rem;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 50%;
+      right: -7rem;
+      top: -8rem;
+      box-shadow: 0 0 0 3rem rgba(255,255,255,.04), 0 0 0 6rem rgba(255,255,255,.03);
+    }
+    .eyebrow { margin: 0 0 .45rem; text-transform: uppercase; letter-spacing: .14em; font-size: .73rem; font-weight: 800; }
+    h1, h2, h3 { line-height: 1.12; }
+    h1 { max-width: 18ch; margin: 0; font-family: Georgia, serif; font-size: clamp(2.2rem, 6vw, 5.5rem); font-weight: 500; }
+    .dek { max-width: 65ch; margin: 1rem 0 0; font-size: clamp(1rem, 2vw, 1.3rem); color: #d9e9e3; }
+    .recommendation { display: inline-flex; gap: .5rem; align-items: center; margin-top: 1.5rem; padding: .48rem .72rem; background: #f7d3bd; color: #54220f; border-radius: 999px; font-size: .8rem; font-weight: 800; text-transform: uppercase; letter-spacing: .07em; }
+    .controls {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      margin: 1rem 0;
+      padding: .75rem;
+      border: 1px solid var(--line);
+      border-radius: .85rem;
+      background: rgba(245, 242, 233, .96);
+      box-shadow: 0 5px 18px rgba(25,39,36,.08);
+      backdrop-filter: blur(10px);
+      display: flex;
+      flex-wrap: wrap;
+      gap: .75rem 1.25rem;
+      align-items: center;
+    }
+    .control-group { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+    .control-label { margin-right: .25rem; color: var(--muted); font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
+    .controls button {
+      border: 1px solid #a9aea8;
+      border-radius: 999px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: .35rem .7rem;
+      font-size: .84rem;
+      font-weight: 700;
+    }
+    .controls button[aria-pressed="true"] { color: white; background: var(--green); border-color: var(--green); }
+    button:focus-visible, a:focus-visible, summary:focus-visible { outline: 3px solid var(--orange); outline-offset: 3px; }
+    .layout { display: grid; grid-template-columns: 14rem minmax(0, 1fr); gap: clamp(1.2rem, 3vw, 3rem); align-items: start; }
+    .rail { position: sticky; top: 6.3rem; border-left: 1px solid var(--line); padding-left: 1rem; }
+    .rail p { margin: 0 0 .65rem; color: var(--muted); font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }
+    .rail a { display: block; margin: .14rem 0; padding: .45rem .6rem; border-radius: .45rem; color: var(--muted); font-size: .9rem; text-decoration: none; border-left: 3px solid transparent; }
+    .rail a[aria-current="location"] { color: var(--green); background: var(--green-soft); border-left-color: var(--green); font-weight: 800; }
+    .content { min-width: 0; }
+    .spec-section { padding: 2.3rem 0; border-bottom: 1px solid var(--line); }
+    .section-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 29rem); gap: 1rem 2rem; align-items: end; margin-bottom: 1.2rem; }
+    .kicker { margin: 0 0 .3rem; color: var(--orange); font-size: .72rem; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
+    h2 { margin: 0; font-family: Georgia, serif; font-size: clamp(1.7rem, 4vw, 3.1rem); font-weight: 500; }
+    .section-intro { margin: 0; color: var(--muted); }
+    h3 { margin: 0 0 .5rem; font-size: 1.05rem; }
+    p { margin-top: .4rem; }
+    .minute { padding: clamp(1rem, 3vw, 1.8rem); border: 1px solid #b7c9c1; border-radius: 1rem; background: var(--green-soft); }
+    .minute-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .9rem; }
+    .minute-card { background: rgba(255,255,255,.65); border-radius: .7rem; padding: 1rem; }
+    .minute-card p { margin-bottom: 0; font-size: .92rem; }
+    .minute-card.wide { grid-column: 1 / -1; }
+    .number-row { display: flex; gap: .35rem; flex-wrap: wrap; margin-top: .65rem; }
+    .number-row span { display: inline-flex; align-items: center; gap: .25rem; padding: .25rem .48rem; border-radius: .4rem; background: white; font-size: .78rem; font-weight: 700; }
+    .number-row b { color: var(--orange); }
+    .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .85rem; }
+    .card { padding: 1rem; border: 1px solid var(--line); border-radius: .8rem; background: var(--surface); box-shadow: 0 4px 13px rgba(25,39,36,.04); }
+    .card p:last-child { margin-bottom: 0; }
+    .card-index { display: inline-grid; place-items: center; min-width: 1.8rem; height: 1.8rem; margin-bottom: .75rem; border-radius: 50%; color: white; background: var(--green); font-size: .8rem; font-weight: 900; }
+    .topic-label { display: inline-block; margin-bottom: .6rem; color: var(--muted); font-size: .68rem; font-weight: 900; text-transform: uppercase; letter-spacing: .1em; }
+    .flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; }
+    .stage { position: relative; padding: 1rem; border: 1px solid var(--line); border-radius: .7rem; background: var(--surface); }
+    .stage::before { content: attr(data-stage); display: block; color: var(--orange); font-family: Georgia, serif; font-size: 1.5rem; }
+    .stage::after { content: "→"; position: absolute; right: -.65rem; top: 50%; z-index: 1; color: var(--orange); font-weight: 900; }
+    .stage:nth-child(3)::after, .stage:last-child::after { content: none; }
+    html:not([data-topic="all"]) .stage::after { content: none; }
+    .stage h3 { margin-top: .35rem; }
+    .stage p { font-size: .88rem; color: var(--muted); }
+    .principle { margin: 1rem 0; padding: 1rem 1.2rem; border-left: .35rem solid var(--orange); background: var(--orange-soft); font-family: Georgia, serif; font-size: clamp(1.1rem, 2vw, 1.45rem); }
+    .journey { display: grid; grid-template-columns: repeat(7, minmax(9rem, 1fr)); gap: .7rem; overflow-x: auto; padding: .25rem 0 1rem; }
+    .journey-state { min-height: 12.5rem; padding: .8rem; border: 1px solid var(--line); border-radius: .8rem; background: var(--surface); }
+    .journey-state .card-index { background: var(--orange); }
+    .journey-state p { font-size: .83rem; color: var(--muted); }
+    .operator-question { font-weight: 800; color: var(--ink) !important; }
+    .legend { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .7rem; margin: 1rem 0; }
+    .legend-item { padding: .8rem; border-radius: .65rem; font-size: .85rem; }
+    .legend-item strong { display: block; margin-bottom: .2rem; }
+    .current { background: var(--green-soft); border: 1px solid #9cbeb0; }
+    .derived { background: var(--blue-soft); border: 1px dashed #83a8bb; }
+    .proposed { background: var(--violet-soft); border: 1px dotted #9c83ad; }
+    .marker { display: inline-block; padding: .16rem .42rem; border-radius: .3rem; font-size: .65rem; font-weight: 900; letter-spacing: .08em; text-transform: uppercase; }
+    .marker.current { color: #10483f; }
+    .marker.derived { color: #244f69; }
+    .marker.proposed { color: #624177; }
+    .continuity { display: flex; flex-wrap: wrap; gap: .45rem; padding: .8rem; border: 1px dashed #9b927f; border-radius: .7rem; }
+    .continuity span { padding: .27rem .5rem; background: #ece8dd; border-radius: .35rem; font-size: .78rem; }
+    details { margin-top: .8rem; border-top: 1px solid var(--line); padding-top: .65rem; }
+    summary { color: var(--green); cursor: pointer; font-size: .84rem; font-weight: 800; }
+    details p, details li { color: var(--muted); font-size: .84rem; }
+    .rubric { display: grid; grid-template-columns: 1fr 1fr; gap: .85rem; }
+    .track { padding: 1rem; border-radius: .8rem; background: var(--surface); border: 1px solid var(--line); }
+    .track ol { padding-left: 1.3rem; }
+    .track li { margin: .35rem 0; }
+    .stop-list { margin: 1rem 0 0; padding: 0; list-style: none; display: grid; gap: .6rem; }
+    .stop-list li { padding: .8rem 1rem .8rem 2.5rem; border: 1px solid #d7a38e; border-radius: .6rem; background: var(--orange-soft); position: relative; }
+    .stop-list li::before { content: "×"; position: absolute; left: .9rem; color: #9d3416; font-weight: 900; }
+    .deliverables { display: grid; grid-template-columns: repeat(3, 1fr); gap: .7rem; }
+    .deliverable { padding: 1rem; border-top: .25rem solid var(--green); background: var(--surface); }
+    .deliverable code { overflow-wrap: anywhere; }
+    .footer { padding: 1.5rem 0; color: var(--muted); font-size: .82rem; }
+    .empty-state { margin: 0 0 1rem; padding: .7rem .85rem; border: 1px dashed #9b927f; border-radius: .6rem; color: var(--muted); background: #ece8dd; font-size: .86rem; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .journey:focus-visible { outline: 3px solid var(--orange); outline-offset: 3px; }
+    [data-detail] { display: none; }
+    html[data-depth="standard"] [data-detail="standard"],
+    html[data-depth="full"] [data-detail="standard"],
+    html[data-depth="full"] [data-detail="full"] { display: block; }
+    [hidden] { display: none !important; }
+    @media (max-width: 850px) {
+      html { scroll-padding-top: 10rem; }
+      .layout { grid-template-columns: 1fr; }
+      .rail { position: sticky; top: 5.8rem; z-index: 8; display: flex; gap: .2rem; overflow-x: auto; border: 1px solid var(--line); border-radius: .7rem; padding: .35rem; background: var(--paper); }
+      .rail p { display: none; }
+      .rail a { flex: 0 0 auto; border-left: 0; border-bottom: 3px solid transparent; }
+      .rail a[aria-current="location"] { border-left-color: transparent; border-bottom-color: var(--green); }
+      .section-head { grid-template-columns: 1fr; }
+      .flow { grid-template-columns: repeat(2, 1fr); }
+      .stage:nth-child(3)::after { content: "→"; }
+      .stage:nth-child(even)::after { content: none; }
+    }
+    @media (max-width: 580px) {
+      html { scroll-padding-top: 1rem; }
+      .shell { padding-inline: .7rem; }
+      .masthead { margin-top: .7rem; border-radius: .8rem; }
+      .controls { top: auto; gap: .5rem; }
+      .controls, .rail { position: static; }
+      .control-group { width: 100%; }
+      .control-group button { flex: 1; padding-inline: .4rem; }
+      .rail { top: auto; }
+      .minute-grid, .cards, .flow, .legend, .rubric, .deliverables { grid-template-columns: 1fr; }
+      .journey { grid-template-columns: 1fr; overflow: visible; }
+      .journey-state { min-height: auto; border: 1px solid var(--line); border-radius: .8rem; }
+      .stage::after, .stage:nth-child(3)::after { content: none; }
+      .spec-section { padding-block: 1.6rem; }
+    }
+    @media print {
+      :root { background: white; }
+      .shell { max-width: none; padding: 0; }
+      .masthead { color: black; background: white; box-shadow: none; border: 2px solid black; }
+      .dek { color: #333; }
+      .controls, .rail { display: none; }
+      .layout { display: block; }
+      [data-detail] { display: block !important; }
+      [data-topic][hidden] { display: block !important; }
+      .empty-state { display: none !important; }
+      .card, .stage, .track { break-inside: avoid; box-shadow: none; }
+      .journey { grid-template-columns: repeat(4, 1fr); overflow: visible; }
+      .journey-state { min-height: auto; }
+      details { break-inside: avoid; }
+      details > * { display: block; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+    }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header class="masthead">
+    <p class="eyebrow">Approved process spec · 26 July 2026</p>
+    <h1>Make the screen the unit of learning.</h1>
+    <p class="dek">Recommendation: replace catalog-first research with one scenario, an immediate seven-state graybox, targeted evidence, one reality challenge, and one refinement pass. The purpose is a credible clickable concept for the full dynamic-graph operator loop—not another semantic system.</p>
+    <div class="recommendation"><span aria-hidden="true">→</span> Build, observe, pull only the detail that changes the deck</div>
+  </header>
+
+  <div class="controls" aria-label="Reading controls">
+    <div class="control-group" role="group" aria-labelledby="detail-controls-label">
+      <span class="control-label" id="detail-controls-label">Detail</span>
+      <button type="button" data-depth-control="summary" aria-pressed="false">Summary</button>
+      <button type="button" data-depth-control="standard" aria-pressed="true">Standard</button>
+      <button type="button" data-depth-control="full" aria-pressed="false">Full</button>
+    </div>
+    <div class="control-group" role="group" aria-labelledby="topic-controls-label">
+      <span class="control-label" id="topic-controls-label">Topic</span>
+      <button type="button" data-topic-control="all" aria-pressed="true">All</button>
+      <button type="button" data-topic-control="process" aria-pressed="false">Process</button>
+      <button type="button" data-topic-control="product" aria-pressed="false">Product</button>
+      <button type="button" data-topic-control="evidence" aria-pressed="false">Evidence</button>
+      <button type="button" data-topic-control="evaluation" aria-pressed="false">Evaluation</button>
+    </div>
+    <p class="sr-only" data-filter-status role="status" aria-live="polite" aria-atomic="true"></p>
+  </div>
+
+  <div class="layout">
+    <nav class="rail" aria-label="Spec orientation">
+      <p>Orientation</p>
+      <a href="#overview" data-nav="overview" aria-current="location">Overview</a>
+      <a href="#process" data-nav="process">Process</a>
+      <a href="#scenario" data-nav="scenario">Scenario</a>
+      <a href="#deck" data-nav="deck">Concept deck</a>
+      <a href="#evaluation" data-nav="evaluation">Evaluation</a>
+      <a href="#stops" data-nav="stops">Stop conditions</a>
+    </nav>
+
+    <main class="content">
+      <section class="spec-section" id="overview" data-section="overview">
+        <div class="section-head">
+          <div><p class="kicker">Start here</p><h2>The 60-second read</h2></div>
+          <p class="section-intro">Enough structure to decide whether the process is sound. Increase detail only when you need rationale, evidence, or verification.</p>
+        </div>
+        <p class="empty-state" data-empty-state hidden></p>
+        <div class="minute">
+          <div class="minute-grid">
+            <article class="minute-card" data-topic="process">
+              <h3>Structural diagnosis</h3>
+              <p>The previous process prohibited screens, optimized for catalogs and validators, delayed visual feedback, and turned uncertainty into a global prerequisite. Useful research survived; the machinery did not.</p>
+            </article>
+            <article class="minute-card" data-topic="process">
+              <h3>Replacement principle</h3>
+              <p><strong>Research just enough to make one visible screen claim honest.</strong> Review the screen, then let observed design needs pull more research.</p>
+            </article>
+            <article class="minute-card wide" data-topic="product">
+              <h3>The shape of the work</h3>
+              <div class="number-row" aria-label="Process quantities">
+                <span><b>6</b> process stages</span><span><b>7</b> linked concept states</span><span><b>3</b> deliverables</span><span><b>1</b> scenario: r314</span><span><b>1</b> challenge</span><span><b>1</b> refinement pass</span>
+              </div>
+              <p data-summary-outline>Stages: Freeze Scenario → Build Graybox → Review Operator Flow → Pull Targeted Research → Reality Challenge → Refine &amp; Evaluate. States: Fleet → Graph Workspace → Failure Comparison → Node Audit → Intervention Decision → Proposed Steering → Recovery &amp; Postscript.</p>
+            </article>
+            <article class="minute-card" data-topic="evaluation">
+              <h3>Three outputs only</h3>
+              <p>A scenario sheet, one offline clickable HTML concept, and a review record. No catalog, schema, validator, generator, snapshot, or feedback importer.</p>
+            </article>
+            <article class="minute-card" data-topic="evaluation">
+              <h3>Research &amp; refinement stops</h3>
+              <p>Every iteration changes a screen or stops. Research stops when either answer leaves the deck unchanged. Refinement stops after one challenge and one response pass; then decide.</p>
+            </article>
+            <article class="minute-card wide" data-topic="evaluation">
+              <h3>Concept rejection gates</h3>
+              <p>Reject or substantially revise when decision readiness, evidence access, action safety, or capability honesty scores below 3. Also reject capability leakage, continuity loss, acceptance-only feedback, or narrow-layout loss of decision-critical information.</p>
+            </article>
+          </div>
+        </div>
+        <details data-detail="full">
+          <summary>Citations · diagnosis and retained foundation</summary>
+          <p>Approved spec: “Review Of The Previous Process” and “Working Principle.” Retain agent reports 01–11, <code>DECISIONS.md</code>, the JTBD jobs/journeys/contracts/architecture/rubric, and direct source or test citations only where a visible claim needs confirmation.</p>
+        </details>
+      </section>
+
+      <section class="spec-section" id="process" data-section="process">
+        <div class="section-head">
+          <div><p class="kicker">Six-stage loop</p><h2>From scenario to decision</h2></div>
+          <p class="section-intro">Front-load the reviewable flow. Research is a pull system, not a gate in front of design.</p>
+        </div>
+        <p class="empty-state" data-empty-state hidden></p>
+        <div class="flow">
+          <article class="stage" data-stage="01" data-topic="process"><h3>Freeze the scenario</h3><p>One degrading run, <code>r314</code>, among four runs. Record questions, realistic data, capability status, citations, and known gaps.</p></article>
+          <article class="stage" data-stage="02" data-topic="product"><h3>Build graybox now</h3><p>Link all seven low-fidelity states before polishing any screen. The flow is the first useful artifact.</p></article>
+          <article class="stage" data-stage="03" data-topic="evaluation"><h3>Review operator flow</h3><p>Walk rubric tasks. Note wrong inferences, missing information, resets, backtracks, ambiguity, and unconfirmed outcomes.</p></article>
+          <article class="stage" data-stage="04" data-topic="evidence"><h3>Pull targeted research</h3><p>Start with decisions and reports. Reopen code or tests only for an ambiguous field, state, relation, transition, or action.</p></article>
+          <article class="stage" data-stage="05" data-topic="evidence"><h3>Reality challenge</h3><p>A second reader challenges only claims capable of materially changing the deck, then edits findings in place.</p></article>
+          <article class="stage" data-stage="06" data-topic="evaluation"><h3>Refine once, evaluate</h3><p>Apply focused findings, make one refinement pass, score the concept, and choose continue, revise, combine, or stop.</p></article>
+        </div>
+        <blockquote class="principle" data-topic="process">“Every iteration must change a reviewable screen or stop.”</blockquote>
+        <div class="cards" data-detail="standard">
+          <article class="card" data-topic="evidence">
+            <span class="topic-label">Evidence economy</span><h3>Research enters at the point of use</h3>
+            <p>Record the answer in the scenario note and update the affected screen. Create no separate research artifact unless the deck directly consumes it.</p>
+            <details><summary>Rationale · why pull beats inventory</summary><p>It bounds uncertainty to an actual decision and prevents a second canonical model from accumulating invented states, conflated outputs, and broken cross-references.</p></details>
+          </article>
+          <article class="card" data-topic="evaluation">
+            <span class="topic-label">Review discipline</span><h3>Challenge material claims, not everything</h3>
+            <p>Prioritize identity and scope errors, invented behavior, optimistic success, causal overclaiming, capability leakage, and misleading freshness, cost, authority, or coverage.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="spec-section" id="scenario" data-section="scenario">
+        <div class="section-head">
+          <div><p class="kicker">Design fixture</p><h2>One degrading run, in context</h2></div>
+          <p class="section-intro">The versioned scenario fixture is specific enough to make screens honest—not generalized enough to become a domain model.</p>
+        </div>
+        <p class="empty-state" data-empty-state hidden></p>
+        <div class="cards">
+          <article class="card" data-topic="product">
+            <span class="topic-label">Fleet · r311–r314</span><h3>Four runs establish contrast</h3>
+            <p>Each includes status, frontier, last event, pending human action, active lease, final gate, recorded usage, and pricing coverage. Quiet runs use observed facts—not a fictitious “healthy” classifier.</p>
+          </article>
+          <article class="card" data-topic="product">
+            <span class="topic-label">Focus · r314</span><h3>Six to eight connected nodes</h3>
+            <p>Two worker candidates, two failed verifier reports, a human gate or corrective planning point, and a final gate blocked by one unresolved requirement.</p>
+          </article>
+          <article class="card" data-topic="evidence" data-detail="standard">
+            <span class="topic-label">Required texture</span><h3>Enough evidence to judge a retry</h3>
+            <p>Directed edges, required bindings, scheduler buckets, states, leases, repeated requirement, two verifier reasons, candidate records, file-state boundaries, prompt-summary metadata, ordered events, and two usage facts—one unpriced.</p>
+          </article>
+          <article class="card" data-topic="product" data-detail="standard">
+            <span class="topic-label">Action contrast</span><h3>Executable now vs imagined next</h3>
+            <p>Include one currently executable decision and a separately labeled proposed typed-steering path. Proposed steering must never look operable in the current product.</p>
+          </article>
+        </div>
+        <div class="legend" aria-label="Capability marker definitions">
+          <div class="legend-item current"><strong><span class="marker current">Current</span></strong>Persisted or executable behavior available in the product now.</div>
+          <div class="legend-item derived"><strong><span class="marker derived">Derived</span></strong>An interpretation computed from current evidence; useful, but not a persisted fact or detector.</div>
+          <div class="legend-item proposed"><strong><span class="marker proposed">Proposed</span></strong>A future concept for coherence and desirability testing; not currently available or executable.</div>
+        </div>
+        <details data-detail="full">
+          <summary>Error states · variants the scenario must expose</summary>
+          <ul><li>Accepted but not yet applied, followed by projection-confirmed success.</li><li>Stale proposal or graph base; validation rejection with reason.</li><li>Unavailable or partial evidence; unpriced usage.</li><li>Disconnected event stream—“Live” means connection only.</li><li>Action unavailable in current state, including Cancel while stopping.</li></ul>
+        </details>
+      </section>
+
+      <section class="spec-section" id="deck" data-section="deck">
+        <div class="section-head">
+          <div><p class="kicker">Seven-state journey</p><h2>The operator’s questions stay in motion</h2></div>
+          <p class="section-intro">A horizontal strip makes the whole decision journey inspectable at once, then stacks into a scan-friendly sequence on narrow screens.</p>
+        </div>
+        <p class="empty-state" data-empty-state hidden></p>
+        <div class="journey" aria-label="Seven concept states" tabindex="0">
+          <article class="journey-state" data-topic="product"><span class="card-index">1</span><h3>Fleet</h3><p class="operator-question">Where is attention needed?</p><p>Quiet sweep; rank <code>r314</code> by observed conditions. Preserve filters and return context.</p></article>
+          <article class="journey-state" data-topic="product"><span class="card-index">2</span><h3>Graph Workspace</h3><p class="operator-question">Where is the run blocked?</p><p>Frontier, expansion, bindings, downstream topology, final gate; selection is one run-scoped <code>node_id</code>. Graph nodes are not legacy tasks.</p></article>
+          <article class="journey-state" data-topic="evidence"><span class="card-index">3</span><h3>Failure Comparison</h3><p class="operator-question">What repeated—and what changed?</p><p>Compare requirement, reasons, candidates, file boundaries, and scoped cost across attempts. Raw differences are current evidence; retry information value is not a current detector.</p></article>
+          <article class="journey-state" data-topic="evidence"><span class="card-index">4</span><h3>Node Audit</h3><p class="operator-question">What is the ground truth?</p><p>Hold selection steady while exposing records, outputs, trace, prompt summary, files, and usage.</p></article>
+          <article class="journey-state" data-topic="product"><span class="card-index">5</span><h3>Intervention Decision</h3><p class="operator-question">What can I safely do now?</p><p><span class="marker current">Current</span> Gate, patch, retry, or lifecycle actions expose trigger, scope, evidence, consequence, validation, reversibility, and provenance.</p></article>
+          <article class="journey-state" data-topic="product"><span class="card-index">6</span><h3>Proposed Steering</h3><p class="operator-question">Would typed steering resolve it?</p><p><span class="marker proposed">Proposed</span> Instruction, context, evidence binding, budget, validation, and delivery proof—visibly non-executable.</p></article>
+          <article class="journey-state" data-topic="evaluation"><span class="card-index">7</span><h3>Recovery &amp; Postscript</h3><p class="operator-question">Did corrective work actually begin?</p><p>“Accepted, applying…” until projection confirmation; then postscript. Cohort analysis remains proposed.</p></article>
+        </div>
+        <div data-detail="standard">
+          <h3>Continuity contract</h3>
+          <div class="continuity"><span>run identity + synopsis</span><span>selected node + evidence</span><span>attempt / time</span><span>unresolved decision / action</span><span>freshness + capability honesty</span><span>source + return context</span></div>
+          <p class="section-intro">Desktop can place context beside focus; narrow views stack below a sticky context strip. Neither may remove information needed to authorize action.</p>
+        </div>
+        <div class="cards" data-detail="full">
+          <article class="card" data-topic="evidence"><h3>Evidence stays close</h3><p>Raw prompts, transcripts, tool activity, diffs, and full topology open through progressive disclosure—not context-resetting destinations. Missing exact prompts, partial traces, and non-causal file-state evidence stay visible.</p></article>
+          <article class="card" data-topic="product"><h3>Actions remain honest</h3><p>Attribution labels do not imply authenticated identity. Consequential actions use a proper modal. HTTP acceptance is never rendered as success before the projection confirms it.</p></article>
+        </div>
+      </section>
+
+      <section class="spec-section" id="evaluation" data-section="evaluation">
+        <div class="section-head">
+          <div><p class="kicker">Two-track evaluation</p><h2>Judge reality and possibility separately</h2></div>
+          <p class="section-intro">The same deck can test current decision support and future coherence without letting proposed capability leak into current claims.</p>
+        </div>
+        <p class="empty-state" data-empty-state hidden></p>
+        <div class="rubric">
+          <article class="track" data-topic="evaluation"><span class="marker current">Current-grounded</span><h3>Tasks 1–6</h3><ol><li>Gain quiet-fleet confidence.</li><li>Find the run needing attention.</li><li>Locate its graph position.</li><li>Explain repeated failure.</li><li>Judge retry value from available evidence.</li><li>Inspect ground truth.</li></ol></article>
+          <article class="track" data-topic="evaluation"><span class="marker proposed">Future concept</span><h3>Tasks 7–9</h3><ol><li>Explore proposed typed steering.</li><li>Prove intervention reached corrective work.</li><li>Compare across runs.</li></ol><p>Scores coherence and desirability—not implementation readiness.</p></article>
+        </div>
+        <div class="cards" data-detail="standard">
+          <article class="card" data-topic="evaluation"><h3>Reject below the honesty floor</h3><p>Substantially revise if decision readiness, evidence access, action safety, or capability honesty scores below 3.</p></article>
+          <article class="card" data-topic="evaluation"><h3>Reject broken continuity or feedback</h3><p>Reject if a lens loses context, proposed/derived looks current, feedback stops at acceptance, or narrow layout hides decision-critical information.</p></article>
+        </div>
+        <details data-detail="full">
+          <summary>Exact verification steps</summary>
+          <ol><li>Open the concept HTML through <code>file://</code> with network access unavailable.</li><li>Exercise every link, disclosure, and action-result variant.</li><li>Inspect representative desktop and narrow viewports.</li><li>Complete the JTBD rubric walkthrough and record observations.</li><li>Confirm every visible nontrivial claim is cited in the scenario sheet or clearly labeled derived or proposed.</li></ol>
+          <p>Automated browser tests are optional when interaction complexity makes regression risk material; they are not a prerequisite for design learning.</p>
+        </details>
+      </section>
+
+      <section class="spec-section" id="stops" data-section="stops">
+        <div class="section-head">
+          <div><p class="kicker">Stop conditions</p><h2>Bound the work before it becomes a system</h2></div>
+          <p class="section-intro">The process succeeds by producing a decision, not by maximizing research or artifact count.</p>
+        </div>
+        <p class="empty-state" data-empty-state hidden></p>
+        <ul class="stop-list" data-topic="evaluation">
+          <li>Stop research when either possible answer would leave the deck unchanged.</li>
+          <li>Stop when uncertainty can be omitted or honestly labeled.</li>
+          <li>Stop when resolution requires unrelated backend or future-product design.</li>
+          <li>Stop when one research pass does not change a screen.</li>
+          <li>Stop expanding when a proposed file is not directly consumed by the concept or its evaluation.</li>
+          <li>Stop refining after one focused challenge and one response pass; choose continue, revise, combine, or stop.</li>
+        </ul>
+        <div data-detail="standard">
+          <h3>Only three deliverables</h3>
+          <div class="deliverables">
+            <div class="deliverable" data-topic="evidence"><strong>Scenario sheet</strong><br><code>operator-loop-scenario.md</code></div>
+            <div class="deliverable" data-topic="product"><strong>Clickable concept</strong><br><code>operator-loop-concept.html</code></div>
+            <div class="deliverable" data-topic="evaluation"><strong>Review record</strong><br><code>operator-loop-review.md</code></div>
+          </div>
+        </div>
+        <details data-detail="full">
+          <summary>Scope guard · what must not return</summary>
+          <p>Do not rebuild a comprehensive semantic model, capability catalog, stable research IDs, custom schema, validator, generator, source snapshot, or feedback importer. Do not exhaustively design every graph state or imply proposed steering and cross-run analysis are current.</p>
+        </details>
+      </section>
+      <footer class="footer">Interactive reading companion for <code>2026-07-26-dynamic-graph-mockup-process-design.md</code>. The approved Markdown remains the source of truth.</footer>
+    </main>
+  </div>
+</div>
+<script>
+(() => {
+  const DEPTH_KEY = 'dynamic-graph-mockup-process-spec:depth:v1';
+  const depths = new Set(['summary', 'standard', 'full']);
+  const depthControls = [...document.querySelectorAll('[data-depth-control]')];
+  const topicControls = [...document.querySelectorAll('[data-topic-control]')];
+  const topicCards = [...document.querySelectorAll('[data-topic]')];
+  const filterStatus = document.querySelector('[data-filter-status]');
+  const depthRank = { summary: 0, standard: 1, full: 2 };
+  let currentTopic = 'all';
+
+  const updateEmptyStates = () => {
+    const currentDepth = document.documentElement.dataset.depth;
+    let visibleCount = 0;
+    document.querySelectorAll('[data-section]').forEach(section => {
+      const visibleTopicCards = [...section.querySelectorAll('[data-topic]')].filter(card => {
+        const detail = card.closest('[data-detail]')?.dataset.detail;
+        const availableAtDepth = !detail || depthRank[detail] <= depthRank[currentDepth];
+        return !card.hidden && availableAtDepth;
+      });
+      const hasVisibleTopic = visibleTopicCards.length > 0;
+      visibleCount += visibleTopicCards.length;
+      const emptyState = section.querySelector('[data-empty-state]');
+      emptyState.hidden = hasVisibleTopic;
+      if (!hasVisibleTopic) emptyState.textContent = `No ${currentTopic} content is available at ${currentDepth} detail in this section.`;
+    });
+    filterStatus.textContent = `${visibleCount} items shown for ${currentTopic} at ${currentDepth} detail.`;
+  };
+
+  const setDepth = (depth, persist = true) => {
+    const selected = depths.has(depth) ? depth : 'standard';
+    document.documentElement.dataset.depth = selected;
+    depthControls.forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.depthControl === selected));
+    });
+    if (persist) {
+      try { localStorage.setItem(DEPTH_KEY, selected); } catch (_) { /* file privacy mode */ }
+    }
+    updateEmptyStates();
+  };
+
+  let savedDepth = 'standard';
+  try { savedDepth = localStorage.getItem(DEPTH_KEY) || savedDepth; } catch (_) { /* file privacy mode */ }
+  setDepth(savedDepth, false);
+  depthControls.forEach(button => button.addEventListener('click', () => setDepth(button.dataset.depthControl)));
+
+  const setTopic = topic => {
+    currentTopic = topic;
+    document.documentElement.dataset.topic = topic;
+    topicControls.forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.topicControl === topic));
+    });
+    topicCards.forEach(card => { card.hidden = topic !== 'all' && card.dataset.topic !== topic; });
+    updateEmptyStates();
+  };
+  topicControls.forEach(button => button.addEventListener('click', () => setTopic(button.dataset.topicControl)));
+
+  const navItems = [...document.querySelectorAll('[data-nav]')];
+  const sectionRatios = new Map();
+  const setActive = id => navItems.forEach(link => {
+    if (link.dataset.nav === id) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  });
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(entry => sectionRatios.set(entry.target.dataset.section, entry.isIntersecting ? entry.intersectionRatio : 0));
+      const visible = [...sectionRatios.entries()].sort((a, b) => b[1] - a[1])[0];
+      if (visible && visible[1] > 0) setActive(visible[0]);
+    }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, .15, .5] });
+    document.querySelectorAll('[data-section]').forEach(section => {
+      sectionRatios.set(section.dataset.section, 0);
+      observer.observe(section);
+    });
+  }
+  window.addEventListener('hashchange', () => setActive(location.hash.slice(1) || 'overview'));
+  if (location.hash) setActive(location.hash.slice(1));
+
+  const detailPrintStates = new Map();
+  window.addEventListener('beforeprint', () => {
+    detailPrintStates.clear();
+    document.querySelectorAll('details').forEach(detail => {
+      detailPrintStates.set(detail, detail.open);
+      detail.open = true;
+    });
+  });
+  window.addEventListener('afterprint', () => {
+    detailPrintStates.forEach((open, detail) => { detail.open = open; });
+    detailPrintStates.clear();
+  });
+})();
+</script>
+</body>
+</html>

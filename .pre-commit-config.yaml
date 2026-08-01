@@ -28,7 +28,7 @@ repos:
         pass_filenames: false
       - id: pytest
         name: pytest
-        entry: uv run pytest -x -n 2 --dist loadgroup --timeout=30
+        entry: uv run pytest -x
         language: system
         pass_filenames: false
         stages: [pre-commit]

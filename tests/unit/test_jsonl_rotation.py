@@ -265,6 +265,7 @@ async def test_concurrent_same_path_observers_preserve_one_copy_of_each_event(
     assert positions == list(range(1, 21))
 
 
+@pytest.mark.slow
 def test_separate_process_writers_preserve_one_copy_of_each_event(tmp_path: Path) -> None:
     path = tmp_path / "history.jsonl"
     context = multiprocessing.get_context("spawn")

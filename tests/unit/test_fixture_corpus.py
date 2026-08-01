@@ -134,6 +134,7 @@ def test_every_fixture_stream_matches_incremental_and_checkpointed_replay_at_eve
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow
 async def test_fixture_corpus_replay_matches_checkpoint_and_compact_projection() -> None:
     engine = create_engine(":memory:")
     await init_db(engine)

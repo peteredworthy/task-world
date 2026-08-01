@@ -44,6 +44,8 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 
+pytestmark = pytest.mark.slow
+
 
 class FixedClock:
     def __init__(self) -> None:

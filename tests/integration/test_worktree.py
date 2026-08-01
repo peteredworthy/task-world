@@ -18,6 +18,8 @@ from orchestrator.git.worktree import WorktreeManager, get_agent_cache_write_pat
 
 from tests.integration.git_helpers import _git
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture
 def git_repo(tmp_path: Path, _base_repo: Path) -> tuple[Path, Path]:

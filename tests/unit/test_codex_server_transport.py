@@ -994,6 +994,7 @@ async def test_real_stdio_transport_reads_large_ndjson_lines_without_limit_overr
     assert second["method"] == "ping"
 
 
+@pytest.mark.slow
 async def test_real_stdio_transport_discards_oversized_lines_and_recovers() -> None:
     """recv() drops oversized non-delimited lines and continues with following frames."""
     payload = (

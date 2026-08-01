@@ -52,6 +52,8 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from orchestrator.workflow.graph_driver import GraphRunDriver
 
+pytestmark = pytest.mark.e2e
+
 ROUTINE_PATH = (
     Path(__file__).resolve().parents[2] / "routines" / "dynamic-graph-feature" / "routine.yaml"
 )

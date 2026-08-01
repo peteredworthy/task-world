@@ -184,6 +184,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     skip_slow = pytest.mark.skip(reason="needs --run-slow to run")
     skip_e2e = pytest.mark.skip(reason="needs --run-e2e to run")
     for item in items:
+        if item.path.name.startswith("test_graph_fr") and item.path.name.endswith("_acceptance.py"):
+            item.add_marker(pytest.mark.slow)
         if "slow" in item.keywords and not config.getoption("--run-slow"):
             item.add_marker(skip_slow)
         if "e2e" in item.keywords and not config.getoption("--run-e2e"):

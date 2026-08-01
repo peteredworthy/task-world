@@ -5,6 +5,8 @@ import stat
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from orchestrator.git import delete_snapshot_ref, restore, snapshot
 from orchestrator.git.snapshot import (
     SnapshotRef,
@@ -353,6 +355,7 @@ def test_pathspec_batches_empty() -> None:
     assert _pathspec_batches([]) == []
 
 
+@pytest.mark.slow
 def test_snapshot_force_includes_many_paths_without_arg_overflow(tmp_path: Path) -> None:
     """A worktree with thousands of force-included ignored files must snapshot
     without overflowing git's argv (regression for the ARG_MAX/E2BIG boundary bug).

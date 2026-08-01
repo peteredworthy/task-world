@@ -24,6 +24,8 @@ from orchestrator.db import (
 )
 from orchestrator.workflow import deserialize_event
 
+pytestmark = pytest.mark.slow
+
 
 def _alembic_config(database_path: Path) -> Config:
     config = Config("alembic.ini")

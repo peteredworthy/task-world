@@ -32,6 +32,8 @@ from orchestrator.runners.types import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
 
+pytestmark = pytest.mark.slow
+
 
 class FixedClock:
     def __init__(self) -> None:

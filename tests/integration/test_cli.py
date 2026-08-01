@@ -15,6 +15,8 @@ from orchestrator.db import init_db
 from orchestrator.workflow import InMemorySignalTransport
 from tests.integration.signal_helpers import make_drain_fn
 
+pytestmark = pytest.mark.slow
+
 
 @pytest.fixture
 async def test_app() -> AsyncIterator[FastAPI]:

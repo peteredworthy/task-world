@@ -40,6 +40,8 @@ from orchestrator.graph_runtime import (
 )
 from tests.unit.graph_test_utils import canonical_event_payload
 
+pytestmark = pytest.mark.slow
+
 
 def test_expired_lease_health_uses_latest_generation_for_each_node() -> None:
     leases = {

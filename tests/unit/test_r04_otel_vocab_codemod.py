@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from scripts.codemods.r04_otel_vocab import (
     FIELD_RENAMES,
     diagnose_source,
@@ -236,6 +238,7 @@ def _run_cli(root: Path, mode: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.slow
 def test_cli_modes_report_apply_and_guard_changes(tmp_path: Path) -> None:
     source_path = tmp_path / "src" / "example.py"
     source_path.parent.mkdir()

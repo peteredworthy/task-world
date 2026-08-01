@@ -57,6 +57,8 @@ from orchestrator.workflow import (
 )
 from orchestrator.workflow.service import WorkflowService
 
+pytestmark = pytest.mark.slow
+
 
 def _legacy_usage_snapshot(value: object) -> object:
     return value

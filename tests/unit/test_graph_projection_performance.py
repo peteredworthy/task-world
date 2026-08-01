@@ -19,6 +19,8 @@ from orchestrator.graph import (
     reduce_event,
 )
 
+pytestmark = pytest.mark.slow
+
 
 SCENARIOS = ("general", "edge-heavy", "record-heavy")
 EVENT_COUNT = 10_000

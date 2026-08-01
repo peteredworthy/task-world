@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from orchestrator.config import AgentRunnerType
 from orchestrator.runners import (
     ClaudeCliQuotaAgent,
@@ -13,6 +15,8 @@ from orchestrator.runners import (
     discover_agents,
     get_registered_agent_runner_types,
 )
+
+pytestmark = pytest.mark.slow
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]

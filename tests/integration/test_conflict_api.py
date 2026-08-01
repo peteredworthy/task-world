@@ -21,10 +21,13 @@ cost, so facets of the same response are asserted together in one test.
 from pathlib import Path
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 
 from tests.integration.git_helpers import _commit_file, _git
 from tests.integration.signal_helpers import DrainFn
+
+pytestmark = pytest.mark.slow
 
 # Fixtures (client_with_repo, git_repo, _shared_app_fixture) come from
 # tests/integration/conftest.py. See that module for isolation guarantees.

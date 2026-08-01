@@ -41,6 +41,8 @@ from orchestrator.state.models import (
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow import derive_output_path, resolve_template
 
+pytestmark = pytest.mark.slow
+
 
 async def _minimal_service_factory(session: AsyncSession) -> WorkflowService:
     """Minimal WorkflowService factory for test executor subclasses."""

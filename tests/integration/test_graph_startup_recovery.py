@@ -39,6 +39,8 @@ from tests.integration.test_graph_run_driver import (
 from orchestrator.workflow.graph_driver import GraphRunDriver
 from orchestrator.graph_runtime.store import GraphEventStore
 
+pytestmark = pytest.mark.slow
+
 
 def _build_driver(
     session_factory: async_sessionmaker[AsyncSession],

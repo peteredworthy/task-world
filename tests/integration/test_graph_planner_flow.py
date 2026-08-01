@@ -21,6 +21,8 @@ from orchestrator.graph import (
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 
+pytestmark = pytest.mark.slow
+
 
 class FixedClock:
     def now(self) -> datetime:

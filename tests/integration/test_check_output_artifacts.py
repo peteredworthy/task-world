@@ -34,6 +34,8 @@ from orchestrator.graph_runtime import (
 )
 from tests.unit.graph_test_utils import canonical_event_payload
 
+pytestmark = pytest.mark.slow
+
 
 class FixedClock:
     def now(self) -> datetime:

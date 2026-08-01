@@ -34,6 +34,8 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import AgentOutputEvent, WorkflowService
 from orchestrator.workflow.graph_driver import GraphRunDriver
 
+pytestmark = pytest.mark.slow
+
 
 class FakeConnectionManager:
     """Records broadcast events without a real WebSocket server."""

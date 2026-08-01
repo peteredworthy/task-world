@@ -37,6 +37,8 @@ from orchestrator.workflow import InMemorySignalTransport
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
+pytestmark = pytest.mark.slow
+
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 

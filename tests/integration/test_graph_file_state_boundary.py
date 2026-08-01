@@ -43,6 +43,8 @@ from orchestrator.runners.types import (
 )
 from orchestrator.state import ActionEntryKind, ActionLog, ActionLogEntry
 
+pytestmark = pytest.mark.slow
+
 
 class FixedClock:
     def __init__(self) -> None:

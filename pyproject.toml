@@ -62,10 +62,10 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "module"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-n 2 --dist loadgroup --timeout=30 -m 'not slow and not e2e'"
+addopts = "-n auto --dist loadfile --timeout=30 -m 'not slow and not e2e'"
 timeout = 30
 markers = [
-    "slow: tests that invoke real external tools or deterministic repository-wide static/migration analyses (LLMs, Docker, CLI agents)",
+    "slow: opt-in stress, acceptance, performance, external-tool, or repository-wide analyses",
     "e2e: end-to-end tests that run the orchestrator through real process or network boundaries",
 ]
 filterwarnings = [

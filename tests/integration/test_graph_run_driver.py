@@ -48,6 +48,8 @@ from orchestrator.workflow.graph_driver import (
     GraphRunDriver,
 )
 
+pytestmark = pytest.mark.slow
+
 
 class FixedClock:
     def __init__(self) -> None:

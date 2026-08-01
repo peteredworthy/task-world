@@ -47,6 +47,8 @@ from orchestrator.graph_runtime.controller import rebuild_projection
 from orchestrator.graph_runtime.outbox import append_outbox_rows
 from orchestrator.graph_runtime.store import graph_aggregate_id
 
+pytestmark = pytest.mark.slow
+
 
 class FixedClock:
     def __init__(self) -> None:

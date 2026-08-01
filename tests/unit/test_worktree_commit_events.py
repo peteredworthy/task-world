@@ -31,6 +31,8 @@ from orchestrator.git import WorktreeCommitError
 from orchestrator.state import Attempt, create_run_from_routine
 from orchestrator.workflow import LocalAutoVerifyRunner, PersistentEventEmitter, WorkflowService
 
+pytestmark = pytest.mark.slow
+
 
 def _git(repo: Path, *args: str) -> str:
     result = subprocess.run(

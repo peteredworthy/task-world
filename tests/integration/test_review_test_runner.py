@@ -18,6 +18,8 @@ from tests.integration.conftest import cleanup_runs_for_repo
 from tests.integration.signal_helpers import DrainFn
 from tests.integration.signal_helpers import make_drain_fn
 
+pytestmark = pytest.mark.slow
+
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 

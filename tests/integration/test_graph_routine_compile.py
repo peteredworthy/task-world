@@ -33,6 +33,8 @@ from orchestrator.graph_runtime import (
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
 
+pytestmark = pytest.mark.slow
+
 ROUTINE_PATHS = [
     Path("routines/demo-task.yaml"),
     *sorted(Path("routines").glob("*/routine.yaml")),

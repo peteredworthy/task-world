@@ -4,6 +4,8 @@ import ast
 from importlib import import_module
 from pathlib import Path
 
+import pytest
+
 from orchestrator.graph import (
     ProjectionCheckpointCodecError,
     ProjectionIntegrityDiagnostic,
@@ -13,6 +15,8 @@ from orchestrator.graph import (
     task_state,
     validate_projection_integrity,
 )
+
+pytestmark = pytest.mark.slow
 
 
 _ROOT = Path(__file__).parents[2]
