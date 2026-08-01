@@ -11,6 +11,10 @@ import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
     OUTPUT_RECORD_MODELS_BY_TYPE,
     ProjectedAnalysisSummaryRecord,
     ProjectedArtifactReferenceRecord,
@@ -64,7 +68,12 @@ from orchestrator.graph import (
     FrozenJsonValue,
     FrozenMap,
     OutputRecord,
+    OutputRecordAcceptedPayload,
+    initial_projection,
+    output_record_payload,
     project_record,
+    projection_to_checkpoint,
+    reduce_event,
 )
 from tests.unit.test_output_record_event_payloads import OUTPUT_RECORD_CASES
 
@@ -537,6 +546,21 @@ def _fan_out_payload() -> dict[str, object]:
     }
 
 
+def _accepted_record_event(
+    payload: dict[str, object], *, event_id: str = "accepted-1"
+) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=event_id,
+        run_id="run-1",
+        position=1,
+        event_type="output_record_accepted",
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=FakeClock().now(),
+        payload=payload,
+    )
+
+
 def test_project_record_fan_out_preserves_json_mode_normalization() -> None:
     source = OutputRecord.model_validate(
         {
@@ -557,6 +581,79 @@ def test_project_record_fan_out_preserves_json_mode_normalization() -> None:
     expected = ProjectedFanOutInputsRecord.model_validate(expected_payload)
 
     assert project_record(source) == expected
+
+
+def test_reducer_fan_out_preserves_public_explicit_empty_field_serialization() -> None:
+    source = OutputRecord.model_validate(
+        {
+            **_fan_out_payload(),
+            "candidate_id": None,
+            "task_region_id": None,
+            "attempt_number": None,
+            "file_state_record_id": None,
+            "file_state_record_ids": [],
+            "value": {},
+            "payload": {},
+            "provenance": {},
+        }
+    )
+    expected = project_record(source)
+
+    projection = reduce_event(
+        initial_projection(),
+        _accepted_record_event(source.model_dump(by_alias=True, exclude_unset=True)),
+    )
+    expected_serialized = expected.model_dump(mode="json", by_alias=True, exclude_unset=True)
+    projected = output_record_payload(projection, source.record_id)
+
+    assert projected is not None
+    assert (
+        projected.model_dump(mode="json", by_alias=True, exclude_none=True) == expected_serialized
+    )
+    assert {"payload", "provenance", "file_state_record_ids"} <= set(expected_serialized)
+    assert {"candidate_id", "task_region_id", "attempt_number", "file_state_record_id"}.isdisjoint(
+        expected_serialized
+    )
+    checkpoint_record = projection_to_checkpoint(projection)["records"]["by_id"][source.record_id]
+    expected_checkpoint = dict(expected_serialized)
+    expected_checkpoint["schema_"] = expected_checkpoint.pop("schema")
+    assert checkpoint_record == expected_checkpoint
+
+
+def test_reducer_fan_out_deep_native_json_uses_public_destination_validation_fallback() -> None:
+    deeply_nested: dict[str, object] = {"leaf": "value"}
+    for _ in range(101):
+        deeply_nested = {"nested": deeply_nested}
+    source = OutputRecord.model_validate({**_fan_out_payload(), "payload": deeply_nested})
+
+    with pytest.raises(ValidationError) as public_error:
+        project_record(source)
+    with pytest.raises(ValidationError) as reducer_error:
+        reduce_event(
+            initial_projection(),
+            _accepted_record_event(source.model_dump(by_alias=True, exclude_unset=True)),
+        )
+
+    assert [
+        (error["type"], error["loc"], error["msg"]) for error in reducer_error.value.errors()
+    ] == [(error["type"], error["loc"], error["msg"]) for error in public_error.value.errors()]
+
+
+def test_reducer_rejects_fan_out_missing_required_canonical_field_during_payload_validation() -> (
+    None
+):
+    malformed = _fan_out_payload()
+    del malformed["record_id"]
+    event = _accepted_record_event(malformed)
+    before = initial_projection()
+    snapshot = projection_to_checkpoint(before)
+
+    with pytest.raises(ValidationError, match="record_id"):
+        reduce_event(before, event)
+
+    assert projection_to_checkpoint(before) == snapshot
+    with pytest.raises(ValidationError, match="record_id"):
+        OutputRecordAcceptedPayload.model_validate(event.payload)
 
 
 @pytest.mark.parametrize(
