@@ -121,7 +121,7 @@ from orchestrator.graph.projection_models import (
     VerificationResultValue,
     VerifierVerdictValue,
     InvalidTestBlockValue,
-    project_record,
+    project_validated_record_for_reducer,
 )
 
 
@@ -1235,7 +1235,7 @@ def _reduce_projected_record_event(state: GraphProjection, event: EventEnvelope)
         if record_model is not None
         else OutputRecordAcceptedPayload.model_validate(event.payload).root
     )
-    projected = project_record(payload)
+    projected = project_validated_record_for_reducer(payload)
     if isinstance(projected, ProjectedFileStateRecord):
         projected = projected.model_copy(
             update={

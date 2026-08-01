@@ -1,7 +1,11 @@
 """Boundary conversion contracts for immutable projected records."""
 
 from copy import deepcopy
+from contextlib import nullcontext
+from datetime import date, datetime, timezone
+from enum import Enum
 from typing import Any, cast, get_type_hints
+from uuid import UUID
 
 import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
@@ -59,6 +63,7 @@ from orchestrator.graph import (
     ProjectedVerificationReportValue,
     FrozenJsonValue,
     FrozenMap,
+    OutputRecord,
     project_record,
 )
 from tests.unit.test_output_record_event_payloads import OUTPUT_RECORD_CASES
@@ -514,6 +519,94 @@ def test_project_record_isolated_from_source_event_mutation() -> None:
     raw["value"]["summary"] = "mutated after projection"
 
     assert projected.value.summary == "Implemented the requested change"
+
+
+class _NormalizationEnum(str, Enum):
+    VALUE = "value"
+
+
+def _fan_out_payload() -> dict[str, object]:
+    return {
+        "record_id": "fan-out-normalization",
+        "record_kind": "output",
+        "record_type": "fan_out_inputs",
+        "producer_node_id": "planner-1",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "value": {},
+    }
+
+
+def test_project_record_fan_out_preserves_json_mode_normalization() -> None:
+    source = OutputRecord.model_validate(
+        {
+            **_fan_out_payload(),
+            "value": {
+                "date": date(2026, 1, 2),
+                "datetime": datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+                "uuid": UUID("12345678-1234-5678-1234-567812345678"),
+                "enum": _NormalizationEnum.VALUE,
+            },
+            "payload": {"date": date(2026, 1, 2)},
+            "provenance": {"uuid": UUID("12345678-1234-5678-1234-567812345678")},
+        }
+    )
+    expected_payload = source.model_dump(
+        mode="json", by_alias=True, exclude_unset=True, exclude_none=True
+    )
+    expected = ProjectedFanOutInputsRecord.model_validate(expected_payload)
+
+    assert project_record(source) == expected
+
+
+@pytest.mark.parametrize(
+    ("source", "serializer_warning"),
+    (
+        (OutputRecord.model_construct(**_fan_out_payload(), schema_version=0), False),
+        (OutputRecord.model_construct(**_fan_out_payload(), producer_port="other"), False),
+        (OutputRecord.model_construct(**{**_fan_out_payload(), "record_id": 7}), True),
+    ),
+    ids=("schema-version", "producer-port", "strict-record-id"),
+)
+def test_project_record_does_not_bypass_fan_out_destination_validation(
+    source: OutputRecord, serializer_warning: bool
+) -> None:
+    warning_context = (
+        pytest.warns(UserWarning, match="Pydantic serializer warnings")
+        if serializer_warning
+        else nullcontext()
+    )
+    with warning_context, pytest.raises(ValidationError):
+        project_record(source)
+
+
+def test_project_record_validates_fan_out_subclass_extra_fields() -> None:
+    class ExtendedOutputRecord(OutputRecord):
+        extra_value: str
+
+    source = ExtendedOutputRecord.model_validate(
+        {**_fan_out_payload(), "extra_value": "unexpected"}
+    )
+
+    with pytest.raises(ValidationError):
+        project_record(source)
+
+
+def test_projected_fan_out_normalizes_list_and_dict_subclasses() -> None:
+    class JsonList(list[object]):
+        pass
+
+    class JsonDict(dict[str, object]):
+        pass
+
+    projected = ProjectedFanOutInputsRecord.model_validate(
+        {
+            **_fan_out_payload(),
+            "value": JsonDict({"items": JsonList([JsonDict({"name": "candidate"})])}),
+        }
+    )
+
+    assert projected.value == FrozenMap({"items": (FrozenMap({"name": "candidate"}),)})
 
 
 def test_projected_record_revalidates_exact_instance_and_rejects_map_subclass() -> None:

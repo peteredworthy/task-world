@@ -7,6 +7,7 @@ boundary, preventing mutable event payloads from becoming projected state.
 
 from __future__ import annotations
 
+from math import isfinite
 from typing import Annotated, Literal, TypeAlias, cast
 
 from pydantic import (
@@ -1044,9 +1045,9 @@ class ProjectedRecordBase(ProjectionModel):
         """Make every declared tuple independent before strict nested validation."""
 
         def freeze_sequences(item: object) -> object:
-            if type(item) is list:
+            if isinstance(item, list):
                 return tuple(freeze_sequences(child) for child in cast(list[object], item))
-            if type(item) is dict:
+            if isinstance(item, dict):
                 return {
                     key: freeze_sequences(child)
                     for key, child in cast(dict[object, object], item).items()
@@ -1452,35 +1453,6 @@ def project_record(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
     """Copy a validated accepted record into its immutable projection counterpart."""
     if not hasattr(record, "model_dump"):
         raise ValueError("unknown projected record discriminator")
-    if isinstance(record, OutputRecord):
-        payload = None if record.payload is None else _freeze_json_input(record.payload)
-        provenance = None if record.provenance is None else _freeze_json_input(record.provenance)
-        if (payload is not None and type(payload) is not FrozenMap) or (
-            provenance is not None and type(provenance) is not FrozenMap
-        ):
-            raise ValueError("record envelope JSON must be an object")
-        return ProjectedFanOutInputsRecord.model_construct(
-            _fields_set=set(record.model_fields_set),
-            record_id=record.record_id,
-            record_type="fan_out_inputs",
-            record_kind="output",
-            producer_node_id=record.producer_node_id,
-            port=record.port,
-            schema_=record.schema_,
-            value=cast(FrozenMap[str, FrozenJsonValue], _freeze_json_input(record.value)),
-            schema_version=record.schema_version,
-            producer_port=record.producer_port,
-            created_at=record.created_at,
-            graph_position=record.graph_position,
-            run_id=record.run_id,
-            payload=payload,
-            provenance=provenance,
-            candidate_id=record.candidate_id,
-            task_region_id=record.task_region_id,
-            attempt_number=record.attempt_number,
-            file_state_record_id=record.file_state_record_id,
-            file_state_record_ids=tuple(record.file_state_record_ids),
-        )
     payload = record.model_dump(
         mode="json",
         by_alias=True,
@@ -1491,3 +1463,110 @@ def project_record(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
     if not isinstance(record_type, str) or record_type not in _PROJECTED_RECORD_MODELS:
         raise ValueError("unknown projected record discriminator")
     return cast(ProjectedRecord, _PROJECTED_RECORD_MODELS[record_type].model_validate(payload))
+
+
+def _is_native_json(value: object, *, active_ids: set[int] | None = None) -> bool:
+    value_type = type(value)
+    if value is None or value_type is bool or value_type is int or value_type is str:
+        return True
+    if value_type is float:
+        return isfinite(cast(float, value))
+    if value_type is list or value_type is tuple:
+        sequence = cast(list[object] | tuple[object, ...], value)
+        current_active_ids = active_ids if active_ids is not None else set[int]()
+        if id(sequence) in current_active_ids:
+            return False
+        current_active_ids.add(id(sequence))
+        try:
+            return all(_is_native_json(item, active_ids=current_active_ids) for item in sequence)
+        finally:
+            current_active_ids.remove(id(sequence))
+    if value_type is dict:
+        dictionary = cast(dict[object, object], value)
+        current_active_ids = active_ids if active_ids is not None else set[int]()
+        if id(dictionary) in current_active_ids:
+            return False
+        current_active_ids.add(id(dictionary))
+        try:
+            return all(
+                type(key) is str and _is_native_json(item, active_ids=current_active_ids)
+                for key, item in dictionary.items()
+            )
+        finally:
+            current_active_ids.remove(id(dictionary))
+    return False
+
+
+def _can_construct_validated_fan_out_record(record: AcceptedOutputRecordPayload) -> bool:
+    if type(record) is not OutputRecord:
+        return False
+    if (
+        record.record_type != "fan_out_inputs"
+        or record.record_kind != "output"
+        or type(record.record_id) is not str
+        or type(record.producer_node_id) is not str
+        or type(record.port) is not str
+        or type(record.schema_) is not str
+        or (
+            record.schema_version is not None
+            and (type(record.schema_version) is not int or record.schema_version <= 0)
+        )
+        or (
+            record.producer_port is not None
+            and (type(record.producer_port) is not str or record.producer_port != record.port)
+        )
+        or (record.created_at is not None and type(record.created_at) is not str)
+        or (record.graph_position is not None and type(record.graph_position) is not int)
+        or (record.run_id is not None and type(record.run_id) is not str)
+        or (record.candidate_id is not None and type(record.candidate_id) is not str)
+        or (record.task_region_id is not None and type(record.task_region_id) is not str)
+        or (
+            record.attempt_number is not None
+            and (type(record.attempt_number) is not int or record.attempt_number < 0)
+        )
+        or (
+            record.file_state_record_id is not None and type(record.file_state_record_id) is not str
+        )
+        or type(record.file_state_record_ids) is not list
+        or any(type(record_id) is not str for record_id in record.file_state_record_ids)
+    ):
+        return False
+    return (
+        type(record.value) is dict
+        and _is_native_json(record.value)
+        and all(
+            value is None or (type(value) is dict and _is_native_json(value))
+            for value in (record.payload, record.provenance)
+        )
+    )
+
+
+def project_validated_record_for_reducer(record: AcceptedOutputRecordPayload) -> ProjectedRecord:
+    """Construct an exact, already-validated reducer record or retain public validation."""
+    if not _can_construct_validated_fan_out_record(record):
+        return project_record(record)
+    fan_out = cast(OutputRecord, record)
+    payload = None if fan_out.payload is None else _freeze_json_input(fan_out.payload)
+    provenance = None if fan_out.provenance is None else _freeze_json_input(fan_out.provenance)
+    return ProjectedFanOutInputsRecord.model_construct(
+        _fields_set=set(fan_out.model_fields_set),
+        record_id=fan_out.record_id,
+        record_type="fan_out_inputs",
+        record_kind="output",
+        producer_node_id=fan_out.producer_node_id,
+        port=fan_out.port,
+        schema_=fan_out.schema_,
+        value=cast(FrozenMap[str, FrozenJsonValue], _freeze_json_input(fan_out.value)),
+        schema_version=fan_out.schema_version,
+        producer_port=fan_out.producer_port,
+        created_at=fan_out.created_at,
+        graph_position=fan_out.graph_position,
+        run_id=fan_out.run_id,
+        payload=payload,
+        provenance=provenance,
+        candidate_id=fan_out.candidate_id,
+        task_region_id=fan_out.task_region_id,
+        attempt_number=fan_out.attempt_number,
+        file_state_record_id=fan_out.file_state_record_id,
+        file_state_record_ids=tuple(fan_out.file_state_record_ids),
+    )

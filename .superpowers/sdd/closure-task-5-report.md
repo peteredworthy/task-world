@@ -127,3 +127,59 @@ one-warmup/three-sample contracts and default-suite visibility.
   CPU-bound contention without removing the gate from default execution.
 - No unresolved behavioral or check failures remain in the final all-files hook
   run.
+
+## Semantic review follow-up
+
+### RED
+
+`tests/unit/test_graph_projected_records.py` added six failures against the
+Task 5 public fast path:
+
+- JSON-mode normalization for `date`, `datetime`, `UUID`, and enum values in
+  fan-out value/payload/provenance raised before normalization.
+- `OutputRecord.model_construct()` sources with `schema_version=0`, a mismatched
+  `producer_port`, or a non-string `record_id` bypassed destination validation.
+- An `OutputRecord` subclass with an extra field bypassed destination
+  `extra="forbid"` validation.
+- List and dict subclasses no longer normalized through the shared projected
+  record validator.
+
+### GREEN and fallback rationale
+
+- Public `project_record()` is restored to its historical `model_dump(mode="json",
+  by_alias=True, exclude_unset=True, exclude_none=True)` plus destination
+  `model_validate()` path for every source, preserving normalization and all
+  public validation semantics.
+- `freeze_record_sequences()` again uses `isinstance` for list/dict subclasses.
+- The reducer alone calls the non-exported internal
+  `project_validated_record_for_reducer()`. Its trusted
+  construct path requires the exact `OutputRecord` type, every destination
+  scalar invariant (including schema version, port consistency, strict IDs, and
+  list element types), and recursively native finite JSON with no cycles.
+  Dates, datetimes, UUIDs, enums, subclasses, non-native container subclasses,
+  and malformed constructed records fall back to public conversion.
+- The private path is available only after reducer payload validation; the
+  public API cannot reach it.
+
+Verification after the review fixes:
+
+```text
+uv run pytest tests/unit/test_graph_projected_records.py \
+  tests/unit/test_graph_projection_codec.py \
+  tests/unit/test_graph_projection_duplicate_ids.py -q
+137 passed in 3.40s
+
+uv run pytest tests/unit/test_graph_projection_performance.py -q
+3 passed in 8.98s
+
+uv run pytest tests/unit/test_graph_projection_performance.py -q
+3 passed in 8.91s
+
+uv run pre-commit run pytest --all-files
+Passed
+```
+
+The full hook initially overrode project pytest settings with eight-worker
+`worksteal`; its entry now matches the grouped two-worker contract. Four workers
+still produced record-heavy scheduling failures after private reduction
+optimization, while two grouped workers passed the full default-suite hook.
