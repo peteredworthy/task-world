@@ -18,6 +18,38 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     reduce_event,
 )
+from tests.unit.graph_projection_behavior_cases import fold_events, replay_streams
+
+
+STREAMS = replay_streams()
+
+
+@pytest.mark.parametrize(
+    ("name", "stream"),
+    STREAMS,
+    ids=[name for name, _stream in STREAMS],
+)
+def test_matrix_streams_match_full_incremental_and_checkpoint_tail_replay_at_every_split(
+    name: str, stream: tuple[EventEnvelope, ...]
+) -> None:
+    full = fold_events(stream)
+    for split in range(len(stream) + 1):
+        prefix = fold_events(stream[:split])
+        assert fold_events(stream[split:], prefix) == full, (name, split)
+
+        checkpoint = projection_to_checkpoint(prefix)
+        restored = projection_from_checkpoint(deepcopy(checkpoint))
+        assert fold_events(stream[split:], restored) == full, (name, split)
+
+
+def test_gatekeeper_verdict_replay_after_checkpoint_preserves_projected_file_entry_type() -> None:
+    stream = dict(STREAMS)["gatekeeper_verdict_recorded"]
+    prefix = fold_events(stream[:3])
+    full = fold_events(stream)
+
+    restored = projection_from_checkpoint(deepcopy(projection_to_checkpoint(prefix)))
+
+    assert fold_events(stream[3:], restored) == full
 
 
 def _fold(projection: Any, events: tuple[EventEnvelope, ...] | list[EventEnvelope]) -> Any:

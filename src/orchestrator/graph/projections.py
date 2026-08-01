@@ -107,6 +107,8 @@ from orchestrator.graph.projection_models import (
     ProjectedCompletionDecisionRecord,
     ProjectedDecisionRequestRecord,
     ProjectedFanOutInputsRecord,
+    ProjectedExternalFileEntry,
+    ProjectedFileEntry,
     ProjectedFileStateRecord,
     ProjectedRecord,
     ProjectedRoutineSnapshotRecord,
@@ -646,7 +648,8 @@ def merge_node_created(
             merged[field] = new_value
         elif explicitly_present and old_value != new_value:
             raise ProjectionReplayConflictError(
-                f"node {payload.node_id!r} conflicts for stable field {field!r} in {event_id!r}"
+                f"node {payload.node_id!r} conflicts during replay for stable field {field!r} "
+                f"in {event_id!r}"
             )
     merged["node_id"] = existing.spec.node_id
     merged["creation_position"] = existing.spec.creation_position
@@ -4204,9 +4207,9 @@ def _environment_failure_reason_from_check_value(value: dict[str, Any]) -> str:
 
 
 def _resolved_file_entry(
-    raw_entry: FileEntry | ExternalFileEntry,
+    raw_entry: FileEntry | ExternalFileEntry | ProjectedFileEntry | ProjectedExternalFileEntry,
     verdicts_by_path: dict[str, dict[str, Any]],
-) -> FileEntry | ExternalFileEntry:
+) -> FileEntry | ExternalFileEntry | ProjectedFileEntry | ProjectedExternalFileEntry:
     entry = _file_entry_dict(raw_entry)
     path = entry.get("path")
     if not isinstance(path, str) or path not in verdicts_by_path:
@@ -4219,10 +4222,16 @@ def _resolved_file_entry(
     entry["gatekeeper_rationale"] = verdict.get("rationale")
     if isinstance(raw_entry, ExternalFileEntry):
         return ExternalFileEntry.model_validate(entry)
+    if isinstance(raw_entry, ProjectedExternalFileEntry):
+        return ProjectedExternalFileEntry.model_validate(entry)
+    if isinstance(raw_entry, ProjectedFileEntry):
+        return ProjectedFileEntry.model_validate(entry)
     return FileEntry.model_validate(entry)
 
 
-def _file_entry_dict(entry: FileEntry | ExternalFileEntry) -> dict[str, Any]:
+def _file_entry_dict(
+    entry: FileEntry | ExternalFileEntry | ProjectedFileEntry | ProjectedExternalFileEntry,
+) -> dict[str, Any]:
     return entry.model_dump(mode="json")
 
 

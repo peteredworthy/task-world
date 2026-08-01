@@ -435,6 +435,14 @@ def test_conflicting_record_id_fails_replay(first: EventEnvelope, second: EventE
         build_projection([first, second.model_copy(update={"position": 1})])
 
 
+def test_conflicting_duplicate_matrix_node_id_raises_typed_replay_conflict() -> None:
+    state_with_matrix_node = reduce_event(initial_projection(), _node(position=1, role="builder"))
+    conflicting_same_node_id_event = _node(position=2, role="verifier")
+
+    with pytest.raises(ProjectionReplayConflictError, match="conflicts during replay"):
+        reduce_event(state_with_matrix_node, conflicting_same_node_id_event)
+
+
 @pytest.mark.parametrize("field", ("graph_position", "run_id"))
 def test_record_payload_delivery_fields_are_part_of_immutable_identity(field: str) -> None:
     first = _fan_out_record()

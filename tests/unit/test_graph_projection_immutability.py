@@ -1,6 +1,7 @@
 """RED contracts for deeply immutable graph projection generations."""
 
 from collections.abc import Mapping
+from copy import deepcopy
 from datetime import datetime, timezone
 from operator import delitem, setitem
 from pathlib import Path
@@ -22,23 +23,15 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     reduce_event,
 )
+from tests.unit.graph_projection_behavior_cases import (
+    behavior_cases,
+    case_projection,
+    replay_streams,
+)
 
 
 FIXTURE_DIR = Path(__file__).parents[1] / "fixtures" / "graph"
-ROOT_GROUPS = (
-    "lifecycle",
-    "nodes",
-    "tasks",
-    "topology",
-    "records",
-    "scheduling",
-    "planning",
-    "verification",
-    "governance",
-    "requirements",
-    "execution",
-    "usage",
-)
+ROOT_GROUPS = tuple(GraphProjection.model_fields)
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnvelope:
@@ -262,6 +255,51 @@ def _mapping_containing_key(model: BaseModel, key: str) -> Mapping[str, object]:
         if isinstance(value, Mapping) and key in value:
             return value
     raise AssertionError(f"no mapping field contains {key!r}")
+
+
+def value_at(projection: GraphProjection, path: tuple[str, ...]) -> object:
+    value: object = projection
+    for part in path:
+        value = getattr(value, part) if isinstance(value, BaseModel) else value[part]
+    return value
+
+
+@pytest.mark.parametrize("case", behavior_cases(), ids=lambda case: case.event_type)
+def test_matrix_reduction_preserves_prior_generation_and_shares_only_unchanged_values(case) -> None:
+    before, after = case_projection(case)
+    before_checkpoint = deepcopy(projection_to_checkpoint(before))
+
+    assert projection_to_checkpoint(before) == before_checkpoint
+    for group in ROOT_GROUPS:
+        if group in case.changed_groups:
+            assert getattr(after, group) is not getattr(before, group), (case.event_type, group)
+        else:
+            assert getattr(after, group) is getattr(before, group), (case.event_type, group)
+    for path in case.replaced_paths:
+        assert value_at(after, path) is not value_at(before, path), (case.event_type, path)
+    for path in case.shared_paths:
+        assert value_at(after, path) is value_at(before, path), (case.event_type, path)
+
+
+@pytest.mark.parametrize("name,stream", replay_streams(), ids=lambda stream: stream[0])
+def test_matrix_replay_generations_keep_saved_checkpoints_and_identity_semantics(
+    name: str, stream: tuple[EventEnvelope, ...]
+) -> None:
+    generation = initial_projection()
+    saved_generations: list[tuple[GraphProjection, dict[str, object]]] = []
+    for event in stream:
+        before_checkpoint = projection_to_checkpoint(generation)
+        next_generation = reduce_event(generation, event)
+        next_checkpoint = projection_to_checkpoint(next_generation)
+        if next_checkpoint == before_checkpoint:
+            assert next_generation is generation, (name, event.event_type)
+        else:
+            assert next_generation is not generation, (name, event.event_type)
+        saved_generations.append((next_generation, deepcopy(next_checkpoint)))
+        generation = next_generation
+
+    for saved_generation, checkpoint in saved_generations:
+        assert projection_to_checkpoint(saved_generation) == checkpoint, name
 
 
 def _event_model_types() -> tuple[type[BaseModel], ...]:

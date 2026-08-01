@@ -1,6 +1,7 @@
 """Public query-boundary and migration-disposition behavior."""
 
 from datetime import UTC, datetime
+from copy import deepcopy
 from pathlib import Path
 import pytest
 import yaml
@@ -161,6 +162,7 @@ from scripts.graph_projection_inventory import (
     validate_query_migration_manifest,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
+from tests.unit.graph_projection_behavior_cases import behavior_cases, case_projection, fold_events
 
 
 ROOT = Path(__file__).parents[2]
@@ -692,6 +694,23 @@ def test_query_results_are_mutation_isolated_from_projection_storage() -> None:
     fresh_binding = input_binding_for_port(projection, "worker-query", "input")
     assert fresh_binding is not None
     assert fresh_binding.record_ids == ["record-1"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    tuple(case for case in behavior_cases() if case.mutate_query_result is not None),
+    ids=lambda case: case.event_type,
+)
+def test_matrix_public_query_results_cannot_mutate_projection_storage(case) -> None:
+    _, projection = case_projection(case)
+    checkpoint = deepcopy(projection_to_checkpoint(projection))
+    original = case.query(projection)
+
+    assert case.mutate_query_result is not None
+    case.mutate_query_result(original)
+
+    assert projection_to_checkpoint(projection) == checkpoint
+    case.assert_outcome(fold_events(case.prefix), projection)
 
 
 def test_exact_collection_views_preserve_shape_and_isolate_nested_values() -> None:

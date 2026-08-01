@@ -880,6 +880,17 @@ def test_checkpoint_reports_each_independent_invalid_reference(
     assert expected_path in {diagnostic.path for diagnostic in raised.value.diagnostics}
 
 
+def test_checkpoint_missing_edge_target_raises_typed_integrity_failure() -> None:
+    checkpoint = _checkpoint()
+    edges = cast(dict[str, Any], cast(dict[str, Any], checkpoint["topology"])["edges"])
+    edges["edge-1"]["to_node_id"] = "missing-node"
+
+    with pytest.raises(ProjectionCheckpointIntegrityError) as raised:
+        projection_from_checkpoint(checkpoint)
+
+    assert any(item.path == "topology.edges.edge-1.to_node_id" for item in raised.value.diagnostics)
+
+
 @pytest.mark.parametrize(
     ("section", "field", "replacement", "expected_path", "expected_reason"),
     [

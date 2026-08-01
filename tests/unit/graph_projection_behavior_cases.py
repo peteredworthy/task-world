@@ -705,7 +705,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             "node_retired",
             (running_worker, sibling),
             {"node_id": "worker-1"},
-            frozenset({"nodes"}),
+            frozenset({"nodes", "tasks"}),
         ),
         (
             "node_deferred",
@@ -789,7 +789,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
                 "schema": "FanOutInputs",
                 "value": {},
             },
-            frozenset({"records"}),
+            frozenset({"records", "tasks"}),
         ),
         (
             "file_state_accepted",
@@ -949,7 +949,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
                 "execution_id": "execution-1",
                 "expires_at": "2026-01-01T00:05:00+00:00",
             },
-            frozenset({"execution"}),
+            frozenset({"execution", "tasks"}),
         ),
         (
             "lease_renewed",
@@ -958,7 +958,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             frozenset({"execution"}),
         ),
         *(
-            (name, (worker, granted), {"lease_id": "lease-1"}, frozenset({"execution"}))
+            (name, (worker, granted), {"lease_id": "lease-1"}, frozenset({"execution", "tasks"}))
             for name in ("lease_suspended", "lease_revoked", "lease_expired", "lease_released")
         ),
         (
@@ -970,13 +970,13 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
                 "paths": ["src/app.py"],
                 "reason": "residue",
             },
-            frozenset({"execution"}),
+            frozenset({"execution", "records"}),
         ),
         (
             "cleanup_applied",
             (worker, file_state, cleanup_requested),
             {"cleanup_id": "cleanup-1", "file_state_record_id": "file-state-1"},
-            frozenset({"execution"}),
+            frozenset({"execution", "records"}),
         ),
         (
             "callback_accepted",
@@ -1008,3 +1008,8 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         for name, prefix, payload, groups in changing_payloads
     )
     return (*neutral, *changing)
+
+
+def replay_streams() -> tuple[tuple[str, tuple[EventEnvelope, ...]], ...]:
+    """Return the canonical replay streams derived solely from matrix cases."""
+    return tuple((case.event_type, case.stream) for case in behavior_cases())

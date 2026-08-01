@@ -312,6 +312,14 @@ def test_checkpoint_rejects_missing_canonical_root_group(missing_group: str) -> 
         projection_from_checkpoint(raw)
 
 
+def test_checkpoint_missing_lifecycle_root_group_raises_validation_error() -> None:
+    checkpoint = projection_to_checkpoint(final_projection_fixture())
+    checkpoint.pop("lifecycle")
+
+    with pytest.raises(ValidationError, match="checkpoint root keys"):
+        projection_from_checkpoint(checkpoint)
+
+
 @pytest.mark.parametrize("case", ["projection", "user-dict", "mapping-proxy"])
 def test_checkpoint_rejects_model_or_non_exact_mapping_roots(case: str) -> None:
     root: object
