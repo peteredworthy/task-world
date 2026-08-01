@@ -28,21 +28,17 @@ Checkpoints are disposable. `projection_codec.py` validates their structure and
 relationships; graph runtime accepts only schema 13. Missing, malformed, or
 version-mismatched checkpoints are rebuilt from durable events.
 
-## Automation evidence
+## Current executable evidence
 
-- `scripts/graph_projection_inventory.py --check` validates the checked-in
-  ownership and source inventory.
+- `test_graph_projection_behavior.py` covers the canonical event matrix,
+  including every explicit neutral event.
+- `test_graph_projection_replay_equivalence.py` covers full replay,
+  every-split incremental replay, and every-split checkpoint-tail replay.
+- `test_graph_projection_flexible_json.py` covers all model-derived flexible
+  JSON fields through event-driven checkpoint round trips.
+- `test_graph_projection_performance.py` is the direct gate: each 10,000-event
+  scenario uses one warmup and three samples, asserts exact behavior cardinality,
+  and requires a median below one second.
 - `scripts/check_graph_projection_boundaries.py` enforces the exact five-file
   storage allowlist, public-import boundary, and no legacy projection access.
   It runs as the permanent `graph-projection-boundaries` pre-commit hook.
-- `scripts/codemods/migrate_graph_projection_queries.py --assert-clean` checks
-  the current 936-site migration closure (historical inventory: 542 sites);
-  goldens check query-output parity.
-- `tests/fixtures/graph_projection_performance/baseline.json` is the checked-in
-  legacy-mapping schema-12 comparison baseline. A measured schema-13 target run
-  (two warmups, seven samples, requested sizes 100/1,000/10,000 plus probes)
-  passed all hard gates; its subsecond scaling results remain diagnostics under
-  the approved rule. Re-run `uv run python scripts/benchmark_graph_projection.py
-  --baseline tests/fixtures/graph_projection_performance/baseline.json
-  --check-gates` for performance changes. The generated target result is not a
-  permanent repository artifact and the benchmark is not a default test gate.

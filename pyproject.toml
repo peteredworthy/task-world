@@ -66,7 +66,6 @@ addopts = "-n 2 --dist loadgroup --timeout=30 -m 'not slow and not e2e'"
 timeout = 30
 markers = [
     "slow: tests that invoke real external tools or deterministic repository-wide static/migration analyses (LLMs, Docker, CLI agents)",
-    "graph_projection_migration: complete tracked-repository graph projection migration contracts",
     "e2e: end-to-end tests that run the orchestrator through real process or network boundaries",
 ]
 filterwarnings = [

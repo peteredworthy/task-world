@@ -302,10 +302,10 @@ def test_boundary_provenance_candidate_selection_uses_only_collector_seed_origin
     )
 
 
-def test_permanent_boundary_guard_does_not_import_migration_inventory() -> None:
+def test_permanent_boundary_guard_does_not_import_retired_tooling() -> None:
     source = (_ROOT / "scripts/check_graph_projection_boundaries.py").read_text()
 
-    assert "graph_projection_inventory" not in source
+    assert "inventory" not in source
 
 
 def test_boundary_provenance_has_no_migration_bookkeeping_vocabulary() -> None:

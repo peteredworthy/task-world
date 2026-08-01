@@ -1,11 +1,9 @@
 """Observable contracts for the isolated immutable projection scaffold."""
 
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 import pytest
-import yaml
 from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph import (
@@ -31,7 +29,6 @@ from orchestrator.graph import (
     LeaseValue,
     LatestRoutineSnapshotProjection,
     LifecycleProjection,
-    NodeCreationProjection,
     NodeProjection,
     NodeRuntimeProjection,
     NodeSchedulingProjection,
@@ -78,30 +75,6 @@ ROOT_GROUPS = {
     "execution",
     "usage",
 }
-
-
-def _manifest() -> dict[str, Any]:
-    root = Path(__file__).parents[2]
-    return yaml.safe_load((root / "scripts/codemods/graph_projection_manifest.yaml").read_text())
-
-
-def _destination_paths(model: type[BaseModel]) -> set[str]:
-    destinations: set[str] = set()
-
-    def visit(current: type[BaseModel], prefix: str) -> None:
-        for name, field in current.model_fields.items():
-            path = f"{prefix}.{name}" if prefix else name
-            destinations.add(path)
-            annotation = field.annotation
-            if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-                visit(annotation, path)
-            elif get_origin(annotation) is FrozenMap:
-                value_type = get_args(annotation)[1]
-                if isinstance(value_type, type) and issubclass(value_type, BaseModel):
-                    visit(value_type, path)
-
-    visit(model, "")
-    return destinations
 
 
 def _mutable_annotation_violations(annotation: object) -> list[str]:
@@ -157,68 +130,11 @@ def _grouped_paths_containing(root: type[BaseModel], targets: set[type[BaseModel
     return paths
 
 
-def _flatten_node_paths() -> set[str]:
-    paths: set[str] = set()
-    for group_name, group_type in (
-        ("spec", NodeSpecProjection),
-        ("runtime", NodeRuntimeProjection),
-        ("scheduling", NodeSchedulingProjection),
-    ):
-        paths.update(f"nodes.*.{group_name}.{name}" for name in group_type.model_fields)
-    return paths
+def test_root_groups_equal_explicit_projection_architecture() -> None:
+    assert set(GraphProjection.model_fields) == ROOT_GROUPS
 
 
-def test_root_groups_equal_manifest_groups_and_architecture() -> None:
-    manifest_groups = {entry["group"] for entry in _manifest()["fields"] if entry["group"]}
-    assert manifest_groups == ROOT_GROUPS
-    assert set(GraphProjection.model_fields) == manifest_groups
-
-
-def test_manifest_exactly_owns_each_legacy_field_at_its_retained_destination() -> None:
-    manifest = _manifest()
-    destinations = _destination_paths(GraphProjection)
-    by_old_name = {entry["old_name"]: entry for entry in manifest["fields"]}
-
-    assert len(by_old_name) == 73
-    assert len(by_old_name) == len(manifest["fields"])
-    retained = {
-        (old_name, entry["new_path"].replace(".*", ""), entry["group"])
-        for old_name, entry in by_old_name.items()
-        if entry["new_path"] is not None
-    }
-
-    assert all(path in destinations for _, path, _ in retained)
-    assert all(group in ROOT_GROUPS for _, _, group in retained)
-    assert {entry["old_name"] for entry in manifest["fields"] if entry["new_path"] is None} == {
-        "open_proposal_blockers"
-    }
-
-
-def test_node_creation_ownership_exactly_matches_explicit_node_fields() -> None:
-    manifest = _manifest()
-    ownership = manifest["node_creation_ownership"]
-    relationships = [(entry["field_name"], entry["new_path"]) for entry in ownership]
-    node_relationships = {
-        (source, destination)
-        for source, destination in relationships
-        if destination.startswith("nodes.*.")
-    }
-    flattened_by_name = {path.rsplit(".", 1)[-1]: path for path in _flatten_node_paths()}
-    expected_node_relationships = {
-        (source, flattened_by_name[source])
-        for source in NodeCreationProjection.model_fields
-        if source in flattened_by_name
-    }
-    expected_node_relationships.add(("position", flattened_by_name["creation_position"]))
-
-    assert len(relationships) == len(set(relationships))
-    assert len({source for source, _ in relationships}) == len(relationships)
-    assert node_relationships == expected_node_relationships
-    assert _flatten_node_paths() == {
-        entry["new_path"]
-        for entry in [*manifest["fields"], *ownership]
-        if (entry.get("new_path") or "").startswith("nodes.*.")
-    }
+def test_node_projection_uses_explicit_spec_runtime_and_scheduling_groups() -> None:
     assert set(NodeProjection.model_fields) == {"spec", "runtime", "scheduling"}
     assert not {
         name

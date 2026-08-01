@@ -24,7 +24,6 @@ import orchestrator.api as api
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
-from benchmark_graph_projection import corpus_events
 
 
 RUN_ID = "profile-graph-readback"
@@ -247,12 +246,6 @@ async def _events_full_json(session_factory: async_sessionmaker[AsyncSession]) -
     return json.dumps([event.model_dump(mode="json") for event in events], sort_keys=True)
 
 
-def _benchmark_corpus_replay(event_count: int) -> str:
-    """Profile the canonical benchmark corpus through the same projection response path."""
-    events = corpus_events("general", event_count)
-    return build_graph_projection_response(RUN_ID, events).model_dump_json()
-
-
 async def _projection_endpoint_like(session_factory: async_sessionmaker[AsyncSession]) -> str:
     events = await _read_projection(session_factory)
     return build_graph_projection_response(RUN_ID, events).model_dump_json()
@@ -457,11 +450,6 @@ async def profile(args: argparse.Namespace) -> dict[str, Any]:
                 "projection.build_from_cached_events",
                 args.iterations,
                 lambda: build_graph_projection_response(RUN_ID, cached_events).model_dump_json(),
-            ),
-            await _measure_sync(
-                "benchmark.shared_general_corpus_projection_response",
-                args.iterations,
-                lambda: _benchmark_corpus_replay(args.events),
             ),
             await _measure_async(
                 "endpoint_like.graph_projection",

@@ -409,16 +409,12 @@ stored `_projection_schema_version` is exactly 13 and strict codec/integrity
 validation succeeds; missing, malformed, or version-mismatched checkpoints are
 rebuilt from the durable event stream. The permanent
 `graph-projection-boundaries` pre-commit hook rejects storage-boundary and
-public-import violations. The inventory, codemod-closure, and golden-output
-checks provide the companion migration evidence. The checked-in performance
-baseline is the legacy mapping schema-12 artifact; it is a comparison input, not
-schema-13 proof. The measured schema-13 target run used two warmups and seven
-samples across the requested 100, 1,000, and 10,000-event sizes (plus scaling
-probes), passed all hard gates, and retained only approved subsecond scaling
-diagnostics. Re-run `uv run python scripts/benchmark_graph_projection.py
---baseline tests/fixtures/graph_projection_performance/baseline.json
---check-gates` when performance changes; its generated target result is not a
-permanent repository artifact.
+public-import violations. Executable closure evidence is the canonical event
+behavior matrix, every-split incremental and checkpoint-tail replay,
+model-derived flexible-JSON checkpoint coverage, and direct performance tests.
+The direct performance gate replays each 10,000-event scenario after one warmup,
+uses three samples, asserts exact behavior cardinality, and requires a median
+under one second.
 
 ---
 

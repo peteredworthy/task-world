@@ -5,7 +5,6 @@
 .PHONY: test \
         test-changed \
         test-changed-reset \
-        test-graph-projection-migration \
         test-codex \
         test-codex-unit \
         test-codex-integration \
@@ -55,22 +54,6 @@ test-changed:
 test-changed-reset:
 	rm -f .testmondata .testmondata-journal
 	uv run pytest --testmon -o addopts="--timeout=180" $(ARGS)
-
-
-# ---------------------------------------------------------------------------
-# Explicit graph projection migration gate
-# ---------------------------------------------------------------------------
-#
-# These tests intentionally scan the complete tracked repository. Keep them
-# out of the default suite, and run the marker-selected suite in one process
-# so the module-scoped immutable context is built exactly once.
-test-graph-projection-migration:
-	uv run pytest \
-		--run-slow \
-		-m graph_projection_migration \
-		-n 0 \
-		--timeout=300 \
-		tests/unit
 
 
 # ---------------------------------------------------------------------------

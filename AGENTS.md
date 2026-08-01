@@ -302,12 +302,14 @@ It is a dev-loop accelerator, not a merge gate — `make test` stays the gate, a
 
 Key test fixtures: `tmp_dir` (temp directory), `fixed_time` (deterministic datetime), `in_memory_db` (SQLite `:memory:`), `routine_repo` (git repo with test routines).
 
-The complete graph-projection migration scans are excluded from the default
-suite and run explicitly with `make test-graph-projection-migration` (the
-`graph_projection_migration` marker). During
-edit loops, use focused tests or `make test-changed`; commit hooks run the
-default suite once, so a separate pre-commit full run immediately before
-committing is redundant.
+For immutable graph-projection changes, use the focused pure behavior,
+flexible-JSON, every-split replay, immutability, query, duplicate-ID, codec,
+integrity, boundary, and direct-performance test files. The permanent
+`uv run python scripts/check_graph_projection_boundaries.py` command and its
+pre-commit hook enforce the storage and public-import boundary. During edit
+loops, use focused tests or `make test-changed`; commit hooks run the default
+suite once, so a separate pre-commit full run immediately before committing is
+redundant.
 
 ### Unit / Integration boundary rules
 

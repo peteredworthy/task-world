@@ -149,4 +149,7 @@
 | §27.2 | reader output bound to incompatible snapshot rejected | invariants.yaml::invariant_snapshot_mismatch_not_consumed |
 | §27.2 | human approval gates block successors | invariants.yaml::invariant_human_gate_blocks_successors |
 | §27.2 | file-state rejects undeclared residue | invariants.yaml::invariant_file_state_rejects_residue |
-| Migration oracle | replay, checkpoint, and public presenter behavior | tests/fixtures/graph_projection_migration/*.json |
+| Immutable projection | canonical event behavior, including explicit neutral events | tests/unit/test_graph_projection_behavior.py |
+| Immutable projection | full, every-split incremental, and checkpoint-tail replay equivalence | tests/unit/test_graph_projection_replay_equivalence.py |
+| Immutable projection | model-derived flexible JSON event/checkpoint round trips | tests/unit/test_graph_projection_flexible_json.py |
+| Immutable projection | direct 10,000-event median performance and behavior cardinality | tests/unit/test_graph_projection_performance.py |
