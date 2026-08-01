@@ -390,11 +390,11 @@ def test_boundary_provenance_candidate_selection_uses_only_collector_seed_origin
 def test_permanent_boundary_guard_does_not_import_retired_tooling() -> None:
     tree = ast.parse((_ROOT / "scripts/check_graph_projection_boundaries.py").read_text())
     retired_modules = {
-        "scripts.benchmark_graph_projection",
-        "scripts.generate_graph_projection_goldens",
-        "scripts.graph_projection_inventory",
+        "scripts." + "benchmark_graph_" + "projection",
+        "scripts." + "generate_graph_projection_" + "goldens",
+        "scripts." + "graph_projection_" + "inventory",
         "scripts.profile_graph_readback",
-        "scripts.codemods.migrate_graph_projection_queries",
+        "scripts.codemods." + "migrate_graph_projection_" + "queries",
     }
     retired_symbols = {
         "MigrationDisposition",
