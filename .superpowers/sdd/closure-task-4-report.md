@@ -265,3 +265,39 @@ modify `.superpowers/sdd/progress.md`.
   hidden. Exact approved origins, finite state/fact semantics, and the public
   provenance API are unchanged. `.superpowers/sdd/progress.md` was not
   modified.
+
+## Legacy traversal cleanup
+
+### Scope and proof
+
+- Removed only the unreachable `_visit_expr`, `_assign`, `_visit_block`, and
+  `_nested_blocks` methods, which were superseded by the `_Outcomes` transfer
+  engine and had no callers from `projection_provenance()` or the tests.
+- Removed the transitional `_Scope` alias and expressed the unchanged active
+  helper signatures directly with `_FlowState`.
+- Kept the public provenance API, finite origin tables, fact model, active
+  `_evaluate_*` transfer methods, and active state helpers such as `_merge`,
+  `_function`, `_class`, and `_typed_producer` intact.
+- Added a focused AST structure test preventing the obsolete traversal entry
+  points or `_Scope` alias from being reintroduced.
+
+### TDD and verification evidence
+
+- RED: the new structural test failed because the four legacy methods were
+  still present.
+- GREEN: `uv run pytest
+  tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_has_no_legacy_traversal_entry_points -q`
+  — 1 passed.
+- Full boundary suite: `uv run pytest
+  tests/unit/test_graph_projection_boundaries.py -q` — 111 passed.
+- Standalone guard: `uv run python scripts/check_graph_projection_boundaries.py`
+  — exited 0 with no output.
+- Static checks: `uv run ruff check
+  scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py`, `uv run ruff format --check
+  scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py`, and `uv run pyright
+  scripts/graph_projection_boundary_provenance.py
+  tests/unit/test_graph_projection_boundaries.py` — passed; Pyright reported
+  0 errors, 0 warnings, and 0 information messages.
+- `.superpowers/sdd/progress.md` was not modified.

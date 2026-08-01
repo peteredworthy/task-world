@@ -77,11 +77,6 @@ class _FlowState:
         )
 
 
-# Kept as a private spelling during the transition of individual transfer
-# helpers; all states constructed by the collector are `_FlowState` instances.
-_Scope = _FlowState
-
-
 @dataclass
 class _Outcomes:
     """Explicit control paths emitted by one statement transfer."""
@@ -159,7 +154,7 @@ class ProjectionProvenanceCollector:
             (*package[: len(package) - node.level + 1], *(node.module or "").split("."))
         ).rstrip(".")
 
-    def _bind_import(self, node: ast.Import | ast.ImportFrom, scope: _Scope) -> None:
+    def _bind_import(self, node: ast.Import | ast.ImportFrom, scope: _FlowState) -> None:
         if isinstance(node, ast.Import):
             for item in node.names:
                 name = item.asname or item.name.split(".")[0]
@@ -196,7 +191,7 @@ class ProjectionProvenanceCollector:
                     scope.origins[name] = "orchestrator.graph.GraphProjection"
 
     @staticmethod
-    def _clear(name: str, scope: _Scope) -> None:
+    def _clear(name: str, scope: _FlowState) -> None:
         scope.origins.pop(name, None)
         scope.aliases.pop(name, None)
         scope.receiver_types.pop(name, None)
@@ -205,7 +200,7 @@ class ProjectionProvenanceCollector:
         scope.field_types.pop(name, None)
         scope.functions.pop(name, None)
 
-    def _origin(self, node: ast.expr, scope: _Scope) -> str | None:
+    def _origin(self, node: ast.expr, scope: _FlowState) -> str | None:
         if isinstance(node, ast.Name):
             return scope.origins.get(node.id)
         if isinstance(node, ast.Attribute):
@@ -240,7 +235,7 @@ class ProjectionProvenanceCollector:
             return "|".join(candidates) or None
         return None
 
-    def _annotation(self, node: ast.expr | None, scope: _Scope) -> str | None:
+    def _annotation(self, node: ast.expr | None, scope: _FlowState) -> str | None:
         if node is None:
             return None
         origin = self._origin(node, scope)
@@ -263,7 +258,9 @@ class ProjectionProvenanceCollector:
             )
         return None
 
-    def _certainty(self, node: ast.expr, scope: _Scope) -> Literal["definite", "possible"] | None:
+    def _certainty(
+        self, node: ast.expr, scope: _FlowState
+    ) -> Literal["definite", "possible"] | None:
         if isinstance(node, ast.Name):
             return scope.aliases.get(node.id)
         if isinstance(node, ast.NamedExpr):
@@ -300,11 +297,11 @@ class ProjectionProvenanceCollector:
         return None
 
     @staticmethod
-    def _field_is_declared(receiver: str, field_name: str, scope: _Scope) -> bool:
+    def _field_is_declared(receiver: str, field_name: str, scope: _FlowState) -> bool:
         return field_name in scope.field_types.get(receiver, frozenset())
 
     def _set_field_alias(
-        self, receiver: str, field_name: str, value: ast.expr | None, scope: _Scope
+        self, receiver: str, field_name: str, value: ast.expr | None, scope: _FlowState
     ) -> bool:
         if not self._field_is_declared(receiver, field_name, scope):
             return False
@@ -325,7 +322,7 @@ class ProjectionProvenanceCollector:
             ) - frozenset({field_name})
         return True
 
-    def _kill_target(self, target: ast.expr, scope: _Scope) -> None:
+    def _kill_target(self, target: ast.expr, scope: _FlowState) -> None:
         if isinstance(target, ast.Name):
             self._clear(target.id, scope)
         elif isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
@@ -662,164 +659,12 @@ class ProjectionProvenanceCollector:
             return self._evaluate_expression(node.value, state)
         return _Outcomes(normal=[state])
 
-    def _visit_expr(self, node: ast.AST | None, scope: _Scope) -> None:
-        if node is None:
-            return
-        if isinstance(node, ast.NamedExpr):
-            self._visit_expr(node.value, scope)
-            if isinstance(node.target, ast.Name):
-                self._set_alias(node.target.id, node.value, scope)
-            certainty = self._certainty(node, scope)
-            if certainty is not None:
-                self._record(node, certainty)
-            return
-        if isinstance(node, ast.BoolOp):
-            self._visit_expr(node.values[0], scope)
-            running = scope.copy()
-            for value in node.values[1:]:
-                executed = running.copy()
-                self._visit_expr(value, executed)
-                # The RHS of a non-constant short-circuit operator may not run.
-                running = self._merge(running, (running.copy(), executed))
-            scope.origins = running.origins
-            scope.aliases = running.aliases
-            scope.receiver_types = running.receiver_types
-            scope.fields = running.fields
-            scope.possible_fields = running.possible_fields
-            scope.field_types = running.field_types
-            scope.functions = running.functions
-            certainty = self._certainty(node, scope)
-            if certainty is not None:
-                self._record(node, certainty)
-            return
-        if isinstance(node, ast.IfExp):
-            self._visit_expr(node.test, scope)
-            body = scope.copy()
-            otherwise = scope.copy()
-            self._visit_expr(node.body, body)
-            self._visit_expr(node.orelse, otherwise)
-            merged = self._merge(scope, (body, otherwise))
-            scope.origins = merged.origins
-            scope.aliases = merged.aliases
-            scope.receiver_types = merged.receiver_types
-            scope.fields = merged.fields
-            scope.possible_fields = merged.possible_fields
-            scope.field_types = merged.field_types
-            scope.functions = merged.functions
-            return
-        if isinstance(node, ast.expr):
-            certainty = self._certainty(node, scope)
-            if certainty is not None:
-                self._record(node, certainty)
-        if isinstance(node, ast.Lambda):
-            local = scope.copy()
-            for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
-                self._clear(argument.arg, local)
-            if node.args.vararg is not None:
-                self._clear(node.args.vararg.arg, local)
-            if node.args.kwarg is not None:
-                self._clear(node.args.kwarg.arg, local)
-            self._visit_expr(node.body, local)
-            return
-        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
-            local = scope.copy()
-            for generator in node.generators:
-                self._visit_expr(generator.iter, local)
-                for name in _target_names(generator.target):
-                    self._clear(name, local)
-                for condition in generator.ifs:
-                    self._visit_expr(condition, local)
-            self._visit_expr(node.elt, local)
-            return
-        if isinstance(node, ast.DictComp):
-            local = scope.copy()
-            for generator in node.generators:
-                self._visit_expr(generator.iter, local)
-                for name in _target_names(generator.target):
-                    self._clear(name, local)
-                for condition in generator.ifs:
-                    self._visit_expr(condition, local)
-            self._visit_expr(node.key, local)
-            self._visit_expr(node.value, local)
-            return
-        for child in ast.iter_child_nodes(node):
-            self._visit_expr(child, scope)
-
-    def _set_alias(self, name: str, value: ast.expr | None, scope: _Scope) -> None:
+    def _set_alias(self, name: str, value: ast.expr | None, scope: _FlowState) -> None:
         self._clear(name, scope)
         if value is not None and (certainty := self._certainty(value, scope)) is not None:
             scope.aliases[name] = certainty
 
-    def _assign(self, node: ast.Assign | ast.AnnAssign, scope: _Scope) -> None:
-        value = node.value
-        self._visit_expr(value, scope)
-        targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
-        for target in targets:
-            self._visit_expr(target, scope)
-        if (
-            isinstance(node, ast.Assign)
-            and len(targets) == 1
-            and isinstance(targets[0], (ast.Tuple, ast.List))
-            and isinstance(value, (ast.Call, ast.Await))
-        ):
-            call = value.value if isinstance(value, ast.Await) else value
-            if (
-                isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
-                and isinstance(call.func.value, ast.Name)
-            ):
-                receiver = scope.receiver_types.get(call.func.value.id)
-                if (
-                    PROJECTION_METHODS.get((receiver or "", call.func.attr)) == "first_tuple_item"
-                    and targets[0].elts
-                ):
-                    first = targets[0].elts[0]
-                    if isinstance(first, ast.Name):
-                        self._clear(first.id, scope)
-                        scope.aliases[first.id] = "definite"
-                    return
-        for target in targets:
-            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name):
-                if self._set_field_alias(target.value.id, target.attr, value, scope):
-                    continue
-                self._clear(target.value.id, scope)
-                continue
-            for name in _target_names(target):
-                annotation = (
-                    self._annotation(node.annotation, scope)
-                    if isinstance(node, ast.AnnAssign)
-                    else None
-                )
-                local_return = (
-                    isinstance(value, ast.Call)
-                    and isinstance(value.func, ast.Name)
-                    and value.func.id in scope.functions
-                )
-                if (
-                    isinstance(node, ast.AnnAssign)
-                    and annotation != "GraphProjection"
-                    or local_return
-                ):
-                    self._clear(name, scope)
-                else:
-                    self._set_alias(name, value, scope)
-                if annotation == "GraphProjection":
-                    scope.aliases[name] = "definite"
-                if annotation in {name for name, _ in PROJECTION_METHODS} | set(PROJECTION_FIELDS):
-                    scope.receiver_types[name] = annotation
-                    fields = scope.field_types.get(
-                        annotation, PROJECTION_FIELDS.get(annotation, frozenset())
-                    )
-                    scope.field_types[name] = fields
-                    scope.fields[name] = fields
-                typed = self._typed_producer(value, scope)
-                if typed is not None:
-                    scope.receiver_types[name] = typed
-                    fields = scope.field_types.get(typed, PROJECTION_FIELDS.get(typed, frozenset()))
-                    scope.field_types[name] = fields
-                    scope.fields[name] = fields
-
-    def _typed_producer(self, value: ast.expr | None, scope: _Scope) -> str | None:
+    def _typed_producer(self, value: ast.expr | None, scope: _FlowState) -> str | None:
         if isinstance(value, ast.Await):
             value = value.value
         if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Attribute):
@@ -830,7 +675,7 @@ class ProjectionProvenanceCollector:
         shape = PROJECTION_METHODS.get((receiver or "", value.func.attr))
         return shape if shape in PROJECTION_FIELDS else None
 
-    def _merge(self, before: _Scope, branches: tuple[_Scope, ...]) -> _Scope:
+    def _merge(self, before: _FlowState, branches: tuple[_FlowState, ...]) -> _FlowState:
         """Join all finite runtime bindings, not only projection aliases."""
         merged = before.copy()
         names = set(before.aliases).union(*(set(branch.aliases) for branch in branches))
@@ -868,7 +713,7 @@ class ProjectionProvenanceCollector:
     def _function(
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
-        scope: _Scope,
+        scope: _FlowState,
         class_name: str | None = None,
     ) -> None:
         self._clear(node.name, scope)
@@ -908,7 +753,7 @@ class ProjectionProvenanceCollector:
         finally:
             self._function_depth -= 1
 
-    def _class(self, node: ast.ClassDef, scope: _Scope) -> None:
+    def _class(self, node: ast.ClassDef, scope: _FlowState) -> None:
         fields = {
             child.target.id
             for child in node.body
@@ -928,104 +773,6 @@ class ProjectionProvenanceCollector:
                 outcomes = self._evaluate_block([child], class_scope)
                 if outcomes.normal:
                     self._replace_state(class_scope, outcomes.normal[0])
-
-    def _visit_block(self, statements: list[ast.stmt], scope: _Scope) -> _Scope:
-        for statement in statements:
-            if isinstance(statement, (ast.Import, ast.ImportFrom)):
-                self._bind_import(statement, scope)
-            elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
-                self._assign(statement, scope)
-            elif isinstance(statement, ast.AugAssign):
-                self._visit_expr(statement.target, scope)
-                self._visit_expr(statement.value, scope)
-                self._kill_target(statement.target, scope)
-            elif isinstance(statement, ast.Delete):
-                for target in statement.targets:
-                    self._visit_expr(target, scope)
-                    self._kill_target(target, scope)
-            elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                self._function(statement, scope)
-            elif isinstance(statement, ast.ClassDef):
-                self._class(statement, scope)
-            elif isinstance(statement, ast.If):
-                self._visit_expr(statement.test, scope)
-                body = self._visit_block(statement.body, scope.copy())
-                otherwise = self._visit_block(statement.orelse, scope.copy())
-                scope = self._merge(scope, (body, otherwise))
-            elif isinstance(statement, (ast.For, ast.AsyncFor)):
-                self._visit_expr(statement.iter, scope)
-                body_scope = scope.copy()
-                for name in _target_names(statement.target):
-                    self._clear(name, body_scope)
-                body = self._visit_block(statement.body, body_scope)
-                otherwise = self._visit_block(statement.orelse, scope.copy())
-                scope = self._merge(scope, (body, otherwise))
-            elif isinstance(statement, ast.Match):
-                self._visit_expr(statement.subject, scope)
-                branches: list[_Scope] = []
-                has_unconditional_case = False
-                for case in statement.cases:
-                    case_scope = scope.copy()
-                    for name in _pattern_capture_names(case.pattern):
-                        self._clear(name, case_scope)
-                    self._visit_expr(case.guard, case_scope)
-                    branches.append(self._visit_block(case.body, case_scope))
-                    has_unconditional_case |= case.guard is None and _is_unconditional_pattern(
-                        case.pattern
-                    )
-                if branches:
-                    if not has_unconditional_case:
-                        branches.append(scope.copy())
-                    scope = self._merge(scope, tuple(branches))
-            elif isinstance(statement, (ast.With, ast.AsyncWith)):
-                body_scope = scope.copy()
-                for item in statement.items:
-                    self._visit_expr(item.context_expr, scope)
-                    if item.optional_vars is not None:
-                        for name in _target_names(item.optional_vars):
-                            self._clear(name, body_scope)
-                scope = self._merge(scope, (self._visit_block(statement.body, body_scope),))
-            elif isinstance(statement, (ast.Try, ast.TryStar)):
-                try_scope = self._visit_block(statement.body, scope.copy())
-                successful_scope = self._visit_block(statement.orelse, try_scope.copy())
-                handler_input = self._merge(scope, (scope.copy(), try_scope))
-                branches = [successful_scope]
-                for handler in statement.handlers:
-                    handler_scope = handler_input.copy()
-                    if handler.name is not None:
-                        self._clear(handler.name, handler_scope)
-                    branches.append(self._visit_block(handler.body, handler_scope))
-                if statement.finalbody:
-                    branches = [
-                        self._visit_block(statement.finalbody, branch.copy()) for branch in branches
-                    ]
-                scope = self._merge(scope, tuple(branches))
-            else:
-                self._visit_expr(statement, scope)
-                nested = [
-                    self._visit_block(block, scope.copy())
-                    for block in self._nested_blocks(statement)
-                ]
-                if nested:
-                    scope = self._merge(scope, tuple(nested))
-        return scope
-
-    @staticmethod
-    def _nested_blocks(statement: ast.stmt) -> tuple[list[ast.stmt], ...]:
-        if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
-            return statement.body, statement.orelse
-        if isinstance(statement, (ast.With, ast.AsyncWith)):
-            return (statement.body,)
-        if isinstance(statement, (ast.Try, ast.TryStar)):
-            return (
-                statement.body,
-                *(item.body for item in statement.handlers),
-                statement.orelse,
-                statement.finalbody,
-            )
-        if isinstance(statement, ast.Match):
-            return tuple(case.body for case in statement.cases)
-        return ()
 
 
 def projection_provenance(

@@ -324,6 +324,24 @@ def test_boundary_provenance_has_no_migration_bookkeeping_vocabulary() -> None:
     )
 
 
+def test_boundary_provenance_has_no_legacy_traversal_entry_points() -> None:
+    tree = ast.parse((_ROOT / "scripts/graph_projection_boundary_provenance.py").read_text())
+    collector = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ClassDef) and node.name == "ProjectionProvenanceCollector"
+    )
+
+    method_names = {
+        node.name
+        for node in collector.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+    assert method_names.isdisjoint({"_visit_expr", "_assign", "_visit_block", "_nested_blocks"})
+    assert not any(isinstance(node, ast.Name) and node.id == "_Scope" for node in ast.walk(tree))
+
+
 def test_boundary_provenance_uses_exact_origins_and_dotted_imports(tmp_path: Path) -> None:
     source = tmp_path / "src/orchestrator/runtime/consumer.py"
     source.parent.mkdir(parents=True)
