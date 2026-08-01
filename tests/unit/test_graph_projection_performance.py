@@ -128,6 +128,7 @@ def _replay(events: tuple[EventEnvelope, ...]) -> GraphProjection:
     return projection
 
 
+@pytest.mark.xdist_group(name="graph-projection-performance")
 @pytest.mark.parametrize("scenario", SCENARIOS)
 def test_ten_thousand_event_replay_median_is_strictly_subsecond(scenario: str) -> None:
     events = _performance_event_stream(scenario, EVENT_COUNT)
