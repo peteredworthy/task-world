@@ -81,14 +81,24 @@ def test_retained_fields_are_declared_by_payload_models_or_envelope() -> None:
             assert not undeclared, (spec.model.__name__, mode, undeclared)
 
 
-def test_neutral_events_retain_required_payload_fields_for_every_compact_read_mode() -> None:
+def test_neutral_events_retain_required_payload_fields_for_replay_read_modes() -> None:
     for event_type in PROJECTION_NEUTRAL_EVENT_TYPES:
         model = EVENT_PAYLOAD_MODELS[event_type]
         required = {name for name, field in model.model_fields.items() if field.is_required()}
         spec = EVENT_PAYLOAD_SPECS[event_type]
-        for mode in ("projection", "light", "summary", "node_detail"):
+        for mode in ("projection", "summary"):
             missing = required - getattr(spec, mode)
             assert not missing, (event_type, mode, missing)
+
+
+def test_non_replay_compact_modes_exclude_neutral_callback_and_outbox_bodies() -> None:
+    callback = EVENT_PAYLOAD_SPECS["callback_duplicate_returned"]
+    outbox = EVENT_PAYLOAD_SPECS["outbox_requeued"]
+
+    for mode in ("light", "node_detail"):
+        assert "payload" not in getattr(callback, mode)
+        assert "prior_result" not in getattr(callback, mode)
+        assert not getattr(outbox, mode)
 
 
 def test_node_created_retains_typed_retry_limit_for_all_projection_reads() -> None:

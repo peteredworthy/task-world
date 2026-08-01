@@ -74,19 +74,20 @@ def _spec(
     return EventPayloadSpec(
         model=EVENT_PAYLOAD_MODELS[event_type],
         projection=_fields(projection) | required,
-        light=_fields(light) | required,
+        light=_fields(light),
         summary=_fields(summary) | required,
-        node_detail=_fields(node_detail) | required,
+        node_detail=_fields(node_detail),
     )
 
 
 def _same(event_type: str, fields: str) -> EventPayloadSpec:
-    retained = _fields(fields) | _required_neutral_fields(event_type)
+    retained = _fields(fields)
+    replay_retained = retained | _required_neutral_fields(event_type)
     return EventPayloadSpec(
         model=EVENT_PAYLOAD_MODELS[event_type],
-        projection=retained,
+        projection=replay_retained,
         light=retained,
-        summary=retained,
+        summary=replay_retained,
         node_detail=retained,
     )
 

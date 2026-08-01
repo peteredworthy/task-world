@@ -188,3 +188,35 @@ async def test_sqlite_compact_readers_retain_explicit_null_callback_payload() ->
                 assert "payload" not in compact_callback.payload
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_non_replay_compact_readers_exclude_heavy_duplicate_callback_bodies() -> None:
+    callback = event(
+        "callback_duplicate_returned",
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "execution_id": "execution-1",
+            "idempotency_key": "callback-1",
+            "payload": {"body": "callback-body"},
+            "reason": "duplicate",
+            "prior_result": {"body": "prior-result-body"},
+        },
+        position=1,
+    )
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    try:
+        async with session_factory() as session:
+            async with session.begin():
+                await GraphEventStore(session).append_events("run-1", 0, [callback])
+            store = GraphEventStore(session)
+            for reader in (store.read_run_light, store.read_run_node_detail):
+                compact_callback = (await reader("run-1"))[0]
+                assert "payload" not in compact_callback.payload
+                assert "prior_result" not in compact_callback.payload
+    finally:
+        await engine.dispose()
