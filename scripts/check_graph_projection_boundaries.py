@@ -23,13 +23,13 @@ from orchestrator.graph import (
 )
 
 if __package__:
-    from scripts.graph_projection_inventory import (
+    from scripts.graph_projection_boundary_provenance import (
         ProjectionProvenanceFact,
         projection_provenance,
         projection_provenance_seed_tokens,
     )
 else:
-    from graph_projection_inventory import (
+    from graph_projection_boundary_provenance import (
         ProjectionProvenanceFact,
         projection_provenance,
         projection_provenance_seed_tokens,

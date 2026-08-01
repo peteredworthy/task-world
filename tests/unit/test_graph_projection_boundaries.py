@@ -301,6 +301,24 @@ def test_boundary_provenance_candidate_selection_uses_only_collector_seed_origin
     )
 
 
+def test_permanent_boundary_guard_does_not_import_migration_inventory() -> None:
+    source = (_ROOT / "scripts/check_graph_projection_boundaries.py").read_text()
+
+    assert "graph_projection_inventory" not in source
+
+
+def test_boundary_provenance_has_no_migration_bookkeeping_vocabulary() -> None:
+    source = (_ROOT / "scripts/graph_projection_boundary_provenance.py").read_text()
+
+    for retired_name in (
+        "baseline_revision",
+        "occurrence_id",
+        "graph_projection_manifest",
+        "MigrationDisposition",
+    ):
+        assert retired_name not in source
+
+
 def test_boundary_guard_tracks_direct_awaited_producer_access(tmp_path: Path) -> None:
     source = tmp_path / "src/orchestrator/runtime/consumer.py"
     source.parent.mkdir(parents=True)
