@@ -480,6 +480,13 @@ class ApprovalDecisionValue(ProjectionModel):
     expires_at: StrictStr | None = None
     reason: StrictStr | None = None
 
+    @field_validator("scope", mode="before")
+    @classmethod
+    def freeze_scope(cls, value: object) -> FrozenJsonValue | None:
+        if value is None:
+            return None
+        return _freeze_json_input(value)
+
 
 class AuthorityDecisionValue(ProjectionModel):
     node_id: StrictStr
@@ -514,9 +521,9 @@ class OversightDecisionValue(ProjectionModel):
     expires_at: StrictStr | None = None
     reason: StrictStr | None = None
 
-    @field_validator("scope", mode="before")
+    @field_validator("decider", "scope", mode="before")
     @classmethod
-    def freeze_scope(cls, value: object) -> FrozenJsonValue | None:
+    def freeze_open_json(cls, value: object) -> FrozenJsonValue | None:
         if value is None:
             return None
         return _freeze_json_input(value)
