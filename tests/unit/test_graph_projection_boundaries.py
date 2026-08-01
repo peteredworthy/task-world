@@ -1379,6 +1379,94 @@ def test_boundary_provenance_with_body_raise_can_be_suppressed(prefix: str) -> N
     ]
 
 
+def test_boundary_provenance_restores_comprehension_shadow_on_raised_path() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def may_raise() -> None:
+    raise RuntimeError()
+
+def read(projection: GraphProjection, values: list[object]) -> None:
+    try:
+        [projection for projection in values if may_raise()]
+    except RuntimeError:
+        projection["outer-handler"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [("projection['outer-handler']", "definite")]
+
+
+@pytest.mark.parametrize("prefix", ("with", "async with"))
+def test_boundary_provenance_suppression_downgrades_all_established_bindings(prefix: str) -> None:
+    async_prefix = "async " if prefix == "async with" else ""
+    facts = projection_provenance(
+        f"""from orchestrator.graph import (
+    GraphController,
+    GraphDispatchContext,
+    GraphProjection,
+    initial_projection,
+)
+
+def local_factory() -> GraphProjection:
+    return initial_projection()
+
+def may_raise() -> None:
+    raise RuntimeError()
+
+{async_prefix}def read(
+    projection: GraphProjection,
+    controller: GraphController,
+    context: GraphDispatchContext,
+    manager: object,
+) -> None:
+    {prefix} manager:
+        factory = initial_projection
+        receiver = controller
+        function = local_factory
+        holder = context
+        holder.graph_projection = projection
+        may_raise()
+    factory()["factory"]
+    receiver.read_projection()["receiver"]
+    function()["function"]
+    holder.graph_projection["field"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("factory()['factory']", "possible"),
+        ("receiver.read_projection()['receiver']", "possible"),
+        ("function()['function']", "possible"),
+        ("holder.graph_projection['field']", "possible"),
+    ]
+
+
+def test_boundary_provenance_nested_destructuring_binds_before_later_target_evaluation() -> None:
+    facts = projection_provenance(
+        """from orchestrator.graph import GraphProjection
+
+def read(projection: GraphProjection, values: dict[GraphProjection, object]) -> None:
+    ([first], values[(later := first)]) = ([projection], object())
+    later["later-target"]
+""",
+        relative_path="src/orchestrator/runtime/consumer.py",
+    )
+
+    assert [
+        (item.expression, item.certainty) for item in facts if item.expression.endswith("]")
+    ] == [
+        ("[projection]", "definite"),
+        ("later['later-target']", "definite"),
+    ]
+
+
 @pytest.mark.parametrize(
     "method",
     (

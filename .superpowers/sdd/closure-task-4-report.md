@@ -417,3 +417,49 @@ modify `.superpowers/sdd/progress.md`.
   provenance as `possible` whenever a feasible candidate/path remains, but it
   never turns an unimported sibling path into an approved origin.
   `.superpowers/sdd/progress.md` was not modified.
+
+## Final Task 4 review-blocker corrections
+
+### Corrections
+
+- Comprehension cleanup now restores captured target names on every outgoing
+  outcome, including raised, returned, broken, and continued states. This
+  restores an outer `GraphProjection` binding before an enclosing `try` handler
+  consumes a comprehension-raised state, while retaining non-target effects.
+- Suppressed `with` and `async with` continuations retain their exact finite
+  origin, receiver-type, and function candidate sets, but mark each as
+  possible. Alias and runtime-field certainty are likewise downgraded, so a
+  locally bound approved factory, typed method receiver, local typed function,
+  and projected field cannot become definite solely through an unresolved
+  exception-suppression path.
+- Destructuring assignment now transfers each tuple/list child in source order:
+  it evaluates that child target, assigns it, and only then evaluates the next
+  child. Nested structures and starred targets follow the same transfer, so a
+  later subscript target can observe an earlier child's `NamedExpr` binding.
+
+### RED/GREEN evidence
+
+- RED: `uv run pytest
+  tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_restores_comprehension_shadow_on_raised_path
+  tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_suppression_downgrades_all_established_bindings
+  tests/unit/test_graph_projection_boundaries.py::test_boundary_provenance_nested_destructuring_binds_before_later_target_evaluation
+  -q` — **3 failed**. The handler saw the restored outer projection only as
+  possible, suppressed factory provenance remained definite, and the later
+  named-expression subscript target did not observe the earlier nested binding.
+- GREEN: the same focused command — **3 passed**. The suppression regression
+  was then parameterized for both `with` and `async with`.
+- GREEN: `uv run pytest tests/unit/test_graph_projection_boundaries.py -q` —
+  **130 passed**.
+- GREEN: `uv run python scripts/check_graph_projection_boundaries.py` — exited
+  0 with no output; Ruff check and format check passed; Pyright reported 0
+  errors, 0 warnings, and 0 information messages.
+- Full repository verification: `uv run pytest` — **6303 passed, 3 skipped**;
+  `uv run ruff check .`, `uv run ruff format --check .`, and `uv run pyright`
+  passed; `uv run pre-commit run --all-files` passed every configured hook.
+
+### Conservative boundary
+
+- These fixes preserve the collector's bounded, conservative analysis and all
+  finite approved-origin tables. Candidate sets and the public provenance API
+  are unchanged; only certainty is lowered on feasible suppression paths.
+  `.superpowers/sdd/progress.md` was not modified.
