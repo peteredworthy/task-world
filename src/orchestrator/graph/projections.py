@@ -22,7 +22,7 @@ from orchestrator.graph.contracts import (
     output_port_contract,
     port_contract_summary,
 )
-from orchestrator.graph.event_registry import PROJECTION_NEUTRAL_EVENT_TYPES
+from orchestrator.graph.event_registry import EVENT_PAYLOAD_MODELS, PROJECTION_NEUTRAL_EVENT_TYPES
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
     AppealOpenedPayload,
@@ -1797,6 +1797,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
     # These events are canonical audit facts with no owned projection state.
     # Keeping this registry explicit makes unrecognised events fail loudly.
     if event.event_type in PROJECTION_NEUTRAL_EVENT_TYPES:
+        EVENT_PAYLOAD_MODELS[event.event_type].model_validate(event.payload)
         return state
     raise ValueError(f"unsupported graph projection event type: {event.event_type!r}")
 

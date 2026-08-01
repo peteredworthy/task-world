@@ -14,6 +14,7 @@ from orchestrator.graph import (
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
     LIGHT_GRAPH_PAYLOAD_FIELDS,
     NODE_DETAIL_PAYLOAD_FIELDS,
+    PROJECTION_NEUTRAL_EVENT_TYPES,
     SUMMARY_REBUILD_PAYLOAD_FIELDS,
     generated_payload_fields,
     payload_model_fields,
@@ -78,6 +79,16 @@ def test_retained_fields_are_declared_by_payload_models_or_envelope() -> None:
         for mode in ("projection", "light", "summary", "node_detail"):
             undeclared = getattr(spec, mode) - serialized_fields - spec.envelope_fields
             assert not undeclared, (spec.model.__name__, mode, undeclared)
+
+
+def test_neutral_events_retain_required_payload_fields_for_every_compact_read_mode() -> None:
+    for event_type in PROJECTION_NEUTRAL_EVENT_TYPES:
+        model = EVENT_PAYLOAD_MODELS[event_type]
+        required = {name for name, field in model.model_fields.items() if field.is_required()}
+        spec = EVENT_PAYLOAD_SPECS[event_type]
+        for mode in ("projection", "light", "summary", "node_detail"):
+            missing = required - getattr(spec, mode)
+            assert not missing, (event_type, mode, missing)
 
 
 def test_node_created_retains_typed_retry_limit_for_all_projection_reads() -> None:

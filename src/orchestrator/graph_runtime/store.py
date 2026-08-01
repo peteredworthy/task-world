@@ -1736,9 +1736,8 @@ def _is_callback_history_event(event: EventEnvelope) -> bool:
 
 
 def _node_detail_light_event(event: EventEnvelope) -> EventEnvelope:
-    payload = {
-        key: value for key, value in event.payload.items() if key in NODE_DETAIL_PAYLOAD_FIELDS
-    }
+    retained_fields = EVENT_PAYLOAD_SPECS[event.event_type].node_detail
+    payload = {key: value for key, value in event.payload.items() if key in retained_fields}
     value = event.payload.get("value")
     if _is_verification_report_payload(event.payload) and isinstance(value, dict):
         typed_value = cast(dict[str, Any], value)

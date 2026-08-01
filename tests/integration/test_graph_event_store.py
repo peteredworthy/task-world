@@ -175,10 +175,10 @@ async def test_compact_readers_filter_union_fields_by_event_type_and_mode(
     async with session_factory() as session:
         store = GraphEventStore(session)
         readers_and_expected_outbox = (
-            (store.read_run_projection, {}),
-            (store.read_run_light, {}),
+            (store.read_run_projection, outbox_payload),
+            (store.read_run_light, outbox_payload),
             (store.read_run_summary_rebuild, outbox_payload),
-            (store.read_run_node_detail, {}),
+            (store.read_run_node_detail, outbox_payload),
         )
         for reader, expected_outbox in readers_and_expected_outbox:
             compact = await reader(run_id)

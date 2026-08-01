@@ -163,6 +163,9 @@ def test_projected_prior_rejection_does_not_return_duplicate() -> None:
             "callback_rejected_conflict",
             {
                 "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "lease_generation": 1,
+                "execution_id": "execution-1",
                 "idempotency_key": "key-1",
                 "payload": {"payload_hash": "hash-a"},
                 "reason": "idempotency payload conflict",

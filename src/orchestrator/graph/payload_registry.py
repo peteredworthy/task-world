@@ -7,7 +7,7 @@ from typing import Literal, get_args, get_origin
 
 from pydantic import BaseModel
 
-from orchestrator.graph.event_registry import EVENT_PAYLOAD_MODELS
+from orchestrator.graph.event_registry import EVENT_PAYLOAD_MODELS, PROJECTION_NEUTRAL_EVENT_TYPES
 
 RetentionMode = Literal["projection", "light", "summary", "node_detail"]
 _KNOWN_ENVELOPE_FIELDS = frozenset[str]()
@@ -70,23 +70,34 @@ def _spec(
     summary: str,
     node_detail: str,
 ) -> EventPayloadSpec:
+    required = _required_neutral_fields(event_type)
     return EventPayloadSpec(
         model=EVENT_PAYLOAD_MODELS[event_type],
-        projection=_fields(projection),
-        light=_fields(light),
-        summary=_fields(summary),
-        node_detail=_fields(node_detail),
+        projection=_fields(projection) | required,
+        light=_fields(light) | required,
+        summary=_fields(summary) | required,
+        node_detail=_fields(node_detail) | required,
     )
 
 
 def _same(event_type: str, fields: str) -> EventPayloadSpec:
-    retained = _fields(fields)
+    retained = _fields(fields) | _required_neutral_fields(event_type)
     return EventPayloadSpec(
         model=EVENT_PAYLOAD_MODELS[event_type],
         projection=retained,
         light=retained,
         summary=retained,
         node_detail=retained,
+    )
+
+
+def _required_neutral_fields(event_type: str) -> frozenset[str]:
+    if event_type not in PROJECTION_NEUTRAL_EVENT_TYPES:
+        return frozenset()
+    return frozenset(
+        name
+        for name, field in EVENT_PAYLOAD_MODELS[event_type].model_fields.items()
+        if field.is_required()
     )
 
 
@@ -130,21 +141,21 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "callback_duplicate_returned": _spec(
             "callback_duplicate_returned",
-            projection="execution_id lease_id node_id reason",
+            projection="execution_id idempotency_key lease_generation lease_id node_id payload prior_result reason",
             light="execution_id lease_generation lease_id node_id reason",
             summary="execution_id idempotency_key lease_generation lease_id node_id payload reason",
             node_detail="execution_id lease_generation lease_id node_id reason",
         ),
         "callback_rejected_conflict": _spec(
             "callback_rejected_conflict",
-            projection="execution_id lease_id node_id reason",
+            projection="execution_id idempotency_key lease_generation lease_id node_id payload reason",
             light="execution_id lease_generation lease_id node_id reason",
             summary="execution_id idempotency_key lease_generation lease_id node_id payload reason",
             node_detail="execution_id lease_generation lease_id node_id reason",
         ),
         "callback_rejected_stale": _spec(
             "callback_rejected_stale",
-            projection="execution_id lease_id node_id reason",
+            projection="execution_id idempotency_key lease_generation lease_id node_id payload reason",
             light="execution_id lease_generation lease_id node_id reason",
             summary="execution_id idempotency_key lease_generation lease_id node_id payload reason",
             node_detail="execution_id lease_generation lease_id node_id reason",
@@ -166,7 +177,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         "command_recorded": _same("command_recorded", "command_payload command_type"),
         "command_rejected": _spec(
             "command_rejected",
-            projection="reason",
+            projection="command_type reason",
             light="patch_id proposed_by_node_id reason",
             summary="actor_role blockers command_type patch_id proposed_by_node_id reason rejection_reason",
             node_detail="reason",
@@ -225,7 +236,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
             node_detail="reason",
         ),
         "heartbeat_recorded": _same(
-            "heartbeat_recorded", "execution_id expires_at generation lease_id node_id"
+            "heartbeat_recorded", "execution_id expires_at generation lease_id node_id observed_at"
         ),
         "input_bound": _spec(
             "input_bound",
