@@ -1,183 +1,140 @@
 # Closure Task 5 Report: Direct Deterministic 10,000-Event Performance Gate
 
-## Scope and files
+## Scope
 
-- Added `tests/unit/test_graph_projection_performance.py`.
-  - Generates deterministic test-local `general`, `edge-heavy`, and `record-heavy`
-    tuples of exactly 10,000 `EventEnvelope` values.
-  - Times only full `initial_projection()` / `reduce_event()` folds.
-  - Each scenario has exactly one unmeasured warmup and three timed folds; the
-    median must be strictly less than 1.0 second.
-  - Validates unique event IDs, contiguous positions, replay equality, and public
-    node/edge/accepted-record cardinalities.
-- Public `project_record()` retains JSON-mode normalization and full destination
-  validation; `freeze_record_sequences()` retains `isinstance` subclass
-  normalization. Only the reducer helper may use the guarded
-  exact-native fan-out construct path after payload validation.
-- Both pytest defaults and the pre-commit pytest hook use two-worker
-  `loadgroup`; the default full suite and all three grouped gate rows remain
-  enabled.
-- `project_validated_record_for_reducer()` is an internal sibling import used
-  only by `projections.py`; it is not exported from `orchestrator.graph`.
-- Its native-JSON guard mirrors `freeze_json` depth rejection (>100), so deep
-  structures fall back to public normalization and validation.
-- Did not import or extend the historical benchmark, add a script/artifact/
-  baseline/ratio/slow marker, add metadata, modify `progress.md`, or change the
-  event mixes, threshold, warmup count, or timed-run count.
+Task 5 closes the direct, deterministic 10,000-event graph-projection replay
+gate and the associated projected-record conversion evidence.
 
-## RED evidence
+- `tests/unit/test_graph_projection_performance.py` defines exactly three
+  deterministic event mixes (`general`, `edge-heavy`, and `record-heavy`), each
+  containing exactly 10,000 `EventEnvelope` values. Each row performs one
+  unmeasured warmup and three timed full `initial_projection()` /
+  `reduce_event()` folds; its median must be strictly below one second.
+- The normal pytest configuration and the pytest pre-commit hook both use the
+  same **two-worker `loadgroup`** contract. The three gate rows remain in the
+  default test suite and execute as one xdist group.
+- `tests/unit/test_graph_projected_records.py` now exercises fan-out replay
+  only through public `orchestrator.graph` APIs: `reduce_event()`,
+  `initial_projection()`, `output_record_payload()`,
+  `projection_to_checkpoint()`, and `project_record()`. It neither imports nor
+  exposes the internal reducer conversion helper.
+- No production API and no `progress.md` content changed.
 
-Initial direct gate, before defining `_performance_event_stream`:
+## Public and internal conversion contract
+
+`project_record()` is the public conversion boundary. It always JSON-mode
+serializes the source with aliases, excludes unset and `None` fields, and
+validates the resulting data with the concrete projected destination model.
+It therefore owns the public normalization and destination-validation
+semantics.
+
+The reducer first validates canonical `output_record_accepted` payload data.
+Only after that validation, its private, non-exported helper may construct the
+exact native `OutputRecord` fan-out shape directly. The helper preserves the
+public destination field-presence behavior. It rejects non-native values,
+subclasses, cycles, non-finite numbers, and JSON nesting deeper than 100, then
+falls back to public `project_record()` conversion and destination validation.
+The public API cannot invoke the private helper.
+
+The checkpoint codec intentionally stores the Python field spelling `schema_`;
+public record serialization uses the `schema` alias. This is an encoding-key
+difference only: the reducer regression asserts the same public record field
+presence and values, then asserts the canonical checkpoint equivalent.
+
+## Reducer regression evidence
+
+The new fan-out regressions are characterization tests added before any
+test-support adjustment. The initial RED run exposed two assertion assumptions,
+not a production mismatch: checkpoint records use canonical `schema_`, and the
+depth guard applies to envelope JSON (`payload`/`provenance`), rather than the
+unrestricted fan-out `value` destination. The tests were adjusted to those
+existing public contracts; no production code changed.
+
+1. Explicit `null` optionals together with explicit empty `value`, `payload`,
+   `provenance`, and `file_state_record_ids` produce the same public
+   serialization as `project_record()`. The public replay query and checkpoint
+   preserve the empty fields while omitting the explicit-null optionals.
+2. A native JSON `payload` nested beyond 100 levels makes `reduce_event()`
+   fail with the same destination `ValidationError` type, location, and message
+   as public `project_record()`, proving the private path falls back.
+3. An `output_record_accepted` fan-out payload missing required `record_id`
+   raises `ValidationError` during canonical event-payload model validation,
+   before projection state changes.
+
+```text
+Initial new-test run (RED):
+2 failed, 63 passed in 2.74s
+
+Final reducer regression run:
+65 passed in 2.58s
+
+Focused projected-record / codec / duplicate / performance suite:
+143 passed in 9.67s
+```
+
+## Current direct gate evidence
+
+These runs used the exact committed reducer-test code in
+`395856ed3 test(graph): add reducer conversion regressions` and the normal
+two-worker `loadgroup` test configuration.
 
 ```text
 uv run pytest tests/unit/test_graph_projection_performance.py -q
-FFF
-NameError: name '_performance_event_stream' is not defined
-3 failed in 4.08s
-```
-
-All three rows failed for the expected missing-interface reason.
-
-## GREEN evidence
-
-Required direct gate runs after implementation:
-
-```text
-uv run pytest tests/unit/test_graph_projection_performance.py -q
-3 passed in 8.17s
+3 passed in 9.87s
 
 uv run pytest tests/unit/test_graph_projection_performance.py -q
-3 passed in 7.18s
+3 passed in 10.40s
 ```
 
-Final exact sequential samples (seconds). Event generation and cardinality
-validation were outside the timed folds; each listed scenario performed one
-unmeasured warmup followed by exactly these three timed replays.
+The gate deliberately captures sample values for the strict median assertion
+without emitting them on successful pytest runs. The following current samples
+were recorded by executing that exact event-stream and replay contract (one
+warmup plus three timed folds per scenario) against the same committed code:
 
-| Scenario | Timed samples (s) | Median (s) | Nodes | Edges | Accepted records |
-| --- | --- | ---: | ---: | ---: | ---: |
-| general | 0.338407458, 0.338887500, 0.327355041 | 0.338407458 | 2501 | 2500 | 2499 |
-| edge-heavy | 0.280514875, 0.263974041, 0.272438500 | 0.272438500 | 5001 | 4999 | 0 |
-| record-heavy | 0.583722125, 0.676550333, 0.673780708 | 0.673780708 | 1 | 0 | 9999 |
+| Scenario | Timed samples (s) | Median (s) |
+| --- | --- | ---: |
+| general | 0.332321375, 0.325648125, 0.322326167 | 0.325648125 |
+| edge-heavy | 0.241088750, 0.246094500, 0.241276959 | 0.241276959 |
+| record-heavy | 0.651302083, 0.657011916, 0.655356166 | 0.655356166 |
 
-All medians are strictly below 1.0 second and all observed public-query
-cardinalities equal the generated event-family counts.
+Every current median is strictly below one second.
 
-Focused regression verification:
+## Historical samples and investigation
 
-```text
-uv run pytest \
-  tests/unit/test_graph_projected_records.py \
-  tests/unit/test_graph_projection_behavior.py \
-  tests/unit/test_graph_projection_replay_equivalence.py \
-  tests/unit/test_graph_projection_immutability.py \
-  tests/unit/test_graph_projection_queries.py \
-  tests/unit/test_graph_projection_duplicate_ids.py \
-  tests/unit/test_graph_projection_performance.py -q
-479 passed in 8.89s
+All earlier samples in prior versions of this report are **historical**, not
+current evidence. They documented the original gate introduction and a
+scheduling-sensitive record-heavy failure under a larger worker pool. The
+two-worker `loadgroup` configuration is retained everywhere now as the narrow
+normal-suite control for that CPU-bound contention; it does not remove,
+relax, mark, baseline, or ratio-gate the direct release bound.
 
-uv run ruff check ... && uv run ruff format --check ... && uv run pyright ...
-All checks passed; 0 errors, 0 warnings, 0 informations
-
-uv run pre-commit run --all-files
-All hooks passed, including pytest, pyright, graph-projection-boundaries,
-module-imports, signal-routing, enum-drift, ui-lint, and ui-typecheck.
-```
-
-## Performance investigation
-
-The first normal full-suite hook exposed a real record-heavy failure under
-default xdist contention:
-
-```text
-record-heavy samples: 1.082912209, 0.759528208, 1.329866666
-median: 1.082912209s
-```
-
-Pure-reduction `cProfile` attributed the hot path to the 9,999
-`output_record_accepted` reductions: repeated record projection validation,
-frozen-record-store replacement, and persistent-map updates. An initial
-fan-out sequence shortcut was rejected because existing projected-record tests
-proved strict nested `FrozenMap` validation requires list-to-tuple conversion.
-A `FrozenMap` method-dispatch experiment was also reverted after profiling
-showed it slower. The committed changes above were the narrow surviving
-optimizations, with projected-record serialization equivalence explicitly
-restored through `_fields_set`.
-
-The full suite still showed scheduling-sensitive wall-clock variance under
-`worksteal` (for example, median 1.010375708s after the reducer optimizations).
-`loadgroup` is therefore retained and the default xdist worker count is capped
-at four, so the three release-gate rows run in one group without competing with
-seven other CPU-bound workers. This preserves their individual
-one-warmup/three-sample contracts and default-suite visibility.
+The historical profiling investigation identified repeated accepted-record
+conversion and persistent record-store replacement as the record-heavy hot
+path. A fan-out shortcut was retained only after public conversion semantics,
+including `_fields_set`, JSON normalization, nested freezing, and destination
+validation fallback were preserved. The current public reducer regressions
+cover the remaining conversion edge cases without making the internal helper
+public.
 
 ## Commits
 
-- `d006b782b test(graph): enforce direct replay performance bound`
-- `16a8d0ac9 test(graph): group replay performance gate`
-- `1711c7a14 test: bound xdist replay gate contention`
+- `d006b782b` `test(graph): enforce direct replay performance bound`
+- `16a8d0ac9` `test(graph): group replay performance gate`
+- `1711c7a14` `test: bound xdist replay gate contention`
+- `7a6052017` `docs: record replay performance gate closure`
+- `9de7facbb` `fix(graph): preserve projected record validation`
+- `537d0ce27` `fix(graph): align reducer record field sets`
+- `d3a724d68` `fix(graph): keep reducer fast path internal`
+- `395856ed3` `test(graph): add reducer conversion regressions`
 
-## Concerns
+## Verification and concerns
 
-- The release bound intentionally measures wall-clock time, so host CPU
-  scheduling is material. The gate stays strict and unmarked; four-worker xdist
-  grouping is the minimal normal-suite scheduling control used to bound
-  CPU-bound contention without removing the gate from default execution.
-- No unresolved behavioral or check failures remain in the final all-files hook
-  run.
+The `395856ed3` commit ran normal hooks successfully: ruff, ruff format,
+hardcoded-secret detection, pyright, graph-projection boundaries, the full
+pytest hook, module-imports, signal-routing, enum drift, UI lint, and UI type
+checking. This report update will run the same normal hooks before commit.
 
-## Semantic review follow-up
-
-### RED
-
-`tests/unit/test_graph_projected_records.py` added six failures against the
-Task 5 public fast path:
-
-- JSON-mode normalization for `date`, `datetime`, `UUID`, and enum values in
-  fan-out value/payload/provenance raised before normalization.
-- `OutputRecord.model_construct()` sources with `schema_version=0`, a mismatched
-  `producer_port`, or a non-string `record_id` bypassed destination validation.
-- An `OutputRecord` subclass with an extra field bypassed destination
-  `extra="forbid"` validation.
-- List and dict subclasses no longer normalized through the shared projected
-  record validator.
-
-### GREEN and fallback rationale
-
-- Public `project_record()` is restored to its historical `model_dump(mode="json",
-  by_alias=True, exclude_unset=True, exclude_none=True)` plus destination
-  `model_validate()` path for every source, preserving normalization and all
-  public validation semantics.
-- `freeze_record_sequences()` again uses `isinstance` for list/dict subclasses.
-- The reducer alone calls the non-exported internal
-  `project_validated_record_for_reducer()`. Its trusted
-  construct path requires the exact `OutputRecord` type, every destination
-  scalar invariant (including schema version, port consistency, strict IDs, and
-  list element types), and recursively native finite JSON with no cycles.
-  Dates, datetimes, UUIDs, enums, subclasses, non-native container subclasses,
-  and malformed constructed records fall back to public conversion.
-- The private path is available only after reducer payload validation; the
-  public API cannot reach it.
-
-Verification after the review fixes:
-
-```text
-uv run pytest tests/unit/test_graph_projected_records.py \
-  tests/unit/test_graph_projection_codec.py \
-  tests/unit/test_graph_projection_duplicate_ids.py -q
-137 passed in 3.40s
-
-uv run pytest tests/unit/test_graph_projection_performance.py -q
-3 passed in 8.98s
-
-uv run pytest tests/unit/test_graph_projection_performance.py -q
-3 passed in 8.91s
-
-uv run pre-commit run pytest --all-files
-Passed
-```
-
-The full hook initially overrode project pytest settings with eight-worker
-`worksteal`; its entry now matches the grouped two-worker contract. Four workers
-still produced record-heavy scheduling failures after private reduction
-optimization, while two grouped workers passed the full default-suite hook.
+The remaining operational concern is expected wall-clock sensitivity to host
+CPU contention. The direct assertion remains strict and unmarked, and both
+current direct two-worker `loadgroup` runs passed. There are no unresolved
+behavioral, validation, or hook failures.
