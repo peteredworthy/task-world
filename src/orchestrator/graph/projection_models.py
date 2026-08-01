@@ -1,8 +1,8 @@
-"""Immutable destination models for the future graph-projection cutover.
+"""Schema-13 immutable models owned by the permanent graph projection.
 
-This module is deliberately passive: production reducers do not construct these
-models until the later cutover task.  Conversion copies transport records at the
-boundary, preventing mutable event payloads from becoming projected state.
+Production reducers construct these frozen grouped models directly. Conversion
+at event and checkpoint boundaries prevents mutable transport payloads from
+becoming reachable projected state.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
 
 
 class ProjectionModel(BaseModel):
-    """Strict, immutable base for every model reachable from the scaffold."""
+    """Strict, immutable base for every model reachable from the projection."""
 
     model_config = ConfigDict(
         frozen=True,

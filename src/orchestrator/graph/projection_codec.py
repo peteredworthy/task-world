@@ -1,4 +1,4 @@
-"""Strict checkpoint codec and referential validation for the immutable scaffold."""
+"""Schema-13 checkpoint codec and referential validation for GraphProjection."""
 
 from __future__ import annotations
 

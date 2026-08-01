@@ -37,6 +37,12 @@ _PROJECTION_TYPE_ORIGINS = frozenset(
         "orchestrator.graph.GraphProjectionCheckpoint",
     }
 )
+_PUBLIC_PROJECTION_MODULES = frozenset(
+    {
+        "orchestrator.graph",
+        "orchestrator.graph_runtime.controller",
+    }
+)
 
 
 class ProjectionProvenanceFact(BaseModel):
@@ -180,6 +186,12 @@ class ProjectionProvenanceCollector:
         module = self._import_module(node)
         for item in node.names:
             if item.name == "*":
+                if module in _PUBLIC_PROJECTION_MODULES:
+                    for origin in (
+                        GRAPH_PROJECTION_TYPES | PROJECTION_FUNCTIONS | _PROJECTION_TYPE_ORIGINS
+                    ):
+                        if origin.startswith(f"{module}."):
+                            scope.origins[origin.rpartition(".")[2]] = frozenset({origin})
                 continue
             name = item.asname or item.name
             self._clear(name, scope)
@@ -187,7 +199,10 @@ class ProjectionProvenanceCollector:
                 origin = f"{module}.{item.name}"
                 if (
                     origin
-                    in GRAPH_PROJECTION_TYPES | PROJECTION_FUNCTIONS | _PROJECTION_TYPE_ORIGINS
+                    in _PUBLIC_PROJECTION_MODULES
+                    | GRAPH_PROJECTION_TYPES
+                    | PROJECTION_FUNCTIONS
+                    | _PROJECTION_TYPE_ORIGINS
                 ):
                     scope.origins[name] = frozenset({origin})
                 elif origin == "orchestrator.graph.projections.GraphProjection":

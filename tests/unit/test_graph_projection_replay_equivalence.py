@@ -1,4 +1,4 @@
-"""RED contracts for deterministic full, incremental, and checkpointed replay."""
+"""Permanent contracts for deterministic full, incremental, and checkpointed replay."""
 
 from copy import deepcopy
 from typing import Any

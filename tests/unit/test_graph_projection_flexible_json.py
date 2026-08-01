@@ -19,6 +19,7 @@ from orchestrator.graph import (
     build_projection,
     projection_from_checkpoint,
     projection_to_checkpoint,
+    thaw_json,
 )
 from tests.unit.graph_projection_behavior_cases import event
 
@@ -141,6 +142,12 @@ class FlexibleJsonCase:
     projected_value: Callable[[GraphProjection], object]
     checkpoint_value: Callable[[dict[str, object]], object]
     container: Literal["direct", "map-value", "tuple-map-value"]
+    checkpoint_present: Callable[[dict[str, object]], bool] | None = None
+    omits_none: bool = False
+
+    def expected_value(self, probe: object) -> object:
+        """Return the ordinary JSON value deliberately installed by this case."""
+        return _adapt(probe, self.container)
 
 
 def _adapt(probe: object, container: Literal["direct", "map-value", "tuple-map-value"]) -> object:
@@ -149,6 +156,15 @@ def _adapt(probe: object, container: Literal["direct", "map-value", "tuple-map-v
     if container == "map-value":
         return {"probe": probe}
     return [{"probe": probe}]
+
+
+def _checkpoint_path_present(checkpoint: dict[str, object], path: tuple[str, ...]) -> bool:
+    value: object = checkpoint
+    for item in path:
+        if not isinstance(value, dict) or item not in value:
+            return False
+        value = value[item]
+    return True
 
 
 def _node(node_id: str, position: int = 0, **payload: object) -> EventEnvelope:
@@ -281,7 +297,22 @@ def _record_case(
             return record["value"]
         return record["value"].get(field)
 
-    return FlexibleJsonCase(owner, field, events, projected, checkpoint, container)
+    def checkpoint_present(checkpoint: dict[str, object]) -> bool:
+        record = checkpoint["records"]["by_id"][record_id]  # type: ignore[index]
+        if envelope:
+            return field in record
+        return "value" in record if field == "value" else field in record["value"]
+
+    return FlexibleJsonCase(
+        owner,
+        field,
+        events,
+        projected,
+        checkpoint,
+        container,
+        checkpoint_present,
+        omits_none=container == "direct",
+    )
 
 
 def _direct_case(
@@ -314,7 +345,16 @@ def _direct_case(
                 value = value[item]  # type: ignore[index]
         return value
 
-    return FlexibleJsonCase(owner, field, events, projected, checkpoint, container)
+    return FlexibleJsonCase(
+        owner,
+        field,
+        events,
+        projected,
+        checkpoint,
+        container,
+        lambda checkpoint: _checkpoint_path_present(checkpoint, path),
+        omits_none=True,
+    )
 
 
 def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
@@ -363,6 +403,12 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
             lambda p, f=field: getattr(_required_edge(p, f"edge-{f}"), f),
             lambda c, f=field: c["topology"]["edges"][f"edge-{f}"].get(f),
             "direct" if container == "direct" else "map-value",
+            (
+                lambda c, f=field, k=container: f in c["topology"]["edges"][f"edge-{f}"]
+                if k == "direct"
+                else None
+            ),
+            container == "direct",
         )  # type: ignore[index]
     for owner, field, kind, decision in (
         ("ApprovalDecisionValue", "scope", "approval", "approved"),
@@ -536,6 +582,9 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
             "evidence"
         ),
         "direct",
+        lambda c: "evidence"
+        in c["records"]["by_id"]["record-ProjectedVerificationReportRecord-evidence"],
+        omits_none=True,
     )  # type: ignore[index]
     for field in ("payload", "provenance"):
         cases[("ProjectedRecordBase", field)] = _record_case(
@@ -650,9 +699,15 @@ def test_every_flexible_json_field_round_trips_through_plain_checkpoint_json(
     case: FlexibleJsonCase, probe: object
 ) -> None:
     projection = build_projection(list(case.events(probe)))
+    expected = case.expected_value(probe)
+    assert thaw_json(case.projected_value(projection)) == expected
     checkpoint = projection_to_checkpoint(projection)
-    _assert_plain_json(case.checkpoint_value(checkpoint))
+    checkpoint_value = case.checkpoint_value(checkpoint)
+    if case.checkpoint_present is not None:
+        assert case.checkpoint_present(checkpoint) is not (probe is None and case.omits_none)
+    _assert_plain_json(checkpoint_value)
+    assert checkpoint_value == expected
     restored = projection_from_checkpoint(deepcopy(checkpoint))
     assert restored == projection
-    assert case.projected_value(restored) == case.projected_value(projection)
+    assert thaw_json(case.projected_value(restored)) == expected
     _assert_deeply_immutable(case.projected_value(restored))

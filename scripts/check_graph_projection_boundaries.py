@@ -100,6 +100,12 @@ _MUTABLE_METHODS = frozenset().union(
     _INPLACE_DUNDER_MUTABLE_METHODS,
 )
 _IMMUTABLE_SCALARS = frozenset({str, int, float, bool, bytes, type(None)})
+_PUBLIC_PROJECTION_STAR_IMPORT_MODULES = frozenset(
+    {
+        "orchestrator.graph",
+        "orchestrator.graph_runtime.controller",
+    }
+)
 
 
 def projection_annotation_violations(root: type[ProjectionModel]) -> tuple[str, ...]:
@@ -682,6 +688,14 @@ class _BoundaryVisitor(ast.NodeVisitor):
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         module = self._resolved_import_module(node)
+        if module in _PUBLIC_PROJECTION_STAR_IMPORT_MODULES and any(
+            imported.name == "*" for imported in node.names
+        ):
+            self._add(
+                node,
+                "projection_public_star_import",
+                "projection-producing public modules must not be star imported",
+            )
         forbidden_graph_import = module.startswith("orchestrator.graph.") or (
             node.level > 0 and module == "orchestrator.graph"
         )

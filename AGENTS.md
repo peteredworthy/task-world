@@ -311,6 +311,11 @@ loops, use focused tests or `make test-changed`; commit hooks run the default
 suite once, so a separate pre-commit full run immediately before committing is
 redundant.
 
+Copyable focused pure-projection command (the ten current closure files):
+```bash
+uv run pytest tests/unit/test_graph_projection_behavior.py tests/unit/test_graph_projection_flexible_json.py tests/unit/test_graph_projection_replay_equivalence.py tests/unit/test_graph_projection_immutability.py tests/unit/test_graph_projection_queries.py tests/unit/test_graph_projection_duplicate_ids.py tests/unit/test_graph_projection_codec.py tests/unit/test_graph_projection_integrity.py tests/unit/test_graph_projection_boundaries.py tests/unit/test_graph_projection_performance.py
+```
+
 ### Unit / Integration boundary rules
 
 **Unit tests** (`tests/unit/`) must NOT:

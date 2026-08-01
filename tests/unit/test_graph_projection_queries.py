@@ -696,37 +696,7 @@ def test_matrix_public_query_results_cannot_mutate_projection_storage(case) -> N
 
 @pytest.mark.parametrize(
     "case",
-    tuple(
-        case
-        for case in behavior_cases()
-        if case.event_type
-        in {
-            "node_created",
-            "node_state_changed",
-            "plan_region_marked_suspect",
-            "node_authority_changed",
-            "edge_created",
-            "input_bound",
-            "output_record_accepted",
-            "file_state_accepted",
-            "gatekeeper_verdict_recorded",
-            "verification_passed",
-            "verification_failed",
-            "approval_decision_recorded",
-            "authority_decision_recorded",
-            "oversight_decision_recorded",
-            "requirement_revision_recorded",
-            "support_evidence_recorded",
-            "lease_granted",
-            "lease_renewed",
-            "lease_suspended",
-            "lease_revoked",
-            "lease_expired",
-            "lease_released",
-            "cleanup_requested",
-            "callback_accepted",
-        }
-    ),
+    tuple(case for case in behavior_cases() if case.frozen_query_result_target is not None),
     ids=lambda case: case.event_type,
 )
 def test_matrix_frozen_public_query_results_reject_field_assignment(case) -> None:

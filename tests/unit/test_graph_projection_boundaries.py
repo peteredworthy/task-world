@@ -94,6 +94,91 @@ def read(holder: Holder) -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("import_line", "module_name"),
+    (
+        ("from orchestrator import graph", "graph"),
+        ("from orchestrator import graph as graph_api", "graph_api"),
+    ),
+)
+def test_boundary_guard_tracks_package_imported_graph_module_without_sibling_broadening(
+    tmp_path: Path, import_line: str, module_name: str
+) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        f"""{import_line}
+import foreign
+
+def read() -> None:
+    projection = {module_name}.initial_projection()
+    projection.lifecycle.run_state = "active"
+    projection["nodes"]
+    projection.records.by_id.update({{}})
+    foreign.graph.initial_projection()["not-a-projection"]
+"""
+    )
+
+    violations = check_projection_boundaries(tmp_path, paths=(source,))
+
+    assert [(item.line, item.code) for item in violations] == [
+        (6, "forbidden_grouped_storage_access"),
+        (7, "legacy_projection_subscript"),
+        (8, "forbidden_grouped_storage_access"),
+        (8, "mutable_projection_operation"),
+    ]
+
+
+def test_boundary_guard_fails_closed_for_public_projection_star_import(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph import *
+
+def read() -> None:
+    projection = initial_projection()
+    projection.lifecycle.run_state = "active"
+    projection["nodes"]
+    projection.records.by_id.update({})
+"""
+    )
+
+    violations = check_projection_boundaries(tmp_path, paths=(source,))
+
+    assert [(item.line, item.code) for item in violations] == [
+        (1, "projection_public_star_import"),
+        (5, "forbidden_grouped_storage_access"),
+        (6, "legacy_projection_subscript"),
+        (7, "forbidden_grouped_storage_access"),
+        (7, "mutable_projection_operation"),
+    ]
+
+
+def test_boundary_guard_fails_closed_for_controller_projection_star_import(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """from orchestrator.graph_runtime.controller import *
+
+def read() -> None:
+    projection = rebuild_projection([])
+    projection.lifecycle.run_state = "active"
+    projection["nodes"]
+    projection.records.by_id.update({})
+"""
+    )
+
+    assert [
+        (item.line, item.code) for item in check_projection_boundaries(tmp_path, paths=(source,))
+    ] == [
+        (1, "projection_public_star_import"),
+        (5, "forbidden_grouped_storage_access"),
+        (6, "legacy_projection_subscript"),
+        (7, "forbidden_grouped_storage_access"),
+        (7, "mutable_projection_operation"),
+    ]
+
+
 def test_boundary_guard_default_scans_every_tracked_python_file(tmp_path: Path) -> None:
     source = tmp_path / "tests/unit/consumer.py"
     source.parent.mkdir(parents=True)
@@ -303,9 +388,35 @@ def test_boundary_provenance_candidate_selection_uses_only_collector_seed_origin
 
 
 def test_permanent_boundary_guard_does_not_import_retired_tooling() -> None:
-    source = (_ROOT / "scripts/check_graph_projection_boundaries.py").read_text()
+    tree = ast.parse((_ROOT / "scripts/check_graph_projection_boundaries.py").read_text())
+    retired_modules = {
+        "scripts.benchmark_graph_projection",
+        "scripts.generate_graph_projection_goldens",
+        "scripts.graph_projection_inventory",
+        "scripts.profile_graph_readback",
+        "scripts.codemods.migrate_graph_projection_queries",
+    }
+    retired_symbols = {
+        "MigrationDisposition",
+        "baseline_revision",
+        "graph_projection_manifest",
+        "occurrence_id",
+    }
 
-    assert "inventory" not in source
+    imported_modules = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    } | {
+        node.module
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    referenced_symbols = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+
+    assert imported_modules.isdisjoint(retired_modules)
+    assert referenced_symbols.isdisjoint(retired_symbols)
 
 
 def test_boundary_provenance_has_no_migration_bookkeeping_vocabulary() -> None:
