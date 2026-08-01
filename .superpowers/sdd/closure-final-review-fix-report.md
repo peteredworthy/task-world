@@ -72,6 +72,12 @@ uv run pyright <changed Python files>
 
 ## Commit evidence
 
-Pending normal `git commit` hooks at the time this report was written. The
-resulting non-amended commit SHA and hook result are recorded in the final
-work summary.
+The implementation commit was created without amendment:
+
+```text
+8f1fe3846 fix(graph): close final projection review findings
+```
+
+Its normal hooks all passed: Ruff, Ruff format, hardcoded-secret detection,
+Pyright, graph-projection boundaries, pytest, module-imports, signal-routing,
+enum-drift (not applicable), UI lint, and UI typecheck.
