@@ -40,12 +40,18 @@ EXPECTED_COMMANDS = {
     "evaluate_join",
     "evaluate_final_gate",
     "record_cleanup_applied",
+    "record_runner_baseline",
+    "stage_runner_submission",
+    "finalize_runner_execution",
+    "request_runner_recovery",
+    "complete_runner_recovery",
+    "record_managed_snapshot_cleanup_applied",
 }
 
 
-def test_command_registry_has_exactly_24_strict_models() -> None:
+def test_command_registry_has_exactly_30_strict_models() -> None:
     assert set(COMMAND_SPECS) == EXPECTED_COMMANDS
-    assert len(COMMAND_SPECS) == 24
+    assert len(COMMAND_SPECS) == 30
     assert all(
         spec.payload_model.model_config["extra"] == "forbid" for spec in COMMAND_SPECS.values()
     )

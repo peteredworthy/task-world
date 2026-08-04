@@ -65,6 +65,26 @@ class ArtifactGarbageCollector:
         except (OSError, ValueError) as exc:
             raise ArtifactGarbageCollectionError("Artifact garbage collection failed") from exc
 
+    async def collect_after_mark_hashes(
+        self,
+        load_hashes: Callable[[], Awaitable[Iterable[str]]],
+        now: datetime,
+    ) -> frozenset[str]:
+        """Sweep after loading exact durable artifact marks.
+
+        This is the request-path counterpart to ``collect_after_mark`` for
+        graph runs.  Artifact authorization rows are already written in the
+        same transaction as accepted graph output, so re-reading and parsing
+        every retained event would add history-dependent latency without
+        improving the mark set.
+        """
+        try:
+            async with ArtifactRootLock(self._root).sweep():
+                retained_hashes = frozenset(await load_hashes())
+                return await self._sweep_retained(retained_hashes, now)
+        except (OSError, ValueError) as exc:
+            raise ArtifactGarbageCollectionError("Artifact garbage collection failed") from exc
+
     async def _sweep_retained(
         self, retained_hashes: frozenset[str], now: datetime
     ) -> frozenset[str]:
@@ -79,15 +99,15 @@ class ArtifactGarbageCollector:
         graph_store: Any,
         now: datetime,
     ) -> frozenset[str]:
-        """Collect an explicitly configured single-project root."""
+        """Collect from the durable artifact-reference projection only."""
+        del deleted_run
 
-        async def load_events() -> list[Any]:
-            events: list[Any] = []
-            for run in surviving_runs:
-                events.extend(await graph_store.read_run(run.id))
-            return events
+        async def load_hashes() -> frozenset[str]:
+            return await graph_store.read_artifact_content_hashes(
+                [str(run.id) for run in surviving_runs]
+            )
 
-        return await self.collect_after_mark(load_events, now)
+        return await self.collect_after_mark_hashes(load_hashes, now)
 
 
 def collect_artifact_refs(events: Iterable[Any]) -> frozenset[str]:

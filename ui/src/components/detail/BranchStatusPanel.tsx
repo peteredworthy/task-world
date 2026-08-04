@@ -38,6 +38,7 @@ export function BranchStatusPanel({ runId }: BranchStatusPanelProps) {
   }
 
   const hasConflicts = data.has_conflicts || !data.can_merge_cleanly;
+  const disposition = data.merge_disposition;
 
   return (
     <div className="mb-6 rounded-md border border-border bg-bg-elevated p-4">
@@ -80,6 +81,15 @@ export function BranchStatusPanel({ runId }: BranchStatusPanelProps) {
           <p className="mt-1 text-lg font-semibold text-text-primary">{data.ahead_count}</p>
         </div>
       </div>
+
+      {disposition && (
+        <div className="mt-3 rounded-md border border-border bg-bg-muted px-3 py-2">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-text-muted">
+            Merge disposition: {disposition.status.replace('_', ' ')}
+          </p>
+          <p className="mt-1 text-xs text-text-secondary">{disposition.reason}</p>
+        </div>
+      )}
 
       {hasConflicts && (
         <div className="mt-3 rounded-md border border-yellow-300 bg-yellow-50 px-3 py-2">

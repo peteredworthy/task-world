@@ -84,12 +84,11 @@ def handle_raise_appeal(
     clock: Clock,
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
-    del projection
     del events
     del command_type
     del clock
     del context
-    return apply_raise_appeal(payload, make_event, id_gen)
+    return apply_raise_appeal(projection, payload, make_event, id_gen)
 
 
 def handle_record_decision(

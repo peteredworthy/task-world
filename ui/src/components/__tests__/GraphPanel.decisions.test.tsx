@@ -83,7 +83,11 @@ function makeDecisionView(): DecisionViewResponse {
   };
 }
 
-function renderPanel(decisionView = makeDecisionView()) {
+function renderPanel(
+  decisionView = makeDecisionView(),
+  preloadEvents = true,
+  preloadFileState = true,
+) {
   const run = makeRun();
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -102,25 +106,43 @@ function renderPanel(decisionView = makeDecisionView()) {
   };
   queryClient.setQueryData(['graphProjection', run.id], projection);
   queryClient.setQueryData(['graphDecisions', run.id], decisionView);
-  queryClient.setQueryData(['graphEvents', run.id, undefined], []);
+  if (preloadEvents) {
+    queryClient.setQueryData(['graphEvents', run.id, 0, 50, 'summary'], {
+      pages: [{ events: [], has_more: false, next_position: null }],
+      pageParams: [0],
+    });
+  }
   queryClient.setQueryData(['graphScheduler', run.id], {
     run_id: run.id,
     event_count: 2,
     scheduler: { ready: [], blocked: [], waiting_resources: [], waiting_gates: [] },
     leases: { active: [], suspended: [] },
   });
-  queryClient.setQueryData(['graphFileState', run.id], {
-    run_id: run.id,
-    event_count: 2,
-    gatekeeper: { gatekeeper_resolved: 0, unresolved_residue: 0 },
-    nodes: [],
-  });
+  if (preloadFileState) {
+    queryClient.setQueryData(['graphFileState', run.id], {
+      pages: [{
+        run_id: run.id,
+        event_count: 2,
+        from_position: 0,
+        has_more: false,
+        next_position: null,
+        path_limit: 50,
+        gatekeeper_scope: 'page',
+        gatekeeper_metrics_truncated: false,
+        orphan_gatekeeper_fact_count: 0,
+        gatekeeper: { gatekeeper_resolved: 0, unresolved_residue: 0 },
+        nodes: [],
+      }],
+      pageParams: [0],
+    });
+  }
 
-  return render(
+  const rendered = render(
     <QueryClientProvider client={queryClient}>
       <GraphPanel runId={run.id} run={run} open onClose={() => undefined} />
     </QueryClientProvider>,
   );
+  return { ...rendered, queryClient };
 }
 
 function graphApiResponse(input: RequestInfo | URL, init?: RequestInit): Response {
@@ -144,7 +166,7 @@ function graphApiResponse(input: RequestInfo | URL, init?: RequestInit): Respons
       leases: { active: [], suspended: [] },
     }), { status: 200 });
   }
-  if (url.endsWith('/graph/events')) return new Response(JSON.stringify([]), { status: 200 });
+  if (url.includes('/graph/events')) return new Response(JSON.stringify([]), { status: 200 });
   if (url.endsWith('/graph')) {
     return new Response(JSON.stringify({
       run_id: 'run-1', event_count: 3, run_state: 'active', node_states: {}, task_states: {}, leases: {}, ready_nodes: [],
@@ -153,7 +175,146 @@ function graphApiResponse(input: RequestInfo | URL, init?: RequestInit): Respons
   return new Response(JSON.stringify(makeRun()), { status: 200 });
 }
 
+function fileStateResponse(hasMore: boolean, nextPosition: number | null): Response {
+  return new Response(JSON.stringify({
+    run_id: 'run-1', event_count: 1, from_position: 0, has_more: hasMore,
+    next_position: nextPosition, path_limit: 50, gatekeeper_scope: 'page',
+    gatekeeper_metrics_truncated: false, orphan_gatekeeper_fact_count: 0,
+    gatekeeper: null, nodes: [],
+  }), { status: 200 });
+}
+
 describe('GraphPanel human-gate decisions', () => {
+  it('shows an initial graph-event error and retries the initial page', async () => {
+    let eventAttempts = 0;
+    globalThis.fetch = async (input, init) => {
+      if (!String(input).includes('/graph/events')) return graphApiResponse(input, init);
+      eventAttempts += 1;
+      if (eventAttempts === 1) {
+        return new Response(JSON.stringify({ detail: 'event service unavailable' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify([{
+        event_id: 'event-1',
+        event_type: 'node_created',
+        run_id: 'run-1',
+        position: 1,
+        timestamp: '2026-01-01T00:00:00Z',
+        payload: { node_id: 'worker-1', kind: 'worker' },
+      }]), {
+        status: 200,
+        headers: { 'X-Has-More': 'false', 'X-Next-Position': 'null' },
+      });
+    };
+    renderPanel(makeDecisionView(), false);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load graph events');
+    expect(screen.queryByText(/All 0 graph events loaded/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading events' }));
+
+    await screen.findByRole('button', { name: 'Events (1)' });
+    expect(screen.getByText('All 1 graph events loaded.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(eventAttempts).toBe(2);
+  });
+
+  it('retains loaded events and retries a failed continuation page', async () => {
+    const eventRequests: string[] = [];
+    const event = (position: number) => ({
+      event_id: `event-${position}`,
+      event_type: 'node_created',
+      run_id: 'run-1',
+      position,
+      timestamp: '2026-01-01T00:00:00Z',
+      payload: { node_id: `worker-${position}`, kind: 'worker' },
+    });
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (!url.includes('/graph/events')) return graphApiResponse(input, init);
+      eventRequests.push(url);
+      if (eventRequests.length === 1) {
+        return new Response(JSON.stringify([event(1)]), {
+          status: 200,
+          headers: { 'X-Has-More': 'true', 'X-Next-Position': '2' },
+        });
+      }
+      if (eventRequests.length === 2) {
+        return new Response(JSON.stringify({ detail: 'temporary page failure' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify([event(1), event(2)]), {
+        status: 200,
+        headers: { 'X-Has-More': 'false', 'X-Next-Position': 'null' },
+      });
+    };
+    renderPanel(makeDecisionView(), false);
+
+    await screen.findByRole('button', { name: 'Events (1)' });
+    fireEvent.click(screen.getByRole('button', { name: 'Load more events' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load more events');
+    expect(screen.getByRole('button', { name: 'Events (1)' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading more events' }));
+
+    await screen.findByRole('button', { name: 'Events (2)' });
+    expect(screen.getByText('All 2 graph events loaded.')).toBeInTheDocument();
+    expect(eventRequests).toHaveLength(3);
+    expect(eventRequests[1]).toContain('from_position=2');
+    expect(eventRequests[2]).toContain('from_position=2');
+  });
+
+  it('loads bounded event pages once and exposes loading and terminal states', async () => {
+    const eventRequests: string[] = [];
+    let releaseSecondPage: (() => void) | undefined;
+    const secondPageReady = new Promise<void>((resolve) => {
+      releaseSecondPage = resolve;
+    });
+    const event = (position: number) => ({
+      event_id: `event-${position}`,
+      event_type: 'node_created',
+      run_id: 'run-1',
+      position,
+      timestamp: '2026-01-01T00:00:00Z',
+      payload: { node_id: `worker-${position}`, kind: 'worker' },
+    });
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (!url.includes('/graph/events')) return graphApiResponse(input, init);
+      eventRequests.push(url);
+      if (eventRequests.length === 1) {
+        return new Response(JSON.stringify([event(1)]), {
+          status: 200,
+          headers: { 'X-Has-More': 'true', 'X-Next-Position': '2' },
+        });
+      }
+      await secondPageReady;
+      return new Response(JSON.stringify([event(1), event(2)]), {
+        status: 200,
+        headers: { 'X-Has-More': 'false', 'X-Next-Position': 'null' },
+      });
+    };
+    renderPanel(makeDecisionView(), false);
+
+    await screen.findByRole('button', { name: 'Events (1)' });
+    expect(screen.getByText('1 events loaded; more history is available.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Load more events' }));
+    await waitFor(() => expect(eventRequests).toHaveLength(2));
+    expect(screen.getByRole('button', { name: 'Loading more events…' })).toBeDisabled();
+    expect(eventRequests[1]).toContain('from_position=2');
+    expect(eventRequests[1]).toContain('limit=50');
+    expect(eventRequests[1]).toContain('payload_mode=summary');
+
+    releaseSecondPage?.();
+    await screen.findByRole('button', { name: 'Events (2)' });
+    expect(screen.getByText('All 2 graph events loaded.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Load more events' })).not.toBeInTheDocument();
+    expect(eventRequests).toHaveLength(2);
+  });
+
   it('moves focus into the modal and restores it to the review trigger on close', () => {
     renderPanel();
     const trigger = screen.getByRole('button', { name: 'Review decision' });
@@ -268,5 +429,83 @@ describe('GraphPanel human-gate decisions', () => {
       decider: { kind: 'human', id: 'human-operator', role: 'operator' },
       reason: 'Unsafe output',
     });
+  });
+
+  it('shows initial file-state failure details and retries without rendering a viewer', async () => {
+    let attempts = 0;
+    globalThis.fetch = async (input, init) => {
+      if (String(input).includes('/graph/file-state')) {
+        attempts += 1;
+        if (attempts === 1) {
+          return new Response(JSON.stringify({ detail: 'file-state service unavailable' }), { status: 503 });
+        }
+        return fileStateResponse(false, null);
+      }
+      return graphApiResponse(input, init);
+    };
+    renderPanel(makeDecisionView(), true, false);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load file-state records: file-state service unavailable');
+    expect(screen.queryByTestId('file-state-viewer')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading file-state records' }));
+
+    await waitFor(() => expect(screen.getByTestId('file-state-viewer')).toBeInTheDocument());
+    expect(attempts).toBe(2);
+  });
+
+  it('retains file-state data and retries a failed continuation cursor', async () => {
+    const fileStateRequests: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes('/graph/file-state')) {
+        fileStateRequests.push(url);
+        if (fileStateRequests.length === 1) return fileStateResponse(true, 5);
+        if (fileStateRequests.length === 2) {
+          return new Response(JSON.stringify({ detail: 'continuation unavailable' }), { status: 503 });
+        }
+        return fileStateResponse(false, null);
+      }
+      return graphApiResponse(input, init);
+    };
+    renderPanel(makeDecisionView(), true, false);
+
+    await screen.findByRole('button', { name: 'Load more file-state records' });
+    fireEvent.click(screen.getByRole('button', { name: 'Load more file-state records' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not load more file-state records: continuation unavailable');
+    expect(screen.getByTestId('file-state-viewer')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry loading more file-state records' }));
+
+    await waitFor(() => expect(screen.queryByText('Could not load more file-state records')).not.toBeInTheDocument());
+    expect(fileStateRequests).toHaveLength(3);
+    expect(fileStateRequests[1]).toContain('from_position=5');
+    expect(fileStateRequests[2]).toContain('from_position=5');
+  });
+
+  it('marks cached file-state data stale on refresh failure and retries via refetch', async () => {
+    let refreshAttempts = 0;
+    globalThis.fetch = async (input, init) => {
+      if (String(input).includes('/graph/file-state')) {
+        refreshAttempts += 1;
+        if (refreshAttempts === 1) {
+          return new Response(JSON.stringify({ detail: 'refresh unavailable' }), { status: 503 });
+        }
+        return fileStateResponse(false, null);
+      }
+      return graphApiResponse(input, init);
+    };
+    const { queryClient } = renderPanel();
+
+    await queryClient.invalidateQueries({ queryKey: ['graphFileState', 'run-1'] });
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Could not refresh file-state records: refresh unavailable');
+    expect(alert).toHaveTextContent('Showing stale file-state data.');
+    expect(screen.getByTestId('file-state-viewer')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry refreshing file-state records' }));
+
+    await waitFor(() => expect(screen.queryByText('Could not refresh file-state records')).not.toBeInTheDocument());
+    expect(refreshAttempts).toBe(2);
   });
 });

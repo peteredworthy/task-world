@@ -98,6 +98,11 @@ function makeProjection(runId: string): GraphProjectionResponse {
   return {
     run_id: runId,
     event_count: 24,
+    from_position: 0,
+    has_more: false,
+    next_position: null,
+    path_limit: 50,
+    gatekeeper_scope: 'page',
     run_state: 'active',
     node_states: {
       'worker-1': 'completed',
@@ -181,9 +186,16 @@ function makeFileState(runId: string): FileStateReportResponse {
                 needs_gatekeeper: false,
               },
             ],
+            captured_source_entries_total: 1,
+            captured_paths_truncated: false,
             rejected_paths: [],
+            rejected_source_entries_total: 0,
+            rejected_paths_truncated: false,
             gatekeeper_verdicts: [],
+            gatekeeper_verdicts_total: 0,
+            gatekeeper_verdicts_truncated: false,
             diff_summary: { files_changed: 2, additions: 30, deletions: 4 },
+            diff_summary_available: true,
           },
         ],
       },
@@ -359,8 +371,14 @@ function renderGraphPanel() {
   queryClient.setQueryData(['graphProjection', run.id], makeProjection(run.id));
   queryClient.setQueryData(['graphScheduler', run.id], makeScheduler(run.id));
   queryClient.setQueryData(['graphDecisions', run.id], makeDecision(run.id));
-  queryClient.setQueryData(['graphFileState', run.id], makeFileState(run.id));
-  queryClient.setQueryData(['graphEvents', run.id, undefined], makeGraphEvents(run.id));
+  queryClient.setQueryData(['graphFileState', run.id], {
+    pages: [makeFileState(run.id)],
+    pageParams: [0],
+  });
+  queryClient.setQueryData(['graphEvents', run.id, 0, 50, 'summary'], {
+    pages: [{ events: makeGraphEvents(run.id), has_more: false, next_position: null }],
+    pageParams: [0],
+  });
   queryClient.setQueryData(['graphHealth', run.id], makeHealth(run.id));
   queryClient.setQueryData(['graphNodeDetail', run.id, 'verifier-expired'], makeNodeDetail(run.id));
 

@@ -900,6 +900,7 @@ def create_app(
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Has-More", "X-Next-Position"],
     )
 
     _install_state(

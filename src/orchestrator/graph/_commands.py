@@ -28,6 +28,7 @@ from orchestrator.graph.command_models import (
     RaiseAppealCommand,
     ReconcileCommand,
     RecordCleanupAppliedCommand,
+    RecordManagedSnapshotCleanupAppliedCommand,
     RecordDecisionCommand,
     RecordGatekeeperVerdictsCommand,
     RecordHeartbeatCommand,
@@ -126,7 +127,6 @@ from orchestrator.graph.projection_queries import (
     node_failed_candidates_view,
     node_pending_appeals_view,
     node_preconditions_view,
-    accepted_graph_patches_by_node_view,
     accepted_no_successor_patches_by_node_view,
     accepted_output_records_by_node_port_view,
     accepted_record_summaries_by_id_view,
@@ -136,18 +136,23 @@ from orchestrator.graph.projection_queries import (
     cleanup_requested_events_view,
     completion_decision_passed,
     edges_view,
+    execution_attempts_view,
     failed_verification_candidate_ids_view,
     failed_verification_results_by_record_id_view,
     file_state_records_view,
     input_bindings_view,
     last_deferred_reasons_view,
     latest_routine_snapshot_record,
+    cache_authority_binding,
+    cache_authority_is_new_format,
     leases_view,
     node_attempts_view,
     node_command_definitions_view,
     node_creation_positions_view,
+    node_cache_authority_hash,
     node_gate_decisions_view,
     node_kinds_view,
+    non_gap_planner_has_accepted_patch,
     node_resource_claims_view,
     node_roles_view,
     node_states_view,
@@ -345,6 +350,11 @@ def _apply_lifecycle_command(
                 )
             ]
     if command_type == "complete":
+        if any(
+            attempt.state == "recovery_requested"
+            for attempt in execution_attempts_view(projection).values()
+        ):
+            return [_command_rejected(make_event, command_type, "runner recovery remains pending")]
         blockers = final_invariant_blockers_for_events(events, projection)
         if blockers:
             return [
@@ -779,6 +789,8 @@ def _apply_callback_command(
     payload: SubmitCallbackCommand,
     run_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    *,
+    allow_recorded_runner_execution: bool = False,
 ) -> list[EventEnvelope]:
     callback_payload = _canonical_external_callback_payload(
         _callback_payload(payload),
@@ -814,6 +826,17 @@ def _apply_callback_command(
     }
     if result.outcome == CallbackOutcome.REJECTED_STALE:
         return [make_event("callback_rejected_stale", event_payload)]
+    if (
+        payload.execution_id in execution_attempts_view(projection)
+        and not allow_recorded_runner_execution
+    ):
+        return [
+            _command_rejected(
+                make_event,
+                "submit_callback",
+                "managed runner execution with baseline requires boundary finalization",
+            )
+        ]
     if result.outcome in {
         CallbackOutcome.REJECTED_CONFLICT,
         CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT,
@@ -2307,8 +2330,9 @@ def _apply_patch_command(
                         "count": budget_rejection["count"],
                     },
                 ),
-                make_event(
-                    "node_created",
+                _node_created_event(
+                    projection,
+                    make_event,
                     {
                         "node_id": gate_node_id,
                         "kind": "gate",
@@ -2391,12 +2415,14 @@ def _apply_patch_command(
                 projection,
                 events,
                 make_event,
+                patch_id=patch.patch_id,
                 inherited_session_id=parent_session_id,
                 carryover_record_id=carryover_record_id,
             )
         )
     if carryover_record_id is not None and successor_planner_node_ids:
         assert carryover_edge_payload is not None
+        carryover_edge_payload["patch_id"] = patch.patch_id
         output.append(make_event("edge_created", carryover_edge_payload))
         output.append(
             make_event(
@@ -2484,6 +2510,13 @@ def _apply_schedule_tick(
     id_gen: IdGenerator,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
+    if any(
+        attempt.state == "recovery_requested"
+        for attempt in execution_attempts_view(projection).values()
+    ):
+        # Restoration is authoritative for a recovering execution.  Do not
+        # generate expiry/failure/retry facts before its proof is recorded.
+        return []
     output = _expired_lease_events(projection, clock.now(), make_event)
     expired_lease_ids = _expired_active_lease_ids(projection, clock.now())
     active_claims = [
@@ -2590,6 +2623,20 @@ def _apply_schedule_tick(
             output.append(make_event("node_ready", {"node_id": node_id}))
         planner_session_id = _planner_session_id(projection, node_id, id_gen)
         lease_generation = _next_lease_generation(projection, node_id)
+        projected_cache_authority_hash = cache_authority_binding(projection).hash
+        node_cache_authority_hash = _cache_authority_hash_for_node(projection, node_id)
+        if (cache_authority_is_new_format(projection) and node_cache_authority_hash is None) or (
+            node_cache_authority_hash is not None
+            and node_cache_authority_hash != projected_cache_authority_hash
+        ):
+            _append_node_deferred_if_changed(
+                output,
+                projection,
+                node_id,
+                "cache_authority_mismatch",
+                make_event,
+            )
+            continue
         lease_payload: dict[str, Any] = {
             "lease_id": lease_id,
             "node_id": node_id,
@@ -2599,6 +2646,8 @@ def _apply_schedule_tick(
             "expires_at": (clock.now() + timedelta(seconds=lease_seconds)).isoformat(),
             "resource_claims": [_resource_claim_payload(claim) for claim in claims],
         }
+        if cache_authority_is_new_format(projection):
+            lease_payload["cache_authority_hash"] = projected_cache_authority_hash
         if planner_session_id is not None:
             lease_payload["session_id"] = planner_session_id
         output.append(
@@ -2894,8 +2943,9 @@ def _failed_check_recovery_events(
         if record_type == "check_result":
             selector["status"] = "failed"
         output.append(
-            make_event(
-                "node_created",
+            _node_created_event(
+                projection,
+                make_event,
                 {
                     "node_id": recovery_node_id,
                     "kind": "planner",
@@ -2980,8 +3030,9 @@ def _failed_verification_recovery_events(
         task_region_id = verification.get("task_region_id", node_id)
         recovery_region_id = f"recovery-{_stable_graph_id_part(task_region_id)}"
         output.append(
-            make_event(
-                "node_created",
+            _node_created_event(
+                projection,
+                make_event,
                 {
                     "node_id": recovery_node_id,
                     "kind": "planner",
@@ -3394,8 +3445,9 @@ def _passed_verification_final_check_edges(
         if _would_create_directed_cycle(projection, verifier_node_id, check_node_id):
             return output
         output.append(
-            make_event(
-                "node_created",
+            _node_created_event(
+                projection,
+                make_event,
                 {
                     "node_id": check_node_id,
                     "kind": "check",
@@ -3973,7 +4025,7 @@ def _apply_agent_died(
         "reason": reason,
     }
 
-    if _non_gap_planner_has_accepted_patch(projection, node_id):
+    if non_gap_planner_has_accepted_patch(projection, node_id):
         return [
             make_event("agent_died", event_payload),
             make_event(
@@ -4261,14 +4313,6 @@ def _recovery_plan_record_payload(
     return record.model_dump(mode="json")
 
 
-def _non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str) -> bool:
-    return (
-        node_kinds_view(projection).get(node_id) == "planner"
-        and node_roles_view(projection).get(node_id) != "gap_planner"
-        and bool(accepted_graph_patches_by_node_view(projection).get(node_id))
-    )
-
-
 def _is_rate_limit_death(reason: str) -> bool:
     normalized = reason.lower()
     return (
@@ -4286,6 +4330,7 @@ def _is_non_retryable_runtime_death(reason: str) -> bool:
 
 
 def _apply_raise_appeal(
+    projection: GraphProjection,
     payload: RaiseAppealCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
@@ -4305,8 +4350,9 @@ def _apply_raise_appeal(
                 }
             ).model_dump(mode="json"),
         ),
-        make_event(
-            "node_created",
+        _node_created_event(
+            projection,
+            make_event,
             {
                 "node_id": oversight_node_id,
                 "kind": "oversight",
@@ -4689,6 +4735,59 @@ def _apply_record_cleanup_applied(
     ]
 
 
+def apply_record_managed_snapshot_cleanup_applied(
+    projection: GraphProjection,
+    payload: RecordManagedSnapshotCleanupAppliedCommand,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    """Record completion only for the complete cleanup ownership identity."""
+    requested = _cleanup_requested_event(projection, payload.cleanup_id)
+    if requested is None:
+        return [
+            _command_rejected(
+                make_event, "record_managed_snapshot_cleanup_applied", "unknown cleanup"
+            )
+        ]
+    expected = {
+        "snapshot_id": payload.snapshot_id,
+        "snapshot_ref": payload.snapshot_ref,
+        "tree_sha": payload.tree_sha,
+        "commit_sha": payload.commit_sha,
+        "node_id": payload.node_id,
+        "lease_id": payload.lease_id,
+        "lease_generation": payload.lease_generation,
+        "snapshot_role": payload.snapshot_role,
+    }
+    request_data = requested.model_dump(mode="json")
+    if any(request_data.get(key) != value for key, value in expected.items()):
+        return [
+            _command_rejected(
+                make_event, "record_managed_snapshot_cleanup_applied", "cleanup ownership conflicts"
+            )
+        ]
+    if _cleanup_applied_exists(projection, payload.cleanup_id):
+        return []
+    return [
+        make_event(
+            "cleanup_applied",
+            {
+                "cleanup_id": payload.cleanup_id,
+                "old_snapshot_id": payload.snapshot_id,
+                "snapshot_ref": payload.snapshot_ref,
+                "tree_sha": payload.tree_sha,
+                "commit_sha": payload.commit_sha,
+                "node_id": payload.node_id,
+                "lease_id": payload.lease_id,
+                "lease_generation": payload.lease_generation,
+                "snapshot_role": payload.snapshot_role,
+                "execution_id": request_data.get("execution_id"),
+                "reason": request_data.get("reason"),
+                "deleted_snapshot_ref": payload.deleted_snapshot_ref,
+            },
+        )
+    ]
+
+
 def _apply_record_requirement_revision(
     payload: RecordRequirementRevisionCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
@@ -5059,12 +5158,14 @@ def _patch_op_events(
     events: list[EventEnvelope],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     *,
+    patch_id: str,
     inherited_session_id: str | None = None,
     carryover_record_id: str | None = None,
 ) -> list[EventEnvelope]:
     op_payload = _op_payload(op)
     if op.op == "create_node" and isinstance(op.node, dict):
         node_payload = dict(op.node)
+        node_payload["patch_id"] = patch_id
         node_payload.setdefault("state", "planned")
         _ensure_default_node_authority(node_payload)
         canonicalize_check_command_definition(node_payload, events)
@@ -5074,13 +5175,14 @@ def _patch_op_events(
             _ensure_optional_session_carryover_input(node_payload)
             if carryover_record_id is not None:
                 node_payload["carryover_record_id"] = carryover_record_id
-        output = [make_event("node_created", node_payload)]
+        output = [_node_created_event(projection, make_event, node_payload)]
         output.extend(_request_record_events_for_node(node_payload, make_event))
         return output
     if op.op == "create_edge":
         edge_id = op_payload.get("edge_id")
         required = op_payload.get("required")
         edge_payload = {
+            "patch_id": patch_id,
             "edge_id": edge_id,
             "from_node_id": op.from_node_id,
             "from_port": op.from_port,
@@ -5117,7 +5219,8 @@ def _patch_op_events(
             ),
         ]
     if op.op == "create_gate":
-        node_payload = _node_payload_for_op(op_payload, default_kind="gate")
+        node_payload = _node_payload_for_op(projection, op_payload, default_kind="gate")
+        node_payload["patch_id"] = patch_id
         return [make_event("node_created", node_payload)]
     if op.op == "create_revision_attempt":
         worker_raw = op_payload.get("worker_node")
@@ -5130,9 +5233,11 @@ def _patch_op_events(
         worker_node.setdefault("node_id", f"worker-revision-{task_region_id}")
         worker_node.setdefault("kind", "worker")
         worker_node.setdefault("state", "planned")
+        worker_node["patch_id"] = patch_id
         verifier_node.setdefault("node_id", f"verifier-revision-{task_region_id}")
         verifier_node.setdefault("kind", "verifier")
         verifier_node.setdefault("state", "planned")
+        verifier_node["patch_id"] = patch_id
         events = [
             make_event(
                 "revision_created",
@@ -5153,19 +5258,30 @@ def _patch_op_events(
                 events.append(
                     make_event(
                         "node_created",
-                        _node_payload_for_op(
-                            {"node": raw_node, **op_payload},
-                            default_kind=default_kind,
-                        ),
+                        {
+                            **_node_payload_for_op(
+                                projection,
+                                {"node": raw_node, **op_payload},
+                                default_kind=default_kind,
+                            ),
+                            "patch_id": patch_id,
+                        },
                     )
                 )
         if len(events) == 1:
             events.append(
-                make_event("node_created", _node_payload_for_op(op_payload, default_kind="worker"))
+                make_event(
+                    "node_created",
+                    {
+                        **_node_payload_for_op(projection, op_payload, default_kind="worker"),
+                        "patch_id": patch_id,
+                    },
+                )
             )
         return events
     if op.op == "create_appeal":
-        node_payload = _node_payload_for_op(op_payload, default_kind="appeal")
+        node_payload = _node_payload_for_op(projection, op_payload, default_kind="appeal")
+        node_payload["patch_id"] = patch_id
         appeal_payload = {
             key: value for key, value in op_payload.items() if key not in {"op", "node"}
         }
@@ -5421,7 +5537,9 @@ def _op_payload(op: PatchOp) -> dict[str, Any]:
     return op.model_dump(exclude_none=True)
 
 
-def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> dict[str, Any]:
+def _node_payload_for_op(
+    projection: GraphProjection, op_payload: dict[str, Any], *, default_kind: str
+) -> dict[str, Any]:
     raw_node = op_payload.get("node")
     node_payload = dict(cast(dict[str, Any], raw_node)) if isinstance(raw_node, dict) else {}
     node_id = node_payload.get("node_id")
@@ -5445,7 +5563,28 @@ def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> di
         if key in op_payload and key not in node_payload:
             node_payload[key] = op_payload[key]
     _ensure_default_node_authority(node_payload)
+    is_new_format = cache_authority_is_new_format(projection)
+    projected_hash = cache_authority_binding(projection).hash
+    supplied_hash = node_payload.get("cache_authority_hash")
+    if supplied_hash is not None and (not is_new_format or supplied_hash != projected_hash):
+        raise ValueError("dynamic node cache_authority_hash differs from routine snapshot")
+    if is_new_format:
+        node_payload["cache_authority_hash"] = projected_hash
     return node_payload
+
+
+def _node_created_event(
+    projection: GraphProjection,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    payload: dict[str, Any],
+) -> EventEnvelope:
+    """Single authority-normalizing constructor for command-created nodes."""
+    normalized = _node_payload_for_op(projection, {"node": payload}, default_kind="worker")
+    return make_event("node_created", normalized)
+
+
+def _cache_authority_hash_for_node(projection: GraphProjection, node_id: str) -> str | None:
+    return node_cache_authority_hash(projection, node_id)
 
 
 def _input_bound_events_for_edge(

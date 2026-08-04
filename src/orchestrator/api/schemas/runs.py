@@ -294,6 +294,9 @@ class RepresentativeNodeEvidence(ApiModel):
     role: str | None = None
     title: str | None = None
     evidence_summary: str | None = None
+    # ``partial`` means the bounded evidence window omitted additional facts;
+    # ``unavailable`` means no current graph projection was available.
+    evidence_status: Literal["complete", "partial", "unavailable", "not_requested"] = "unavailable"
     blockers: list[str] = Field(default_factory=list)
 
 
@@ -312,6 +315,7 @@ class RunEvidenceDigestResponse(ApiModel):
     status: str
     execution_mode: str
     is_graph_backed: bool
+    graph_facts_status: Literal["complete", "partial", "unavailable"] = "unavailable"
     generated_at: datetime
     run_summary: RunEvidenceDigestRunSummary
     blockers: list[str]
@@ -370,6 +374,14 @@ class MergeReadinessSnapshot(ApiModel):
     blocking_reasons: list[str]
 
 
+class MergeDispositionSnapshot(ApiModel):
+    """Truthful user-facing disposition of a run branch."""
+
+    status: Literal["merged", "ready", "no_changes", "dirty", "unfinalized", "blocked"]
+    reason: str
+    merge_commit: str | None = None
+
+
 class BranchStatusResponse(ApiModel):
     """Response for branch status check."""
 
@@ -381,6 +393,7 @@ class BranchStatusResponse(ApiModel):
     run_branch: str
     predicted_conflict_count: int = 0
     merge_readiness: MergeReadinessSnapshot
+    merge_disposition: MergeDispositionSnapshot
 
 
 class BackMergeResponse(ApiModel):

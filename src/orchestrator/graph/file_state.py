@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from fnmatch import fnmatch
 from typing import Literal
 
 FileStatePathKind = Literal["tracked", "untracked", "ignored"]
@@ -85,6 +84,18 @@ class FileStateDeclaration:
 
 
 @dataclass(frozen=True)
+class FileStateScanBudget:
+    """Immutable cache-descendant inspection limits compiled into authority."""
+
+    max_entries: int = 10_000
+    max_bytes: int = 1_073_741_824
+
+    def __post_init__(self) -> None:
+        if self.max_entries < 1 or self.max_bytes < 1:
+            raise ValueError("file-state scan budget limits must be at least one")
+
+
+@dataclass(frozen=True)
 class FileStatePolicy:
     declarations: tuple[FileStateDeclaration, ...] = ()
     tool_cache_patterns: tuple[str, ...] = (
@@ -92,6 +103,8 @@ class FileStatePolicy:
         "**/__pycache__/**",
         ".pytest_cache/**",
         "**/.pytest_cache/**",
+        ".hypothesis/**",
+        "**/.hypothesis/**",
         "node_modules/**",
         "**/node_modules/**",
         ".ruff_cache/**",
@@ -113,6 +126,7 @@ class FileStatePolicy:
         "*credentials*",
     )
     secret_entropy_threshold: float = 4.0
+    scan_budget: FileStateScanBudget = FileStateScanBudget()
 
 
 @dataclass(frozen=True)
@@ -202,18 +216,65 @@ def default_file_state_policy(
     return FileStatePolicy(declarations=declarations)
 
 
+def declared_tool_cache_roots(
+    status: WorktreeStatus,
+    policy: FileStatePolicy,
+) -> tuple[str, ...]:
+    """Return concrete policy-declared ephemeral roots present in ``status``.
+
+    This is deliberately derived from the canonical file-state policy rather
+    than from a second, runtime-only list of directory names.  A root is the
+    first matching ancestor of a non-tracked status path, so a nested cache is
+    recovered as one bounded unit and a merely cache-*named* source path is not
+    silently made ephemeral.
+    """
+    roots: set[str] = set()
+    for item in (*status.untracked, *status.ignored):
+        parts = _normalize_match_path(item.path).split("/")
+        for index in range(1, len(parts) + 1):
+            candidate = "/".join(parts[:index])
+            candidate_path = FileStatePath(path=candidate, kind=item.kind)
+            declaration = _match_declaration(candidate_path, policy.declarations)
+            is_declared = declaration is not None and declaration.classification == "tool_cache"
+            if is_declared or _matches_any(candidate, policy.tool_cache_patterns):
+                roots.add(candidate)
+                break
+    return tuple(sorted(roots))
+
+
 def secret_name_matches(path: str, policy: FileStatePolicy | None = None) -> bool:
     active_policy = policy or default_file_state_policy()
     normalized = _normalize_match_path(path)
     name = normalized.rsplit("/", maxsplit=1)[-1]
     return any(
-        fnmatch(normalized, pattern) or fnmatch(name, pattern)
+        _pattern_matches(normalized, pattern) or _pattern_matches(name, pattern)
         for pattern in active_policy.secret_name_patterns
     )
 
 
 def _classify_path(path: FileStatePath, policy: FileStatePolicy) -> PathClassification:
     declaration = _match_declaration(path, policy.declarations)
+    # Security classifications are authority checks, never declarations that a
+    # routine/pattern library may override. An external-artifact declaration
+    # cannot authorize an escaping path or a secret.
+    if _path_escapes_repo(path):
+        return _classification(
+            path,
+            "external_artifact",
+            "repo_escape",
+            rejected=True,
+            reason="repo_escape",
+        )
+    if declaration is not None and declaration.classification == "secret":
+        return _classification(
+            path,
+            "secret",
+            declaration.rule or f"declared:{declaration.pattern}",
+            rejected=True,
+            reason="secret",
+        )
+    if secret_name_matches(path.path, policy) and _secret_metadata_matches(path, policy):
+        return _classification(path, "secret", "secret_detector", rejected=True, reason="secret")
     if (
         path.kind != "tracked"
         and declaration is not None
@@ -235,38 +296,13 @@ def _classify_path(path: FileStatePath, policy: FileStatePolicy) -> PathClassifi
             manifest=manifest,
         )
 
-    # Known tool-cache / dependency dirs (e.g. .venv, node_modules) are allowed
-    # gitignored content that is never restored downstream. Classify them before
-    # the repo-escape and secret-name heuristics so third-party library files —
-    # venv python symlinks, or sources merely named like `*credentials*`/`*.pem`
-    # (authlib, certifi cacert.pem, google.auth, …) — are not false-flagged as
-    # repo escapes or secrets and used to reject the whole boundary. A genuine
-    # worker-introduced secret lands as an untracked file outside these dirs and
-    # is still caught by the checks below.
+    # Cache content is only exempt after the escape and secret checks above.
+    # This keeps bounded cache collection from concealing security-relevant
+    # paths merely because a parent directory has a cache-like name.
     if path.kind != "tracked" and _matches_any(path.path, policy.tool_cache_patterns):
         return _classification(path, "tool_cache", "builtin_tool_cache")
-
-    if _path_escapes_repo(path):
-        return _classification(
-            path,
-            "external_artifact",
-            "repo_escape",
-            rejected=True,
-            reason="repo_escape",
-        )
-    if secret_name_matches(path.path, policy) and _secret_metadata_matches(path, policy):
-        return _classification(path, "secret", "secret_detector", rejected=True, reason="secret")
     if path.kind == "tracked":
         return _classification(path, "tracked_change", "git_status")
-
-    if declaration is not None and declaration.classification == "secret":
-        return _classification(
-            path,
-            "secret",
-            declaration.rule or f"declared:{declaration.pattern}",
-            rejected=True,
-            reason="secret",
-        )
 
     if declaration is not None:
         return _classification(
@@ -368,13 +404,45 @@ def _matches_any(path: str, patterns: tuple[str, ...]) -> bool:
     return any(_pattern_matches(normalized, pattern) for pattern in patterns)
 
 
+def authority_pattern_matches(path: str, pattern: str) -> bool:
+    """Public segment-aware matcher used by immutable cache authority only."""
+    return _pattern_matches(path, pattern)
+
+
 def _pattern_matches(path: str, pattern: str) -> bool:
-    normalized_pattern = _normalize_match_path(pattern)
-    return (
-        fnmatch(path, normalized_pattern)
-        or fnmatch(f"{path}/", normalized_pattern)
-        or fnmatch(path, normalized_pattern.rstrip("/") + "/**")
-    )
+    path_parts = tuple(part for part in _normalize_match_path(path).split("/") if part)
+    pattern_parts = tuple(part for part in _normalize_match_path(pattern).split("/") if part)
+    return _match_pattern_parts(path_parts, pattern_parts)
+
+
+def _match_pattern_parts(path: tuple[str, ...], pattern: tuple[str, ...]) -> bool:
+    if not pattern:
+        return not path
+    head, *tail = pattern
+    if head == "**":
+        return any(
+            _match_pattern_parts(path[index:], tuple(tail)) for index in range(len(path) + 1)
+        )
+    if not path or not _segment_matches(path[0], head):
+        return False
+    return len(path) == 1 if not tail else _match_pattern_parts(path[1:], tuple(tail))
+
+
+def _segment_matches(value: str, pattern: str) -> bool:
+    """Match one validated glob segment; wildcards never cross a slash."""
+    if pattern == "*" or any(token in pattern for token in ("?", "[", "]")):
+        return False
+    if "*" not in pattern:
+        return value == pattern
+    if pattern.count("*") > 2:
+        return False
+    starts, ends = pattern.startswith("*"), pattern.endswith("*")
+    literal = pattern.strip("*")
+    if not literal or not (starts or ends):
+        return False
+    if starts and ends:
+        return literal in value
+    return value.endswith(literal) if starts else value.startswith(literal)
 
 
 def _normalize_match_path(path: str) -> str:

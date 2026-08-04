@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -20,7 +21,10 @@ if TYPE_CHECKING:
     from orchestrator.db.access.event_store_v2 import SqliteEventStore
 
 _JOURNAL_PATH_ENV = "ORCHESTRATOR_EVENT_JOURNAL_PATH"
-_ARCHIVE_NAME = re.compile(r"^(?P<stem>.+)\.(?P<first>\d+)-(?P<last>\d+)\.jsonl$")
+_ARCHIVE_NAME = re.compile(
+    r"^(?P<stem>.+)\.(?P<first>\d+)-(?P<last>\d+)"
+    r"(?:\.(?P<content_hash>[0-9a-f]{16})(?:\.(?P<collision>\d+))?)?\.jsonl$"
+)
 _TAIL_SCAN_CHUNK_SIZE = 64 * 1024
 
 
@@ -88,7 +92,12 @@ class SystemJournalFileOperations:
 
 
 def discover_journal_segments(active_path: Path) -> list[JournalSegment]:
-    """Return valid archive segments ordered by their first global position."""
+    """Return valid archive segments ordered by their first global position.
+
+    Archives written by current versions include a content hash and, when
+    necessary, a collision ordinal.  The optional suffix keeps older
+    range-only archive names readable during upgrades and recovery.
+    """
     segments: list[JournalSegment] = []
     prefix = f"{active_path.stem}."
     for candidate in active_path.parent.glob(f"{active_path.stem}.*.jsonl"):
@@ -100,7 +109,10 @@ def discover_journal_segments(active_path: Path) -> list[JournalSegment]:
         first, last = int(match.group("first")), int(match.group("last"))
         if first <= last:
             segments.append(JournalSegment(candidate, first, last))
-    return sorted(segments, key=lambda segment: (segment.first_position, segment.last_position))
+    return sorted(
+        segments,
+        key=lambda segment: (segment.first_position, segment.last_position, segment.path.name),
+    )
 
 
 def resolve_default_journal_path(db_path: "str | Path | None") -> "Path | None":
@@ -491,13 +503,48 @@ def _rotate(path: Path, operations: RotationOperations) -> None:
     positions = _read_positions(path)
     if not positions:
         return
-    archive = path.with_name(f"{path.stem}.{min(positions)}-{max(positions)}{path.suffix}")
-    # link is an atomic no-clobber install: EEXIST leaves the destination intact.
     operations.fsync_active(path)
-    operations.link(path, archive)
+    _link_unique_archive(path, positions, operations)
     operations.fsync_parent(path)
     operations.unlink(path)
     operations.fsync_parent(path)
+
+
+def _link_unique_archive(
+    path: Path,
+    positions: set[int],
+    operations: RotationOperations,
+) -> Path:
+    """Hard-link ``path`` to a new immutable archive without ever replacing one.
+
+    Position ranges are not unique: recovery, retries, and manually repaired
+    journals can all rotate a second active file covering an earlier range.
+    Include a content-derived identity in every new archive name and reserve a
+    numeric ordinal for the (still possible) same-content repeat. ``link`` is
+    the no-clobber reservation, so a racing writer cannot overwrite an archive
+    between selecting a candidate and installing it.
+    """
+    content_hash = _archive_content_hash(path)
+    prefix = f"{path.stem}.{min(positions)}-{max(positions)}.{content_hash}"
+    ordinal = 0
+    while True:
+        collision_suffix = "" if ordinal == 0 else f".{ordinal}"
+        archive = path.with_name(f"{prefix}{collision_suffix}{path.suffix}")
+        try:
+            operations.link(path, archive)
+        except FileExistsError:
+            ordinal += 1
+            continue
+        return archive
+
+
+def _archive_content_hash(path: Path) -> str:
+    """Return a compact identity for the exact bytes about to be archived."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as file:
+        for chunk in iter(lambda: file.read(64 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()[:16]
 
 
 def _recover_linked_rotation(path: Path, operations: RotationOperations) -> None:

@@ -37,7 +37,6 @@ from orchestrator.graph import (
     lease_by_id,
     leases_view,
     node_allowed_actions,
-    node_creation_payloads_view,
     node_creation_position,
     node_exists,
     node_gate_decision,
@@ -68,6 +67,9 @@ from orchestrator.graph import (
     verifier_verdict,
     verifier_verdicts_view,
 )
+from orchestrator.graph import recovery_proof_hash
+from orchestrator.graph import boundary_manifest_hash
+from orchestrator.graph import derive_recovery_paths
 from tests.unit.graph_test_utils import canonical_event_payload
 
 ProjectionPath: TypeAlias = tuple[str, ...]
@@ -112,6 +114,79 @@ def event(event_type: str, payload: dict[str, object], position: int) -> EventEn
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
         payload=canonical,
     )
+
+
+_RUNNER_TREE_SHA = "a" * 40
+_RUNNER_CLEAN_ENTRY = {
+    "path": "src/app.py",
+    "kind": "tracked",
+    "status": "clean",
+    "fingerprint": "sha256:" + "a" * 64,
+    "file_type": "file",
+}
+_RUNNER_FINAL_ENTRY = {
+    **_RUNNER_CLEAN_ENTRY,
+    "status": "modified",
+    "fingerprint": "sha256:" + "c" * 64,
+}
+_RUNNER_BASELINE_ENTRIES = [_RUNNER_CLEAN_ENTRY]
+_RUNNER_STAGED_ENTRIES = [_RUNNER_CLEAN_ENTRY]
+_RUNNER_FINAL_ENTRIES = [_RUNNER_FINAL_ENTRY]
+_RUNNER_STAGED_HASH = boundary_manifest_hash(_RUNNER_TREE_SHA, _RUNNER_STAGED_ENTRIES)
+_RUNNER_FINAL_HASH = boundary_manifest_hash(_RUNNER_TREE_SHA, _RUNNER_FINAL_ENTRIES)
+
+
+_RUNNER_MISMATCH_PREFIX = (
+    event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 0),
+    event(
+        "lease_granted",
+        {
+            "lease_id": "lease-1",
+            "node_id": "worker-1",
+            "generation": 1,
+            "execution_id": "execution-1",
+            "base_snapshot_id": "snapshot-1",
+        },
+        1,
+    ),
+    event(
+        "runner_baseline_recorded",
+        {
+            "execution_id": "execution-1",
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "baseline_snapshot_id": "snapshot-1",
+            "baseline_tree_sha": _RUNNER_TREE_SHA,
+            "entries": _RUNNER_BASELINE_ENTRIES,
+            "boundary_hash": boundary_manifest_hash(_RUNNER_TREE_SHA, _RUNNER_BASELINE_ENTRIES),
+            "cache_roots": [],
+        },
+        2,
+    ),
+    event(
+        "runner_submission_staged",
+        {
+            "execution_id": "execution-1",
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "idempotency_key": "callback-1",
+            "payload": {"result": "ok"},
+            "payload_hash": "sha256:1",
+            "staged_snapshot_id": "snapshot-2",
+            "staged_tree_sha": _RUNNER_TREE_SHA,
+            "boundary_hash": _RUNNER_STAGED_HASH,
+            "boundary_entries": _RUNNER_STAGED_ENTRIES,
+            "base_snapshot_id": "snapshot-1",
+            "observed_graph_position": 1,
+            "is_mutating": True,
+            "complete_node": True,
+            "new_state": "completed",
+        },
+        3,
+    ),
+)
 
 
 def fold_events(
@@ -260,6 +335,19 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
         callback = callback_idempotency_event(after, "callback-1")
         assert callback is not None
         assert (callback.outcome, callback.payload) == ("callback_accepted", {"result": "ok"})
+    elif event_type.startswith("runner_"):
+        attempts = projection_to_checkpoint(after)["execution"]["attempts_by_execution_id"]
+        assert (
+            attempts["execution-1"]["state"]
+            == {
+                "runner_baseline_recorded": "baseline_captured",
+                "runner_submission_staged": "submission_staged",
+                "runner_boundary_mismatch": "submission_staged",
+                "runner_recovery_requested": "recovery_requested",
+                "runner_recovery_completed": "recovered",
+                "runner_execution_finalized": "finalized",
+            }[event_type]
+        )
     else:
         raise AssertionError(f"missing direct outcome assertion for {event_type}")
 
@@ -326,15 +414,16 @@ _NEUTRAL_QUERIES: dict[str, QueryProbe] = {
     "gatekeeper_cost_recorded": lambda state: file_state_record(state, "file-state-1"),
     "graph_patch_rejected": lambda state: accepted_graph_patch_ids(state, "planner-1"),
     "heartbeat_recorded": lambda state: lease_by_id(state, "lease-1"),
+    "runner_boundary_mismatch": lambda state: projection_to_checkpoint(state)["execution"],
     "outbox_requeued": lambda state: run_state(state),
-    "revision_created": lambda state: node_creation_payloads_view(state),
+    "revision_created": lambda state: node_exists(state, "revision-1"),
 }
 
 
 _CHANGING_QUERIES: dict[str, QueryProbe] = {
     "run_lifecycle_changed": lambda state: run_state(state),
-    "node_created": lambda state: node_creation_payloads_view(state),
-    "node_state_changed": lambda state: node_creation_payloads_view(state),
+    "node_created": lambda state: node_state(state, "worker-1"),
+    "node_state_changed": lambda state: node_state(state, "worker-1"),
     "node_retired": lambda state: node_states_view(state),
     "node_deferred": lambda state: node_last_deferred_reason(state, "worker-1"),
     "node_ready": lambda state: node_last_deferred_reason(state, "worker-1"),
@@ -342,7 +431,7 @@ _CHANGING_QUERIES: dict[str, QueryProbe] = {
     "plan_region_marked_suspect": lambda state: projection_to_checkpoint(state)["nodes"][
         "worker-1"
     ]["runtime"].get("suspect_reason"),
-    "node_authority_changed": lambda state: node_creation_payloads_view(state),
+    "node_authority_changed": lambda state: node_allowed_actions(state, "worker-1"),
     "edge_created": lambda state: edges_view(state),
     "input_bound": lambda state: input_bindings_view(state),
     "output_record_accepted": lambda state: output_records_by_node_port_view(state),
@@ -380,9 +469,6 @@ _MUTABLE_QUERY_EVENTS = frozenset(
 
 _FROZEN_QUERY_EVENTS = frozenset(
     {
-        "node_created",
-        "node_state_changed",
-        "node_authority_changed",
         "edge_created",
         "input_bound",
         "output_record_accepted",
@@ -529,6 +615,17 @@ NEUTRAL_PAYLOADS: dict[str, dict[str, object]] = {
         "observed_at": "2026-01-01T00:00:00+00:00",
         "expires_at": "2026-01-01T00:05:00+00:00",
     },
+    "runner_boundary_mismatch": {
+        "execution_id": "execution-1",
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "staged_boundary_hash": _RUNNER_STAGED_HASH,
+        "final_boundary_hash": _RUNNER_FINAL_HASH,
+        "final_tree_sha": _RUNNER_TREE_SHA,
+        "final_boundary_entries": _RUNNER_FINAL_ENTRIES,
+        "reason": "boundary_mismatch",
+    },
     "outbox_requeued": {
         "run_id": "matrix-run",
         "outbox_id": 1,
@@ -553,7 +650,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
     neutral = tuple(
         ProjectionBehaviorCase(
             name,
-            (),
+            _RUNNER_MISMATCH_PREFIX if name == "runner_boundary_mismatch" else (),
             event(name, payload, 1),
             frozenset(),
             (),
@@ -745,6 +842,51 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         },
         2,
     )
+    runner_context = (
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 0),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 1,
+                "execution_id": "execution-1",
+                "base_snapshot_id": "snapshot-1",
+            },
+            1,
+        ),
+    )
+    runner_baseline_payload: dict[str, object] = {
+        "execution_id": "execution-1",
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "baseline_snapshot_id": "snapshot-1",
+        "baseline_tree_sha": _RUNNER_TREE_SHA,
+        "entries": _RUNNER_BASELINE_ENTRIES,
+        "boundary_hash": boundary_manifest_hash(_RUNNER_TREE_SHA, _RUNNER_BASELINE_ENTRIES),
+        "cache_roots": [".cache"],
+    }
+    runner_baseline = _event("runner_baseline_recorded", runner_baseline_payload, 2)
+    runner_staged_payload: dict[str, object] = {
+        "execution_id": "execution-1",
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "idempotency_key": "callback-1",
+        "payload": {"result": "ok"},
+        "payload_hash": "sha256:1",
+        "staged_snapshot_id": "snapshot-2",
+        "staged_tree_sha": _RUNNER_TREE_SHA,
+        "boundary_hash": _RUNNER_STAGED_HASH,
+        "boundary_entries": _RUNNER_STAGED_ENTRIES,
+        "base_snapshot_id": "snapshot-1",
+        "observed_graph_position": 1,
+        "is_mutating": True,
+        "complete_node": True,
+        "new_state": "completed",
+    }
+    runner_staged = _event("runner_submission_staged", runner_staged_payload, 3)
     changing_payloads: tuple[
         tuple[str, tuple[EventEnvelope, ...], dict[str, object], frozenset[str]], ...
     ] = (
@@ -1055,6 +1197,121 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
                 "idempotency_key": "callback-1",
                 "payload": {"result": "ok"},
                 "reason": "accepted",
+            },
+            frozenset({"execution"}),
+        ),
+    )
+    runner_recovery_requested_payload: dict[str, object] = {
+        "execution_id": "execution-1",
+        "recovery_id": "recovery-1",
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "reason": "boundary_mismatch",
+        "baseline_snapshot_id": "snapshot-1",
+        "baseline_tree_sha": _RUNNER_TREE_SHA,
+        "final_tree_sha": _RUNNER_TREE_SHA,
+        "final_boundary_hash": _RUNNER_FINAL_HASH,
+        "final_boundary_entries": _RUNNER_FINAL_ENTRIES,
+        "paths": list(
+            derive_recovery_paths(
+                _RUNNER_BASELINE_ENTRIES,
+                _RUNNER_STAGED_ENTRIES,
+                _RUNNER_FINAL_ENTRIES,
+                [],
+                [".cache"],
+            )
+        ),
+    }
+    runner_recovery_requested = _event(
+        "runner_recovery_requested", runner_recovery_requested_payload, 2
+    )
+    runner_names = (
+        "runner_baseline_recorded",
+        "runner_submission_staged",
+        "runner_boundary_mismatch",
+        "runner_recovery_requested",
+        "runner_recovery_completed",
+        "runner_execution_finalized",
+    )
+    _CHANGING_QUERIES.update(
+        {
+            name: lambda projection: projection_to_checkpoint(projection)["execution"].get(
+                "attempts_by_execution_id", {}
+            )
+            for name in runner_names
+        }
+    )
+    _SHARED_PATHS.update({name: (("lifecycle",),) for name in runner_names})
+    changing_payloads = (
+        *changing_payloads,
+        (
+            "runner_baseline_recorded",
+            runner_context,
+            runner_baseline_payload,
+            frozenset({"execution"}),
+        ),
+        (
+            "runner_submission_staged",
+            (*runner_context, runner_baseline),
+            runner_staged_payload,
+            frozenset({"execution"}),
+        ),
+        (
+            "runner_recovery_requested",
+            (*runner_context, runner_baseline, runner_staged),
+            runner_recovery_requested_payload,
+            frozenset({"execution"}),
+        ),
+        (
+            "runner_recovery_completed",
+            (*runner_context, runner_baseline, runner_staged, runner_recovery_requested),
+            {
+                "execution_id": "execution-1",
+                "recovery_id": "recovery-1",
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "lease_generation": 1,
+                "baseline_snapshot_id": "snapshot-1",
+                "baseline_tree_sha": _RUNNER_TREE_SHA,
+                "requested_paths": list(
+                    derive_recovery_paths(
+                        _RUNNER_BASELINE_ENTRIES,
+                        _RUNNER_STAGED_ENTRIES,
+                        _RUNNER_FINAL_ENTRIES,
+                        [],
+                        [".cache"],
+                    )
+                ),
+                "proof_hash": recovery_proof_hash(
+                    execution_id="execution-1",
+                    recovery_id="recovery-1",
+                    node_id="worker-1",
+                    lease_id="lease-1",
+                    lease_generation=1,
+                    baseline_snapshot_id="snapshot-1",
+                    baseline_tree_sha=_RUNNER_TREE_SHA,
+                    requested_paths=(".cache", "src/app.py"),
+                    restored_paths=(".cache", "src/app.py"),
+                    removed_paths=(),
+                ),
+                "restored_paths": [".cache", "src/app.py"],
+                "removed_paths": [],
+            },
+            frozenset({"execution"}),
+        ),
+        (
+            "runner_execution_finalized",
+            (*runner_context, runner_baseline, runner_staged),
+            {
+                "execution_id": "execution-1",
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "lease_generation": 1,
+                "final_snapshot_id": "snapshot-3",
+                "final_tree_sha": _RUNNER_TREE_SHA,
+                "boundary_hash": _RUNNER_STAGED_HASH,
+                "boundary_entries": _RUNNER_STAGED_ENTRIES,
             },
             frozenset({"execution"}),
         ),

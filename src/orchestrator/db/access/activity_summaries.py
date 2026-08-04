@@ -12,6 +12,8 @@ GRAPH_ACTIVITY_EVENT_TYPES = {
     "node_deferred",
     "verification_failed",
     "verification_passed",
+    "cleanup_requested",
+    "cleanup_applied",
 }
 
 
@@ -30,6 +32,8 @@ def compact_graph_activity_payload(event_type: str, envelope: dict[str, Any]) ->
         return _compact_verification(event_type, payload)
     if event_type == "node_deferred":
         return _compact_node_deferred(payload)
+    if event_type in {"cleanup_requested", "cleanup_applied"}:
+        return _compact_managed_cleanup(event_type, payload)
     if event_type == "node_created":
         return _compact_review_node_created(payload)
     return {"summary": event_type}
@@ -129,6 +133,32 @@ def _compact_node_deferred(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+def _compact_managed_cleanup(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Expose bounded lifecycle metadata without snapshot ownership secrets."""
+    applied = event_type == "cleanup_applied"
+    action = "applied" if applied else "requested"
+    compact: dict[str, Any] = {
+        "summary": _join_summary(
+            f"Managed snapshot cleanup {action}",
+            _bounded_fact("cleanup", payload.get("cleanup_id")),
+            _bounded_fact("role", payload.get("snapshot_role")),
+            _bounded_fact("execution", payload.get("execution_id")),
+            _bounded_fact("reason", payload.get("reason")),
+        ),
+        "status": action,
+        "cleanup_id": _bounded_optional_str(payload.get("cleanup_id")),
+        "execution_id": _bounded_optional_str(payload.get("execution_id")),
+        "node_id": _bounded_optional_str(payload.get("node_id")),
+        "lease_id": _bounded_optional_str(payload.get("lease_id")),
+        "lease_generation": payload.get("lease_generation"),
+        "snapshot_role": _bounded_optional_str(payload.get("snapshot_role")),
+        "reason": _bounded_optional_str(payload.get("reason")),
+    }
+    if applied:
+        compact["deleted_snapshot_ref"] = payload.get("deleted_snapshot_ref")
+    return _drop_none(compact)
+
+
 def _compact_review_node_created(payload: dict[str, Any]) -> dict[str, Any]:
     blocker = payload.get("blocker") or payload.get("blocker_reason") or payload.get("reason")
     return _drop_none(
@@ -195,6 +225,13 @@ def _fact(name: str, value: Any) -> str | None:
     return f"{name}={text}"
 
 
+def _bounded_fact(name: str, value: Any) -> str | None:
+    text = _bounded_optional_str(value)
+    if not text:
+        return None
+    return f"{name}={text}"
+
+
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -206,6 +243,13 @@ def _optional_str(value: Any) -> str | None:
         return None
     text = str(value)
     return text if text else None
+
+
+def _bounded_optional_str(value: Any, *, max_length: int = 128) -> str | None:
+    text = _optional_str(value)
+    if text is None:
+        return None
+    return text if len(text) <= max_length else f"{text[: max_length - 1]}…"
 
 
 def _drop_none(data: dict[str, Any]) -> dict[str, Any]:

@@ -4757,6 +4757,11 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
     assert output[1].payload["kind"] == "gate"
     assert output[3].payload["kind"] == "worker"
     assert output[4].payload["kind"] == "appeal"
+    assert all(
+        event.payload["patch_id"] == "patch-v1"
+        for event in output
+        if event.event_type in {"node_created", "edge_created"}
+    )
     assert output[6].payload["resource_claims"] == [{"mode": "read", "scope": "repo"}]
     assert output[7].payload["allowed_actions"] == ["submit_records"]
 

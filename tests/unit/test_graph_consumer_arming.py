@@ -57,3 +57,30 @@ async def test_arm_graph_run_starts_once_and_guards_double_arm() -> None:
 async def test_arm_graph_run_noop_without_graph_runner() -> None:
     consumer = _consumer(None)
     assert consumer.arm_graph_run("run-1") is False
+
+
+@pytest.mark.asyncio
+async def test_quiesce_graph_run_cancels_and_awaits_before_rearming() -> None:
+    started = asyncio.Event()
+    stopped = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(run_id: str) -> None:
+        del run_id
+        started.set()
+        try:
+            await release.wait()
+        finally:
+            stopped.set()
+
+    consumer = _consumer(runner)
+    assert consumer.arm_graph_run("run-1") is True
+    await started.wait()
+
+    await consumer._quiesce_graph_run("run-1")
+
+    assert stopped.is_set()
+    assert "run-1" not in consumer._active_graph_runs
+    assert "run-1" not in consumer._graph_driver_tasks
+    assert consumer.arm_graph_run("run-1") is True
+    await consumer._quiesce_graph_run("run-1")

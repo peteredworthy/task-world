@@ -64,7 +64,6 @@ __all__ = [
     "AddRepoRequest",
     "ApiModel",
     "ActionLogSchema",
-    "append_requeue_audit_event",
     "BackwardTransitionRequest",
     "CallbackInstructions",
     "CopyBackRequest",
@@ -178,12 +177,6 @@ def build_final_invariant_blockers_response(*args: Any, **kwargs: Any) -> Any:
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
     return _graph_router.build_final_invariant_blockers_response(*args, **kwargs)
-
-
-def append_requeue_audit_event(*args: Any, **kwargs: Any) -> Any:
-    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
-
-    return _graph_router.append_requeue_audit_event(*args, **kwargs)
 
 
 def build_graph_regions_response(*args: Any, **kwargs: Any) -> Any:

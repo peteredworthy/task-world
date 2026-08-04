@@ -333,7 +333,11 @@ class EventV2Model(Base):
 
 
 class GraphEventSummaryModel(Base):
-    """Disposable compact graph event row derived from events_v2."""
+    """Disposable bounded graph event row derived losslessly from events_v2.
+
+    ``payload`` carries its graph-read-contract revision and truncation digest;
+    those format facts deliberately require no additional schema columns.
+    """
 
     __tablename__ = "graph_event_summaries"
     __table_args__ = (
@@ -349,8 +353,33 @@ class GraphEventSummaryModel(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class GraphArtifactReferenceModel(Base):
+    """Durable authorization facts for graph-owned CAS artifacts.
+
+    Graph events remain the canonical provenance record, but serving an
+    artifact range must not inspect their JSON payloads.  This narrow index is
+    written in the same transaction as accepted output records and keeps the
+    exact reference needed to resolve one ``(run_id, content_hash)`` request.
+    """
+
+    __tablename__ = "graph_artifact_references"
+    __table_args__ = (Index("idx_graph_artifact_references_run_hash", "run_id", "content_hash"),)
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    content_hash: Mapped[str] = mapped_column(String, primary_key=True)
+    artifact_id: Mapped[str] = mapped_column(String, nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    media_type: Mapped[str] = mapped_column(String, nullable=False)
+    encoding: Mapped[str | None] = mapped_column(String, nullable=True)
+    storage_uri: Mapped[str] = mapped_column(String, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class GraphProjectionSnapshotModel(Base):
-    """Disposable latest graph projection snapshot derived from events_v2."""
+    """Disposable bounded latest graph projection snapshot derived from events_v2.
+
+    Collection page metadata and the JSON format revision live in ``decisions``.
+    """
 
     __tablename__ = "graph_projection_snapshots"
 
@@ -366,8 +395,61 @@ class GraphProjectionSnapshotModel(Base):
     decisions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class GraphArchivalViewCheckpointModel(Base):
+    """Position through which every archival graph view has been materialized."""
+
+    __tablename__ = "graph_archival_view_checkpoints"
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class GraphTopologyViewEntryModel(Base):
+    """One exact, page-addressable topology entry derived from the graph projection."""
+
+    __tablename__ = "graph_topology_view_entries"
+    __table_args__ = (Index("idx_graph_topology_view_entries_run_sequence", "run_id", "sequence"),)
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    entry_kind: Mapped[str] = mapped_column(String, nullable=False)
+    entry_id: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class GraphFinalBlockerViewEntryModel(Base):
+    """One exact final-invariant blocker derived from the graph projection."""
+
+    __tablename__ = "graph_final_blocker_view_entries"
+    __table_args__ = (
+        Index("idx_graph_final_blocker_view_entries_run_sequence", "run_id", "sequence"),
+    )
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
+class GraphRegionViewEntryModel(Base):
+    """One exact task-region view row derived from the graph projection."""
+
+    __tablename__ = "graph_region_view_entries"
+    __table_args__ = (
+        Index("idx_graph_region_view_entries_run_sequence", "run_id", "sequence"),
+        Index("idx_graph_region_view_entries_run_region", "run_id", "task_region_id"),
+    )
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_region_id: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+
+
 class GraphNodeDetailSummaryModel(Base):
-    """Disposable compact graph node-detail row derived from events_v2."""
+    """Disposable bounded graph node-detail row derived from events_v2.
+
+    Per-list totals and revision metadata live in reserved ``prompt_summary`` JSON.
+    """
 
     __tablename__ = "graph_node_detail_summaries"
     __table_args__ = (

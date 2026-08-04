@@ -1,4 +1,4 @@
-"""Schema-13 checkpoint codec and referential validation for GraphProjection."""
+"""Schema-14 checkpoint codec and referential validation for GraphProjection."""
 
 from __future__ import annotations
 
@@ -55,6 +55,13 @@ from orchestrator.graph.projection_models import (
     OversightDecisionValue,
 )
 from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap
+from orchestrator.graph.cache_authority import (
+    CacheAuthorityPolicy,
+    POLICY_VERSION,
+    cache_authority_hash,
+    canonicalize_cache_authority,
+    has_cache_authority_carrier,
+)
 
 
 class ProjectionCheckpointCodecError(ValueError):
@@ -196,6 +203,80 @@ def validate_projection_integrity(projection: GraphProjection) -> None:
         diagnostics.append(ProjectionIntegrityDiagnostic(path=path, reason=reason))
 
     nodes, tasks, records = projection.nodes, projection.tasks, projection.records.by_id
+    has_carrier = has_cache_authority_carrier(
+        any(node.spec.cache_authority_hash is not None for node in nodes.values()),
+        (lease.cache_authority_hash for lease in projection.execution.leases.values()),
+    )
+
+    snapshot = records.get("routine-snapshot-record")
+    new_cache_authority = False
+    expected_cache_authority_hash: str | None = None
+    if isinstance(snapshot, ProjectedRoutineSnapshotRecord):
+        value = snapshot.value
+        preimage = value.cache_authority_preimage
+        digest = value.cache_authority_hash
+        version = value.cache_authority_version
+        absent = version is None and preimage is None and digest is None
+        present = isinstance(version, str) and isinstance(preimage, str) and isinstance(digest, str)
+        if absent and has_carrier:
+            fail(
+                "records.routine-snapshot-record.value",
+                "legacy cache authority metadata must not have authority carriers",
+            )
+        if not absent and not present:
+            fail(
+                "records.routine-snapshot-record.value",
+                "cache authority format must be all absent or all present",
+            )
+        if present:
+            new_cache_authority = True
+            if version != POLICY_VERSION:
+                fail(
+                    "records.routine-snapshot-record.value",
+                    "new cache authority snapshot is incomplete",
+                )
+            else:
+                if not isinstance(preimage, str) or not isinstance(digest, str):
+                    fail(
+                        "records.routine-snapshot-record.value",
+                        "cache authority values must be strings",
+                    )
+                    preimage = ""
+                    digest = ""
+                try:
+                    policy = CacheAuthorityPolicy.model_validate_json(preimage)
+                    if (
+                        canonicalize_cache_authority(policy) != preimage
+                        or cache_authority_hash(policy) != digest
+                    ):
+                        fail(
+                            "records.routine-snapshot-record.value",
+                            "cache authority hash does not verify",
+                        )
+                    else:
+                        expected_cache_authority_hash = digest
+                except ValueError:
+                    fail(
+                        "records.routine-snapshot-record.value",
+                        "cache authority preimage is invalid",
+                    )
+    elif snapshot is not None:
+        fail("records.routine-snapshot-record", "must be a routine snapshot record")
+    elif has_carrier:
+        fail("records.routine-snapshot-record", "is required by routine snapshot graph structure")
+    if new_cache_authority and expected_cache_authority_hash is not None:
+        for node_id, node_item in nodes.items():
+            if node_item.spec.cache_authority_hash != expected_cache_authority_hash:
+                fail(
+                    f"nodes.{node_id}.spec.cache_authority_hash",
+                    "must equal routine cache authority hash",
+                )
+        for lease_id, lease_item in projection.execution.leases.items():
+            if lease_item.cache_authority_hash != expected_cache_authority_hash:
+                fail(
+                    f"execution.leases.{lease_id}.cache_authority_hash",
+                    "must equal routine cache authority hash",
+                )
 
     def reference(values: Any, value: str | None, path: str, kind: str) -> None:
         if value is not None and value not in values:
@@ -209,6 +290,21 @@ def validate_projection_integrity(projection: GraphProjection) -> None:
 
     def resolve_record(value: str | None, path: str) -> None:
         reference(records, value, path, "record")
+
+    for execution_id, attempt in projection.execution.attempts_by_execution_id.items():
+        path = f"execution.attempts_by_execution_id.{execution_id}"
+        if execution_id != attempt.execution_id:
+            fail(path, "map key must equal execution_id")
+        resolve_node(attempt.node_id, f"{path}.node_id")
+        attempt_lease = projection.execution.leases.get(attempt.lease_id)
+        if attempt_lease is None:
+            fail(f"{path}.lease_id", f"references missing lease {attempt.lease_id!r}")
+        elif (
+            attempt_lease.node_id != attempt.node_id
+            or attempt_lease.generation != attempt.lease_generation
+            or attempt_lease.execution_id != attempt.execution_id
+        ):
+            fail(f"{path}.lease_id", "does not match execution/node/generation lease identity")
 
     candidate_paths: dict[str, list[str]] = defaultdict(list)
     candidate_tasks: dict[str, str] = {}

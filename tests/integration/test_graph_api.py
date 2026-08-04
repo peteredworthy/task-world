@@ -1,21 +1,25 @@
 """Integration tests for graph compatibility projection endpoints."""
 
+import json
+
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Any
 from uuid import uuid4
 
 import pytest
-from fastapi import HTTPException
 from httpx import AsyncClient
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, event, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from orchestrator.api import append_requeue_audit_event, build_expired_lease_rows
+from orchestrator.api import build_expired_lease_rows
 from orchestrator.config import RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import (
     EventV2Model,
     GraphEventSummaryModel,
+    GraphNodeDetailSummaryCheckpointModel,
+    GraphNodeDetailSummaryModel,
     GraphOutboxModel,
     GraphProjectionSnapshotModel,
     RunModel,
@@ -635,36 +639,14 @@ async def test_graph_health_returns_an_empty_bounded_snapshot_for_a_saved_run(
     response = await client.get(f"/api/runs/{run_id}/graph/health")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "run_id": run_id,
-        "event_count": 0,
-        "run_state": None,
-        "status": "empty",
-        "counts": {
-            "ready": 0,
-            "blocked": 0,
-            "waiting_resources": 0,
-            "waiting_gates": 0,
-            "active_leases": 0,
-            "suspended_leases": 0,
-            "expired_leases": 0,
-            "failed_nodes": 0,
-            "final_blockers": 0,
-            "patches_accepted": 0,
-            "patches_rejected": 0,
-            "verifier_passed": 0,
-            "verifier_failed": 0,
-            "pending_gates": 0,
-        },
-        "failed_nodes": [],
-        "expired_leases": [],
-        "blockers": [],
-        "recent_patch_decisions": [],
-        "verifier": {"passed": 0, "failed": 0, "recent": []},
-        "pending_gates": [],
-        "review_blockers": [],
-        "detail_meta": {},
-    }
+    health = response.json()
+    assert health["run_id"] == run_id
+    assert health["event_count"] == 0
+    assert health["status"] == "empty"
+    assert health["health_status"] == health["facts_status"] == "complete"
+    assert health["unavailable_checks"] == []
+    assert all(value == 0 for value in health["counts"].values())
+    assert health["detail_meta"] == {}
 
 
 async def test_graph_health_reduces_current_typed_events_to_compact_operator_facts(
@@ -792,33 +774,16 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
 
     assert response.status_code == 200
     health = response.json()
-    assert health["counts"] == {
-        "ready": 0,
-        "blocked": 1,
-        "waiting_resources": 0,
-        "waiting_gates": 1,
-        "active_leases": 0,
-        "suspended_leases": 0,
-        "expired_leases": 1,
-        "failed_nodes": 1,
-        "final_blockers": 3,
-        "patches_accepted": 1,
-        "patches_rejected": 1,
-        "verifier_passed": 1,
-        "verifier_failed": 1,
-        "pending_gates": 1,
-    }
-    assert health["failed_nodes"] == [
-        {"node_id": "verifier-expired", "reason": "lease_expired_without_callback"}
-    ]
-    assert health["expired_leases"] == [
-        {
-            "lease_id": "lease-expired",
-            "node_id": "verifier-expired",
-            "reason": "lease_expired_without_callback",
-        }
-    ]
-    assert len(health["blockers"]) == 3
+    assert health["health_status"] == health["facts_status"] == "partial"
+    assert health["counts"]["patches_accepted"] == 1
+    assert health["counts"]["patches_rejected"] == 1
+    assert health["counts"]["verifier_passed"] == 1
+    assert health["counts"]["verifier_failed"] == 1
+    assert health["counts"]["expired_leases"] is None
+    assert "expired_leases" in health["unavailable_checks"]
+    assert health["failed_nodes"] == []
+    assert health["expired_leases"] == []
+    assert health["blockers"] == []
     assert health["verifier"] == {
         "passed": 1,
         "failed": 1,
@@ -831,11 +796,353 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
         {"patch_id": "patch-accepted", "decision": "accepted", "reason": None},
         {"patch_id": "patch-rejected", "decision": "rejected", "reason": "read_set_changed"},
     ]
-    assert health["pending_gates"] == [{"node_id": "gate-human", "gate_type": "human_approval"}]
-    assert health["review_blockers"] == [
-        "review-final: missing_required_input:verification_evidence"
-    ]
+    assert health["pending_gates"] == []
+    assert health["review_blockers"] == []
     assert len(response.content) < 4_000
+
+
+@pytest.mark.parametrize(
+    "candidate_id",
+    [
+        pytest.param("candidate-" + ("x" * 1_000), id="ascii-over-budget"),
+        pytest.param("候" * 100, id="utf8-over-budget"),
+    ],
+)
+async def test_graph_health_compacts_over_budget_candidate_identities(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    candidate_id: str,
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-health-candidate-id-{uuid4().hex[:8]}"
+    candidate_sha256 = sha256(candidate_id.encode()).hexdigest()
+    compact_candidate_id = f"sha256:{candidate_sha256}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "verification_passed",
+                    {
+                        "verifier_node_id": "verifier-1",
+                        "candidate_id": candidate_id,
+                        "task_region_id": "step-1/task-1",
+                        "record_id": "verification-1",
+                    },
+                )
+            ],
+        )
+        await session.commit()
+        live_summary = (
+            await session.execute(
+                select(GraphEventSummaryModel.payload).where(
+                    GraphEventSummaryModel.run_id == run_id
+                )
+            )
+        ).scalar_one()
+        assert live_summary["candidate_id"] == compact_candidate_id
+        assert live_summary["candidate_id_hashed"] is True
+        assert live_summary["candidate_id_original_chars"] == len(candidate_id)
+        assert live_summary["candidate_id_original_bytes"] == len(candidate_id.encode())
+        assert live_summary["candidate_id_sha256"] == candidate_sha256
+        assert candidate_id not in json.dumps(live_summary)
+
+        await session.execute(
+            delete(GraphEventSummaryModel).where(GraphEventSummaryModel.run_id == run_id)
+        )
+        await GraphEventStore(session).ensure_event_summaries(run_id)
+        await session.commit()
+        rebuilt_summary = (
+            await session.execute(
+                select(GraphEventSummaryModel.payload).where(
+                    GraphEventSummaryModel.run_id == run_id
+                )
+            )
+        ).scalar_one()
+        assert rebuilt_summary == live_summary
+
+    response = await client.get(f"/api/runs/{run_id}/graph/health")
+
+    assert response.status_code == 200
+    assert response.json()["verifier"] == {
+        "passed": 1,
+        "failed": 0,
+        "recent": [
+            {
+                "node_id": "verifier-1",
+                "candidate_id": compact_candidate_id,
+                "candidate_id_hashed": True,
+                "candidate_id_original_chars": len(candidate_id),
+                "candidate_id_original_bytes": len(candidate_id.encode()),
+                "candidate_id_sha256": candidate_sha256,
+                "verdict": "passed",
+            }
+        ],
+    }
+    assert candidate_id not in response.text
+
+
+async def test_graph_summary_event_preserves_compact_candidate_identity_metadata(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-summary-candidate-{uuid4().hex[:8]}"
+    candidate_id = "candidate-" + ("候" * 1_000)
+    candidate_sha256 = sha256(candidate_id.encode()).hexdigest()
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "verification_passed",
+                    {
+                        "verifier_node_id": "verifier-1",
+                        "candidate_id": candidate_id,
+                        "task_region_id": "step-1/task-1",
+                        "record_id": "verification-1",
+                    },
+                )
+            ],
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=summary")
+
+    assert response.status_code == 200
+    payload = response.json()[0]["payload"]
+    assert payload["candidate_id"] == f"sha256:{candidate_sha256}"
+    assert payload["candidate_id_hashed"] is True
+    assert payload["candidate_id_original_chars"] == len(candidate_id)
+    assert payload["candidate_id_original_bytes"] == len(candidate_id.encode())
+    assert payload["candidate_id_sha256"] == candidate_sha256
+    assert candidate_id not in response.text
+
+
+async def test_graph_summary_event_keeps_persisted_depth_bounded_payload_opaque(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-summary-opaque-{uuid4().hex[:8]}"
+    nested_evidence = {
+        "level-1": {
+            "level-2": {
+                "level-3": {"entries": {f"entry-{index:02d}": index for index in range(33)}}
+            }
+        }
+    }
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "verification_passed",
+                    {
+                        "verifier_node_id": "verifier-opaque",
+                        "candidate_id": "candidate-opaque",
+                        "task_region_id": "step-1/task-1",
+                        "record_id": "verification-opaque",
+                        "evidence": [nested_evidence],
+                    },
+                )
+            ],
+        )
+        await session.commit()
+        persisted = (
+            await session.execute(
+                select(GraphEventSummaryModel.payload).where(
+                    GraphEventSummaryModel.run_id == run_id
+                )
+            )
+        ).scalar_one()
+    expected = {key: value for key, value in persisted.items() if key != "_graph_read_contract"}
+
+    response = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=summary")
+
+    assert response.status_code == 200
+    assert response.json()[0]["payload"] == expected
+
+
+async def test_graph_health_keeps_hashed_and_literal_candidate_identities_distinct(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-health-candidate-namespace-{uuid4().hex[:8]}"
+    long_candidate_id = "candidate-" + ("x" * 1_000)
+    candidate_sha256 = sha256(long_candidate_id.encode()).hexdigest()
+    compact_candidate_id = f"sha256:{candidate_sha256}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "verification_passed",
+                    {
+                        "verifier_node_id": "verifier-1",
+                        "candidate_id": long_candidate_id,
+                        "task_region_id": "step-1/task-1",
+                        "record_id": "verification-long",
+                    },
+                ),
+                _event(
+                    "verification_failed",
+                    {
+                        "verifier_node_id": "verifier-1",
+                        "candidate_id": compact_candidate_id,
+                        "task_region_id": "step-1/task-1",
+                        "record_id": "verification-literal",
+                    },
+                ),
+            ],
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/health")
+
+    assert response.status_code == 200
+    health = response.json()
+    assert health["counts"]["verifier_passed"] == 1
+    assert health["counts"]["verifier_failed"] == 1
+    assert health["verifier"] == {
+        "passed": 1,
+        "failed": 1,
+        "recent": [
+            {
+                "node_id": "verifier-1",
+                "candidate_id": compact_candidate_id,
+                "candidate_id_hashed": True,
+                "candidate_id_original_chars": len(long_candidate_id),
+                "candidate_id_original_bytes": len(long_candidate_id.encode()),
+                "candidate_id_sha256": candidate_sha256,
+                "verdict": "passed",
+            },
+            {
+                "node_id": "verifier-1",
+                "candidate_id": compact_candidate_id,
+                "verdict": "failed",
+            },
+        ],
+    }
+
+
+async def test_graph_health_rejects_complete_legacy_summary_with_raw_over_budget_candidate(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-health-legacy-candidate-{uuid4().hex[:8]}"
+    candidate_id = "candidate-" + ("x" * 1_000)
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "verification_passed",
+                    {
+                        "verifier_node_id": "verifier-1",
+                        "candidate_id": candidate_id,
+                        "task_region_id": "step-1/task-1",
+                        "record_id": "verification-1",
+                    },
+                )
+            ],
+        )
+        await session.execute(
+            update(GraphEventSummaryModel)
+            .where(GraphEventSummaryModel.run_id == run_id)
+            .values(
+                payload={
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": candidate_id,
+                    "task_region_id": "step-1/task-1",
+                    "record_id": "verification-1",
+                }
+            )
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/health")
+
+    assert response.status_code == 200
+    health = response.json()
+    assert health["health_status"] == health["facts_status"] == "unavailable"
+    assert health["counts"]["verifier_passed"] is None
+    assert candidate_id not in response.text
+
+
+async def test_graph_health_reads_only_bounded_compact_details(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-health-bounded-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event("graph_patch_accepted", {"patch_id": f"patch-{index:03d}"})
+                for index in range(25)
+            ],
+        )
+        await session.commit()
+
+    statements: list[str] = []
+
+    def capture(
+        _connection: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: Any,
+    ) -> None:
+        statements.append(statement.lower())
+
+    engine = app.state.engine.sync_engine
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        response = await client.get(f"/api/runs/{run_id}/graph/health")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert response.status_code == 200
+    health = response.json()
+    assert health["counts"]["patches_accepted"] == 25
+    assert len(health["recent_patch_decisions"]) == 20
+    assert health["detail_meta"]["recent_patch_decisions"] == {"total": 25, "truncated": True}
+    assert [row["patch_id"] for row in health["recent_patch_decisions"]] == [
+        f"patch-{index:03d}" for index in range(5, 25)
+    ]
+    event_reads = [statement for statement in statements if "events_v2" in statement]
+    assert event_reads
+    assert all("payload" not in statement for statement in event_reads)
+    assert not any("graph_projection_snapshots" in statement for statement in statements)
+
+    async with session_factory() as session:
+        await session.execute(
+            delete(GraphEventSummaryModel).where(GraphEventSummaryModel.run_id == run_id)
+        )
+        await session.commit()
+    stale = await client.get(f"/api/runs/{run_id}/graph/health")
+    assert stale.status_code == 200
+    stale_health = stale.json()
+    assert stale_health["health_status"] == stale_health["facts_status"] == "unavailable"
+    assert stale_health["counts"]["patches_accepted"] is None
+    assert "compact_event_summaries" in stale_health["unavailable_checks"]
 
 
 async def test_graph_projection_reflects_seeded_events(
@@ -887,6 +1194,59 @@ async def test_graph_projection_reflects_seeded_events(
 
     not_found = await client.get(f"/api/runs/{run_id}/graph/nodes/nonexistent")
     assert not_found.status_code == 404
+
+
+async def test_archival_graph_views_page_over_cap_through_http(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """Topology, blockers, and regions remain complete beyond one API page."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-pages-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": f"check-{index:03d}",
+                "kind": "check",
+                "role": "check",
+                "state": "planned",
+                "task_region_id": f"region-{index:03d}",
+            },
+        )
+        for index in range(101)
+    ]
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+    for path, collection in (
+        ("topology", "nodes"),
+        ("final-blockers", "blockers"),
+        ("regions", "regions"),
+    ):
+        first = await client.get(f"/api/runs/{run_id}/graph/{path}")
+        assert first.status_code == 200
+        first_body = first.json()
+        assert len(first.content) <= 262_144
+        assert len(first_body[collection]) == 100
+        assert first_body["truncated"] is True
+        assert first_body["total_known"] > 100
+        cursor = first_body["next_cursor"]
+        assert cursor is not None
+
+        received = len(first_body[collection])
+        while cursor is not None:
+            next_page = await client.get(f"/api/runs/{run_id}/graph/{path}?cursor={cursor}")
+            assert next_page.status_code == 200
+            next_body = next_page.json()
+            assert len(next_page.content) <= 262_144
+            assert next_body["total_known"] == first_body["total_known"]
+            assert next_body[collection]
+            received += len(next_body[collection])
+            cursor = next_body["next_cursor"]
+        assert received == first_body["total_known"]
 
 
 async def test_graph_final_blockers_surface_failed_outbox_rows(
@@ -953,175 +1313,52 @@ async def test_graph_final_blockers_surface_failed_outbox_rows(
     assert isinstance(blocker["outbox_id"], int)
     assert blocker["outbox_kind"] == "agent_dispatch"
     assert blocker["outbox_last_error"] == "agent dispatch exploded"
+
     assert blocker["outbox_attempts"] == 3
 
 
-async def test_operator_requeues_failed_outbox_row_with_audit_event(
+async def test_graph_final_blocker_outbox_cursor_keeps_the_boundary_row(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
-    run_id = f"graph-requeue-outbox-{uuid4().hex[:8]}"
+    run_id = f"graph-failed-outbox-pages-{uuid4().hex[:8]}"
     await _save_manual_graph_run(app, run_id)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(
-            run_id,
-            0,
-            [_event("run_lifecycle_changed", {"to_state": "active"})],
-        )
-        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        session.add(
-            GraphOutboxModel(
-                event_id="requeue-outbox-event",
-                run_id=run_id,
-                kind="agent_dispatch",
-                payload={"event_id": "requeue-outbox-event", "node_id": "worker-1"},
-                status="failed",
-                attempts=3,
-                created_at=now,
-                updated_at=now,
-                next_attempt_at=now,
-                last_error="agent dispatch exploded",
+        async with session.begin():
+            session.add_all(
+                [
+                    GraphOutboxModel(
+                        event_id=f"failed-outbox-{index:03d}",
+                        run_id=run_id,
+                        kind="agent_dispatch",
+                        payload={"event_id": f"failed-outbox-{index:03d}"},
+                        status="failed",
+                        attempts=1,
+                        created_at=now,
+                        updated_at=now,
+                        next_attempt_at=None,
+                        last_error="failed",
+                    )
+                    for index in range(101)
+                ]
             )
-        )
-        await session.commit()
 
-    response = await client.post(f"/api/runs/{run_id}/graph/outbox/requeue/requeue-outbox-event")
+    first = await client.get(f"/api/runs/{run_id}/graph/final-blockers")
+    assert first.status_code == 200
+    first_body = first.json()
+    assert len(first_body["blockers"]) == 100
+    cursor = first_body["next_cursor"]
+    assert isinstance(cursor, str) and cursor.startswith("outbox:")
 
-    assert response.status_code == 200
-    assert response.json() == {
-        "run_id": run_id,
-        "event_id": "requeue-outbox-event",
-        "status": "pending",
-        "attempts": 0,
-    }
-    async with session_factory() as session:
-        row = (
-            await session.execute(
-                select(GraphOutboxModel).where(GraphOutboxModel.event_id == "requeue-outbox-event")
-            )
-        ).scalar_one()
-    assert row.status == "pending"
-    assert row.attempts == 0
-    assert row.next_attempt_at is None
-    assert row.last_error is None
-
-    events_response = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
-    assert events_response.status_code == 200
-    audit_event = next(
-        event for event in events_response.json() if event["event_type"] == "outbox_requeued"
-    )
-    assert audit_event["payload"] == {
-        "run_id": run_id,
-        "outbox_id": row.outbox_id,
-        "event_id": "requeue-outbox-event",
-        "kind": "agent_dispatch",
-        "previous_status": "failed",
-        "previous_attempts": 3,
-        "previous_last_error": "agent dispatch exploded",
-        "operator": "human-operator",
-        "graph_position": audit_event["position"],
-    }
-
-    executor = _RecordingOutboxExecutor()
-    completed = await OutboxDispatcher(session_factory, executor, FakeClock()).dispatch_pending(
-        run_id=run_id
-    )
-    assert executor.event_ids == ["requeue-outbox-event"]
-    assert [item.event_id for item in completed] == ["requeue-outbox-event"]
-    async with session_factory() as session:
-        completed_row = (
-            await session.execute(
-                select(GraphOutboxModel).where(GraphOutboxModel.event_id == "requeue-outbox-event")
-            )
-        ).scalar_one()
-    assert completed_row.status == "completed"
-    assert completed_row.attempts == 1
-
-
-async def test_operator_requeue_failed_outbox_row_rejects_invalid_requests(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
-) -> None:
-    client, _drain, _, _, app = _shared_app_fixture
-    run_id = f"graph-requeue-invalid-{uuid4().hex[:8]}"
-    await _save_manual_graph_run(app, run_id)
-    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
-    async with session_factory() as session:
-        await GraphEventStore(session).append_events(
-            run_id,
-            0,
-            [_event("run_lifecycle_changed", {"to_state": "active"})],
-        )
-        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        session.add(
-            GraphOutboxModel(
-                event_id="pending-outbox-event",
-                run_id=run_id,
-                kind="agent_dispatch",
-                payload={"event_id": "pending-outbox-event", "node_id": "worker-1"},
-                status="pending",
-                attempts=0,
-                created_at=now,
-                updated_at=now,
-            )
-        )
-        await session.commit()
-
-    missing = await client.post(f"/api/runs/{run_id}/graph/outbox/requeue/missing-event")
-    non_failed = await client.post(f"/api/runs/{run_id}/graph/outbox/requeue/pending-outbox-event")
-    invalid_run = await client.post(
-        "/api/runs/invalid%20run/graph/outbox/requeue/pending-outbox-event"
-    )
-    invalid_event = await client.post(f"/api/runs/{run_id}/graph/outbox/requeue/invalid%20event")
-
-    assert missing.status_code == 404
-    assert missing.json()["detail"] == "Outbox row not found"
-    assert non_failed.status_code == 409
-    assert non_failed.json()["detail"] == "Outbox row is not failed"
-    assert invalid_run.status_code == 422
-    assert invalid_event.status_code == 422
-
-
-async def test_requeue_audit_append_translates_stale_position_to_conflict(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
-) -> None:
-    _client, _drain, _, _, app = _shared_app_fixture
-    run_id = f"graph-requeue-stale-{uuid4().hex[:8]}"
-    await _save_manual_graph_run(app, run_id)
-    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
-    async with session_factory() as session:
-        await GraphEventStore(session).append_events(
-            run_id,
-            0,
-            [
-                _event("run_lifecycle_changed", {"to_state": "active"}),
-                _event("node_created", {"node_id": "worker-1", "kind": "worker"}),
-            ],
-        )
-        audit_event = EventEnvelope(
-            event_id=f"outbox-requeued-{uuid4().hex}",
-            run_id=run_id,
-            position=-1,
-            event_type="outbox_requeued",
-            schema_version=1,
-            actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
-            causation_id="stale-outbox-event",
-            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            payload={"event_id": "stale-outbox-event"},
-        )
-
-        try:
-            await append_requeue_audit_event(
-                GraphEventStore(session),
-                run_id=run_id,
-                current_position=1,
-                audit_event=audit_event,
-            )
-        except HTTPException as exc:
-            assert exc.status_code == 409
-            assert "stale graph projection" in str(exc.detail)
-        else:
-            raise AssertionError("expected stale graph projection conflict")
+    second = await client.get(f"/api/runs/{run_id}/graph/final-blockers?cursor={cursor}")
+    assert second.status_code == 200
+    second_body = second.json()
+    assert [blocker["outbox_event_id"] for blocker in second_body["blockers"]] == [
+        "failed-outbox-100"
+    ]
+    assert second_body["next_cursor"] is None
 
 
 async def test_operator_graph_patch_endpoint_accepts_human_patch(
@@ -1246,7 +1483,7 @@ async def test_graph_projection_uses_paused_run_row_as_effective_state(
     assert projection["run_state"] == "paused"
 
 
-async def test_graph_projection_recomputes_task_states_from_events(
+async def test_graph_projection_uses_current_snapshot_task_states(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
@@ -1257,14 +1494,192 @@ async def test_graph_projection_recomputes_task_states_from_events(
     async with session_factory() as session:
         snapshot = await GraphEventStore(session).read_projection_snapshot(run_id)
         assert snapshot is not None
-        snapshot.task_states = {"task-1": "stale"}
+        snapshot.task_states = {"task-1": "snapshot-value"}
         await session.commit()
 
     response = await client.get(f"/api/runs/{run_id}/graph")
     assert response.status_code == 200
     projection = response.json()
-    assert projection["task_states"] != {"task-1": "stale"}
-    assert "stale" not in projection["task_states"].values()
+    assert projection["task_states"] == {"task-1": "snapshot-value"}
+
+
+async def test_graph_projection_uses_snapshot_without_replaying_large_history(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-snapshot-read-{uuid4().hex[:8]}"
+    await _seed_graph_run(app, run_id)
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        position = await store.current_position(run_id)
+        history = [_event("run_lifecycle_changed", {"to_state": "active"}) for _ in range(1_000)]
+        await store.append_events(run_id, position, history)
+        snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
+        assert snapshot is not None
+        expected_task_states = {"task-z": "blocked", "task-a": "ready"}
+        snapshot.task_states = expected_task_states
+        await session.commit()
+
+    statements: list[str] = []
+
+    def capture_statements(
+        _connection: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: Any,
+    ) -> None:
+        normalized = statement.lower()
+        if "events_v2" in normalized and "select" in normalized:
+            statements.append(normalized)
+
+    engine = app.state.engine.sync_engine
+    event.listen(engine, "before_cursor_execute", capture_statements)
+    try:
+        response = await client.get(f"/api/runs/{run_id}/graph")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_statements)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["task_states"] == expected_task_states
+    assert list(body["task_states"]) == list(expected_task_states)
+    assert statements
+    assert all("max(" in statement for statement in statements)
+    assert not any("json_extract" in statement for statement in statements)
+    assert not any("order by" in statement for statement in statements)
+
+    empty_run_id = f"graph-empty-read-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, empty_run_id)
+    empty_response = await client.get(f"/api/runs/{empty_run_id}/graph")
+    assert empty_response.status_code == 200
+    assert empty_response.json()["task_states"] == {}
+
+
+async def _seed_rebuilt_human_gate_read_models(
+    app: Any,
+    run_id: str,
+    *,
+    count: int,
+    aggregate_pressure: bool = False,
+    options: list[str] | None = None,
+) -> None:
+    await _save_manual_graph_run(app, run_id)
+    events = []
+    for index in reversed(range(count)):
+        payload: dict[str, Any] = {
+            "node_id": f"gate-{index:03d}",
+            "kind": "human_gate",
+            "role": "approval",
+            "state": "blocked",
+            "gate_type": "human_approval",
+            "prompt": (
+                f"prompt-{index:03d}-" + ("p" * 4_080) if aggregate_pressure else f"Approve {index}"
+            ),
+            "blocker": (
+                f"blocker-{index:03d}-" + ("b" * 4_080) if aggregate_pressure else "human approval"
+            ),
+        }
+        if aggregate_pressure or (options is not None and index == 0):
+            payload["decision_request"] = {
+                "decision_type": "approval",
+                "options": options if options is not None and index == 0 else ["approve"],
+                "default_option": "option-000" if options is not None and index == 0 else "approve",
+                "consequence_summary": (
+                    f"consequence-{index:03d}-" + ("c" * 4_075)
+                    if aggregate_pressure
+                    else "Choose one option."
+                ),
+            }
+        events.append(_event("node_created", payload))
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        graph_store = GraphEventStore(session)
+        await graph_store.append_events(run_id, 0, events)
+        await graph_store.delete_read_models(run_id)
+        await graph_store.rebuild_read_models(run_id)
+        await session.commit()
+
+
+async def test_decision_route_cursor_uses_aggregate_pressure_field_prefix(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-gate-pressure-cursor-{uuid4().hex[:8]}"
+    await _seed_rebuilt_human_gate_read_models(
+        app,
+        run_id,
+        count=60,
+        aggregate_pressure=True,
+    )
+
+    response = await client.get(f"/api/runs/{run_id}/graph/decisions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [gate["node_id"] for gate in body["pending_gates"]] == [
+        f"gate-{index:03d}" for index in range(30)
+    ]
+    assert body["truncated"] is True
+    assert body["next_cursor"] == "gate-029"
+    decisions_meta = body["collection_meta"]["decisions"]
+    assert decisions_meta["next_cursor"] == "gate-029"
+    assert decisions_meta["fields"]["pending_gates"]["next_cursor"] == "gate-029"
+
+
+async def test_gate_routes_use_count_capped_field_prefix_cursors(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-gate-count-cursor-{uuid4().hex[:8]}"
+    await _seed_rebuilt_human_gate_read_models(app, run_id, count=101)
+
+    scheduler_response = await client.get(f"/api/runs/{run_id}/graph/scheduler")
+    decision_response = await client.get(f"/api/runs/{run_id}/graph/decisions")
+
+    assert scheduler_response.status_code == 200
+    scheduler = scheduler_response.json()
+    assert len(scheduler["scheduler"]["blocked"]) == 100
+    assert scheduler["next_cursor"] == "gate-099"
+    scheduler_meta = scheduler["collection_meta"]["scheduler"]
+    assert scheduler_meta["next_cursor"] == "gate-099"
+    assert scheduler_meta["fields"]["blocked"]["next_cursor"] == "gate-099"
+
+    assert decision_response.status_code == 200
+    decisions = decision_response.json()
+    assert len(decisions["pending_gates"]) == 100
+    assert decisions["next_cursor"] == "gate-099"
+    decisions_meta = decisions["collection_meta"]["decisions"]
+    assert decisions_meta["next_cursor"] == "gate-099"
+    assert decisions_meta["fields"]["pending_gates"]["next_cursor"] == "gate-099"
+
+
+async def test_decision_route_attributes_nested_options_metadata_to_gate_identity(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-gate-options-cursor-{uuid4().hex[:8]}"
+    await _seed_rebuilt_human_gate_read_models(
+        app,
+        run_id,
+        count=1,
+        options=[f"option-{index:03d}" for index in reversed(range(51))],
+    )
+
+    response = await client.get(f"/api/runs/{run_id}/graph/decisions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pending_gates"][0]["options"] == [f"option-{index:03d}" for index in range(50)]
+    assert body["next_cursor"] == "option-049"
+    options_meta = body["collection_meta"]["decisions"]["fields"]["pending_gates.gate-000.options"]
+    assert options_meta["owner"] == "decisions.pending_gates.gate-000.options"
+    assert options_meta["total_known"] == 51
+    assert options_meta["next_cursor"] == "option-049"
 
 
 async def test_active_graph_execution_readback_uses_bounded_summary_paths(
@@ -1302,10 +1717,10 @@ async def test_active_graph_execution_readback_uses_bounded_summary_paths(
     node = node_resp.json()
     assert node["node_id"] == active_node_id
     assert node["active_lease"]["state"] == "active"
-    assert "routine" not in str(node["events"])
+    assert all("routine" not in event["payload"] for event in node["events"])
 
 
-async def test_graph_projection_routes_durably_repair_deleted_read_models(
+async def test_graph_projection_routes_report_deleted_read_models_unavailable(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
@@ -1314,6 +1729,7 @@ async def test_graph_projection_routes_durably_repair_deleted_read_models(
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
+        current_position = await GraphEventStore(session).current_position(run_id)
         await session.execute(
             delete(GraphEventSummaryModel).where(GraphEventSummaryModel.run_id == run_id)
         )
@@ -1325,27 +1741,34 @@ async def test_graph_projection_routes_durably_repair_deleted_read_models(
         await session.commit()
 
     scheduler_resp = await client.get(f"/api/runs/{run_id}/graph/scheduler")
-    assert scheduler_resp.status_code == 200
-
-    async with session_factory() as session:
-        repaired_checkpoint = await GraphEventStore(session).read_projection_checkpoint(run_id)
-        assert repaired_checkpoint is not None
-        assert repaired_checkpoint.schema_version == 13
-        await session.execute(
-            delete(GraphProjectionSnapshotModel).where(
-                GraphProjectionSnapshotModel.run_id == run_id
-            )
-        )
-        await session.commit()
-
     decisions_resp = await client.get(f"/api/runs/{run_id}/graph/decisions")
-    assert decisions_resp.status_code == 200
+    projection_resp = await client.get(f"/api/runs/{run_id}/graph")
+    summary_events_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=summary")
+
+    for response, read_model in (
+        (scheduler_resp, "graph_projection_snapshot"),
+        (decisions_resp, "graph_projection_snapshot"),
+        (projection_resp, "graph_projection_snapshot"),
+        (summary_events_resp, "graph_event_summaries"),
+    ):
+        assert response.status_code == 503
+        assert response.json()["detail"] == {
+            "code": "read_model_unavailable",
+            "run_id": run_id,
+            "read_model": read_model,
+            "current_position": current_position,
+            "reason": "missing_or_stale",
+            "retryable": True,
+        }
 
     async with session_factory() as session:
-        repaired_checkpoint = await GraphEventStore(session).read_projection_checkpoint(run_id)
-
-    assert repaired_checkpoint is not None
-    assert repaired_checkpoint.schema_version == 13
+        assert await session.get(GraphProjectionSnapshotModel, run_id) is None
+        count = await session.scalar(
+            select(func.count())
+            .select_from(GraphEventSummaryModel)
+            .where(GraphEventSummaryModel.run_id == run_id)
+        )
+        assert count == 0
 
 
 async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
@@ -1555,6 +1978,84 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
     assert all("value" not in event["payload"] for event in full["events"])
 
 
+async def test_full_node_detail_uses_summary_owner_contract_for_nested_collections(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-node-detail-shared-owner-{uuid4().hex[:8]}"
+    node_id = "verifier-shared-owner"
+    grades = [
+        {
+            "requirement_id": f"requirement-{index:03d}",
+            "grade": "A",
+            "reason": f"reason-{index:03d}",
+        }
+        for index in range(201)
+    ]
+    await _save_manual_graph_run(app, run_id)
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": node_id,
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-shared-owner",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": node_id,
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-shared-owner",
+                "outcome": "passed",
+                "value": {"outcome": "passed", "grades": grades},
+            },
+        ),
+    ]
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        graph_store = GraphEventStore(session)
+        await graph_store.append_events(run_id, 0, events)
+        await session.execute(
+            delete(GraphNodeDetailSummaryModel).where(GraphNodeDetailSummaryModel.run_id == run_id)
+        )
+        await graph_store.rebuild_node_detail_summaries(run_id)
+        stored_events = await graph_store.read_run(run_id)
+        stored_record = next(
+            event.payload for event in stored_events if event.event_type == "output_record_accepted"
+        )
+        assert len(stored_record["value"]["grades"]) == 201
+        await session.commit()
+
+    summary_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{node_id}")
+    full_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{node_id}?payload_mode=full")
+    assert summary_resp.status_code == 200
+    assert full_resp.status_code == 503
+    unavailable = full_resp.json()["detail"]
+    assert unavailable["code"] == "read_model_unavailable"
+    assert unavailable["reason"] == "full_event_payload_exceeds_byte_cap"
+    summary = summary_resp.json()
+    summary_value = summary["output_records"][0]["value"]
+    assert "__truncated_fields" not in summary_value
+    assert len(summary_value["grades"]["value"]) == 50
+    assert summary["truncated"] is True
+    assert summary["next_cursor"].startswith("sha256:")
+    value_meta = summary["collection_meta"]["output_records"]["fields"][
+        "verification-shared-owner.value"
+    ]
+    assert value_meta["truncated"] is True
+    assert value_meta["next_cursor"] == summary["next_cursor"]
+    assert value_meta["original_bytes"] > 0
+    assert len(value_meta["sha256"]) == 64
+    assert len(full_resp.content) <= 262_144
+
+
 async def test_fresh_control_and_topology_readbacks_preserve_runtime_controls(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
@@ -1717,6 +2218,67 @@ async def test_node_detail_404_for_unknown_node(
     assert response.status_code == 404
 
 
+async def test_node_detail_missing_current_owner_row_is_retryable_without_rebuild(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """A broken compact row never makes a public GET replay or mutate history."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-node-detail-missing-owner-{uuid4().hex[:8]}"
+    await _seed_graph_run(app, run_id)
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        owner_row = (
+            await session.execute(
+                select(GraphNodeDetailSummaryModel)
+                .where(GraphNodeDetailSummaryModel.run_id == run_id)
+                .order_by(GraphNodeDetailSummaryModel.node_id)
+                .limit(1)
+            )
+        ).scalar_one()
+        node_id = owner_row.node_id
+        checkpoint = await session.get(GraphNodeDetailSummaryCheckpointModel, run_id)
+        snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
+        assert checkpoint is not None
+        assert snapshot is not None
+        checkpoint_position = checkpoint.position
+        snapshot_position = snapshot.position
+        await session.execute(
+            delete(GraphNodeDetailSummaryModel).where(
+                GraphNodeDetailSummaryModel.run_id == run_id,
+                GraphNodeDetailSummaryModel.node_id == node_id,
+            )
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/nodes/{node_id}")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "code": "read_model_unavailable",
+        "run_id": run_id,
+        "read_model": "graph_node_detail_summaries",
+        "current_position": checkpoint_position,
+        "reason": "missing_owner_row",
+        "retryable": True,
+    }
+
+    async with session_factory() as session:
+        assert (
+            await session.get(
+                GraphNodeDetailSummaryModel,
+                {"run_id": run_id, "node_id": node_id},
+            )
+            is None
+        )
+        checkpoint = await session.get(GraphNodeDetailSummaryCheckpointModel, run_id)
+        snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
+        assert checkpoint is not None
+        assert snapshot is not None
+        assert checkpoint.position == checkpoint_position
+        assert snapshot.position == snapshot_position
+
+
 async def test_is_graph_backed_flag_in_run_response(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
@@ -1823,3 +2385,118 @@ async def test_graph_events_from_position(
     # Ensure the endpoint enforces floor-position filtering and ordering.
     assert all(event["position"] >= 2 for event in events)
     assert events == sorted(events, key=lambda item: item["position"])
+
+
+@pytest.mark.asyncio
+async def test_graph_events_have_bounded_consistent_pagination(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-events-pagination-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(
+                run_id,
+                0,
+                [
+                    _event(
+                        "node_created",
+                        {
+                            "node_id": f"worker-{position}",
+                            "kind": "worker",
+                            "state": "planned",
+                        },
+                    )
+                    for position in range(1, 53)
+                ],
+            )
+
+    default_page = await client.get(f"/api/runs/{run_id}/graph/events")
+    assert default_page.status_code == 200
+    assert [event["position"] for event in default_page.json()] == list(range(1, 51))
+    assert default_page.headers["X-Has-More"] == "true"
+    assert default_page.headers["X-Next-Position"] == "51"
+    assert default_page.headers["X-Truncated-By-Bytes"] == "false"
+
+    for payload_mode in ("summary", "full"):
+        first = await client.get(
+            f"/api/runs/{run_id}/graph/events",
+            params={"payload_mode": payload_mode, "limit": 2},
+        )
+        second = await client.get(
+            f"/api/runs/{run_id}/graph/events",
+            params={
+                "payload_mode": payload_mode,
+                "limit": 2,
+                "from_position": first.headers["X-Next-Position"],
+            },
+        )
+        assert [event["position"] for event in first.json()] == [1, 2]
+        assert [event["position"] for event in second.json()] == [3, 4]
+        assert first.headers["X-Has-More"] == second.headers["X-Has-More"] == "true"
+
+        final = await client.get(
+            f"/api/runs/{run_id}/graph/events",
+            params={"payload_mode": payload_mode, "from_position": 52, "limit": 2},
+        )
+        assert [event["position"] for event in final.json()] == [52]
+        assert final.headers["X-Has-More"] == "false"
+        assert final.headers["X-Next-Position"] == "null"
+
+        empty = await client.get(
+            f"/api/runs/{run_id}/graph/events",
+            params={"payload_mode": payload_mode, "from_position": 53, "limit": 2},
+        )
+        assert empty.json() == []
+        assert empty.headers["X-Has-More"] == "false"
+        assert empty.headers["X-Next-Position"] == "null"
+
+    for invalid_limit in (0, -1, 101):
+        response = await client.get(
+            f"/api/runs/{run_id}/graph/events",
+            params={"limit": invalid_limit},
+        )
+        assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_graph_full_events_do_not_decode_payloads_above_the_public_byte_cap(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-events-oversized-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    oversized_value = "x" * 20_000
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(
+                run_id,
+                0,
+                [
+                    _event(
+                        "callback_accepted",
+                        {
+                            "node_id": "oversized-node",
+                            "payload": {"oversized_value": oversized_value},
+                        },
+                    )
+                ],
+            )
+
+    response = await client.get(
+        f"/api/runs/{run_id}/graph/events",
+        params={"payload_mode": "full", "limit": 1},
+    )
+
+    assert response.status_code == 200
+    event = response.json()[0]
+    assert event["event_id"].startswith("callback_accepted-")
+    assert event["payload"] == {}
+    assert event["payload_truncated"] is True
+    assert event["payload_original_bytes"] > len(oversized_value)
+    assert event["payload_sha256"] is None
+    assert response.headers["X-Has-More"] == "false"
+    assert response.headers["X-Next-Position"] == "null"

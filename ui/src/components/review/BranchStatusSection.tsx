@@ -78,6 +78,15 @@ export function BranchStatusSection({ runId, worktreePath }: BranchStatusSection
       <div className="mt-3 grid grid-cols-1 gap-3">
         <MetaRow label="Branch" value={data.run_branch} mono />
         <MetaRow label="Target Branch" value={data.source_branch} mono />
+        {data.merge_disposition && (
+          <>
+            <MetaRow
+              label="Merge Disposition"
+              value={data.merge_disposition.status.replace('_', ' ')}
+            />
+            <MetaRow label="Disposition Reason" value={data.merge_disposition.reason} />
+          </>
+        )}
 
         {baseSha && <MetaRow label="Base SHA" value={baseSha} mono />}
         {headSha && <MetaRow label="Head SHA" value={headSha} mono />}

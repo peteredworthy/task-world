@@ -287,6 +287,16 @@ class BackMergeReverted(WorkflowEvent):
     new_head: str = ""
 
 
+class RunMergeBackCompleted(WorkflowEvent):
+    """Durable receipt for accepting a finalized run branch into its source."""
+
+    event_type: str = "run_merge_back_completed"
+    source_branch: str = ""
+    run_branch: str = ""
+    merge_commit: str = ""
+    strategy: str = ""
+
+
 class AgentFixStarted(WorkflowEvent):
     """Emitted when an agent is dispatched to fix conflicts or tests."""
 

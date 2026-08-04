@@ -1,4 +1,4 @@
-"""Schema-13 immutable models owned by the permanent graph projection.
+"""Schema-14 immutable models owned by the permanent graph projection.
 
 Production reducers construct these frozen grouped models directly. Conversion
 at event and checkpoint boundaries prevents mutable transport payloads from
@@ -27,7 +27,9 @@ from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
     OUTPUT_RECORD_MODELS_BY_TYPE,
     OutputRecord,
+    RunnerBoundaryEntry,
 )
+from orchestrator.graph.cache_authority import CacheStatusEvidence, RunnerCacheRoot
 from orchestrator.graph.projection_collections import FrozenJsonValue, FrozenMap, freeze_json
 
 
@@ -186,6 +188,7 @@ class NodeSpecProjection(ProjectionModel):
     hidden_oracle_command: StrictStr | None = None
     command_binding: StrictStr | None = None
     max_attempts: StrictInt | None = None
+    cache_authority_hash: StrictStr | None = None
 
     @field_validator("resource_claims", "allowed_actions", "preconditions", mode="before")
     @classmethod
@@ -569,6 +572,7 @@ class LeaseValue(ProjectionModel):
     task_region_id: StrictStr | None = None
     kind: StrictStr | None = None
     resource_claims: tuple[ResourceClaimValue, ...] = ()
+    cache_authority_hash: StrictStr | None = None
 
     @field_validator("resource_claims", mode="before")
     @classmethod
@@ -608,6 +612,98 @@ class CallbackEventValue(ProjectionModel):
         return _freeze_json_input(value)
 
 
+class ExecutionAttemptValue(ProjectionModel):
+    execution_id: StrictStr
+    state: Literal[
+        "baseline_captured", "submission_staged", "recovery_requested", "recovered", "finalized"
+    ]
+    node_id: StrictStr
+    lease_id: StrictStr
+    lease_generation: StrictInt
+    lease_base_snapshot_id: StrictStr | None = None
+    baseline_snapshot_id: StrictStr | None = None
+    baseline_snapshot_ref: StrictStr | None = None
+    baseline_commit_sha: StrictStr | None = None
+    baseline_tree_sha: StrictStr | None = None
+    baseline_boundary_hash: StrictStr | None = None
+    baseline_entries: tuple[RunnerBoundaryEntry, ...] = ()
+    cache_authority_hash: StrictStr | None = None
+    # Kept only to replay pre-cache-authority durable histories. New attempts
+    # store independently attributable typed root evidence per phase.
+    cache_roots: tuple[RunnerCacheRoot | StrictStr, ...] = ()
+    legacy_cache_root_paths: tuple[StrictStr, ...] = ()
+    baseline_cache_roots: tuple[RunnerCacheRoot | StrictStr, ...] = ()
+    baseline_cache_status_evidence: tuple[CacheStatusEvidence, ...] = ()
+    idempotency_key: StrictStr | None = None
+    payload: FrozenJsonValue | None = None
+    payload_hash: StrictStr | None = None
+    payload_size_bytes: StrictInt | None = None
+    staged_snapshot_id: StrictStr | None = None
+    staged_snapshot_ref: StrictStr | None = None
+    staged_commit_sha: StrictStr | None = None
+    staged_tree_sha: StrictStr | None = None
+    staged_boundary_hash: StrictStr | None = None
+    staged_boundary_entries: tuple[RunnerBoundaryEntry, ...] = ()
+    staged_cache_roots: tuple[RunnerCacheRoot | StrictStr, ...] = ()
+    staged_cache_status_evidence: tuple[CacheStatusEvidence, ...] = ()
+    observed_graph_position: StrictInt | None = None
+    callback_base_snapshot_id: StrictStr | None = None
+    is_mutating: StrictBool | None = None
+    complete_node: StrictBool | None = None
+    new_state: StrictStr | None = None
+    recovery_id: StrictStr | None = None
+    recovery_reason: StrictStr | None = None
+    recovery_max_attempts: StrictInt | None = None
+    recovery_snapshot_id: StrictStr | None = None
+    recovery_snapshot_ref: StrictStr | None = None
+    recovery_commit_sha: StrictStr | None = None
+    recovery_scope: Literal["selective", "full_baseline"] = "selective"
+    recovery_paths: tuple[StrictStr, ...] = ()
+    recovery_proof_hash: StrictStr | None = None
+    restored_paths: tuple[StrictStr, ...] = ()
+    removed_paths: tuple[StrictStr, ...] = ()
+    final_snapshot_id: StrictStr | None = None
+    final_snapshot_ref: StrictStr | None = None
+    final_commit_sha: StrictStr | None = None
+    final_tree_sha: StrictStr | None = None
+    final_boundary_hash: StrictStr | None = None
+    final_boundary_entries: tuple[RunnerBoundaryEntry, ...] = ()
+    final_cache_roots: tuple[RunnerCacheRoot | StrictStr, ...] = ()
+    final_cache_status_evidence: tuple[CacheStatusEvidence, ...] = ()
+    recovery_observed_cache_roots: tuple[RunnerCacheRoot | StrictStr, ...] = ()
+    recovery_authorized_cache_roots: tuple[RunnerCacheRoot, ...] = ()
+    recovery_cache_status_evidence: tuple[CacheStatusEvidence, ...] = ()
+
+    @field_validator(
+        "baseline_entries",
+        "staged_boundary_entries",
+        "final_boundary_entries",
+        "cache_roots",
+        "legacy_cache_root_paths",
+        "baseline_cache_roots",
+        "baseline_cache_status_evidence",
+        "staged_cache_roots",
+        "staged_cache_status_evidence",
+        "final_cache_roots",
+        "final_cache_status_evidence",
+        "recovery_observed_cache_roots",
+        "recovery_authorized_cache_roots",
+        "recovery_cache_status_evidence",
+        "recovery_paths",
+        "restored_paths",
+        "removed_paths",
+        mode="before",
+    )
+    @classmethod
+    def freeze_attempt_sequences(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "execution attempt values must be sequences")
+
+    @field_validator("payload", mode="before")
+    @classmethod
+    def freeze_attempt_payload(cls, value: object) -> FrozenJsonValue | None:
+        return None if value is None else _freeze_json_input(value)
+
+
 class CleanupRequestValue(ProjectionModel):
     cleanup_id: StrictStr
     position: StrictInt
@@ -618,6 +714,13 @@ class CleanupRequestValue(ProjectionModel):
     reason: StrictStr | None = None
     execution_id: StrictStr | None = None
     producer_node_id: StrictStr | None = None
+    snapshot_ref: StrictStr | None = None
+    tree_sha: StrictStr | None = None
+    commit_sha: StrictStr | None = None
+    node_id: StrictStr | None = None
+    lease_id: StrictStr | None = None
+    lease_generation: StrictInt | None = None
+    snapshot_role: Literal["baseline", "staged", "final", "recovery"] | None = None
 
     @field_validator("paths", mode="before")
     @classmethod
@@ -715,6 +818,9 @@ class ExecutionProjection(ProjectionModel):
         default_factory=FrozenMap
     )
     applied_cleanup_ids: FrozenMap[StrictStr, StrictBool] = Field(default_factory=FrozenMap)
+    attempts_by_execution_id: FrozenMap[StrictStr, ExecutionAttemptValue] = Field(
+        default_factory=FrozenMap
+    )
 
     @field_validator("lease_ids_in_grant_order", mode="before")
     @classmethod
@@ -774,6 +880,9 @@ class ProjectedRoutineSnapshotValue(ProjectionModel):
     builder_agent: StrictStr | None = None
     verifier_agent: StrictStr | None = None
     dynamic_feature: FrozenMap[StrictStr, FrozenJsonValue] | None = None
+    cache_authority_preimage: StrictStr | None = None
+    cache_authority_hash: StrictStr | None = None
+    cache_authority_version: StrictStr | None = None
 
 
 class ProjectedArtifactReferenceValue(ProjectionModel):

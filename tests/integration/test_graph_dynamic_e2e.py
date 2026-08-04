@@ -1206,5 +1206,30 @@ async def test_dynamic_root_planner_accepted_patch_then_no_submit_does_not_dupli
         and event.payload.get("patch_id") == "patch-ds-root-plan"
     ]
     assert len(root_patches) == 1, "root planner must not produce a duplicate accepted patch"
+    root_planner_id = root_patches[0].payload["proposed_by_node_id"]
+    recovery_completed = next(
+        event
+        for event in events
+        if event.event_type == "runner_recovery_completed"
+        and event.payload.get("node_id") == root_planner_id
+    )
+    lease_revoked = next(
+        event
+        for event in events
+        if event.event_type == "lease_revoked" and event.payload.get("node_id") == root_planner_id
+    )
+    node_completed = next(
+        event
+        for event in events
+        if event.event_type == "node_state_changed"
+        and event.payload.get("node_id") == root_planner_id
+        and event.payload.get("new_state") == "completed"
+    )
+    assert recovery_completed.position < lease_revoked.position < node_completed.position
+    assert not any(
+        event.event_type == "runtime_retry_scheduled"
+        and event.payload.get("node_id") == root_planner_id
+        for event in events
+    )
     assert outcome.completed is True, outcome.blocked_reason
     assert project_run_state(events) == "completed"

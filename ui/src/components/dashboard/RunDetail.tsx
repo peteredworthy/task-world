@@ -139,7 +139,18 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
   const [approvalReviewAction, setApprovalReviewAction] = useState<PendingAction | null>(null);
   const autoOpenedRef = useRef<string | null>(null);
   const { data: graphProjection } = useGraphProjection(run?.id);
-  const { data: graphEvents = [] } = useGraphEvents(run?.id);
+  const {
+    events: graphEvents,
+    hasNextPage: hasMoreGraphEvents,
+    fetchNextPage: fetchNextGraphEventsPage,
+    refetch: retryGraphEvents,
+    isError: isGraphEventsError,
+    error: graphEventsError,
+    isFetching: isFetchingGraphEvents,
+    isLoading: isLoadingGraphEvents,
+    isFetchNextPageError: isFetchNextGraphEventsPageError,
+    isFetchingNextPage: isFetchingNextGraphEventsPage,
+  } = useGraphEvents(run?.id);
 
   const graphTaskNodeIds = useMemo(() => {
     const byTaskId: Record<string, string> = {};
@@ -382,11 +393,11 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
               )}
 
               {run.status === 'completed' && !mergeResult && (
-                branchStatus?.ahead_count === 0 ? (
+                branchStatus?.merge_disposition.status === 'merged' ? (
                   <span className="px-3 py-1.5 text-xs font-medium text-status-completed bg-status-completed/10 border border-status-completed/30 rounded-md">
                     Merged
                   </span>
-                ) : (
+                ) : branchStatus?.merge_disposition.status === 'ready' ? (
                   <button
                     onClick={() => {
                       setMutationError(null);
@@ -417,7 +428,20 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
                   >
                     {mergeBack.isPending ? 'Merging...' : `Merge to ${run.source_branch || 'main'}`}
                   </button>
-                )
+                ) : branchStatus?.merge_disposition ? (
+                  <span
+                    className="px-3 py-1.5 text-xs font-medium text-text-secondary bg-bg-muted border border-border rounded-md"
+                    title={branchStatus.merge_disposition.reason}
+                  >
+                    {branchStatus.merge_disposition.status === 'no_changes'
+                      ? 'No changes'
+                      : branchStatus.merge_disposition.status === 'unfinalized'
+                        ? 'Finalization pending'
+                        : branchStatus.merge_disposition.status === 'dirty'
+                          ? 'Uncommitted changes'
+                          : 'Merge blocked'}
+                  </span>
+                ) : null
               )}
             </div>
           </div>
@@ -665,15 +689,64 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
                     Status changes, task transitions, gates, and other recorded run events.
                   </p>
                 </div>
-              <ActivityFeed
+               <ActivityFeed
                 events={events}
                 run={run}
                 graphTaskStates={run.is_graph_backed ? graphProjection?.task_states : undefined}
                 graphTaskNodeIds={run.is_graph_backed ? graphTaskNodeIds : undefined}
                 onOpenGraphNode={handleOpenGraphNode}
-                expandCompletedSteps
-              />
-            </section>
+                 expandCompletedSteps
+               />
+               {run.is_graph_backed && (
+                 <div className="mt-3 border-t border-border pt-3 text-xs text-text-muted">
+                   {isGraphEventsError && graphEvents.length === 0 ? (
+                     <div role="alert">
+                       <p>Could not load graph events for node mappings{graphEventsError instanceof Error ? `: ${graphEventsError.message}` : '.'}</p>
+                       <button
+                         type="button"
+                         onClick={() => void retryGraphEvents()}
+                         disabled={isFetchingGraphEvents}
+                         className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                       >
+                         {isFetchingGraphEvents ? 'Retrying graph events…' : 'Retry loading events'}
+                       </button>
+                     </div>
+                   ) : (
+                     <>
+                       <p aria-live="polite">
+                         {isLoadingGraphEvents
+                           ? 'Loading graph events for node mappings…'
+                           : hasMoreGraphEvents
+                           ? `${graphEvents.length} events loaded for graph node mappings; more history is available.`
+                           : `All ${graphEvents.length} graph events loaded for node mappings.`}
+                       </p>
+                       {isFetchNextGraphEventsPageError ? (
+                         <div role="alert" className="mt-2">
+                           <p>Could not load more events{graphEventsError instanceof Error ? `: ${graphEventsError.message}` : '.'}</p>
+                           <button
+                             type="button"
+                             onClick={() => void fetchNextGraphEventsPage()}
+                             disabled={isFetchingNextGraphEventsPage}
+                             className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                           >
+                             {isFetchingNextGraphEventsPage ? 'Retrying more events…' : 'Retry loading more events'}
+                           </button>
+                         </div>
+                       ) : !isLoadingGraphEvents && hasMoreGraphEvents ? (
+                         <button
+                           type="button"
+                           onClick={() => void fetchNextGraphEventsPage()}
+                           disabled={isFetchingNextGraphEventsPage}
+                           className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                         >
+                           {isFetchingNextGraphEventsPage ? 'Loading more events…' : 'Load more events'}
+                         </button>
+                       ) : null}
+                     </>
+                   )}
+                 </div>
+               )}
+             </section>
             </>
           ) : (
             <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path ?? null} />

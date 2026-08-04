@@ -437,6 +437,8 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
             session_factory, repo=repo, dispatch_order=dispatch_order, ids=ids
         ).run(run_id)
         events = await _events(session_factory, run_id)
+        if routine.id == "auto-verify":
+            print([event.payload for event in events if event.event_type == "agent_died"])
 
         assert outcome.completed is True
         assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED

@@ -28,3 +28,12 @@ class RetiredAgentRunnerError(WorkflowError):
             f"Run uses retired agent runner '{agent_runner_type}'. "
             "Select an active replacement runner before starting or resuming."
         )
+
+
+class RunFinalizationError(WorkflowError):
+    """Raised when a terminal run-level durability step cannot be completed."""
+
+    def __init__(self, run_id: str, reason: str) -> None:
+        self.run_id = run_id
+        self.reason = reason
+        super().__init__(f"Run {run_id} finalization failed: {reason}")

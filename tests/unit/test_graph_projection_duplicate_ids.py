@@ -495,6 +495,49 @@ def test_file_state_duplicate_is_idempotent_after_derived_enrichment(
     assert reduce_event(restored, duplicate) is restored
 
 
+def test_paired_file_state_events_ignore_delivery_timestamps_for_replay_identity() -> None:
+    payload = dict(_file_state(position=48).payload)
+    output_accepted = _event(
+        "output_record_accepted",
+        {
+            **payload,
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "graph_position": 48,
+            "run_id": "run-1",
+        },
+        position=48,
+    )
+    file_state_accepted = _event(
+        "file_state_accepted",
+        {
+            **payload,
+            "created_at": "2026-01-01T00:00:01+00:00",
+            "graph_position": 49,
+            "run_id": "run-1",
+        },
+        position=49,
+    )
+
+    state = build_projection([output_accepted, file_state_accepted])
+
+    record = file_state_record(state, "file-state-1")
+    assert record is not None
+    assert record.created_at == "2026-01-01T00:00:00+00:00"
+    assert record.graph_position == 48
+    assert record.position == 48
+    assert record.run_id == "run-1"
+
+
+def test_file_state_duplicate_from_a_different_run_conflicts() -> None:
+    first = _file_state(position=48)
+    different_run = first.model_copy(
+        update={"event_id": "different-run", "position": 49, "run_id": "run-2"}
+    )
+
+    with pytest.raises(ProjectionReplayConflictError, match=r"record.*file-state-1"):
+        build_projection([first, different_run])
+
+
 def test_direct_file_state_insert_computes_identity_and_rejects_conflicting_missing_identity() -> (
     None
 ):

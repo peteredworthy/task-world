@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { api, getConfig, validateRoutine } from '../api/client';
 import type {
   CreateRunRequest,
@@ -7,7 +8,8 @@ import type {
   UpdateChecklistRequest,
   GraphProjectionResponse,
   DecisionViewResponse,
-  GraphEventResponse,
+  GraphEventsPage,
+  GraphPatchAttemptsPage,
   FileStateReportResponse,
   SchedulerViewResponse,
   GraphHealthResponse,
@@ -72,13 +74,91 @@ export function useGraphProjection(runId: string | undefined) {
   });
 }
 
-export function useGraphEvents(runId: string | undefined, fromPosition?: number) {
-  return useQuery<GraphEventResponse[]>({
-    queryKey: ['graphEvents', runId, fromPosition],
-    queryFn: () => api.getRunGraphEvents(runId!, fromPosition),
+export function useGraphEvents(
+  runId: string | undefined,
+  params?: { fromPosition?: number; limit?: number; payloadMode?: 'summary' | 'full' },
+) {
+  const fromPosition = params?.fromPosition ?? 0;
+  const limit = params?.limit ?? 50;
+  const payloadMode = params?.payloadMode ?? 'summary';
+  const query = useInfiniteQuery<GraphEventsPage>({
+    queryKey: ['graphEvents', runId, fromPosition, limit, payloadMode],
+    queryFn: ({ pageParam }) => api.getRunGraphEvents(runId!, {
+      fromPosition: pageParam as number,
+      limit,
+      payloadMode,
+    }),
+    initialPageParam: fromPosition,
+    getNextPageParam: (lastPage) => (
+      lastPage.has_more && lastPage.next_position !== null
+        ? lastPage.next_position
+        : undefined
+    ),
     enabled: !!runId,
     staleTime: 5000,
   });
+
+  const events = useMemo(() => {
+    const positions = new Set<number>();
+    return query.data?.pages.flatMap((page) => page.events.filter((event) => {
+      if (positions.has(event.position)) return false;
+      positions.add(event.position);
+      return true;
+    })) ?? [];
+  }, [query.data]);
+
+  return { ...query, events };
+}
+
+/** Patch attempts are intentionally user-paged; never automatically exhaust history. */
+export function useGraphPatchAttempts(
+  runId: string | undefined,
+  params?: { fromPosition?: number; limit?: number },
+) {
+  const fromPosition = params?.fromPosition ?? 0;
+  const limit = params?.limit ?? 25;
+  const query = useInfiniteQuery<GraphPatchAttemptsPage>({
+    queryKey: ['graphPatchAttempts', runId, fromPosition, limit],
+    queryFn: ({ pageParam }) => api.getRunGraphPatchAttempts(runId!, {
+      fromPosition: pageParam as number,
+      limit,
+    }),
+    initialPageParam: fromPosition,
+    getNextPageParam: (lastPage) => (
+      lastPage.has_more && lastPage.next_position !== null ? lastPage.next_position : undefined
+    ),
+    enabled: !!runId,
+    staleTime: 5000,
+  });
+  const attempts = useMemo(() => {
+    const seen = new Set<string>();
+    return query.data?.pages.flatMap((page, pageIndex) => page.attempts.filter((attempt, attemptIndex) => {
+      const identity = graphPatchAttemptIdentity(attempt, pageIndex, attemptIndex);
+      if (seen.has(identity)) return false;
+      seen.add(identity);
+      return true;
+    })) ?? [];
+  }, [query.data]);
+  const partial = query.data?.pages.some((page) => page.partial) ?? false;
+  const orphanOutcomeCount = query.data?.pages.reduce(
+    (count, page) => count + page.orphan_outcome_count,
+    0,
+  ) ?? 0;
+  return { ...query, attempts, partial, orphanOutcomeCount };
+}
+
+function graphPatchAttemptIdentity(
+  attempt: GraphPatchAttemptsPage['attempts'][number],
+  pageIndex: number,
+  attemptIndex: number,
+): string {
+  if (!attempt.patch_id_truncated) return `id:${attempt.patch_id}`;
+  if (attempt.patch_id_sha256) {
+    return `sha256:${attempt.patch_id_original_chars ?? 'unknown'}:${attempt.patch_id_sha256}`;
+  }
+  // A malformed truncated response has no stable identity. Keep it visible
+  // rather than merging two distinct long IDs by their shared prefix.
+  return `invalid-truncated:${pageIndex}:${attemptIndex}`;
 }
 
 export function useSchedulerView(runId: string | undefined) {
@@ -123,13 +203,97 @@ export function useRecordGraphDecision(runId: string) {
   });
 }
 
+export function mergeFileStateReportPages(
+  pages: FileStateReportResponse[],
+  hasMore: boolean,
+): FileStateReportResponse | undefined {
+    if (pages.length === 0) return undefined;
+    const first = pages[0];
+    const boundariesByNode = new Map<string, Map<string, FileStateReportResponse['nodes'][number]['boundaries'][number]>>();
+    const uniquePages: FileStateReportResponse[] = [];
+    const seenPageBoundaries = new Set<string>();
+    for (const page of pages) {
+      const boundaryIds = page.nodes.flatMap((node) => node.boundaries.map((boundary) => boundary.record_id));
+      const pageKey = boundaryIds.slice().sort().join('\u0000');
+      if (seenPageBoundaries.has(pageKey)) continue;
+      seenPageBoundaries.add(pageKey);
+      uniquePages.push(page);
+      for (const node of page.nodes) {
+        const boundaries = boundariesByNode.get(node.node_id) ?? new Map();
+        for (const boundary of node.boundaries) boundaries.set(boundary.record_id, boundary);
+        boundariesByNode.set(node.node_id, boundaries);
+      }
+    }
+    const numericGatekeeperFields = [
+      'boundary_count', 'deterministic_classifications', 'gatekeeper_consults',
+      'gatekeeper_resolved', 'unresolved_residue', 'total_classified',
+      'gen_ai_usage_input_tokens', 'gen_ai_usage_output_tokens',
+      'gen_ai_usage_cache_read_input_tokens', 'gen_ai_usage_cache_creation_input_tokens',
+      'cost_usd', 'wall_time_ms',
+    ];
+    const gatekeeper = uniquePages.reduce<Record<string, unknown> | null>((total, page) => {
+      if (page.gatekeeper === null) return total;
+      const next = total ? { ...total } : {};
+      for (const field of numericGatekeeperFields) {
+        next[field] = Number(next[field] ?? 0) + Number(page.gatekeeper[field] ?? 0);
+      }
+      const models = { ...(next.models as Record<string, Record<string, unknown>> | undefined) };
+      const pageModels = page.gatekeeper.models as Record<string, Record<string, unknown>> | undefined;
+      for (const [modelId, model] of Object.entries(pageModels ?? {})) {
+        const aggregate = { ...(models[modelId] ?? { model_id: modelId, executions: [] }) };
+        for (const field of ['consults', ...numericGatekeeperFields.slice(6)]) {
+          aggregate[field] = Number(aggregate[field] ?? 0) + Number(model[field] ?? 0);
+        }
+        aggregate.executions = [...new Set([
+          ...((aggregate.executions as string[] | undefined) ?? []),
+          ...((model.executions as string[] | undefined) ?? []),
+        ])];
+        models[modelId] = aggregate;
+      }
+      next.models = models;
+      return next;
+    }, null);
+    if (gatekeeper !== null) {
+      const totalClassified = Number(gatekeeper.total_classified ?? 0);
+      gatekeeper.hit_rate = totalClassified > 0
+        ? Number(gatekeeper.deterministic_classifications ?? 0) / totalClassified
+        : 0;
+    }
+    return {
+      ...first,
+      event_count: pages.reduce((count, page) => count + page.event_count, 0),
+      nodes: [...boundariesByNode.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([node_id, boundaries]) => ({
+          node_id,
+          boundaries: [...boundaries.values()].sort((left, right) => left.record_id.localeCompare(right.record_id)),
+        })),
+      orphan_gatekeeper_fact_count: pages[0].orphan_gatekeeper_fact_count,
+      gatekeeper,
+      // Keep incompleteness sticky even when React Query presents a refreshed
+      // duplicate boundary page that is later deduplicated for metrics.
+      gatekeeper_metrics_truncated: pages.some((page) => page.gatekeeper_metrics_truncated),
+      has_more: hasMore,
+      next_position: hasMore ? pages.at(-1)?.next_position ?? null : null,
+    };
+}
+
 export function useFileStateReport(runId: string | undefined) {
-  return useQuery<FileStateReportResponse>({
+  const query = useInfiniteQuery<FileStateReportResponse>({
     queryKey: ['graphFileState', runId],
-    queryFn: () => api.getRunGraphFileState(runId!),
+    queryFn: ({ pageParam }) => api.getRunGraphFileState(runId!, { fromPosition: pageParam as number }),
+    initialPageParam: 0,
+    getNextPageParam: (lastPage) => (
+      lastPage?.has_more && lastPage.next_position !== null ? lastPage.next_position : undefined
+    ),
     enabled: !!runId,
     staleTime: 5000,
   });
+  const report = useMemo(
+    () => mergeFileStateReportPages(query.data?.pages ?? [], query.hasNextPage),
+    [query.data, query.hasNextPage],
+  );
+  return { ...query, data: report };
 }
 
 export function useGraphNodeDetail(runId: string | undefined, nodeId: string | undefined) {

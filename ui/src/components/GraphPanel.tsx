@@ -61,9 +61,10 @@ function GraphSummaryMetric({ label, value }: { label: string; value: number | s
 
 function GraphHealth({ health }: { health: GraphHealthResponse }) {
   const counts = health.counts ?? {};
-  const verifier = health.verifier ?? { passed: 0, failed: 0 };
+  const verifier = health.verifier ?? { passed: null, failed: null };
   const expiredMeta = health.detail_meta?.expired_leases;
-  return <section className="space-y-2 text-xs"><h3 className="text-sm font-semibold text-text-primary">Graph health</h3><div className="grid grid-cols-2 gap-2"><GraphSummaryMetric label="Expired leases" value={counts.expired_leases ?? 0} /><GraphSummaryMetric label="Final blockers" value={counts.final_blockers ?? 0} /><GraphSummaryMetric label="Verifier pass/fail" value={`${verifier.passed}/${verifier.failed}`} /></div>{expiredMeta?.truncated && <p className="text-text-muted">Showing {health.expired_leases.length} of {expiredMeta.total} expired leases</p>}{(health.expired_leases ?? []).map((lease) => <div key={lease.lease_id}>{lease.reason}</div>)}</section>;
+  const unavailable = (value: number | null | undefined) => value == null ? 'Unavailable' : value;
+  return <section className="space-y-2 text-xs"><h3 className="text-sm font-semibold text-text-primary">Graph health</h3>{health.health_status !== 'complete' && <p className="text-text-muted">Health facts are {health.health_status}; unavailable checks are not reported as zero.</p>}<div className="grid grid-cols-2 gap-2"><GraphSummaryMetric label="Expired leases" value={unavailable(counts.expired_leases)} /><GraphSummaryMetric label="Final blockers" value={unavailable(counts.final_blockers)} /><GraphSummaryMetric label="Verifier pass/fail" value={`${unavailable(verifier.passed)}/${unavailable(verifier.failed)}`} /></div>{expiredMeta?.truncated && <p className="text-text-muted">Showing {health.expired_leases.length} of {expiredMeta.total} expired leases</p>}{(health.expired_leases ?? []).map((lease) => <div key={lease.lease_id}>{lease.reason}</div>)}</section>;
 }
 
 function graphActivityKind(event: ActivityEvent): 'patch' | 'verifier' | 'blocker' | null {
@@ -550,8 +551,29 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
   const { data: schedulerView } = useSchedulerView(runId);
   const { data: health } = useGraphHealth(runId, open);
   const { data: decisionView } = useDecisionView(runId);
-  const { data: fileStateReport } = useFileStateReport(runId);
-  const { data: events = [] } = useGraphEvents(runId);
+  const {
+    data: fileStateReport,
+    hasNextPage: hasMoreFileState,
+    fetchNextPage: fetchMoreFileState,
+    refetch: retryFileState,
+    isError: isFileStateError,
+    error: fileStateError,
+    isFetching: isFetchingFileState,
+    isFetchNextPageError: isFetchMoreFileStateError,
+    isFetchingNextPage: isFetchingMoreFileState,
+  } = useFileStateReport(runId);
+  const {
+    events,
+    hasNextPage,
+    fetchNextPage,
+    refetch: retryGraphEvents,
+    isError: isGraphEventsError,
+    error: graphEventsError,
+    isFetching: isFetchingEvents,
+    isLoading: isLoadingEvents,
+    isFetchNextPageError,
+    isFetchingNextPage,
+  } = useGraphEvents(runId);
   const [showEvents, setShowEvents] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -606,7 +628,110 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
           <GraphActivitySection activityEvents={activityEvents} />
           {schedulerView && <SchedulerView view={schedulerView} />}
           {decisionView && <DecisionsSection runId={runId} view={decisionView} />}
-          {fileStateReport && <FileStateViewer report={fileStateReport} />}
+          {isFileStateError && !fileStateReport ? (
+            <div className="rounded border border-border bg-bg-card p-3 text-xs text-text-muted" role="alert">
+              <p>
+                Could not load file-state records
+                {fileStateError instanceof Error ? `: ${fileStateError.message}` : '.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => void retryFileState()}
+                disabled={isFetchingFileState}
+                className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+              >
+                {isFetchingFileState ? 'Retrying file-state records…' : 'Retry loading file-state records'}
+              </button>
+            </div>
+          ) : fileStateReport && (
+            <>
+            {isFileStateError && !isFetchMoreFileStateError && (
+              <div className="rounded border border-border bg-bg-card p-3 text-xs text-text-muted" role="alert">
+                <p>
+                  Could not refresh file-state records
+                  {fileStateError instanceof Error ? `: ${fileStateError.message}` : '.'}
+                </p>
+                <p className="mt-1">Showing stale file-state data.</p>
+                <button
+                  type="button"
+                  onClick={() => void retryFileState()}
+                  disabled={isFetchingFileState}
+                  className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isFetchingFileState ? 'Retrying file-state refresh…' : 'Retry refreshing file-state records'}
+                </button>
+              </div>
+            )}
+            <FileStateViewer
+              report={fileStateReport}
+              onLoadMore={hasMoreFileState ? () => void fetchMoreFileState() : undefined}
+              isLoadingMore={isFetchingMoreFileState}
+            />
+            {isFetchMoreFileStateError && (
+              <div className="rounded border border-border bg-bg-card p-3 text-xs text-text-muted" role="alert">
+                <p>
+                  Could not load more file-state records
+                  {fileStateError instanceof Error ? `: ${fileStateError.message}` : '.'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void fetchMoreFileState()}
+                  disabled={isFetchingMoreFileState}
+                  className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isFetchingMoreFileState ? 'Retrying more file-state records…' : 'Retry loading more file-state records'}
+                </button>
+              </div>
+            )}
+            </>
+          )}
+          <div className="rounded border border-border bg-bg-card p-3 text-xs text-text-muted">
+            {isGraphEventsError && events.length === 0 ? (
+              <div role="alert">
+                <p>Could not load graph events{graphEventsError instanceof Error ? `: ${graphEventsError.message}` : '.'}</p>
+                <button
+                  type="button"
+                  onClick={() => void retryGraphEvents()}
+                  disabled={isFetchingEvents}
+                  className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isFetchingEvents ? 'Retrying graph events…' : 'Retry loading events'}
+                </button>
+              </div>
+            ) : (
+              <>
+                <p aria-live="polite">
+                  {isLoadingEvents
+                    ? 'Loading graph events…'
+                    : hasNextPage
+                    ? `${events.length} events loaded; more history is available.`
+                    : `All ${events.length} graph events loaded.`}
+                </p>
+                {isFetchNextPageError ? (
+                  <div role="alert" className="mt-2">
+                    <p>Could not load more events{graphEventsError instanceof Error ? `: ${graphEventsError.message}` : '.'}</p>
+                    <button
+                      type="button"
+                      onClick={() => void fetchNextPage()}
+                      disabled={isFetchingNextPage}
+                      className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                    >
+                      {isFetchingNextPage ? 'Retrying more events…' : 'Retry loading more events'}
+                    </button>
+                  </div>
+                ) : !isLoadingEvents && hasNextPage ? (
+                  <button
+                    type="button"
+                    onClick={() => void fetchNextPage()}
+                    disabled={isFetchingNextPage}
+                    className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                  >
+                    {isFetchingNextPage ? 'Loading more events…' : 'Load more events'}
+                  </button>
+                ) : null}
+              </>
+            )}
+          </div>
           <NodeStatesTable
             projection={projection}
             events={events}

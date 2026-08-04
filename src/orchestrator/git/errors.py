@@ -9,6 +9,18 @@ class WorktreeError(GitError):
     """Error related to worktree operations."""
 
 
+class SnapshotPathLimitError(WorktreeError):
+    """Raised before an unbounded untracked path list reaches the temp index."""
+
+    def __init__(self, *, limit: int, observed: int, metric: str) -> None:
+        self.limit = limit
+        self.observed = observed
+        self.metric = metric
+        super().__init__(
+            f"snapshot untracked {metric} limit exceeded: limit={limit}, observed={observed}"
+        )
+
+
 class WorktreeExistsError(WorktreeError):
     def __init__(self, run_id: str, path: str) -> None:
         self.run_id = run_id

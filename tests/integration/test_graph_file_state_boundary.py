@@ -13,7 +13,7 @@ from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import RunModel, create_engine, create_session_factory, init_db
-from orchestrator.git import restore
+from orchestrator.git import prepare_snapshot, restore
 from orchestrator.graph import (
     action_count_by_node_kind_view,
     project_leases,
@@ -26,6 +26,7 @@ from orchestrator.graph_runtime import (
     GraphDispatchExecutor,
     GraphEventStore,
     OutboxDispatcher,
+    capture_file_state_boundary,
     seed_run,
 )
 from orchestrator.runners import AgentRunner
@@ -203,11 +204,22 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
     }
     assert classifications["README.md"] == "tracked_change"
     assert classifications["residue.txt"] == "unknown_untracked"
-    assert classifications["__pycache__/app.cpython-312.pyc"] == "tool_cache"
+    # A cache root is represented once; descendant scanning is bounded and
+    # retains only security-relevant entries.
+    assert classifications["__pycache__"] == "tool_cache"
     assert classifications["ignored.log"] == "unknown_ignored"
     assert accepted.payload["git"]["ref"].startswith("refs/orchestrator/snapshots/")
 
     snapshot_id = str(accepted.payload["snapshot_id"])
+    drained = await dispatcher.dispatch_pending(run_id=run_id)
+    assert {item.kind for item in drained} == {"snapshot_publish", "snapshot_cleanup"}
+    drained_events = await _read_events(session_factory, run_id)
+    assert [
+        event.payload["snapshot_role"]
+        for event in drained_events
+        if event.event_type == "cleanup_requested"
+    ] == ["baseline", "final"]
+    assert _ref_exists(repo, str(accepted.payload["git"]["ref"]))
     (repo / "README.md").unlink()
     (repo / "residue.txt").unlink()
     (repo / "__pycache__" / "app.cpython-312.pyc").unlink()
@@ -221,6 +233,81 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
     report = project_residue_report(events)
     assert report["residue.txt"][0]["classification"] == "unknown_untracked"
     assert report["ignored.log"][0]["classification"] == "unknown_ignored"
+
+
+@pytest.mark.asyncio
+async def test_file_state_snapshot_publication_replays_from_durable_staging(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A restart redelivery publishes only the staged file-state identity."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-publish-replay"
+    _init_repo(repo)
+    run_id = "file-state-publish-replay"
+    controller = await _seed_active_run(session_factory, run_id)
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory(BoundaryFixtureAgent()),
+        worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
+
+    await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
+    accepted = next(
+        event
+        for event in await _read_events(session_factory, run_id)
+        if event.event_type == "file_state_accepted"
+    )
+    git = accepted.payload["git"]
+    assert isinstance(git, dict)
+    ref, commit = str(git["ref"]), str(git["commit_sha"])
+    subprocess.run(["git", "update-ref", "-d", ref], cwd=repo, check=True, timeout=30)
+    assert not _ref_exists(repo, ref)
+
+    completed = await dispatcher.dispatch_pending(
+        run_id=run_id, allowed_kinds=frozenset({"snapshot_publish"})
+    )
+
+    assert [item.kind for item in completed] == ["snapshot_publish"]
+    assert _ref_exists(repo, ref)
+    assert (
+        subprocess.run(
+            ["git", "rev-parse", ref],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        ).stdout.strip()
+        == commit
+    )
+
+
+def test_file_state_prepare_before_staging_leaves_no_named_ref(tmp_path: Path) -> None:
+    """The prepare-to-stage crash point leaves only an unreachable Git object."""
+    repo = tmp_path / "repo-prepare-before-stage"
+    _init_repo(repo)
+    (repo / "ignored.log").write_text("boundary content\n")
+    boundary = capture_file_state_boundary(
+        worktree_path=repo,
+        run_id="prepare-before-stage",
+        node_id="worker-1",
+        execution_id="execution-1",
+        base_snapshot_id="base-snapshot",
+    )
+    prepared = prepare_snapshot(
+        repo,
+        "file-state submission prepared but not staged",
+        snapshot_id="a" * 64,
+        force_include_paths=list(boundary.force_include_paths),
+    )
+
+    # Simulate process death / append rejection before stage_runner_submission:
+    # no durable ownership command ran, so publication is prohibited.
+    assert not _ref_exists(repo, prepared.ref)
 
 
 @pytest.mark.asyncio
@@ -257,8 +344,13 @@ async def test_secret_file_state_rejection_releases_lease_and_retries_clean_atte
         event.event_type == "node_state_changed" and event.payload.get("new_state") == "completed"
         for event in events
     )
-    assert project_node_states(events)["worker-step-1-task-1"] == "ready"
-    assert not any(lease.get("state") == "active" for lease in project_leases(events).values())
+    assert project_node_states(events)["worker-step-1-task-1"] == "running"
+    await dispatcher.dispatch_pending(run_id=run_id, allowed_kinds=frozenset({"runner_recovery"}))
+    recovered_events = await _read_events(session_factory, run_id)
+    assert project_node_states(recovered_events)["worker-step-1-task-1"] == "ready"
+    assert not any(
+        lease.get("state") == "active" for lease in project_leases(recovered_events).values()
+    )
 
     await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
 
@@ -490,6 +582,18 @@ def _tree_paths(repo: Path, commit_sha: str) -> set[str]:
             capture_output=True,
             text=True,
         ).stdout.splitlines()
+    )
+
+
+def _ref_exists(repo: Path, ref: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", ref],
+            cwd=repo,
+            check=False,
+            timeout=30,
+        ).returncode
+        == 0
     )
 
 

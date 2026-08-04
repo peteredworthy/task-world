@@ -1,6 +1,7 @@
 """Run API endpoints."""
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -29,7 +30,7 @@ from orchestrator.api.deps import (
     get_workflow_service,
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
-from orchestrator.git import WorktreeResetError
+from orchestrator.git import BranchStatus, WorktreeResetError, dirty_paths
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.git import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
@@ -44,6 +45,7 @@ from orchestrator.api.schemas.runs import (
     InvalidEvidenceItem,
     MergeBackRequest,
     MergeBackResponse,
+    MergeDispositionSnapshot,
     MergeReadinessSnapshot,
     RecoverRequest,
     RecoverResponse,
@@ -78,6 +80,7 @@ from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import EventV2Model, RunRepository, create_wired_event_store_v2
 from orchestrator.db import SqliteEventStore
+from orchestrator.graph import EventEnvelope
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, graph_aggregate_id
 from orchestrator.db import commit_with_event_outbox
 from orchestrator.config import RoutineNotFoundError, discover_routines
@@ -88,6 +91,7 @@ from orchestrator.workflow import (
     InvalidTransitionError,
     PersistentEventEmitter,
     RecordStepHumanApprovalCommand,
+    RunMergeBackCompleted,
     handle_record_step_human_approval,
 )
 from orchestrator.runners import validate_codex_model_selection
@@ -96,6 +100,124 @@ from orchestrator.workflow.service import WorkflowService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+
+async def _merge_receipt_payload(
+    session: AsyncSession,
+    run_id: str,
+    *,
+    event_type: str,
+    commit_type: str | None = None,
+) -> dict[str, Any] | None:
+    """Return the newest durable receipt matching an event and optional commit type."""
+    statement = (
+        select(EventV2Model.payload)
+        .where(
+            EventV2Model.aggregate_id == run_id,
+            EventV2Model.event_type == event_type,
+        )
+        .order_by(EventV2Model.position.desc())
+    )
+    if commit_type is not None:
+        statement = statement.where(
+            func.json_extract(EventV2Model.payload, "$.commit_type") == commit_type
+        )
+    result = await session.execute(statement.limit(1))
+    payload = result.scalar_one_or_none()
+    if payload is None:
+        return None
+    decoded = json.loads(payload)
+    return cast(dict[str, Any], decoded) if isinstance(decoded, dict) else None
+
+
+def _resolve_merge_disposition(
+    *,
+    run_status: RunStatus,
+    ahead_count: int,
+    behind_count: int,
+    can_merge_cleanly: bool,
+    has_conflicts: bool,
+    dirty_paths_count: int,
+    finalization_receipt: dict[str, Any] | None,
+    merge_receipt: dict[str, Any] | None,
+) -> MergeDispositionSnapshot:
+    """Classify branch state without equating an empty diff to a completed merge."""
+    if merge_receipt is not None:
+        merge_commit = merge_receipt.get("merge_commit")
+        return MergeDispositionSnapshot(
+            status="merged",
+            reason="A durable merge-back receipt confirms this run was accepted into its source branch.",
+            merge_commit=merge_commit if isinstance(merge_commit, str) else None,
+        )
+    if run_status != RunStatus.COMPLETED:
+        return MergeDispositionSnapshot(
+            status="blocked",
+            reason=f"Run is {run_status.value}; only completed, finalized runs can be merged back.",
+        )
+    if finalization_receipt is None:
+        return MergeDispositionSnapshot(
+            status="unfinalized",
+            reason="Run completion has no durable finalization receipt, so merge-back is not safe.",
+        )
+    if dirty_paths_count:
+        return MergeDispositionSnapshot(
+            status="dirty",
+            reason=(
+                f"Run worktree has {dirty_paths_count} uncommitted change(s) after finalization; "
+                "finalize or discard them before merge-back."
+            ),
+        )
+    if has_conflicts or not can_merge_cleanly:
+        return MergeDispositionSnapshot(
+            status="blocked",
+            reason="Run branch cannot be merged cleanly into its source branch.",
+        )
+    if behind_count:
+        return MergeDispositionSnapshot(
+            status="blocked",
+            reason=f"Run branch is {behind_count} commit(s) behind its source branch.",
+        )
+    if ahead_count == 0:
+        return MergeDispositionSnapshot(
+            status="no_changes",
+            reason="Finalization is complete, but the run branch has no commits to merge back.",
+        )
+    return MergeDispositionSnapshot(
+        status="ready",
+        reason=f"Finalization is complete and {ahead_count} commit(s) are ready to merge back.",
+    )
+
+
+async def _get_merge_disposition(
+    session: AsyncSession,
+    *,
+    run: Run,
+    status: BranchStatus,
+) -> MergeDispositionSnapshot:
+    """Resolve a run's disposition from durable receipts plus current git state."""
+    finalization_receipt = await _merge_receipt_payload(
+        session,
+        run.id,
+        event_type="run_worktree_commit_completed",
+        commit_type="graph_run_finalization",
+    )
+    merge_receipt = await _merge_receipt_payload(
+        session,
+        run.id,
+        event_type="run_merge_back_completed",
+    )
+    uncommitted: set[str] = dirty_paths(run.worktree_path) if run.worktree_path else set()
+    return _resolve_merge_disposition(
+        run_status=run.status,
+        ahead_count=status.ahead_count,
+        behind_count=status.behind_count,
+        can_merge_cleanly=status.can_merge_cleanly,
+        has_conflicts=status.has_conflicts,
+        dirty_paths_count=len(uncommitted),
+        finalization_receipt=finalization_receipt,
+        merge_receipt=merge_receipt,
+    )
+
 
 ActivityPayloadMode = Literal["summary", "full"]
 DEFAULT_ACTIVITY_LIMIT = 50
@@ -621,14 +743,55 @@ async def get_run_evidence_digest(
 ) -> RunEvidenceDigestResponse:
     """Return a bounded digest for benchmarking and run-detail readback."""
     run = await service.get_run(run_id)
-    events = await graph_store.read_run(run_id)
+    # This endpoint is deliberately a read-model consumer: never read or
+    # decode a checkpoint, and never replay a run's event history here.
+    graph_position = await graph_store.current_position(run_id)
+    digest_read_model = await graph_store.read_evidence_digest_read_model(
+        run_id,
+        max_nodes=max_nodes,
+    )
+    evidence_by_node: dict[str, tuple[EventEnvelope, ...]] | None = None
+    associated_lease_ids_by_node: dict[str, frozenset[str]] | None = None
+    partial_evidence_node_ids: frozenset[str] = frozenset()
+    selected_node_ids = tuple(node.node_id for node in digest_read_model.node_summaries)
+    if selected_node_ids:
+        bounded_evidence = await graph_store.read_bounded_node_evidence(
+            run_id,
+            selected_node_ids,
+        )
+        evidence_by_node = bounded_evidence.events_by_node
+        associated_lease_ids_by_node = bounded_evidence.lease_ids_by_node
+        partial_evidence_node_ids = bounded_evidence.truncated_node_ids
     pending_actions = await service.get_pending_actions(run_id)
     return build_run_evidence_digest_response(
         run,
-        events,
+        [],
         pending_actions=pending_actions,
         max_nodes=max_nodes,
         include_node_evidence=include_node_evidence,
+        graph_event_count=graph_position,
+        evidence_by_node=evidence_by_node,
+        associated_lease_ids_by_node=associated_lease_ids_by_node,
+        partial_evidence_node_ids=partial_evidence_node_ids,
+        projection_available=False,
+        read_model_nodes=tuple(
+            {
+                "node_id": node.node_id,
+                "state": node.state,
+                "role": node.role,
+                "deferred_reason": node.deferred_reason,
+            }
+            for node in digest_read_model.node_summaries
+        ),
+        read_model_scheduler=(
+            digest_read_model.ready_count,
+            digest_read_model.blocked_count,
+            digest_read_model.waiting_resource_count,
+            digest_read_model.waiting_gate_count,
+            digest_read_model.active_lease_count,
+            digest_read_model.suspended_lease_count,
+        ),
+        read_model_blockers=digest_read_model.blockers,
     )
 
 
@@ -1262,6 +1425,7 @@ async def get_branch_status_endpoint(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> BranchStatusResponse:
     """Get branch status for a run (ahead/behind counts, merge-ability).
 
@@ -1287,6 +1451,7 @@ async def get_branch_status_endpoint(
     )
 
     status = get_branch_status(repo_path, run_branch, run.source_branch)
+    merge_disposition = await _get_merge_disposition(session, run=run, status=status)
 
     # Compute merge readiness snapshot
     blocking_reasons: list[str] = []
@@ -1313,6 +1478,7 @@ async def get_branch_status_endpoint(
             status=readiness_status,
             blocking_reasons=blocking_reasons,
         ),
+        merge_disposition=merge_disposition,
     )
 
 
@@ -1371,6 +1537,8 @@ async def merge_back_endpoint(
     config: Annotated[GlobalConfig, Depends(get_global_config)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
     test_runner: Annotated[TestRunner, Depends(get_test_runner)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
     request: MergeBackRequest | None = None,
 ) -> MergeBackResponse:
     """Merge run branch back into source branch.
@@ -1379,7 +1547,7 @@ async def merge_back_endpoint(
     returns 409 if any gate is unmet.
     """
     from orchestrator.api.routers.review import compute_readiness
-    from orchestrator.git import merge_back
+    from orchestrator.git import get_branch_status, merge_back
 
     run = await service.get_run(run_id)
 
@@ -1396,6 +1564,21 @@ async def merge_back_endpoint(
         )
 
     repo_path = config.paths.get_repos_path() / run.repo_name
+    run_branch = f"orchestrator/run-{run.id}"
+    branch_status = get_branch_status(repo_path, run_branch, run.source_branch)
+    merge_disposition = await _get_merge_disposition(
+        session,
+        run=run,
+        status=branch_status,
+    )
+    if merge_disposition.status != "ready":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Merge-back is not ready",
+                "merge_disposition": merge_disposition.model_dump(),
+            },
+        )
 
     # Pre-flight readiness check — only hard-block on "fail" gates.
     # "pending" gates (e.g. no test run recorded) are warnings, not blockers.
@@ -1412,8 +1595,6 @@ async def merge_back_endpoint(
 
     strategy = (request.strategy if request and request.strategy else None) or run.merge_strategy
     dirty_action = request.dirty_action if request else None
-    run_branch = f"orchestrator/run-{run.id}"
-
     worktree_path = Path(run.worktree_path) if run.worktree_path else None
     sha = merge_back(
         repo_path,
@@ -1423,6 +1604,17 @@ async def merge_back_endpoint(
         worktree_path=worktree_path,
         dirty_action=dirty_action,
     )
+    await emitter.emit(
+        RunMergeBackCompleted(
+            timestamp=datetime.now(timezone.utc),
+            run_id=run_id,
+            source_branch=run.source_branch,
+            run_branch=run_branch,
+            merge_commit=sha,
+            strategy=strategy,
+        )
+    )
+    await commit_with_event_outbox(session)
 
     return MergeBackResponse(
         merge_commit=sha,

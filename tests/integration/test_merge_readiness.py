@@ -25,8 +25,9 @@ import pytest
 from httpx import AsyncClient
 
 from orchestrator.config import RunStatus
-from orchestrator.db import RunRepository
+from orchestrator.db import RunRepository, commit_with_event_outbox, create_wired_event_store_v2
 from orchestrator.db.access.mutations import save_run
+from orchestrator.workflow import PersistentEventEmitter, RunWorktreeCommitCompleted
 from tests.integration.git_helpers import _commit_file, _git
 from tests.integration.signal_helpers import DrainFn
 
@@ -76,14 +77,28 @@ async def _create_and_start_run(
     return data
 
 
-async def _mark_run_completed(app: Any, run_id: str) -> None:
+async def _mark_run_completed(app: Any, run_id: str, *, finalized: bool = False) -> None:
     """Directly mark a run as COMPLETED in the database for testing."""
     async with app.state.session_factory() as session:
         repo = RunRepository(session)
         run = await repo.get(run_id)
         run.status = RunStatus.COMPLETED
         await save_run(repo.session, run)
-        await session.commit()
+        if finalized:
+            emitter = PersistentEventEmitter(create_wired_event_store_v2(session))
+            await emitter.emit(
+                RunWorktreeCommitCompleted(
+                    run_id=run_id,
+                    task_id="__run_finalization__",
+                    worktree_path=run.worktree_path or "",
+                    commit_type="graph_run_finalization",
+                    message="Finalize graph run for merge disposition test",
+                    created_commit=False,
+                )
+            )
+            await commit_with_event_outbox(session)
+        else:
+            await session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +184,7 @@ async def test_readiness_gates_through_conflict_lifecycle(
     assert data["ready"] is False
 
     # Even as COMPLETED, merge-back is blocked because a gate fails
-    await _mark_run_completed(app, run_id)
+    await _mark_run_completed(app, run_id, finalized=True)
 
     resp = await client.post(
         f"/api/runs/{run_id}/merge-back",
@@ -177,8 +192,54 @@ async def test_readiness_gates_through_conflict_lifecycle(
     )
     assert resp.status_code == 409
     detail = resp.json()["detail"]
-    # Response should contain gate failure information
-    assert "gates" in detail or "gate" in str(detail).lower() or "conflicts" in str(detail).lower()
+    # A truthful branch disposition explains the concrete blocking condition.
+    assert detail["merge_disposition"]["status"] in {"dirty", "blocked"}
+
+
+async def test_branch_status_reports_each_truthful_merge_disposition(
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
+) -> None:
+    """A zero-ahead branch is not called merged without a durable merge receipt."""
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
+    run_id = run_data["id"]
+    worktree_path = Path(run_data["worktree_path"])
+
+    async def disposition() -> dict[str, Any]:
+        response = await client.get(f"/api/runs/{run_id}/branch-status")
+        assert response.status_code == 200
+        return response.json()["merge_disposition"]
+
+    blocked = await disposition()
+    assert blocked["status"] == "blocked"
+    assert "active" in blocked["reason"]
+
+    await _mark_run_completed(app, run_id)
+    unfinalized = await disposition()
+    assert unfinalized["status"] == "unfinalized"
+
+    await _mark_run_completed(app, run_id, finalized=True)
+    no_changes = await disposition()
+    assert no_changes["status"] == "no_changes"
+    assert "no commits" in no_changes["reason"]
+
+    _commit_file(worktree_path, "ready.py", "ready = True\n", "Create mergeable run change")
+    ready = await disposition()
+    assert ready["status"] == "ready"
+
+    dirty_path = worktree_path / "ready.py"
+    dirty_path.write_text("ready = False\n")
+    dirty = await disposition()
+    assert dirty["status"] == "dirty"
+
+    dirty_path.write_text("ready = True\n")
+    assert (await disposition())["status"] == "ready"
+
+    merged = await client.post(f"/api/runs/{run_id}/merge-back", json={"strategy": "squash"})
+    assert merged.status_code == 200
+    merged_disposition = await disposition()
+    assert merged_disposition["status"] == "merged"
+    assert merged_disposition["merge_commit"] == merged.json()["merge_commit"]
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +261,7 @@ async def test_merge_back_with_strategy_squash(
     _commit_file(worktree_path, "file_b.py", "b = 2\n", "Add file_b.py")
     _commit_file(worktree_path, "file_c.py", "c = 3\n", "Add file_c.py")
 
-    await _mark_run_completed(app, run_id)
+    await _mark_run_completed(app, run_id, finalized=True)
 
     resp = await client.post(
         f"/api/runs/{run_id}/merge-back",
@@ -210,6 +271,12 @@ async def test_merge_back_with_strategy_squash(
     data = resp.json()
     assert data["strategy"] == "squash"
     assert data["merge_commit"] is not None
+
+    disposition = (await client.get(f"/api/runs/{run_id}/branch-status")).json()[
+        "merge_disposition"
+    ]
+    assert disposition["status"] == "merged"
+    assert disposition["merge_commit"] == data["merge_commit"]
 
     # Squash: source branch should have only initial + 1 squash commit
     log = _git(["log", "--oneline"], cwd=repo)
@@ -230,7 +297,7 @@ async def test_merge_back_with_strategy_merge(
     _commit_file(worktree_path, "feat_x.py", "x = 10\n", "Add feat_x.py")
     _commit_file(worktree_path, "feat_y.py", "y = 20\n", "Add feat_y.py")
 
-    await _mark_run_completed(app, run_id)
+    await _mark_run_completed(app, run_id, finalized=True)
 
     resp = await client.post(
         f"/api/runs/{run_id}/merge-back",

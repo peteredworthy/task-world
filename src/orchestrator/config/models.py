@@ -1,12 +1,13 @@
 """Pydantic configuration models for routines, steps, and tasks."""
 
 import logging
+import posixpath
 import re
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from orchestrator.config.enums import (
     Complexity,
@@ -246,9 +247,36 @@ class TaskConfig(BaseModel):
     verifier: VerifierConfig = Field(default_factory=VerifierConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     artifacts: list[ArtifactSpec] = Field(default_factory=lambda: [])
+    implementation_paths: list[str] = Field(default_factory=lambda: [])
     context_from: list[ContextSource] = Field(default_factory=lambda: [])
     fan_out: FanOutConfig | None = None
     script: str | None = None
+
+    @field_validator("implementation_paths")
+    @classmethod
+    def _validate_implementation_paths(cls, paths: list[str]) -> list[str]:
+        """Keep lease-authority paths constrained to this repository."""
+        normalized_paths: list[str] = []
+        for index, path in enumerate(paths):
+            if not path.strip():
+                raise ValueError(f"implementation_paths[{index}] must not be empty or whitespace")
+            if any(ord(character) < 32 for character in path):
+                raise ValueError(
+                    f"implementation_paths[{index}] must not contain control characters"
+                )
+            normalized = posixpath.normpath(path.strip().replace("\\", "/"))
+            if (
+                normalized.startswith("/")
+                or re.match(r"^[A-Za-z]:", normalized) is not None
+                or normalized in {".", ".."}
+                or normalized.startswith("../")
+            ):
+                raise ValueError(
+                    f"implementation_paths[{index}] must be a non-empty repo-relative path"
+                )
+            if normalized not in normalized_paths:
+                normalized_paths.append(normalized)
+        return normalized_paths
 
     @model_validator(mode="after")
     def _validate_task_config(self) -> "TaskConfig":
@@ -505,6 +533,85 @@ class RoutineInputConfig(BaseModel):
     description: str | None = None
 
 
+_FILE_STATE_CLASSIFICATIONS = {
+    "declared",
+    "tool_cache",
+    "build_output",
+    "test_artifact",
+    "secret",
+    "external_artifact",
+}
+
+
+def _empty_file_state_source_kinds() -> list[Literal["tracked", "untracked", "ignored"]]:
+    return []
+
+
+def _empty_file_state_declarations() -> list["FileStateDeclarationConfig"]:
+    return []
+
+
+def _canonical_file_state_pattern(value: str) -> str:
+    from orchestrator.graph import canonical_authority_pattern
+
+    return canonical_authority_pattern(value)
+
+
+class FileStateDeclarationConfig(BaseModel):
+    """A routine-owned classification declaration used for cache authority."""
+
+    model_config = {"extra": "forbid", "strict": True}
+    pattern: str
+    classification: Literal[
+        "declared", "tool_cache", "build_output", "test_artifact", "secret", "external_artifact"
+    ]
+    source_kinds: list[Literal["tracked", "untracked", "ignored"]] = Field(
+        default_factory=_empty_file_state_source_kinds
+    )
+    rule: str | None = None
+    origin: str | None = None
+    retention: str | None = None
+
+    @field_validator("pattern")
+    @classmethod
+    def _validate_pattern(cls, value: str) -> str:
+        return _canonical_file_state_pattern(value)
+
+    @model_validator(mode="after")
+    def _validate_tool_cache_sources(self) -> "FileStateDeclarationConfig":
+        if self.classification == "tool_cache" and (
+            not self.source_kinds
+            or any(kind not in {"untracked", "ignored"} for kind in self.source_kinds)
+        ):
+            raise ValueError(
+                "tool_cache declarations require only untracked and/or ignored source_kinds"
+            )
+        self.source_kinds = sorted(set(self.source_kinds))
+        return self
+
+
+class CacheScanBudgetConfig(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    max_entries: int = Field(default=10_000, ge=1)
+    max_bytes: int = Field(default=1_073_741_824, ge=1)
+
+
+class FileStatePolicyConfig(BaseModel):
+    model_config = {"extra": "forbid", "strict": True}
+    declarations: list[FileStateDeclarationConfig] = Field(
+        default_factory=_empty_file_state_declarations
+    )
+    scan_budget: CacheScanBudgetConfig = Field(default_factory=CacheScanBudgetConfig)
+
+    @model_validator(mode="after")
+    def _unique_patterns(self) -> "FileStatePolicyConfig":
+        patterns = [declaration.pattern for declaration in self.declarations]
+        if len(set(patterns)) != len(patterns):
+            raise ValueError("file_state_policy declarations must not repeat patterns")
+        self.declarations = sorted(self.declarations, key=lambda declaration: declaration.pattern)
+        return self
+
+
 class RoutineConfig(BaseModel):
     """A complete routine definition."""
 
@@ -520,6 +627,7 @@ class RoutineConfig(BaseModel):
     clarifications: ClarificationsConfig | None = None
     strict_validation: bool = False
     planner_generation_budget: int = Field(default=8, ge=0)
+    file_state_policy: FileStatePolicyConfig | None = None
 
     @model_validator(mode="before")
     @classmethod

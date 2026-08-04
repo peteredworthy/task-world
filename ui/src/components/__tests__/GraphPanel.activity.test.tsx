@@ -286,8 +286,14 @@ function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
   queryClient.setQueryData(['graphProjection', run.id], projection);
   queryClient.setQueryData(['graphScheduler', run.id], schedulerView);
   queryClient.setQueryData(['graphDecisions', run.id], decisionView);
-  queryClient.setQueryData(['graphFileState', run.id], makeFileStateReport(run.id));
-  queryClient.setQueryData(['graphEvents', run.id, undefined], graphEvents);
+  queryClient.setQueryData(['graphFileState', run.id], {
+    pages: [makeFileStateReport(run.id)],
+    pageParams: [0],
+  });
+  queryClient.setQueryData(['graphEvents', run.id, 0, 50, 'summary'], {
+    pages: [{ events: graphEvents, has_more: false, next_position: null }],
+    pageParams: [0],
+  });
   queryClient.setQueryData(['graphNodeDetail', run.id, 'worker-1'], makeNodeDetail(run.id));
 
   return render(
@@ -364,6 +370,11 @@ function makeFileStateReport(runId: string): FileStateReportResponse {
   return {
     run_id: runId,
     event_count: 4,
+    from_position: 0,
+    has_more: false,
+    next_position: null,
+    path_limit: 50,
+    gatekeeper_scope: 'page',
     gatekeeper: {
       gatekeeper_resolved: 1,
       unresolved_residue: 0,
@@ -401,6 +412,8 @@ function makeFileStateReport(runId: string): FileStateReportResponse {
                 needs_gatekeeper: false,
               },
             ],
+            captured_source_entries_total: 2,
+            captured_paths_truncated: false,
             rejected_paths: [
               {
                 path: 'tmp/cache.bin',
@@ -411,6 +424,8 @@ function makeFileStateReport(runId: string): FileStateReportResponse {
                 needs_gatekeeper: false,
               },
             ],
+            rejected_source_entries_total: 1,
+            rejected_paths_truncated: false,
             gatekeeper_verdicts: [
               {
                 path: 'reports/result.xml',
@@ -421,11 +436,14 @@ function makeFileStateReport(runId: string): FileStateReportResponse {
                 model_id: 'fake-small-model',
               },
             ],
+            gatekeeper_verdicts_total: 1,
+            gatekeeper_verdicts_truncated: false,
             diff_summary: {
               files_changed: 2,
               additions: 7,
               deletions: 1,
             },
+            diff_summary_available: true,
           },
         ],
       },

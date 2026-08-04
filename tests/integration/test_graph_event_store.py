@@ -13,6 +13,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import (
     EventV2Model,
     GraphProjectionSnapshotModel,
+    SqliteEventStore,
     create_engine,
     create_session_factory,
     init_db,
@@ -26,7 +27,10 @@ from orchestrator.graph import (
     PatchCommandContext,
     SequentialIdGenerator,
     initial_projection,
+    build_projection,
+    projection_from_checkpoint,
     projection_to_checkpoint,
+    project_final_invariant_blockers,
     reduce_event,
 )
 from orchestrator.graph_runtime import (
@@ -87,6 +91,225 @@ def _rebuild_projection(events: list[EventEnvelope]) -> dict[str, Any]:
     for event in events:
         projection = reduce_event(projection, event)
     return projection
+
+
+OID = "a" * 40
+
+
+def _managed_cleanup_history(run_id: str, *, recovery: bool) -> list[EventEnvelope]:
+    """Build valid boundary facts and managed cleanup facts for replay parity."""
+    from orchestrator.graph import boundary_manifest_hash, recovery_proof_hash
+
+    entries: list[dict[str, str]] = []
+    empty_hash = boundary_manifest_hash(OID, entries)
+
+    def event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+        return _event(f"{run_id}-{len(events) + 1}", run_id, event_type, payload)
+
+    events: list[EventEnvelope] = []
+    events.extend(
+        [
+            event("node_created", {"node_id": "node", "kind": "worker", "state": "running"}),
+            event(
+                "lease_granted",
+                {
+                    "lease_id": "lease",
+                    "node_id": "node",
+                    "generation": 1,
+                    "execution_id": "exec",
+                    "base_snapshot_id": "baseline",
+                },
+            ),
+        ]
+    )
+    events.extend(
+        [
+            event(
+                "runner_baseline_recorded",
+                {
+                    "execution_id": "exec",
+                    "node_id": "node",
+                    "lease_id": "lease",
+                    "lease_generation": 1,
+                    "baseline_snapshot_id": "baseline",
+                    "baseline_snapshot_ref": "refs/orchestrator/snapshots/baseline",
+                    "baseline_commit_sha": OID,
+                    "baseline_tree_sha": OID,
+                    "entries": entries,
+                    "boundary_hash": empty_hash,
+                    "cache_roots": [],
+                },
+            ),
+            event(
+                "runner_submission_staged",
+                {
+                    "execution_id": "exec",
+                    "node_id": "node",
+                    "lease_id": "lease",
+                    "lease_generation": 1,
+                    "idempotency_key": "key",
+                    "payload": {},
+                    "payload_hash": "sha256:" + "b" * 64,
+                    "staged_snapshot_id": "staged",
+                    "staged_snapshot_ref": "refs/orchestrator/snapshots/staged",
+                    "staged_commit_sha": OID,
+                    "staged_tree_sha": OID,
+                    "boundary_hash": empty_hash,
+                    "boundary_entries": entries,
+                    "base_snapshot_id": "baseline",
+                    "observed_graph_position": 1,
+                    "is_mutating": False,
+                    "complete_node": False,
+                    "new_state": "completed",
+                },
+            ),
+        ]
+    )
+    if recovery:
+        changed_entries = [
+            {
+                "path": "created.txt",
+                "kind": "untracked",
+                "status": "created",
+                "fingerprint": "sha256:" + "c" * 64,
+                "file_type": "file",
+            }
+        ]
+        changed_hash = boundary_manifest_hash(OID, changed_entries)
+        recovery_id = "recovery:exec:boundary_mismatch"
+        events.extend(
+            [
+                event(
+                    "runner_boundary_mismatch",
+                    {
+                        "execution_id": "exec",
+                        "node_id": "node",
+                        "lease_id": "lease",
+                        "lease_generation": 1,
+                        "staged_boundary_hash": empty_hash,
+                        "final_boundary_hash": changed_hash,
+                        "final_snapshot_id": "final",
+                        "final_snapshot_ref": "refs/orchestrator/snapshots/final",
+                        "final_commit_sha": OID,
+                        "final_tree_sha": OID,
+                        "final_boundary_entries": changed_entries,
+                        "reason": "boundary_mismatch",
+                    },
+                ),
+                event(
+                    "runner_recovery_requested",
+                    {
+                        "execution_id": "exec",
+                        "recovery_id": recovery_id,
+                        "node_id": "node",
+                        "lease_id": "lease",
+                        "lease_generation": 1,
+                        "reason": "boundary_mismatch",
+                        "max_attempts": 2,
+                        "recovery_snapshot_id": "recovery",
+                        "recovery_snapshot_ref": "refs/orchestrator/snapshots/recovery",
+                        "recovery_commit_sha": OID,
+                        "baseline_snapshot_id": "baseline",
+                        "baseline_tree_sha": OID,
+                        "final_tree_sha": OID,
+                        "final_snapshot_id": "final",
+                        "final_snapshot_ref": "refs/orchestrator/snapshots/final",
+                        "final_commit_sha": OID,
+                        "final_boundary_hash": changed_hash,
+                        "final_boundary_entries": changed_entries,
+                        "paths": ["created.txt"],
+                    },
+                ),
+                event(
+                    "runner_recovery_completed",
+                    {
+                        "execution_id": "exec",
+                        "recovery_id": recovery_id,
+                        "node_id": "node",
+                        "lease_id": "lease",
+                        "lease_generation": 1,
+                        "baseline_snapshot_id": "baseline",
+                        "baseline_tree_sha": OID,
+                        "requested_paths": ["created.txt"],
+                        "proof_hash": recovery_proof_hash(
+                            execution_id="exec",
+                            recovery_id=recovery_id,
+                            node_id="node",
+                            lease_id="lease",
+                            lease_generation=1,
+                            baseline_snapshot_id="baseline",
+                            baseline_tree_sha=OID,
+                            requested_paths=("created.txt",),
+                            restored_paths=(),
+                            removed_paths=("created.txt",),
+                        ),
+                        "restored_paths": [],
+                        "removed_paths": ["created.txt"],
+                    },
+                ),
+            ]
+        )
+        roles = ("baseline", "staged", "final", "recovery")
+    else:
+        events.append(
+            event(
+                "runner_execution_finalized",
+                {
+                    "execution_id": "exec",
+                    "node_id": "node",
+                    "lease_id": "lease",
+                    "lease_generation": 1,
+                    "final_snapshot_id": "final",
+                    "final_snapshot_ref": "refs/orchestrator/snapshots/final",
+                    "final_commit_sha": OID,
+                    "final_tree_sha": OID,
+                    "boundary_hash": empty_hash,
+                    "boundary_entries": entries,
+                },
+            )
+        )
+        roles = ("baseline", "staged", "final")
+    for role in roles:
+        snapshot_id = role
+        events.append(
+            event(
+                "cleanup_requested",
+                {
+                    "cleanup_id": f"runner-snapshot:exec:{role}",
+                    "snapshot_id": snapshot_id,
+                    "snapshot_ref": f"refs/orchestrator/snapshots/{snapshot_id}",
+                    "tree_sha": OID,
+                    "commit_sha": OID,
+                    "node_id": "node",
+                    "lease_id": "lease",
+                    "lease_generation": 1,
+                    "snapshot_role": role,
+                    "execution_id": "exec",
+                    "reason": "managed_runner_boundary_no_longer_needed",
+                },
+            )
+        )
+    for role in roles:
+        snapshot_id = role
+        events.append(
+            event(
+                "cleanup_applied",
+                {
+                    "cleanup_id": f"runner-snapshot:exec:{role}",
+                    "old_snapshot_id": snapshot_id,
+                    "snapshot_ref": f"refs/orchestrator/snapshots/{snapshot_id}",
+                    "tree_sha": OID,
+                    "commit_sha": OID,
+                    "node_id": "node",
+                    "lease_id": "lease",
+                    "lease_generation": 1,
+                    "snapshot_role": role,
+                    "execution_id": "exec",
+                    "deleted_snapshot_ref": True,
+                },
+            )
+        )
+    return events
 
 
 @pytest.mark.asyncio
@@ -189,6 +412,128 @@ async def test_compact_readers_filter_union_fields_by_event_type_and_mode(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "recovery", [False, True], ids=["successful-finalization", "mismatch-recovery"]
+)
+async def test_full_and_projection_retained_codec_replay_match_cleanup_histories(
+    session_factory: async_sessionmaker[AsyncSession], recovery: bool
+) -> None:
+    run_id = f"cleanup-replay-{recovery}"
+    events = _managed_cleanup_history(run_id, recovery=recovery)
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        full_events = await store.read_run(run_id)
+        retained_events = await store.read_run_projection(run_id)
+
+    full_projection = build_projection(full_events)
+    retained_projection = build_projection(retained_events)
+    assert retained_projection == full_projection, (
+        full_projection.execution.attempts_by_execution_id["exec"].model_dump(mode="json"),
+        retained_projection.execution.attempts_by_execution_id["exec"].model_dump(mode="json"),
+    )
+    assert (
+        projection_from_checkpoint(projection_to_checkpoint(retained_projection)) == full_projection
+    )
+
+    requested = [event for event in retained_events if event.event_type == "cleanup_requested"]
+    applied = [event for event in retained_events if event.event_type == "cleanup_applied"]
+    assert len(requested) == (4 if recovery else 3)
+    assert len(applied) == len(requested)
+    assert all(
+        {"snapshot_ref", "tree_sha", "commit_sha", "snapshot_role"}.issubset(event.payload)
+        for event in requested
+    )
+    assert all(
+        {"snapshot_ref", "tree_sha", "commit_sha", "snapshot_role"}.issubset(event.payload)
+        for event in applied
+    )
+
+
+@pytest.mark.asyncio
+async def test_managed_cleanup_activity_is_redacted_and_bounded_but_projection_is_complete(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "cleanup-activity-redaction"
+    events = _managed_cleanup_history(run_id, recovery=False)
+    long_reason = "sensitive-reason-" + "x" * 500
+    events = [
+        event.model_copy(update={"payload": {**event.payload, "reason": long_reason}})
+        if event.event_type in {"cleanup_requested", "cleanup_applied"}
+        else event
+        for event in events
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+        activity = await SqliteEventStore(session).get_events_paginated(run_id)
+        projection_events = await GraphEventStore(session).read_run_projection(run_id)
+
+    cleanup_activity = [
+        row for row in activity if row["event_type"] in {"cleanup_requested", "cleanup_applied"}
+    ]
+    assert len(cleanup_activity) == 6
+    for row in cleanup_activity:
+        payload = row["payload"]
+        assert len(str(payload["reason"])) <= 128
+        assert not {"snapshot_ref", "tree_sha", "commit_sha"}.intersection(payload)
+        assert payload["cleanup_id"].startswith("runner-snapshot:exec:")
+    retained_cleanup = [
+        event for event in projection_events if event.event_type == "cleanup_requested"
+    ]
+    assert retained_cleanup
+    assert retained_cleanup[0].payload["reason"] == long_reason
+    assert {
+        "snapshot_ref",
+        "tree_sha",
+        "commit_sha",
+        "snapshot_role",
+        "lease_id",
+    }.issubset(retained_cleanup[0].payload)
+
+
+@pytest.mark.asyncio
+async def test_pending_cleanup_blocker_survives_sql_retained_and_codec_replay(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "cleanup-pending-replay"
+    history = _managed_cleanup_history(run_id, recovery=False)
+    pending_history = [event for event in history if event.event_type != "cleanup_applied"]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, pending_history)
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        full_events = await store.read_run(run_id)
+        retained_events = await store.read_run_projection(run_id)
+
+    full_projection = build_projection(full_events)
+    retained_projection = build_projection(retained_events)
+    full_blockers = project_final_invariant_blockers(full_events, projection=full_projection)
+    cleanup_blockers = [
+        item for item in full_blockers if item["kind"] == "pending_managed_snapshot_cleanup"
+    ]
+    assert [item["kind"] for item in cleanup_blockers] == [
+        "pending_managed_snapshot_cleanup",
+        "pending_managed_snapshot_cleanup",
+        "pending_managed_snapshot_cleanup",
+    ]
+    assert (
+        project_final_invariant_blockers(retained_events, projection=retained_projection)
+        == full_blockers
+    )
+    codec_projection = projection_from_checkpoint(projection_to_checkpoint(retained_projection))
+    assert (
+        project_final_invariant_blockers(retained_events, projection=codec_projection)
+        == full_blockers
+    )
+
+
+@pytest.mark.asyncio
 async def test_projection_snapshot_tail_matches_full_rebuild(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -209,7 +554,7 @@ async def test_projection_snapshot_tail_matches_full_rebuild(
 
     async with session_factory() as session:
         store = GraphEventStore(session)
-        events = await store.read_run(run_id)
+        events = await store.read_run_projection(run_id)
         checkpoint = await store.read_projection_checkpoint(run_id)
 
     assert checkpoint is not None
@@ -436,7 +781,7 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
 
     async with session_factory() as session:
         store = GraphEventStore(session)
-        events = await store.read_run(run_id)
+        events = await store.read_run_projection(run_id)
         checkpoint = await store.read_projection_checkpoint(run_id)
 
     assert checkpoint is not None
@@ -486,7 +831,7 @@ async def test_append_invalidates_legacy_v12_flat_projection_snapshot(
 
     async with session_factory() as session:
         store = GraphEventStore(session)
-        events = await store.read_run(run_id)
+        events = await store.read_run_projection(run_id)
         checkpoint = await store.read_projection_checkpoint(run_id)
 
     assert [event.event_id for event in events] == ["evt-seed", "evt-appended"]
@@ -540,7 +885,7 @@ async def test_append_invalidates_current_malformed_projection_snapshot(
 
     async with session_factory() as session:
         store = GraphEventStore(session)
-        events = await store.read_run(run_id)
+        events = await store.read_run_projection(run_id)
         checkpoint = await store.read_projection_checkpoint(run_id)
 
     assert [event.event_id for event in events] == ["evt-seed", "evt-appended"]
@@ -588,7 +933,7 @@ async def test_current_projection_snapshot_with_invalid_integrity_is_rebuilt(
 
     async with session_factory() as session:
         store = GraphEventStore(session)
-        events = await store.read_run(run_id)
+        events = await store.read_run_projection(run_id)
         repaired = await store.read_projection_checkpoint(run_id)
 
     assert repaired is not None
@@ -600,7 +945,7 @@ async def test_current_partial_projection_checkpoint_is_rebuilt_and_rewritten(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-snapshot-partial-rebuild"
-    assert PROJECTION_SCHEMA_VERSION == 13
+    assert PROJECTION_SCHEMA_VERSION == 14
     clock = FakeClock()
     ids = SequentialIdGenerator()
     controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
@@ -632,7 +977,7 @@ async def test_current_partial_projection_checkpoint_is_rebuilt_and_rewritten(
     async with session_factory() as session:
         store = GraphEventStore(session)
         snapshot = await store.read_projection_snapshot(run_id)
-        events = await store.read_run(run_id)
+        events = await store.read_run_projection(run_id)
         rebuilt = await store.read_projection_checkpoint(run_id)
 
     assert snapshot is not None
@@ -1445,6 +1790,39 @@ async def test_read_from_offset(session_factory: async_sessionmaker[AsyncSession
 
 
 @pytest.mark.asyncio
+async def test_read_run_applies_limit_before_payload_materialization(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-limited-materialization"
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(
+                run_id,
+                0,
+                [
+                    _event(
+                        f"evt-limited-{position}",
+                        run_id,
+                        "node_created",
+                        {"node_id": f"n{position}"},
+                    )
+                    for position in range(1, 4)
+                ],
+            )
+            await session.execute(
+                update(EventV2Model)
+                .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+                .where(EventV2Model.version == 3)
+                .values(payload="not-json")
+            )
+
+    async with session_factory() as session:
+        events = await GraphEventStore(session).read_run(run_id, limit=2)
+
+    assert [event.position for event in events] == [1, 2]
+
+
+@pytest.mark.asyncio
 async def test_read_run_summaries_avoids_heavy_payload_materialization(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -1518,20 +1896,28 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
         "evt-summary-2",
         "evt-summary-3",
     ]
-    assert summaries[0].payload == {
+    summary_payloads: list[dict[str, Any]] = []
+    for summary in summaries:
+        payload = dict(summary.payload)
+        contract = payload.pop("_graph_read_contract")
+        assert contract["owner"] == "events_summary"
+        assert contract["truncated"] is False
+        summary_payloads.append(payload)
+    assert summary_payloads[0] == {
         "execution_id": "execution-1",
         "lease_generation": 1,
         "lease_id": "lease-1",
         "node_id": "worker-1",
         "reason": "accepted",
     }
-    assert summaries[1].payload == {
+    assert summary_payloads[1] == {
         "kind": "worker",
         "node_id": "worker-1",
         "state": "planned",
     }
-    assert summaries[2].payload == {
+    assert summary_payloads[2] == {
         "outcome": "passed",
+        "candidate_id": "candidate-1",
         "port": "verification_report",
         "producer_node_id": "verifier-1",
         "record_id": "verification-1",
@@ -1684,12 +2070,14 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
     assert events[1].payload == {
         "candidate_id": "candidate-1",
         "attempt_number": 1,
+        "graph_position": 2,
         "port": "candidate",
         "producer_node_id": "worker-1",
         "record_id": "candidate-1",
         "record_kind": "output",
         "record_type": "candidate",
         "schema": "ImplementationCandidate",
+        "run_id": "store-light",
         "task_region_id": "step/task",
     }
     assert events[2].payload == {
@@ -1721,6 +2109,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "attempt_number": 0,
         "candidate_id": "candidate-check-1",
         "classification": "passed",
+        "graph_position": 6,
         "port": "check_result",
         "producer_node_id": "check-1",
         "record_id": "check-result-1",
@@ -1729,6 +2118,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "schema": "CheckResult",
         "status": "passed",
         "task_region_id": "step/task",
+        "run_id": "store-light",
     }
     assert all("value" not in event.payload for event in events)
     assert all("payload" not in event.payload for event in events)

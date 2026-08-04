@@ -66,4 +66,35 @@ describe('BranchStatusPanel', () => {
 
     expect(screen.getByText('Merge conflicts detected. Resolve conflicts before pulling upstream changes.')).toBeInTheDocument();
   });
+
+  it('renders the explicit merge disposition instead of inferring it from commit counts', () => {
+    vi.spyOn(apiHooks, 'useBranchStatus').mockReturnValue({
+      data: {
+        source_branch: 'main',
+        run_branch: 'orchestrator/run-123',
+        behind_count: 0,
+        ahead_count: 0,
+        can_merge_cleanly: true,
+        has_conflicts: false,
+        merge_disposition: {
+          status: 'no_changes',
+          reason: 'Finalization is complete, but the run branch has no commits to merge back.',
+          merge_commit: null,
+        },
+      },
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    } as any);
+    vi.spyOn(apiHooks, 'useBackMerge').mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as any);
+
+    render(<BranchStatusPanel runId="run-1" />);
+
+    expect(screen.getByText('Merge disposition: no changes')).toBeInTheDocument();
+    expect(screen.getByText('Finalization is complete, but the run branch has no commits to merge back.')).toBeInTheDocument();
+  });
 });

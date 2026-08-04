@@ -423,12 +423,14 @@ def make_graph_runner(
     the ``http://localhost:8000`` fallback, since worktree/dev instances
     commonly listen on other ports.
     """
+    from orchestrator.graph_runtime import RunnerOwnedProcessRegistry
     from orchestrator.runners import OutputBatcher
 
     output_batcher = OutputBatcher(
         session_factory=session_factory,
         connection_manager=connection_manager,
     )
+    process_registry = RunnerOwnedProcessRegistry()
 
     async def on_agent_output(context: "GraphDispatchContext", lines: list[str]) -> None:
         task_id = str(
@@ -451,6 +453,7 @@ def make_graph_runner(
             service_factory,
             on_agent_output=on_agent_output,
             artifact_stores=artifact_stores,
+            process_registry=process_registry,
             journal_max_bytes=journal_max_bytes,
             runtime_builder=partial(
                 build_graph_runtime,

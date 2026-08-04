@@ -40,6 +40,35 @@ npm run dev   # starts on port 5173
 
 ---
 
+## Cache-authority routine binding
+
+Graph routines may declare `file_state_policy` with bounded `declarations` and
+`scan_budget` (`max_entries`, `max_bytes`). Compilation canonicalizes this
+policy, stores its versioned preimage and SHA-256 digest only in the routine snapshot,
+and copies the digest to every node, lease, and dispatch intent. Runtime
+dispatch verifies all copies against the projected snapshot before it accesses
+the worktree. Pattern-library learning remains classification-only and cannot
+alter this compiled authority. The format is exhaustive: all of version,
+preimage, and hash absent is legacy; all present with version
+`cache-authority-v1` and a verified digest is new-format; every partial or
+unknown-version combination is rejected. V1 built-in tool-cache and secret
+detector fields are frozen constants, while routine configuration can supply
+only custom declarations and scan budgets. Runtime materializes boundary
+policy from the verified snapshot, never from mutable defaults. Older facts
+with all three fields absent resolve to `LEGACY_CACHE_AUTHORITY_V1`.
+
+Runner snapshot boundaries persist `RunnerCacheRoot` objects (`path` plus
+`untracked` or `ignored` source kind), not bare path strings. Roots are sorted,
+non-overlapping concrete first ancestors derived from actual worktree status;
+tracked paths, source-kind mismatches, learned patterns, and broad arbitrary
+paths cannot authorize omission. Baseline, staged, final, and recovery-observed
+sets remain separately attributable on an execution attempt and recovery uses
+their validated union. Hashless string roots are replay-only legacy evidence:
+they are grandfathered for their existing attempt under the frozen legacy
+policy, while new root facts must be typed and policy-authorized.
+
+---
+
 ## Directory Map
 
 ```
@@ -696,6 +725,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | POST | `/api/runs/{id}/resume` | Resume run |
 | POST | `/api/runs/{id}/cancel` | Cancel run |
 | GET | `/api/runs/{id}/evidence` | Return structured `run.evidence.v1` bundles from the run worktree |
+| GET | `/api/runs/{id}/evidence-digest?max_nodes=3&include_node_evidence=true` | Bounded run digest from normalized graph read models; it never decodes a projection checkpoint or replays history. `graph_facts_status=partial` identifies facts unavailable from the compact model; per-node `evidence_status=partial` means the fixed evidence window omitted additional facts. |
 | GET | `/api/runs/{id}/trace` | Run trace data with attempts, phases, action logs, and token usage |
 | GET | `/api/runs/{id}/activity` | Activity log (paginated, compact `payload_mode=summary` by default; use `payload_mode=full` for transcript payloads) |
 | GET | `/api/runs/{id}/activity/stream` | Activity SSE stream (compact `payload_mode=summary` by default; use `payload_mode=full` for transcript payloads) |
@@ -707,9 +737,8 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
 | GET | `/api/runs/{id}/graph/patches` | Graph patch proposal/result readback |
 | GET | `/api/runs/{id}/graph/final-blockers` | Typed final invariant blocker readback |
-| POST | `/api/runs/{id}/graph/outbox/requeue/{event_id}` | Requeue a failed graph outbox side-effect row and append an audit event |
 | GET | `/api/runs/{id}/graph/regions` | Graph task-region state and blocker readback |
-| GET | `/api/runs/{id}/graph/file-state` | Graph file-state boundary and residue report |
+| GET | `/api/runs/{id}/graph/file-state` | Bounded, cursor-paged graph file-state boundary report (`from_position`, `limit`, `path_limit`) |
 | GET | `/api/runs/{id}/graph/nodes/{node_id}` | Graph node detail with inputs, outputs, callbacks, and file-state facts |
 | GET | `/api/runs/{id}/branch-status` | Branch ahead/behind status |
 | POST | `/api/runs/{id}/back-merge` | Pull source branch into run |

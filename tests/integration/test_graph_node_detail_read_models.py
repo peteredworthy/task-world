@@ -299,6 +299,66 @@ async def test_append_creates_and_updates_node_detail_summaries(
 
 
 @pytest.mark.asyncio
+async def test_node_detail_event_positions_use_numeric_ordering_and_cursor(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "node-detail-numeric-event-order"
+    node_id = "worker-1"
+    events = [
+        _event(
+            "evt-worker",
+            run_id,
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+        ),
+        *[
+            _event(
+                f"evt-state-{index:02d}",
+                run_id,
+                "node_state_changed",
+                {"node_id": node_id, "new_state": "planned"},
+            )
+            for index in range(2, 61)
+        ],
+    ]
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            await store.append_events(run_id, 0, events)
+        full_events = await store.read_run(run_id)
+        summary = await store.read_node_detail_summary(run_id, node_id)
+        assert summary is not None
+        compact_response = build_node_detail_response_from_summary(summary).model_dump(mode="json")
+        full_response = build_node_detail_response_from_summary(
+            summary,
+            full_events=full_events,
+        ).model_dump(mode="json")
+        await store.rebuild_node_detail_summaries(run_id)
+        rebuilt = await store.read_node_detail_summary(run_id, node_id)
+        assert rebuilt is not None
+        rebuilt_response = build_node_detail_response_from_summary(rebuilt).model_dump(mode="json")
+
+    expected_positions = list(range(1, 51))
+    assert isinstance(compact_response["events"], list)
+    assert [event["position"] for event in compact_response["events"]] == expected_positions
+    assert [event["position"] for event in full_response["events"]] == expected_positions
+    assert rebuilt_response == compact_response
+    event_meta = compact_response["collection_meta"]["events"]
+    full_event_meta = full_response["collection_meta"]["events"]
+    assert event_meta["owner"] == "node_detail"
+    assert event_meta["truncated"] is True
+    assert event_meta["total_known"] == 60
+    assert event_meta["next_cursor"] == 51
+    assert isinstance(event_meta["original_bytes"], int)
+    assert event_meta["original_bytes"] > 0
+    assert isinstance(event_meta["sha256"], str)
+    assert len(event_meta["sha256"]) == 64
+    assert event_meta["fields"] == {}
+    assert full_event_meta == event_meta
+
+
+@pytest.mark.asyncio
 async def test_check_node_detail_summary_derives_command_precondition(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

@@ -5,17 +5,19 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+from uuid import uuid4
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Protocol, TypeVar
+from typing import Protocol, TypeVar, cast
 
 from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.db import GraphOutboxModel
-from orchestrator.graph import EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.graph_runtime.errors import OutboxAppendError
 
 logger = logging.getLogger(__name__)
@@ -68,9 +70,11 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
     """Map accepted graph events to durable side-effect intent.
 
     The explicit slice-2.1 mapping is:
-    ``agent_dispatch_requested`` -> ``agent_dispatch`` and
-    ``cleanup_requested`` -> ``snapshot_cleanup``. Rejection/audit events
-    intentionally return ``None`` so they are persisted facts only.
+    ``agent_dispatch_requested`` -> ``agent_dispatch``,
+    ``cleanup_requested`` -> ``snapshot_cleanup``,
+    ``runner_submission_staged`` -> ``snapshot_publish``, and
+    ``runner_recovery_requested`` -> ``runner_recovery``. Rejection/audit
+    events intentionally return ``None`` so they are persisted facts only.
     """
     if event.event_type == "agent_dispatch_requested":
         payload: dict[str, object] = {
@@ -88,7 +92,55 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
         }
         payload.update(event.payload)
         return "snapshot_cleanup", payload
+    if event.event_type == "runner_recovery_requested":
+        payload = {
+            "event_id": event.event_id,
+            "run_id": event.run_id,
+            "classification": "runner_recovery_pending",
+        }
+        payload.update(event.payload)
+        return "runner_recovery", payload
+    if event.event_type == "runner_submission_staged":
+        callback = cast(object, event.payload.get("payload"))
+        records_raw: object = (
+            cast(dict[str, object], callback).get("output_records")
+            if isinstance(callback, dict)
+            else None
+        )
+        records = cast(list[object], records_raw) if isinstance(records_raw, list) else None
+        owns_file_state_snapshot = isinstance(records, list) and any(
+            _is_owned_file_state_snapshot(record, event.payload) for record in records
+        )
+        if not owns_file_state_snapshot:
+            return None
+        payload = {
+            "event_id": event.event_id,
+            "run_id": event.run_id,
+            "classification": "snapshot_publish_pending",
+            "snapshot_id": event.payload["staged_snapshot_id"],
+            "snapshot_ref": event.payload["staged_snapshot_ref"],
+            "commit_sha": event.payload["staged_commit_sha"],
+            "tree_sha": event.payload["staged_tree_sha"],
+        }
+        return "snapshot_publish", payload
     return None
+
+
+def _is_owned_file_state_snapshot(record: object, staged: dict[str, object]) -> bool:
+    if not isinstance(record, dict):
+        return False
+    file_state = cast(dict[str, object], record)
+    git = file_state.get("git")
+    if not isinstance(git, dict):
+        return False
+    identity = cast(dict[str, object], git)
+    return (
+        file_state.get("record_kind") == "file_state"
+        and file_state.get("snapshot_id") == staged["staged_snapshot_id"]
+        and identity.get("ref") == staged["staged_snapshot_ref"]
+        and identity.get("commit_sha") == staged["staged_commit_sha"]
+        and identity.get("tree_sha") == staged["staged_tree_sha"]
+    )
 
 
 async def append_outbox_rows(
@@ -158,13 +210,14 @@ class OutboxDispatcher:
         limit: int | None = None,
         *,
         run_id: str | None = None,
+        allowed_kinds: frozenset[str] | None = None,
     ) -> list[OutboxItem]:
         """Dispatch pending rows in outbox order and return completed items."""
         await self.reset_dispatching_to_pending(run_id=run_id)
         completed: list[OutboxItem] = []
         remaining = limit
         while True:
-            item = await self._claim_next(remaining, run_id=run_id)
+            item = await self._claim_next(remaining, run_id=run_id, allowed_kinds=allowed_kinds)
             if item is None:
                 return completed
             try:
@@ -201,6 +254,74 @@ class OutboxDispatcher:
 
         return await self._retry_locked(_op)
 
+    async def requeue_failed_snapshot_cleanups_for_startup(
+        self, *, run_id: str | None = None, immediate: bool = False
+    ) -> list[OutboxItem]:
+        """Requeue one bounded, audited restart epoch for managed cleanup only.
+
+        Failed agent dispatches and other side effects deliberately remain
+        failed.  A snapshot cleanup is idempotent and is the sole operation
+        safe to retry automatically after process restart.  The retained error
+        and append-only audit fact preserve the previous delivery epoch.
+        """
+        requeued: list[OutboxItem] = []
+        async with self._session_factory() as session:
+            async with session.begin():
+                stmt = (
+                    select(GraphOutboxModel)
+                    .where(GraphOutboxModel.status == OUTBOX_FAILED)
+                    .where(GraphOutboxModel.kind == "snapshot_cleanup")
+                    .order_by(GraphOutboxModel.outbox_id)
+                )
+                if run_id is not None:
+                    stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+                rows = list((await session.execute(stmt)).scalars())
+                store = GraphEventStore(session)
+                for row in rows:
+                    previous_attempts = row.attempts
+                    previous_error = row.last_error
+                    now = self._clock.now()
+                    row.status = OUTBOX_PENDING
+                    row.attempts = 0
+                    row.updated_at = now
+                    # Terminal ownership must converge before startup returns;
+                    # active runs retain their normal deterministic backoff.
+                    row.next_attempt_at = None if immediate else now + self._retry_delay(row)
+                    position = await store.current_position(row.run_id)
+                    await store.append_events(
+                        row.run_id,
+                        position,
+                        [
+                            EventEnvelope(
+                                event_id=f"outbox-startup-requeued-{uuid4().hex}",
+                                run_id=row.run_id,
+                                position=-1,
+                                event_type="outbox_requeued",
+                                schema_version=1,
+                                actor=Actor(
+                                    kind=ActorKind.SYSTEM,
+                                    id="startup-cleanup-recovery",
+                                    role="system",
+                                ),
+                                causation_id=row.event_id,
+                                timestamp=now,
+                                payload={
+                                    "run_id": row.run_id,
+                                    "outbox_id": row.outbox_id,
+                                    "event_id": row.event_id,
+                                    "kind": row.kind,
+                                    "previous_status": OUTBOX_FAILED,
+                                    "previous_attempts": previous_attempts,
+                                    "previous_last_error": previous_error,
+                                    "operator": "startup-cleanup-recovery",
+                                    "graph_position": position + 1,
+                                },
+                            )
+                        ],
+                    )
+                    requeued.append(_to_item(row))
+        return requeued
+
     async def pending_items(self, *, run_id: str | None = None) -> list[OutboxItem]:
         async with self._session_factory() as session:
             stmt = (
@@ -234,6 +355,7 @@ class OutboxDispatcher:
         limit: int | None,
         *,
         run_id: str | None = None,
+        allowed_kinds: frozenset[str] | None = None,
     ) -> OutboxItem | None:
         # Safe to retry on a lock: the claim transaction rolls back whole, so a
         # retried attempt re-selects the same still-pending row (at-least-once).
@@ -254,6 +376,8 @@ class OutboxDispatcher:
                     )
                     if run_id is not None:
                         stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+                    if allowed_kinds is not None:
+                        stmt = stmt.where(GraphOutboxModel.kind.in_(allowed_kinds))
                     if limit is not None and limit <= 0:
                         return None
                     result = await session.execute(stmt)
@@ -264,7 +388,6 @@ class OutboxDispatcher:
                     row.attempts += 1
                     row.updated_at = self._clock.now()
                     row.next_attempt_at = None
-                    row.last_error = None
                     await session.flush()
                     return _to_item(row)
 
@@ -315,7 +438,6 @@ class OutboxDispatcher:
                     row.status = OUTBOX_COMPLETED
                     row.updated_at = self._clock.now()
                     row.next_attempt_at = None
-                    row.last_error = None
                     await session.flush()
                     return _to_item(row)
 

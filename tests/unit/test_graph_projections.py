@@ -8,15 +8,16 @@ from pydantic import ValidationError
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    AuthorityRequestRecord,
     EventEnvelope,
     FakeClock,
     build_projection,
     file_state_records_view,
     initial_projection,
     latest_routine_snapshot_record,
-    node_creation_payloads_view,
     node_states_view,
     node_command_definition,
+    output_record_payload,
     output_records_by_node_port_view,
     project_decision_view,
     project_graph_topology,
@@ -112,15 +113,14 @@ def test_authority_request_record_is_owned_only_by_canonical_record_store() -> N
     assert "authority_request_record" not in checkpoint["nodes"]["gate-1"]["spec"]
     assert "authority_request" not in checkpoint["nodes"]["gate-1"]["spec"]
     assert checkpoint["nodes"]["gate-1"]["spec"].get("authority_request_record_id") == record_id
-    public_record = node_creation_payloads_view(projection)["gate-1"].authority_request_record
-    assert public_record is not None
-    assert public_record["record_id"] == record_id
-    assert public_record["value"]["requested_authority"] == ["graph_write"]
-    public_record["value"]["requested_authority"].append("admin")
-    assert node_creation_payloads_view(projection)["gate-1"].authority_request_record is not None
-    assert node_creation_payloads_view(projection)["gate-1"].authority_request_record["value"][
-        "requested_authority"
-    ] == ["graph_write"]
+    public_record = output_record_payload(projection, record_id)
+    assert isinstance(public_record, AuthorityRequestRecord)
+    assert public_record.record_id == record_id
+    assert public_record.value.requested_authority == ["graph_write"]
+    public_record.value.requested_authority.append("admin")
+    fresh_public_record = output_record_payload(projection, record_id)
+    assert isinstance(fresh_public_record, AuthorityRequestRecord)
+    assert fresh_public_record.value.requested_authority == ["graph_write"]
     assert project_decision_view([], projection=projection)["pending_gates"] == [
         {
             "node_id": "gate-1",
@@ -160,7 +160,7 @@ def test_authority_request_record_is_not_fabricated_before_acceptance() -> None:
         ]
     )
 
-    assert node_creation_payloads_view(projection)["gate-1"].authority_request_record is None
+    assert output_record_payload(projection, "authority-request-gate-1") is None
 
 
 def test_node_created_rejects_mismatched_authority_request_record_identity() -> None:

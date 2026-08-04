@@ -65,6 +65,23 @@ async def test_bootstrap_replays_archives_and_active_in_global_position_order(
     assert positions == [1, 2, 3, 4]
 
 
+async def test_bootstrap_reads_hashed_and_collision_archive_names(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    active = tmp_path / "history.jsonl"
+    (tmp_path / "history.1-1.0123456789abcdef.jsonl").write_text(json.dumps(_record(1)) + "\n")
+    (tmp_path / "history.2-2.0123456789abcdef.1.jsonl").write_text(json.dumps(_record(2)) + "\n")
+
+    await bootstrap_from_jsonl(session, active, ProjectionRegistry())
+
+    positions = (
+        (await session.execute(text("SELECT position FROM events_v2 ORDER BY position")))
+        .scalars()
+        .all()
+    )
+    assert positions == [1, 2]
+
+
 def test_backup_scans_all_archives_and_active_for_maximum_position(tmp_path: Path) -> None:
     active = tmp_path / "history.jsonl"
     (tmp_path / "history.8-9.jsonl").write_text(json.dumps({"sequence_number": 9}) + "\n")

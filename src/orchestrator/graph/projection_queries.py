@@ -22,7 +22,6 @@ from orchestrator.graph.models import (
     InputBindingProjection,
     InvalidTestBlockProjection,
     LeaseProjection,
-    NodeCreationProjection,
     OUTPUT_RECORD_MODELS_BY_TYPE,
     OutputRecordAcceptedPayload,
     OversightDecisionProjection,
@@ -33,16 +32,25 @@ from orchestrator.graph.models import (
     VerificationResultProjection,
     VerifierVerdictProjection,
 )
+from orchestrator.graph.cache_authority import (
+    CacheAuthorityBinding,
+    CacheAuthorityPolicy,
+    LEGACY_CACHE_AUTHORITY_V1,
+    POLICY_VERSION,
+    cache_authority_hash,
+    canonicalize_cache_authority,
+    has_cache_authority_carrier,
+)
 from orchestrator.graph.projection_collections import (
     FrozenJsonValue,
     FrozenMap,
     JsonValue,
     thaw_json,
 )
+from orchestrator.graph.projection_models import ExecutionAttemptValue
 from orchestrator.graph.projection_models import (
     GraphRecordSummaryProjection,
     ProjectedFanOutInputsRecord,
-    ProjectedAuthorityRequestRecord,
     ProjectionModel,
 )
 from orchestrator.graph.projections import (
@@ -52,6 +60,7 @@ from orchestrator.graph.projections import (
     LatestRoutineSnapshotRecord,
     RecoveryNodeIndexEntry,
 )
+from orchestrator.graph.projection_models import ProjectedRoutineSnapshotRecord
 
 
 def accepted_graph_patches_by_node_view(projection: GraphProjection) -> dict[str, list[str]]:
@@ -59,6 +68,17 @@ def accepted_graph_patches_by_node_view(projection: GraphProjection) -> dict[str
         node_id: list(ids)
         for node_id, ids in projection.planning.accepted_patch_ids_by_node.items()
     }
+
+
+def non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str) -> bool:
+    """Return whether a regular planner has already published an accepted patch."""
+    node = projection.nodes.get(node_id)
+    return (
+        node is not None
+        and node.spec.kind == "planner"
+        and node.spec.role != "gap_planner"
+        and bool(projection.planning.accepted_patch_ids_by_node.get(node_id))
+    )
 
 
 def action_count_by_node_kind_view(projection: GraphProjection) -> dict[str, int]:
@@ -115,83 +135,6 @@ def latency_ms_by_node_kind_view(projection: GraphProjection) -> dict[str, int]:
 
 def node_allowed_actions_view(projection: GraphProjection) -> dict[str, list[str]]:
     return {node_id: list(node.spec.allowed_actions) for node_id, node in projection.nodes.items()}
-
-
-def node_creation_payloads_view(
-    projection: GraphProjection,
-) -> dict[str, NodeCreationProjection]:
-    return {
-        node_id: NodeCreationProjection(
-            node_id=node_id,
-            position=node.spec.creation_position,
-            kind=node.spec.kind,
-            role=node.spec.role,
-            state=node.runtime.state,
-            task_region_id=node.spec.task_region_id,
-            attempt_number=node.runtime.attempt_number,
-            candidate_id=node.runtime.candidate_id,
-            failed_candidate_id=node.runtime.failed_candidate_id,
-            resource_claims=[
-                ResourceClaimProjection.model_validate(claim.model_dump(mode="json"))
-                for claim in node.spec.resource_claims
-            ],
-            allowed_actions=list(node.spec.allowed_actions),
-            preconditions=list(node.spec.preconditions),
-            planner_generation_budget=projection.planning.generation_budget,
-            generation_index=projection.planning.generation_by_node.get(node_id),
-            region_label=projection.planning.region_label_by_node.get(node_id),
-            session_id=projection.planning.session_id_by_node.get(node_id),
-            gate_type=node.spec.gate_type,
-            approval_type=node.spec.approval_type,
-            reason=node.spec.reason,
-            prompt=node.spec.prompt,
-            approval_prompt=node.spec.approval_prompt,
-            human_prompt=node.spec.human_prompt,
-            message=node.spec.message,
-            blocker=node.spec.blocker,
-            blocker_reason=node.spec.blocker_reason,
-            decision_request=(
-                node.spec.decision_request.model_dump(mode="json")
-                if node.spec.decision_request is not None
-                else None
-            ),
-            authority_request_record_id=node.spec.authority_request_record_id,
-            authority_request_record=_authority_request_record_public_value(
-                projection, node.spec.authority_request_record_id
-            ),
-            authority_request=(
-                node.spec.authority_request.model_dump(mode="json")
-                if node.spec.authority_request is not None
-                else None
-            ),
-            authority=(
-                node.spec.authority.model_dump(mode="json")
-                if node.spec.authority is not None
-                else None
-            ),
-            command_definition=(
-                _command_definition_value(node.spec.command_definition.value)
-                if node.spec.command_definition is not None
-                else None
-            ),
-            command_definition_id=node.spec.command_definition_id,
-            hidden_oracle_command=node.spec.hidden_oracle_command,
-            command_binding=node.spec.command_binding,
-            max_attempts=node.spec.max_attempts,
-        )
-        for node_id, node in projection.nodes.items()
-    }
-
-
-def _authority_request_record_public_value(
-    projection: GraphProjection, record_id: str | None
-) -> dict[str, object] | None:
-    if record_id is None:
-        return None
-    record = projection.records.by_id.get(record_id)
-    if not isinstance(record, ProjectedAuthorityRequestRecord):
-        return None
-    return record.model_dump(mode="json", by_alias=True)
 
 
 def node_output_ports_view(
@@ -288,6 +231,11 @@ def callback_idempotency_events_view(
         key: CallbackIdempotencyEvent.model_validate(value.model_dump(mode="json"))
         for key, value in projection.execution.callback_events_by_key.items()
     }
+
+
+def execution_attempts_view(projection: GraphProjection) -> dict[str, ExecutionAttemptValue]:
+    """Return immutable runner attempts keyed by external execution identity."""
+    return dict(projection.execution.attempts_by_execution_id)
 
 
 def check_results_view(projection: GraphProjection) -> dict[str, CheckResultProjection]:
@@ -390,6 +338,14 @@ def node_attempts_view(projection: GraphProjection) -> dict[str, int]:
     }
 
 
+def node_max_attempts_view(projection: GraphProjection) -> dict[str, int]:
+    return {
+        node_id: node.spec.max_attempts
+        for node_id, node in projection.nodes.items()
+        if node.spec.max_attempts is not None
+    }
+
+
 def node_command_definitions_view(
     projection: GraphProjection,
 ) -> dict[str, CommandDefinitionProjection]:
@@ -402,6 +358,11 @@ def node_command_definitions_view(
 
 def node_creation_positions_view(projection: GraphProjection) -> dict[str, int]:
     return {node_id: node.spec.creation_position for node_id, node in projection.nodes.items()}
+
+
+def node_cache_authority_hash(projection: GraphProjection, node_id: str) -> str | None:
+    node = projection.nodes.get(node_id)
+    return node.spec.cache_authority_hash if node is not None else None
 
 
 def node_gate_decisions_view(projection: GraphProjection) -> dict[str, bool]:
@@ -952,6 +913,64 @@ def latest_routine_snapshot_record(
         LatestRoutineSnapshotRecord.model_validate(record.model_dump(mode="json"))
         if record is not None
         else None
+    )
+
+
+def cache_authority_binding(projection: GraphProjection) -> CacheAuthorityBinding:
+    """Return the verified snapshot-owned cache authority, or frozen legacy V1.
+
+    Snapshot values are the only full policy owner.  The preimage and digest are
+    checked here rather than trusting a caller-supplied policy or command context.
+    """
+    record = projection.records.by_id.get("routine-snapshot-record")
+    has_carrier = has_cache_authority_carrier(
+        any(node.spec.cache_authority_hash is not None for node in projection.nodes.values()),
+        (lease.cache_authority_hash for lease in projection.execution.leases.values()),
+    )
+    if record is None:
+        if has_carrier:
+            raise ValueError("routine snapshot graph requires canonical routine-snapshot-record")
+        policy = LEGACY_CACHE_AUTHORITY_V1
+        return CacheAuthorityBinding(
+            policy=policy,
+            preimage=canonicalize_cache_authority(policy),
+            hash=cache_authority_hash(policy),
+        )
+    if not isinstance(record, ProjectedRoutineSnapshotRecord):
+        raise ValueError("routine-snapshot-record must be a routine snapshot record")
+    value = getattr(record, "value")
+    preimage = getattr(value, "cache_authority_preimage", None)
+    digest = getattr(value, "cache_authority_hash", None)
+    version = getattr(value, "cache_authority_version", None)
+    absent = version is None and preimage is None and digest is None
+    present = isinstance(version, str) and isinstance(preimage, str) and isinstance(digest, str)
+    if absent:
+        if has_carrier:
+            raise ValueError("routine snapshot cache authority is mixed with authority carriers")
+        policy = LEGACY_CACHE_AUTHORITY_V1
+        return CacheAuthorityBinding(
+            policy=policy,
+            preimage=canonicalize_cache_authority(policy),
+            hash=cache_authority_hash(policy),
+        )
+    if not present or version != POLICY_VERSION:
+        raise ValueError("routine snapshot cache authority format is malformed or unknown")
+    if not isinstance(preimage, str) or not isinstance(digest, str):
+        raise ValueError("routine snapshot cache authority values must be strings")
+    try:
+        policy = CacheAuthorityPolicy.model_validate_json(preimage)
+    except ValueError as exc:
+        raise ValueError("routine snapshot has invalid cache authority preimage") from exc
+    if canonicalize_cache_authority(policy) != preimage or cache_authority_hash(policy) != digest:
+        raise ValueError("routine snapshot cache authority hash verification failed")
+    return CacheAuthorityBinding(policy=policy, preimage=preimage, hash=digest)
+
+
+def cache_authority_is_new_format(projection: GraphProjection) -> bool:
+    record = projection.records.by_id.get("routine-snapshot-record")
+    return bool(
+        record is not None
+        and getattr(getattr(record, "value", None), "cache_authority_version", None)
     )
 
 

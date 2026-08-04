@@ -360,9 +360,72 @@ async def test_loop_terminates_on_quiescence() -> None:
     )
 
     assert controller.commands == ["schedule_tick", "schedule_tick"]
-    assert dispatcher.calls == 2
+    assert dispatcher.calls == 3
     assert executor.calls == 2
     assert outcome.completed is True
+
+
+@pytest.mark.asyncio
+async def test_protocol_dispatcher_drains_second_cleanup_pass_before_completion() -> None:
+    """The loop relies only on the dispatcher protocol for its final cleanup drain."""
+    controller = RecordingController()
+    executor = RecordingExecutor()
+
+    class CleanupDrainProtocolDouble:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def dispatch_pending(self, *, run_id: str | None = None) -> None:
+            assert run_id == "run-1"
+            self.calls += 1
+
+        async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None:
+            assert run_id == "run-1"
+            return None
+
+    dispatcher = CleanupDrainProtocolDouble()
+    pending_cleanup = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"step/task": "pending"},
+        node_states={"final-gate": "completed"},
+    )
+    cleanup_applied = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"step/task": "accepted"},
+        node_states={"final-gate": "completed"},
+    )
+    completed = GraphProjectionSnapshot(
+        run_state="completed",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"step/task": "accepted"},
+    )
+
+    async def read_projection(_run_id: str) -> GraphProjectionSnapshot:
+        if "complete" in controller.commands:
+            return completed
+        return pending_cleanup if dispatcher.calls < 2 else cleanup_applied
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=read_projection,
+    )
+
+    assert dispatcher.calls == 2
+    assert controller.commands == ["schedule_tick", "complete"]
+    assert outcome.completed is True
+    assert outcome.run_state == "completed"
 
 
 @pytest.mark.asyncio
@@ -666,10 +729,10 @@ async def test_driver_runs_reconcile_before_quiescent_classification() -> None:
         read_projection=reader.read,
     )
 
-    assert controller.commands == ["schedule_tick", "reconcile", "schedule_tick"]
+    assert controller.commands == ["schedule_tick", "reconcile"]
     assert dispatcher.calls == 2
-    assert executor.calls == 2
-    assert reader.calls == 5
+    assert executor.calls == 1
+    assert reader.calls == 4
     assert outcome.completed is True
     assert outcome.blocked_reason is None
 
@@ -718,9 +781,9 @@ async def test_driver_returns_reconciled_quiescent_projection_without_second_sch
     )
 
     assert controller.commands == ["schedule_tick", "reconcile"]
-    assert dispatcher.calls == 1
+    assert dispatcher.calls == 2
     assert executor.calls == 1
-    assert reader.calls == 3
+    assert reader.calls == 4
     assert outcome.completed is False
     assert outcome.blocked_reason == (
         "graph quiescent with non-terminal node(s): planner-recover-check-final=planned"
@@ -766,6 +829,7 @@ async def test_driver_continues_when_reconcile_creates_schedulable_work() -> Non
         [
             quiescent_pending,
             quiescent_pending,
+            quiescent_pending,
             ready_after_reconcile,
             failed_after_second_tick,
             failed_after_second_tick,
@@ -783,9 +847,9 @@ async def test_driver_continues_when_reconcile_creates_schedulable_work() -> Non
     )
 
     assert controller.commands == ["schedule_tick", "reconcile", "schedule_tick"]
-    assert dispatcher.calls == 2
+    assert dispatcher.calls == 4
     assert executor.calls == 2
-    assert reader.calls == 5
+    assert reader.calls == 7
     assert outcome.completed is False
     assert outcome.run_state == "failed"
 
@@ -924,7 +988,7 @@ async def test_driver_waits_for_future_outbox_backoff_before_declaring_blocked()
 
     assert slept == [5.0]
     assert controller.commands.count("agent_died") == 0
-    assert dispatcher.calls == 3
+    assert dispatcher.calls == 4
     assert outcome.completed is True
 
 

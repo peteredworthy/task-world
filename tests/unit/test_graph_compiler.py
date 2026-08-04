@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import pytest
+
 from orchestrator.config.models import (
     ArtifactSpec,
     AutoVerifyConfig,
@@ -134,6 +136,35 @@ def test_worker_write_claims_are_scoped_to_declared_artifacts() -> None:
     assert worker["authority"]["resource_claims"] == [
         {"mode": "write", "scope": "repo", "paths": ["docs/out.md", "tests/out.md"]}
     ]
+
+
+def test_worker_write_claims_include_declared_implementation_helpers() -> None:
+    routine = _routine_with_task(
+        TaskConfig(
+            id="T-01",
+            title="Task",
+            artifacts=[ArtifactSpec(path="src/package/feature.py")],
+            implementation_paths=["tests/unit/feature_cases.py", "./tests/unit/feature_cases.py"],
+        )
+    )
+
+    worker = _node_event(_compile(routine), "worker-s-01-t-01").payload
+
+    assert worker["authority"]["resource_claims"] == [
+        {
+            "mode": "write",
+            "scope": "repo",
+            "paths": ["src/package/feature.py", "tests/unit/feature_cases.py"],
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "path", ["", "/tmp/helper.py", "../helper.py", "\\helper.py", "C:\\helper.py"]
+)
+def test_implementation_paths_reject_non_repo_relative_paths(path: str) -> None:
+    with pytest.raises(ValueError, match="implementation_paths"):
+        TaskConfig(id="T-01", title="Task", implementation_paths=[path])
 
 
 def test_same_step_artifact_scoped_workers_can_schedule_without_conflict() -> None:

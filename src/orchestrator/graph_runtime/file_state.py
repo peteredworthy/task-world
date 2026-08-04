@@ -12,7 +12,13 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import cast
 
-from orchestrator.git import SnapshotResult, WorktreeError, delete_snapshot_ref, snapshot
+from orchestrator.git import (
+    PreparedSnapshot,
+    SnapshotResult,
+    WorktreeError,
+    delete_snapshot_ref,
+    snapshot,
+)
 from orchestrator.graph import (
     FileStateRecord,
     FileStateClassification,
@@ -24,6 +30,7 @@ from orchestrator.graph import (
     default_file_state_policy,
     secret_name_matches,
 )
+from orchestrator.graph_runtime.errors import CacheScanBudgetExceededError
 
 
 @dataclass(frozen=True)
@@ -32,6 +39,7 @@ class FileStateBoundaryResult:
     output_record: dict[str, object] | None
     rejection_record: dict[str, object] | None
     snapshot_result: SnapshotResult | None
+    force_include_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,52 @@ class CleanupApplication:
     deleted_snapshot_ref: bool
 
 
+@dataclass(frozen=True)
+class WorktreeFileStateBaseline:
+    """The pre-execution status used to isolate an execution's file delta."""
+
+    status: WorktreeStatus
+    fingerprints: dict[tuple[str, str], str]
+
+
+@dataclass
+class _CacheScanAccounting:
+    """One deterministic budget shared by every cache subtree in one collection.
+
+    An entry is charged when its directory entry is inspected, before any
+    symlink metadata/target check. Bytes are charged before a secret-candidate
+    content read using the observed regular-file size. This makes exhaustion
+    fail closed without returning a partial status manifest.
+    """
+
+    max_entries: int
+    max_bytes: int
+    entries: int = 0
+    bytes: int = 0
+
+    def inspect_entry(self, path: Path) -> None:
+        observed = self.entries + 1
+        if observed > self.max_entries:
+            raise CacheScanBudgetExceededError(
+                metric="entries",
+                limit=self.max_entries,
+                observed=observed,
+                path=path.as_posix(),
+            )
+        self.entries = observed
+
+    def inspect_bytes(self, path: Path, size: int) -> None:
+        observed = self.bytes + size
+        if observed > self.max_bytes:
+            raise CacheScanBudgetExceededError(
+                metric="bytes",
+                limit=self.max_bytes,
+                observed=observed,
+                path=path.as_posix(),
+            )
+        self.bytes = observed
+
+
 def collect_worktree_status(
     worktree_path: str | Path,
     policy: FileStatePolicy | None = None,
@@ -48,25 +102,43 @@ def collect_worktree_status(
     """Collect git worktree status plus metadata needed by the pure classifier."""
     path = Path(worktree_path)
     active_policy = policy or default_file_state_policy()
-    result = _run_git(path, ["status", "--porcelain=v2", "--ignored=matching"])
+    cache_scan = _CacheScanAccounting(
+        max_entries=active_policy.scan_budget.max_entries,
+        max_bytes=active_policy.scan_budget.max_bytes,
+    )
+    result = _run_git(path, ["status", "--porcelain=v2", "-z", "--ignored=matching"])
     tracked: list[FileStatePath] = []
     untracked: list[FileStatePath] = []
     ignored: list[FileStatePath] = []
-    for line in result.stdout.splitlines():
-        if not line:
-            continue
+    for line, original_path in _porcelain_v2_records(result.stdout):
         prefix = line[0]
         if prefix == "?":
             relpath = line[2:]
-            untracked.append(_path_with_metadata(path, relpath, "untracked", active_policy))
+            untracked.extend(
+                _paths_with_metadata(path, relpath, "untracked", active_policy, cache_scan)
+            )
         elif prefix == "!":
             relpath = line[2:]
-            ignored.extend(_ignored_paths_with_metadata(path, relpath, active_policy))
+            ignored.extend(
+                _paths_with_metadata(path, relpath, "ignored", active_policy, cache_scan)
+            )
         elif prefix in {"1", "2", "u"}:
             status, relpath = _tracked_status_and_path(line)
+            if prefix == "2" and original_path is None and "\t" in relpath:
+                relpath, original_path = relpath.split("\t", maxsplit=1)
             tracked.append(
                 _path_with_metadata(path, relpath, "tracked", active_policy, status=status)
             )
+            if prefix == "2" and status.startswith("R") and original_path is not None:
+                tracked.append(
+                    _path_with_metadata(
+                        path,
+                        original_path,
+                        "tracked",
+                        active_policy,
+                        status="renamed_from",
+                    )
+                )
     return WorktreeStatus(
         tracked_modified=tuple(tracked),
         untracked=tuple(untracked),
@@ -82,10 +154,19 @@ def capture_file_state_boundary(
     execution_id: str,
     base_snapshot_id: str,
     policy: FileStatePolicy | None = None,
+    baseline: WorktreeFileStateBaseline | None = None,
 ) -> FileStateBoundaryResult:
-    """Collect, classify, and snapshot the worker boundary."""
+    """Collect and classify a worker boundary without publishing a snapshot.
+
+    The caller owns the managed snapshot protocol: it prepares the submission
+    tree, durably stages its exact identity, and only then publishes the ref.
+    Keeping this function ref-free prevents an unowned file-state ref when the
+    subsequent callback is rejected or the process stops before staging.
+    """
     active_policy = policy or default_file_state_policy()
     status = collect_worktree_status(worktree_path, active_policy)
+    if baseline is not None:
+        status = _status_since_baseline(worktree_path, status, baseline)
     classification = classify_file_state(status, active_policy)
     if classification.verdict == "rejected":
         rejection_record: dict[str, object] = {
@@ -117,24 +198,52 @@ def capture_file_state_boundary(
         and not entry.rejected
         and entry.classification != "tool_cache"
         and not (Path(worktree_path) / entry.path).is_dir()
+        and (Path(worktree_path) / entry.path).exists()
     ]
-    snap = snapshot(
-        worktree_path,
-        f"graph file-state boundary {run_id}/{node_id}/{execution_id}",
-        force_include_paths=force_include_paths,
-    )
-    output_record = _file_state_output_record(
+    return FileStateBoundaryResult(
         classification=classification,
-        snapshot_result=snap,
+        output_record=None,
+        rejection_record=None,
+        snapshot_result=None,
+        force_include_paths=tuple(force_include_paths),
+    )
+
+
+def file_state_output_record(
+    boundary: FileStateBoundaryResult,
+    snapshot: PreparedSnapshot | SnapshotResult,
+    *,
+    node_id: str,
+    execution_id: str,
+    base_snapshot_id: str,
+) -> dict[str, object]:
+    """Bind an accepted classification to its already-prepared managed tree."""
+    if boundary.classification.verdict == "rejected":
+        raise WorktreeError("rejected file-state boundary cannot own a snapshot")
+    return _file_state_output_record(
+        classification=boundary.classification,
+        snapshot_result=SnapshotResult(**snapshot.__dict__),
         node_id=node_id,
         execution_id=execution_id,
         base_snapshot_id=base_snapshot_id,
     )
-    return FileStateBoundaryResult(
-        classification=classification,
-        output_record=output_record,
-        rejection_record=None,
-        snapshot_result=snap,
+
+
+def capture_worktree_file_state_baseline(
+    worktree_path: str | Path,
+    policy: FileStatePolicy | None = None,
+) -> WorktreeFileStateBaseline:
+    """Capture the dirty state that existed before a runner starts.
+
+    A graph worktree is shared across sequential task executions. Existing
+    files, including runner residue, are not evidence of the next execution
+    and must not be re-submitted or checked against that execution's lease.
+    """
+    active_policy = policy or default_file_state_policy()
+    status = collect_worktree_status(worktree_path, active_policy)
+    return WorktreeFileStateBaseline(
+        status=status,
+        fingerprints=_status_fingerprints(worktree_path, status),
     )
 
 
@@ -276,10 +385,31 @@ def _cleanup_superseding_record(
 
 
 def _tracked_status_and_path(line: str) -> tuple[str, str]:
-    fields = line.split(" ", maxsplit=8)
-    if len(fields) >= 9:
-        return fields[1], fields[8]
+    maxsplit = 9 if line.startswith("2 ") else 8
+    fields = line.split(" ", maxsplit=maxsplit)
+    if len(fields) >= maxsplit + 1:
+        return fields[1], fields[maxsplit]
     return "modified", line.rsplit(" ", maxsplit=1)[-1]
+
+
+def _porcelain_v2_records(output: str) -> list[tuple[str, str | None]]:
+    """Parse NUL-delimited porcelain-v2 records, including rename origins."""
+    fields = output.split("\0")
+    records: list[tuple[str, str | None]] = []
+    index = 0
+    while index < len(fields):
+        record = fields[index]
+        index += 1
+        if not record:
+            continue
+        original_path: str | None = None
+        if record.startswith("2 "):
+            if index >= len(fields):
+                raise WorktreeError("malformed git porcelain-v2 rename record")
+            original_path = fields[index]
+            index += 1
+        records.append((record, original_path))
+    return records
 
 
 def _path_with_metadata(
@@ -289,16 +419,22 @@ def _path_with_metadata(
     policy: FileStatePolicy,
     *,
     status: str | None = None,
+    cache_scan: _CacheScanAccounting | None = None,
 ) -> FileStatePath:
-    normalized = relpath.strip()
+    normalized = relpath.rstrip("/")
     full_path = worktree_path / normalized
     repo_escape = _repo_escape(worktree_path, normalized, full_path)
     size_bytes: int | None = None
     entropy: float | None = None
     content_hash: str | None = None
-    if full_path.is_file():
+    # lstat first: never read/hash a link target merely while collecting
+    # boundary metadata. The classifier receives the link escape fact instead.
+    is_link = full_path.is_symlink()
+    if not is_link and full_path.is_file():
         size_bytes = full_path.stat().st_size
         if secret_name_matches(normalized, policy):
+            if cache_scan is not None:
+                cache_scan.inspect_bytes(full_path, size_bytes)
             data = full_path.read_bytes()
             entropy = _shannon_entropy(data)
         if _declared_external_artifact(normalized, policy):
@@ -315,22 +451,109 @@ def _path_with_metadata(
     )
 
 
-def _ignored_paths_with_metadata(
+def _status_since_baseline(
+    worktree_path: str | Path,
+    status: WorktreeStatus,
+    baseline: WorktreeFileStateBaseline,
+) -> WorktreeStatus:
+    current = _status_fingerprints(worktree_path, status)
+    unchanged = {
+        key for key, fingerprint in current.items() if baseline.fingerprints.get(key) == fingerprint
+    }
+
+    def changed(paths: tuple[FileStatePath, ...]) -> tuple[FileStatePath, ...]:
+        return tuple(path for path in paths if (path.kind, path.path) not in unchanged)
+
+    baseline_only = set(baseline.fingerprints) - set(current)
+
+    def disappeared(
+        kind: FileStatePathKind, paths: tuple[FileStatePath, ...]
+    ) -> tuple[FileStatePath, ...]:
+        return tuple(
+            FileStatePath(path=path.path, kind=kind, status=_disappearance_status(path))
+            for path in paths
+            if (kind, path.path) in baseline_only
+        )
+
+    return WorktreeStatus(
+        tracked_modified=(
+            *changed(status.tracked_modified),
+            *disappeared("tracked", baseline.status.tracked_modified),
+        ),
+        untracked=(
+            *changed(status.untracked),
+            *disappeared("untracked", baseline.status.untracked),
+        ),
+        ignored=(*changed(status.ignored), *disappeared("ignored", baseline.status.ignored)),
+    )
+
+
+def _disappearance_status(path: FileStatePath) -> str:
+    if path.kind == "tracked":
+        return "renamed_away" if path.status == "renamed_from" else "restored"
+    return "deleted"
+
+
+def _status_fingerprints(
+    worktree_path: str | Path,
+    status: WorktreeStatus,
+) -> dict[tuple[str, str], str]:
+    root = Path(worktree_path)
+    fingerprints: dict[tuple[str, str], str] = {}
+    for path in (*status.tracked_modified, *status.untracked, *status.ignored):
+        full_path = root / path.path
+        fingerprints[(path.kind, path.path)] = _path_fingerprint(full_path, path.status)
+    return fingerprints
+
+
+def _path_fingerprint(path: Path, status: str | None) -> str:
+    if path.is_symlink():
+        return f"symlink:{path.readlink()}:{status or ''}"
+    if path.is_file():
+        return f"file:{_sha256_file(path)}:{status or ''}"
+    if path.exists():
+        return f"directory:{status or ''}"
+    return f"missing:{status or ''}"
+
+
+def _paths_with_metadata(
     worktree_path: Path,
     relpath: str,
+    kind: FileStatePathKind,
     policy: FileStatePolicy,
+    cache_scan: _CacheScanAccounting,
 ) -> list[FileStatePath]:
-    normalized = relpath.strip()
+    normalized = relpath.rstrip("/")
     full_path = worktree_path / normalized
     if not full_path.is_dir() or full_path.is_symlink():
-        return [_path_with_metadata(worktree_path, normalized, "ignored", policy)]
+        return [_path_with_metadata(worktree_path, normalized, kind, policy)]
+    # Git commonly reports the cache root itself as one ignored status entry.
+    # Treat it exactly like a nested cache root: keep the bounded root evidence
+    # and perform the one security traversal under the same shared budget.
+    if _is_declared_tool_cache(normalized, kind, policy):
+        return [
+            _path_with_metadata(worktree_path, normalized, kind, policy),
+            *_cache_security_paths(worktree_path, full_path, kind, policy, cache_scan),
+        ]
 
-    # Git may report an ignored directory as one status entry. The boundary must
-    # classify every file so nested secret-like paths cannot be force-included
-    # through a bare directory pathspec.
+    # Git may report an untracked or ignored directory as one status entry. The
+    # boundary must classify every file so nested secret-like paths cannot be
+    # force-included through a bare directory pathspec.
     paths: list[FileStatePath] = []
     for root, dirs, files in os.walk(full_path, followlinks=False):
         dirs.sort()
+        for dirname in list(dirs):
+            dir_path = Path(root) / dirname
+            relative = dir_path.relative_to(worktree_path).as_posix()
+            if not _is_declared_tool_cache(relative, kind, policy):
+                continue
+            paths.append(_path_with_metadata(worktree_path, relative, kind, policy))
+            # Do not materialize an unbounded dependency/cache tree in the
+            # normal boundary manifest.  Still inspect every descendant that
+            # could be security-relevant: tool-cache precedence must never hide
+            # a secret-like file or an escaping symlink.
+            paths.extend(_cache_security_paths(worktree_path, dir_path, kind, policy, cache_scan))
+            dirs.remove(dirname)
         # Symlinked directories appear in `dirs` but are never descended
         # (followlinks=False). Classify the symlink entry itself so a
         # repo-escaping link cannot vanish from the boundary evidence.
@@ -341,7 +564,7 @@ def _ignored_paths_with_metadata(
                     _path_with_metadata(
                         worktree_path,
                         dir_path.relative_to(worktree_path).as_posix(),
-                        "ignored",
+                        kind,
                         policy,
                     )
                 )
@@ -351,10 +574,62 @@ def _ignored_paths_with_metadata(
                 _path_with_metadata(
                     worktree_path,
                     file_path.relative_to(worktree_path).as_posix(),
-                    "ignored",
+                    kind,
                     policy,
                 )
             )
+    return paths
+
+
+def _is_declared_tool_cache(path: str, kind: FileStatePathKind, policy: FileStatePolicy) -> bool:
+    declaration = next(
+        (
+            declaration
+            for declaration in policy.declarations
+            if declaration.classification == "tool_cache"
+            and (declaration.source_kinds is None or kind in declaration.source_kinds)
+            and _pattern_matches(path, declaration.pattern)
+        ),
+        None,
+    )
+    return declaration is not None or any(
+        _pattern_matches(path, pattern) for pattern in policy.tool_cache_patterns
+    )
+
+
+def _cache_security_paths(
+    worktree_path: Path,
+    cache_root: Path,
+    kind: FileStatePathKind,
+    policy: FileStatePolicy,
+    cache_scan: _CacheScanAccounting,
+) -> list[FileStatePath]:
+    """Collect only security-relevant descendants of an otherwise bounded cache.
+
+    Names and symlink targets are cheap metadata checks; cache file bytes are
+    read only for a secret-like name.  This keeps ordinary cache collection
+    bounded while preserving the security classification guarantee.
+    """
+    paths: list[FileStatePath] = []
+    for root, dirs, files in os.walk(cache_root, followlinks=False):
+        dirs.sort()
+        # os.walk supplies directory and file lists separately. Sort their
+        # combined names so which limit is reached never depends on filesystem
+        # enumeration order or entry type grouping.
+        for name in sorted([*dirs, *files]):
+            candidate = Path(root) / name
+            cache_scan.inspect_entry(candidate)
+            relative = candidate.relative_to(worktree_path).as_posix()
+            if candidate.is_symlink() or secret_name_matches(relative, policy):
+                paths.append(
+                    _path_with_metadata(
+                        worktree_path,
+                        relative,
+                        kind,
+                        policy,
+                        cache_scan=cache_scan,
+                    )
+                )
     return paths
 
 
@@ -431,7 +706,7 @@ def _run_git(cwd: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
             env=env,
             check=False,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+    except (FileNotFoundError, subprocess.TimeoutExpired, UnicodeDecodeError) as exc:
         raise WorktreeError(f"Failed to run git {' '.join(args)}: {exc}") from exc
     if result.returncode != 0:
         raise WorktreeError(f"git {' '.join(args)} failed: {result.stderr}")

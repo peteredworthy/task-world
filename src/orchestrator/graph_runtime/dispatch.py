@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import logging
 from dataclasses import dataclass, field
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Literal, Protocol, cast
@@ -23,30 +23,74 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.db import is_retriable_sqlite_write_conflict
+from orchestrator.git import (
+    GitError,
+    SelectiveRestoreResult,
+    PreparedSnapshot,
+    WorktreeError,
+    SnapshotPathLimitError,
+    delete_snapshot_ref,
+    ensure_snapshot_ref,
+    restore_baseline_worktree,
+    restore_paths,
+    prepare_snapshot,
+    publish_snapshot,
+    snapshot_path_metadata,
+)
 from orchestrator.graph import (
     file_state_records_view,
+    execution_attempts_view,
     input_bindings_view,
     leases_view,
+    node_kinds_view,
+    node_roles_view,
+    project_node_max_attempts,
     CheckResultRecord,
     EventEnvelope,
+    FileStatePolicy,
     GraphCommandContext,
     GraphProjection,
+    RunnerRecoveryRequestedPayload,
+    RunnerBoundaryEntry,
     PatchCommandContext,
     RequirementRecord,
     StoredArtifactRef,
     check_command_uses_acceptance_fallback,
     initial_projection,
     resolve_check_command_definition,
+    recovery_proof_hash,
+    boundary_manifest_hash,
+    cache_authority_binding,
+    cache_authority_is_new_format,
+    file_state_policy_from_authority,
+    derive_cache_roots,
+    first_authorized_cache_root,
+    cache_authority_hash,
+    classify_file_state,
+    run_state,
 )
 from orchestrator.graph_runtime import prompts as _prompts
-from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
+from orchestrator.graph_runtime.controller import (
+    GraphController,
+    RuntimeBoundaryCapability,
+    rebuild_projection,
+)
 from orchestrator.graph_runtime.errors import (
+    CacheScanBudgetExceededError,
     CompromisedFileStateError,
+    RecoveryCompletionRejectedError,
+    RecoveryEventError,
+    ProcessQuiescenceError,
+    RecoveryRestoreError,
     StaleProjectionError,
 )
 from orchestrator.graph_runtime.file_state import (
+    WorktreeFileStateBaseline,
     apply_cleanup_requested,
+    capture_worktree_file_state_baseline,
     capture_file_state_boundary,
+    collect_worktree_status,
+    file_state_output_record,
 )
 from orchestrator.graph_runtime.gatekeeper import (
     ResidueClassifier,
@@ -54,7 +98,7 @@ from orchestrator.graph_runtime.gatekeeper import (
     policy_with_pattern_library,
 )
 from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
-from orchestrator.graph_runtime.outbox import OutboxItem, SideEffectExecutor
+from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, SideEffectExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, create_agent_runner
 from orchestrator.runners.types import ExecutionContext
@@ -69,7 +113,7 @@ CHECK_OUTPUT_TAIL_CHARS = 4_000
 DEFAULT_CHECK_TIMEOUT_SECONDS = 300
 MAX_STALE_COMMAND_RETRIES = 5
 DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS = 3
-SNAPSHOT_REF_PATTERN = re.compile(r"^refs/orchestrator/snapshots/[0-9a-f]{32}$")
+SNAPSHOT_REF_PATTERN = re.compile(r"^refs/orchestrator/snapshots/(?!.*\.\.)[A-Za-z0-9._-]+$")
 
 _prompt_for_node = _prompts.prompt_for_node
 _prompt_summary_for_node = _prompts.prompt_summary_for_node
@@ -117,6 +161,7 @@ class GraphDispatchContext:
     execution_id: str
     base_snapshot_id: str
     dispatch_event_id: str
+    cache_authority_hash: str = ""
     graph_projection: GraphProjection = field(default_factory=initial_projection)
     graph_events: list[EventEnvelope] = field(default_factory=_empty_event_list)
     node_role: str = ""
@@ -138,12 +183,136 @@ class DependencyProvisionResult:
     detail: str
 
 
+@dataclass(frozen=True)
+class RunnerBoundaryCapture:
+    """One durable snapshot plus the typed manifest for its filesystem boundary."""
+
+    snapshot: PreparedSnapshot
+    entries: list[dict[str, str]]
+    boundary_hash: str
+    cache_roots: list[dict[str, str] | str]
+    cache_status_evidence: list[dict[str, str]]
+
+
 class GraphAgentFactory(Protocol):
     def create_runner(self, context: GraphDispatchContext) -> AgentRunner: ...
 
 
 class GraphProcessRegistry(Protocol):
     def is_running(self, execution_id: str) -> bool: ...
+
+    async def try_reattach(
+        self,
+        execution_id: str,
+        callback: Callable[[list[dict[str, object]]], Awaitable[None]],
+        worktree_execution_lock: asyncio.Lock,
+    ) -> bool: ...
+
+
+@dataclass
+class _ExecutionCancellation:
+    runner_loss: bool = False
+
+
+class RunnerOwnedProcessRegistry:
+    """Owns only tasks created by this executor process.
+
+    Current AgentRunner implementations expose neither a stable execution id nor
+    an API to pause mutations and replace their callback closure.  Therefore a
+    task from a prior runtime can never safely be reattached: reporting it live
+    would let it mutate the shared worktree outside the new executor lock.  The
+    registry is nevertheless the production ownership boundary: it records
+    locally-created tasks and explicitly refuses cross-runtime reattachment so
+    reconciliation enters durable recovery instead of making an unsafe claim.
+    """
+
+    def __init__(self) -> None:
+        self._tasks: dict[str, tuple[asyncio.Task[None] | None, _ExecutionCancellation]] = {}
+
+    def reserve(self, execution_id: str, cancellation: "_ExecutionCancellation") -> None:
+        existing = self._tasks.get(execution_id)
+        if existing is not None:
+            raise ProcessQuiescenceError(
+                f"execution {execution_id} already has a live process owner"
+            )
+        self._tasks[execution_id] = (None, cancellation)
+
+    def register(
+        self,
+        execution_id: str,
+        task: asyncio.Task[None],
+        cancellation: "_ExecutionCancellation",
+    ) -> None:
+        if self._tasks.get(execution_id) != (None, cancellation):
+            raise ProcessQuiescenceError(
+                f"execution {execution_id} lost its reserved process owner"
+            )
+        self._tasks[execution_id] = (task, cancellation)
+
+    def release_reservation(
+        self, execution_id: str, cancellation: "_ExecutionCancellation"
+    ) -> None:
+        if self._tasks.get(execution_id) == (None, cancellation):
+            self._tasks.pop(execution_id, None)
+
+    def unregister(self, execution_id: str, task: asyncio.Task[None]) -> None:
+        existing = self._tasks.get(execution_id)
+        if existing is not None and existing[0] is task and task.done():
+            self._tasks.pop(execution_id, None)
+
+    def is_running(self, execution_id: str) -> bool:
+        owner = self._tasks.get(execution_id)
+        return owner is not None and (owner[0] is None or not owner[0].done())
+
+    async def try_reattach(
+        self,
+        execution_id: str,
+        callback: Callable[[list[dict[str, object]]], Awaitable[None]],
+        worktree_execution_lock: asyncio.Lock,
+    ) -> bool:
+        del callback, worktree_execution_lock
+        owner = self._tasks.get(execution_id)
+        if owner is None:
+            return False
+        task, cancellation = owner
+        if task is None:
+            raise ProcessQuiescenceError(f"execution {execution_id} has no task for quiescence")
+        if task.done():
+            if self._tasks.get(execution_id) == owner:
+                self._tasks.pop(execution_id, None)
+            return False
+        if task is asyncio.current_task():
+            raise ProcessQuiescenceError(
+                f"execution {execution_id} cannot quiesce from its own task"
+            )
+        cancellation.runner_loss = True
+        task.cancel()
+        # Do not time out this wait. A runner that catches cancellation remains
+        # a worktree owner, so recovery must stay blocked rather than restore
+        # concurrently with its mutations.
+        waiter = asyncio.ensure_future(asyncio.gather(task, return_exceptions=True))
+        try:
+            await asyncio.shield(waiter)
+        except asyncio.CancelledError:
+            await asyncio.shield(waiter)
+            raise
+        finally:
+            if task.done() and self._tasks.get(execution_id) == owner:
+                self._tasks.pop(execution_id, None)
+        return False
+
+
+class RunnerRecoveryRestorer(Protocol):
+    """Restores one durable recovery request into its shared worktree."""
+
+    def __call__(
+        self,
+        worktree_path: str | Path,
+        snapshot_id: str,
+        paths: list[str],
+        *,
+        expected_tree_sha: str | None = None,
+    ) -> SelectiveRestoreResult: ...
 
 
 class StaticGraphAgentFactory:
@@ -176,6 +345,24 @@ def _runtime_death_max_attempts(context: GraphDispatchContext) -> int | None:
     return None
 
 
+def _authority_file_state_policy(context: GraphDispatchContext) -> FileStatePolicy:
+    """Runtime boundary authority comes exclusively from the verified snapshot."""
+    binding = cache_authority_binding(context.graph_projection)
+    if context.cache_authority_hash and binding.hash != context.cache_authority_hash:
+        raise ValueError("dispatch cache authority binding changed before worktree access")
+    return policy_with_pattern_library(
+        context.graph_events,
+        file_state_policy_from_authority(binding.policy),
+    )
+
+
+def _authority_cache_policy(context: GraphDispatchContext) -> Any:
+    binding = cache_authority_binding(context.graph_projection)
+    if context.cache_authority_hash and binding.hash != context.cache_authority_hash:
+        raise ValueError("dispatch cache authority binding changed before worktree access")
+    return binding.policy
+
+
 class GraphDispatchExecutor(SideEffectExecutor):
     """Start graph-leased agent executions from durable outbox items."""
 
@@ -196,9 +383,18 @@ class GraphDispatchExecutor(SideEffectExecutor):
         monotonic: Callable[[], float] = perf_counter,
         graph_mcp_registry: "GraphMcpExecutionRegistry | None" = None,
         base_url: str = "http://localhost:8000",
+        file_state_baselines: dict[str, WorktreeFileStateBaseline] | None = None,
+        worktree_execution_lock: asyncio.Lock | None = None,
+        runner_recovery_restorer: RunnerRecoveryRestorer = restore_paths,
+        runtime_boundary_capability: RuntimeBoundaryCapability | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._controller = controller
+        self._runtime_boundary_capability = (
+            runtime_boundary_capability
+            if runtime_boundary_capability is not None
+            else getattr(controller, "_runtime_boundary_capability", RuntimeBoundaryCapability())
+        )
         self._agent_factory = agent_factory
         self._worktree_path = str(worktree_path)
         self._artifact_store = artifact_store
@@ -211,10 +407,26 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self._monotonic = monotonic
         self._graph_mcp_registry = graph_mcp_registry
         self._base_url = base_url.rstrip("/")
+        self._file_state_baselines = (
+            file_state_baselines if file_state_baselines is not None else {}
+        )
+        self._worktree_execution_lock = (
+            worktree_execution_lock if worktree_execution_lock is not None else asyncio.Lock()
+        )
+        self._runner_recovery_restorer = runner_recovery_restorer
 
     async def dispatch(self, item: OutboxItem) -> None:
+        if item.kind == "snapshot_publish":
+            async with self._worktree_execution_lock:
+                await self._dispatch_snapshot_publish(item)
+            return
         if item.kind == "snapshot_cleanup":
-            await self._dispatch_snapshot_cleanup(item)
+            async with self._worktree_execution_lock:
+                await self._dispatch_snapshot_cleanup(item)
+            return
+        if item.kind == "runner_recovery":
+            async with self._worktree_execution_lock:
+                await self._dispatch_runner_recovery(item)
             return
         if item.kind != "agent_dispatch":
             return
@@ -224,16 +436,38 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if existing is not None and not existing.done():
             return
 
-        if context.node_kind == "check":
-            task = asyncio.create_task(self._run_check(context))
-        elif context.node_kind == "join":
-            task = asyncio.create_task(self._run_join(context))
-        elif context.node_kind == "final_gate":
-            task = asyncio.create_task(self._run_final_gate(context))
-        else:
-            runner = self._agent_factory.create_runner(context)
-            task = asyncio.create_task(self._run_agent(context, runner))
+        registry = (
+            self._process_registry
+            if isinstance(self._process_registry, RunnerOwnedProcessRegistry)
+            else None
+        )
+        cancellation = _ExecutionCancellation()
+        if registry is not None:
+            registry.reserve(context.execution_id, cancellation)
+        try:
+            if context.node_kind == "check":
+                task = asyncio.create_task(self._run_check_serialized(context))
+            elif context.node_kind == "join":
+                task = asyncio.create_task(self._run_join(context))
+            elif context.node_kind == "final_gate":
+                task = asyncio.create_task(self._run_final_gate(context))
+            else:
+                runner = self._agent_factory.create_runner(context)
+                task = asyncio.create_task(
+                    self._run_agent_serialized(context, runner, cancellation)
+                )
+        except BaseException:
+            if registry is not None:
+                registry.release_reservation(context.execution_id, cancellation)
+            raise
         task.add_done_callback(_consume_task_exception)
+        if registry is not None:
+            registry.register(context.execution_id, task, cancellation)
+
+            def unregister(completed: asyncio.Task[None]) -> None:
+                registry.unregister(context.execution_id, completed)
+
+            task.add_done_callback(unregister)
         self._running[context.execution_id] = task
 
     def is_running(self, execution_id: str) -> bool:
@@ -266,6 +500,134 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 await asyncio.wait(tasks, timeout=max(0.0, timeout_seconds))
         self._prune_done()
 
+    async def reconcile_execution_attempts(self, run_id: str) -> set[str]:
+        """Recover restart state from canonical attempts, not process-local tasks.
+
+        Returns execution ids covered by the managed protocol.  Callers retain
+        the old ``agent_died`` fallback only for histories written before a
+        baseline fact existed.
+        """
+        projection = await self._controller.read_projection(run_id)
+        terminal = run_state(projection) in {"cancelled", "completed", "failed"}
+        handled: set[str] = set()
+        async with self._worktree_execution_lock:
+            for attempt in execution_attempts_view(projection).values():
+                if attempt.state in {"finalized", "recovered", "recovery_requested"}:
+                    handled.add(attempt.execution_id)
+                    continue
+                if self.is_running(attempt.execution_id):
+                    context = await self._reattached_execution_context(run_id, attempt)
+
+                    async def complete_submission(
+                        output_records: list[dict[str, object]],
+                    ) -> None:
+                        await self._complete_reattached_submission(context, output_records)
+
+                    if (
+                        self._process_registry is not None
+                        and await self._process_registry.try_reattach(
+                            attempt.execution_id,
+                            complete_submission,
+                            self._worktree_execution_lock,
+                        )
+                    ):
+                        handled.add(attempt.execution_id)
+                        continue
+                lease = leases_view(projection).get(attempt.lease_id)
+                node_kind = node_kinds_view(projection).get(attempt.node_id, "worker")
+                node_role = node_roles_view(projection).get(attempt.node_id, "")
+                max_attempts = project_node_max_attempts(projection).get(attempt.node_id)
+                context = GraphDispatchContext(
+                    run_id=run_id,
+                    node_id=attempt.node_id,
+                    node_kind=node_kind,
+                    node_role=node_role,
+                    node_payload=(
+                        {"max_attempts": max_attempts} if max_attempts is not None else {}
+                    ),
+                    requirements=[],
+                    worktree_path=self._worktree_path,
+                    lease_id=attempt.lease_id,
+                    lease_generation=attempt.lease_generation,
+                    execution_id=attempt.execution_id,
+                    base_snapshot_id=(lease.base_snapshot_id if lease is not None else None)
+                    or "recovered",
+                    dispatch_event_id=f"reconcile:{attempt.execution_id}",
+                    cache_authority_hash=cache_authority_binding(projection).hash,
+                    graph_projection=projection,
+                )
+                # Staging proves only that on_submit ran.  It does not prove
+                # that runner.execute returned successfully, so an orphaned
+                # staged attempt must not publish its records on restart.
+                # A successfully reattached process finalizes through its
+                # completion callback above; every non-reattached attempt
+                # instead restores first, after which the kernel atomically
+                # determines retry disposition.
+                await self._request_runner_recovery(
+                    context, "cancelled" if terminal else "runner_died"
+                )
+                handled.add(attempt.execution_id)
+        return handled
+
+    async def _reattached_execution_context(
+        self, run_id: str, attempt: Any
+    ) -> GraphDispatchContext:
+        """Rebuild the durable identity needed to complete a surviving runner."""
+        projection = await self._controller.read_projection(run_id)
+        events = await self._events(run_id)
+        node_payload = _node_payload(events, attempt.node_id)
+        lease = leases_view(projection).get(attempt.lease_id)
+        return GraphDispatchContext(
+            run_id=run_id,
+            node_id=attempt.node_id,
+            node_kind=str(node_payload.get("kind", "worker")),
+            node_role=_node_role(str(node_payload.get("kind", "worker")), node_payload),
+            node_payload=node_payload,
+            requirements=_requirements_for_node(events, attempt.node_id),
+            worktree_path=self._worktree_path,
+            lease_id=attempt.lease_id,
+            lease_generation=attempt.lease_generation,
+            execution_id=attempt.execution_id,
+            base_snapshot_id=(lease.base_snapshot_id if lease is not None else None)
+            or attempt.lease_base_snapshot_id
+            or "recovered",
+            dispatch_event_id=f"reconcile:{attempt.execution_id}",
+            cache_authority_hash=cache_authority_binding(projection).hash,
+            graph_projection=projection,
+            graph_events=events,
+        )
+
+    async def _complete_reattached_submission(
+        self,
+        context: GraphDispatchContext,
+        output_records: list[dict[str, object]],
+    ) -> None:
+        """Stage and finalize a live process callback after runtime restart.
+
+        The old process cannot retain the original in-memory callback closure.
+        Rebinding it here deliberately routes its completion through the same
+        capability-gated boundary protocol as a newly dispatched runner.
+        """
+        async with self._worktree_execution_lock:
+            attempt = execution_attempts_view(
+                await self._controller.read_projection(context.run_id)
+            ).get(context.execution_id)
+            if attempt is None or (
+                attempt.node_id != context.node_id
+                or attempt.lease_id != context.lease_id
+                or attempt.lease_generation != context.lease_generation
+            ):
+                raise ValueError("reattached runner identity no longer owns the execution")
+            if attempt.state == "finalized":
+                return
+            if attempt.state == "submission_staged":
+                await self._finalize_runner_execution(context)
+                return
+            if attempt.state != "baseline_captured":
+                raise ValueError("reattached runner execution is not ready for submission")
+            await self._submit_callback(context, [], output_records=output_records)
+            await self._finalize_runner_execution(context)
+
     def cancel_all(self) -> None:
         for task in self._running.values():
             task.cancel()
@@ -275,7 +637,67 @@ class GraphDispatchExecutor(SideEffectExecutor):
             if task.done():
                 self._running.pop(execution_id, None)
 
-    async def _run_agent(self, context: GraphDispatchContext, runner: AgentRunner) -> None:
+    async def _run_agent_serialized(
+        self,
+        context: GraphDispatchContext,
+        runner: AgentRunner,
+        cancellation: _ExecutionCancellation | None = None,
+    ) -> None:
+        """Serialize a shared-worktree execution from baseline through submit.
+
+        File-state attribution cannot safely distinguish concurrent processes in
+        one worktree. The injected lock makes ownership deterministic without
+        process-global coordination: each worker sees a stable baseline and its
+        post-submit capture before the next worker starts.
+        """
+        async with self._worktree_execution_lock:
+            policy = _authority_file_state_policy(context)
+            cache_policy = _authority_cache_policy(context)
+            try:
+                self._file_state_baselines[context.execution_id] = (
+                    capture_worktree_file_state_baseline(context.worktree_path, policy)
+                )
+                baseline = _capture_runner_boundary(
+                    context.worktree_path,
+                    policy,
+                    cache_policy,
+                    "baseline",
+                    snapshot_id=_managed_snapshot_id("baseline", context.execution_id),
+                )
+            except (
+                CacheScanBudgetExceededError,
+                CompromisedFileStateError,
+                SnapshotPathLimitError,
+            ) as exc:
+                # No baseline ref is owned until the boundary event is durable,
+                # so standard lease failure is the only safe path here.
+                self._file_state_baselines.pop(context.execution_id, None)
+                await self._agent_died(context, str(exc))
+                return
+            if callable(self._session_factory):
+                await self._record_runner_baseline(context, baseline)
+                publish_snapshot(context.worktree_path, baseline.snapshot)
+            try:
+                await self._run_agent(context, runner, cancellation)
+            finally:
+                self._file_state_baselines.pop(context.execution_id, None)
+
+    async def _run_check_serialized(self, context: GraphDispatchContext) -> None:
+        """Serialize check snapshot/worktree setup with worker mutations."""
+        async with self._worktree_execution_lock:
+            await self._run_check(context)
+
+    async def _run_agent(
+        self,
+        context: GraphDispatchContext,
+        runner: AgentRunner,
+        cancellation: _ExecutionCancellation | None = None,
+    ) -> None:
+        # Direct callers retain the synchronous, non-managed callback contract.
+        # Production dispatch always installs the baseline before entering here.
+        managed = callable(
+            getattr(self, "_session_factory", None)
+        ) and context.execution_id in getattr(self, "_file_state_baselines", {})
         try:
             await self._acknowledge_start(context)
             await self._record_start_heartbeat(context)
@@ -378,10 +800,34 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     await self._on_agent_usage(context, result)
                 except Exception:
                     logger.exception("graph usage observer failed")
-            if not submitted_callback:
-                await self._agent_died(context, "agent exited without submit")
+            if not managed:
+                if not submitted_callback:
+                    await self._agent_died(context, "agent exited without submit")
+            elif not result.success:
+                await self._request_runner_recovery(context, "runner_died")
+            elif not submitted_callback:
+                await self._request_runner_recovery(context, "runner_died")
+            else:
+                await self._finalize_runner_execution(context)
+        except asyncio.CancelledError:
+            # Cancellation must never leave a mutable shared worktree attributed
+            # to a live lease.  Shield the durable cleanup intent, then preserve
+            # cancellation for the driver.
+            if managed:
+                reason: Literal["runner_died", "cancelled"] = (
+                    "runner_died"
+                    if cancellation is not None and cancellation.runner_loss
+                    else "cancelled"
+                )
+                await asyncio.shield(self._request_runner_recovery(context, reason))
+            raise
         except Exception as exc:
-            await self._agent_died(context, str(exc))
+            if managed:
+                logger.info("managed graph runner failed before finalization: %s", exc)
+                if not isinstance(exc, CompromisedFileStateError):
+                    await self._request_runner_recovery(context, "runner_died")
+            else:
+                await self._agent_died(context, str(exc))
 
     async def _run_check(self, context: GraphDispatchContext) -> None:
         try:
@@ -432,10 +878,30 @@ class GraphDispatchExecutor(SideEffectExecutor):
         async with self._session_factory() as session:
             store = GraphEventStore(session)
             projection, _, _ = await store.load_projection_with_tail(item.run_id)
-            events = await store.read_run(item.run_id)
+            events = await store.read_bounded_runtime_events(item.run_id)
 
         _guard_no_pending_compromised_file_state_bindings(projection, node_id)
         node_payload = _node_payload(events, node_id)
+        binding = cache_authority_binding(projection)
+        lease = leases_view(projection).get(str(payload["lease_id"]))
+        dispatch_hash = payload.get("cache_authority_hash")
+        node_hash = node_payload.get("cache_authority_hash")
+        lease_hash = lease.cache_authority_hash if lease is not None else None
+        if cache_authority_is_new_format(projection) and (
+            not isinstance(dispatch_hash, str)
+            or not isinstance(node_hash, str)
+            or not isinstance(lease_hash, str)
+        ):
+            raise ValueError(
+                "new-format dispatch requires cache authority hashes on dispatch, lease, and node"
+            )
+        if any(
+            value is not None and value != binding.hash
+            for value in (dispatch_hash, lease_hash, node_hash)
+        ):
+            raise ValueError(
+                "cache authority mismatch between dispatch, lease, node, and routine snapshot"
+            )
         node_kind = str(node_payload.get("kind", "worker"))
         base_snapshot_id = payload.get("base_snapshot_id")
         if not isinstance(base_snapshot_id, str) or not base_snapshot_id:
@@ -454,6 +920,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             execution_id=str(payload["execution_id"]),
             base_snapshot_id=base_snapshot_id,
             dispatch_event_id=item.event_id,
+            cache_authority_hash=binding.hash,
             graph_projection=projection,
             graph_events=list(events),
         )
@@ -526,30 +993,33 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self,
         context: GraphDispatchContext,
         grades: list[tuple[str, str, str | None]],
+        *,
+        output_records: list[dict[str, object]] | None = None,
     ) -> None:
         observed_position = await self._current_position(context.run_id)
-        output_records = _output_records_for_submit(context, grades)
-        events_before_boundary = await self._events(context.run_id)
+        submitted_records = (
+            list(output_records)
+            if output_records is not None
+            else _output_records_for_submit(context, grades)
+        )
         boundary = capture_file_state_boundary(
             worktree_path=context.worktree_path,
             run_id=context.run_id,
             node_id=context.node_id,
             execution_id=context.execution_id,
             base_snapshot_id=context.base_snapshot_id,
-            policy=policy_with_pattern_library(events_before_boundary),
+            policy=_authority_file_state_policy(context),
+            baseline=self._file_state_baselines.get(context.execution_id),
         )
-        if boundary.output_record is not None:
-            output_records.append(boundary.output_record)
         if boundary.rejection_record is not None:
             payload: dict[str, object] = {
-                "payload_hash": _payload_hash([boundary.rejection_record]),
                 "output_records": [],
                 "file_state_rejected": boundary.rejection_record,
             }
             result = await self._handle_command_retry_stale(
                 context.run_id,
                 observed_position,
-                "submit_callback",
+                "stage_runner_submission",
                 {
                     "node_id": context.node_id,
                     "execution_id": context.execution_id,
@@ -560,22 +1030,56 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     "idempotency_key": (
                         f"{context.dispatch_event_id}:{context.execution_id}:file-state-rejected"
                     ),
-                    "payload_hash": payload["payload_hash"],
+                    "payload_hash": _payload_hash(payload),
                     "payload": payload,
+                    # A rejected file-state boundary has no accepted snapshot
+                    # to stage.  Supply a valid, empty protocol envelope so
+                    # the managed command can durably emit the rejection
+                    # before recovery restores the worktree.
+                    "staged_snapshot_id": context.base_snapshot_id,
+                    "staged_snapshot_ref": (
+                        f"refs/orchestrator/snapshots/{context.base_snapshot_id}"
+                    ),
+                    "staged_commit_sha": "0" * 40,
+                    "staged_tree_sha": "0" * 40,
+                    "boundary_hash": boundary_manifest_hash(
+                        "0" * 40, [], [], context.cache_authority_hash
+                    ),
+                    "boundary_entries": [],
+                    "cache_authority_hash": context.cache_authority_hash,
+                    "cache_roots": [],
+                    "cache_status_evidence": [],
                     "complete_node": False,
                 },
             )
             if any(event.event_type == "file_state_rejected" for event in result.events):
-                # A rejected boundary means the managed runner exited without an
-                # accepted file-state record. Reuse the existing process-death
-                # recovery path so evidence remains durable and the lease is
-                # revoked before the same node becomes retryable.
-                await self._agent_died(context, "file_state_rejected_boundary")
+                await self._request_runner_recovery(
+                    context, "runner_died", publish_snapshot_ref=False
+                )
+                raise CompromisedFileStateError(
+                    "runner file-state boundary rejected; managed recovery requested"
+                )
             return
         payload = {
-            "payload_hash": _payload_hash(output_records),
-            "output_records": output_records,
+            "output_records": submitted_records,
         }
+        staged = _capture_runner_boundary(
+            context.worktree_path,
+            _authority_file_state_policy(context),
+            _authority_cache_policy(context),
+            "submission",
+            snapshot_id=_managed_snapshot_id("staged", context.execution_id),
+            force_include_paths=list(boundary.force_include_paths),
+        )
+        submitted_records.append(
+            file_state_output_record(
+                boundary,
+                staged.snapshot,
+                node_id=context.node_id,
+                execution_id=context.execution_id,
+                base_snapshot_id=context.base_snapshot_id,
+            )
+        )
         payload_data: dict[str, object] = {
             "node_id": context.node_id,
             "execution_id": context.execution_id,
@@ -584,19 +1088,208 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "base_snapshot_id": context.base_snapshot_id,
             "observed_graph_position": observed_position,
             "idempotency_key": f"{context.dispatch_event_id}:{context.execution_id}:submit",
-            "payload_hash": payload["payload_hash"],
+            "payload_hash": _payload_hash(payload),
             "payload": payload,
+            "staged_snapshot_id": staged.snapshot.id,
+            "staged_snapshot_ref": staged.snapshot.ref,
+            "staged_commit_sha": staged.snapshot.commit_sha,
+            "staged_tree_sha": staged.snapshot.tree_sha,
+            "boundary_hash": staged.boundary_hash,
+            "boundary_entries": staged.entries,
+            "cache_authority_hash": context.cache_authority_hash,
+            "cache_roots": staged.cache_roots,
+            "cache_status_evidence": staged.cache_status_evidence,
         }
         result = await self._handle_command_retry_stale(
             context.run_id,
             observed_position,
-            "submit_callback",
+            "stage_runner_submission",
             payload_data,
         )
         conflict_reason = _callback_conflict_reason(result.events)
         if conflict_reason is not None:
             raise ValueError(f"submit callback rejected: {conflict_reason}")
+        publish_snapshot(context.worktree_path, staged.snapshot)
+        # Stage is deliberately non-terminal.  Gatekeeper classification and
+        # downstream binding may only observe accepted records after finalization.
+
+    async def _record_runner_baseline(
+        self, context: GraphDispatchContext, baseline: RunnerBoundaryCapture
+    ) -> None:
+        result = await self._handle_command_retry_stale(
+            context.run_id,
+            await self._current_position(context.run_id),
+            "record_runner_baseline",
+            {
+                "execution_id": context.execution_id,
+                "node_id": context.node_id,
+                "lease_id": context.lease_id,
+                "lease_generation": context.lease_generation,
+                "lease_base_snapshot_id": context.base_snapshot_id,
+                "baseline_snapshot_id": baseline.snapshot.id,
+                "baseline_snapshot_ref": baseline.snapshot.ref,
+                "baseline_commit_sha": baseline.snapshot.commit_sha,
+                "baseline_tree_sha": baseline.snapshot.tree_sha,
+                "entries": baseline.entries,
+                "boundary_hash": baseline.boundary_hash,
+                "cache_authority_hash": context.cache_authority_hash,
+                "cache_roots": baseline.cache_roots,
+                "cache_status_evidence": baseline.cache_status_evidence,
+            },
+        )
+        reason = _callback_conflict_reason(result.events)
+        if reason is not None:
+            raise ValueError(f"runner baseline rejected: {reason}")
+
+    async def _finalize_runner_execution(self, context: GraphDispatchContext) -> None:
+        file_state = capture_file_state_boundary(
+            worktree_path=context.worktree_path,
+            run_id=context.run_id,
+            node_id=context.node_id,
+            execution_id=context.execution_id,
+            base_snapshot_id=context.base_snapshot_id,
+            policy=_authority_file_state_policy(context),
+            baseline=self._file_state_baselines.get(context.execution_id),
+        )
+        capture = _capture_runner_boundary(
+            context.worktree_path,
+            _authority_file_state_policy(context),
+            _authority_cache_policy(context),
+            "final",
+            snapshot_id=_managed_snapshot_id("final", context.execution_id),
+            force_include_paths=list(file_state.force_include_paths),
+        )
+        result = await self._handle_command_retry_stale(
+            context.run_id,
+            await self._current_position(context.run_id),
+            "finalize_runner_execution",
+            {
+                "execution_id": context.execution_id,
+                "node_id": context.node_id,
+                "lease_id": context.lease_id,
+                "lease_generation": context.lease_generation,
+                "final_snapshot_id": capture.snapshot.id,
+                "final_snapshot_ref": capture.snapshot.ref,
+                "final_commit_sha": capture.snapshot.commit_sha,
+                "final_tree_sha": capture.snapshot.tree_sha,
+                "boundary_hash": capture.boundary_hash,
+                "boundary_entries": capture.entries,
+                "cache_authority_hash": context.cache_authority_hash,
+                "cache_roots": capture.cache_roots,
+                "cache_status_evidence": capture.cache_status_evidence,
+            },
+        )
+        reason = _callback_conflict_reason(result.events)
+        if reason is not None:
+            raise ValueError(f"runner finalization rejected: {reason}")
+        publish_snapshot(context.worktree_path, capture.snapshot)
         await self._record_gatekeeper_verdicts(context, result.projection_position, result.events)
+
+    async def _request_runner_recovery(
+        self,
+        context: GraphDispatchContext,
+        reason: Literal["runner_died", "cancelled"],
+        *,
+        publish_snapshot_ref: bool = True,
+    ) -> None:
+        try:
+            capture = _capture_runner_boundary(
+                context.worktree_path,
+                _authority_file_state_policy(context),
+                _authority_cache_policy(context),
+                "recovery",
+                snapshot_id=_managed_snapshot_id("recovery", context.execution_id),
+            )
+        except (CacheScanBudgetExceededError, CompromisedFileStateError, SnapshotPathLimitError):
+            await self._request_budget_exhaustion_recovery(context, reason)
+            return
+        result = await self._handle_command_retry_stale(
+            context.run_id,
+            await self._current_position(context.run_id),
+            "request_runner_recovery",
+            {
+                "execution_id": context.execution_id,
+                "node_id": context.node_id,
+                "lease_id": context.lease_id,
+                "lease_generation": context.lease_generation,
+                "reason": reason,
+                "recovery_snapshot_id": capture.snapshot.id,
+                "recovery_snapshot_ref": capture.snapshot.ref,
+                "recovery_commit_sha": capture.snapshot.commit_sha,
+                "max_attempts": _runtime_death_max_attempts(context) or 0,
+                "final_tree_sha": capture.snapshot.tree_sha,
+                "boundary_hash": capture.boundary_hash,
+                "boundary_entries": capture.entries,
+                "cache_authority_hash": context.cache_authority_hash,
+                "observed_cache_roots": capture.cache_roots,
+                "cache_status_evidence": capture.cache_status_evidence,
+            },
+        )
+        if _callback_conflict_reason(result.events) is None and publish_snapshot_ref:
+            publish_snapshot(context.worktree_path, capture.snapshot)
+
+    async def _request_budget_exhaustion_recovery(
+        self,
+        context: GraphDispatchContext,
+        reason: Literal["runner_died", "cancelled"],
+    ) -> None:
+        """Request restoration from the durable baseline without a partial scan.
+
+        Cache exhaustion deliberately produces no current-boundary manifest or
+        recovery snapshot. The kernel derives restore paths from the already
+        durable baseline and (if present) staged boundary, then its normal
+        recovery effect releases the lease only after restoration.
+        """
+        projection = await self._controller.read_projection(context.run_id)
+        attempt = execution_attempts_view(projection).get(context.execution_id)
+        if (
+            attempt is None
+            or attempt.baseline_tree_sha is None
+            or attempt.baseline_boundary_hash is None
+        ):
+            raise RecoveryEventError("cache budget recovery has no durable baseline")
+        await self._handle_command_retry_stale(
+            context.run_id,
+            await self._current_position(context.run_id),
+            "request_runner_recovery",
+            {
+                "execution_id": context.execution_id,
+                "node_id": context.node_id,
+                "lease_id": context.lease_id,
+                "lease_generation": context.lease_generation,
+                "reason": reason,
+                "max_attempts": _runtime_death_max_attempts(context) or 0,
+                "final_tree_sha": attempt.baseline_tree_sha,
+                "boundary_hash": boundary_manifest_hash(
+                    attempt.baseline_tree_sha,
+                    [],
+                    [],
+                    context.cache_authority_hash,
+                ),
+                "boundary_entries": [],
+                "cache_authority_hash": context.cache_authority_hash,
+                "observed_cache_roots": [],
+                "cache_status_evidence": [],
+                "recovery_scope": "full_baseline",
+            },
+        )
+
+    async def _dispatch_snapshot_publish(self, item: OutboxItem) -> None:
+        """Publish only the exact snapshot identity durably owned by an event."""
+        payload = item.payload
+        required = ("snapshot_id", "snapshot_ref", "commit_sha", "tree_sha")
+        values = {key: payload.get(key) for key in required}
+        if not all(isinstance(value, str) and value for value in values.values()):
+            raise WorktreeError("snapshot publication has invalid durable identity")
+        publish_snapshot(
+            self._worktree_path,
+            PreparedSnapshot(
+                id=str(values["snapshot_id"]),
+                ref=str(values["snapshot_ref"]),
+                commit_sha=str(values["commit_sha"]),
+                tree_sha=str(values["tree_sha"]),
+            ),
+        )
 
     async def _submit_check_result(
         self,
@@ -605,7 +1298,6 @@ class GraphDispatchExecutor(SideEffectExecutor):
     ) -> None:
         observed_position = await self._current_position(context.run_id)
         payload = {
-            "payload_hash": _payload_hash([record]),
             "output_records": [record],
         }
         await self._handle_command_retry_stale(
@@ -620,7 +1312,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "base_snapshot_id": context.base_snapshot_id,
                 "observed_graph_position": observed_position,
                 "idempotency_key": f"{context.dispatch_event_id}:{context.execution_id}:check",
-                "payload_hash": payload["payload_hash"],
+                "payload_hash": _payload_hash(payload),
                 "payload": payload,
             },
         )
@@ -726,12 +1418,22 @@ class GraphDispatchExecutor(SideEffectExecutor):
                         current_graph_position=current_position,
                     )
                 )
+                if command_type in {
+                    "record_runner_baseline",
+                    "stage_runner_submission",
+                    "finalize_runner_execution",
+                    "request_runner_recovery",
+                }:
+                    return await self._controller.handle_runtime_boundary_command(
+                        run_id,
+                        current_position,
+                        command_type,
+                        retry_payload,
+                        self._runtime_boundary_capability,
+                        context=command_context,
+                    )
                 return await self._controller.handle_command(
-                    run_id,
-                    current_position,
-                    command_type,
-                    retry_payload,
-                    context=command_context,
+                    run_id, current_position, command_type, retry_payload, context=command_context
                 )
             except OperationalError as exc:
                 if (
@@ -753,8 +1455,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
             return await GraphEventStore(session).current_position(run_id)
 
     async def _events(self, run_id: str) -> list[EventEnvelope]:
+        """Return only the bounded event facts permitted during execution."""
         async with self._session_factory() as session:
-            return await GraphEventStore(session).read_run(run_id)
+            return await GraphEventStore(session).read_bounded_runtime_events(run_id)
 
     async def _record_gatekeeper_verdicts(
         self,
@@ -805,6 +1508,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if cleanup_event is None:
             msg = f"unknown cleanup_requested: {cleanup_id}"
             raise ValueError(msg)
+        if cleanup_event.payload.get("snapshot_role") is not None:
+            await self._dispatch_managed_snapshot_cleanup(item, cleanup_event.payload)
+            return
         record_id = cleanup_event.payload.get("file_state_record_id")
         if not isinstance(record_id, str):
             msg = f"cleanup_requested missing file_state_record_id: {cleanup_id}"
@@ -845,19 +1551,241 @@ class GraphDispatchExecutor(SideEffectExecutor):
             msg = str(rejected.payload.get("reason") or "record_cleanup_applied rejected")
             raise ValueError(msg)
 
+    async def _dispatch_managed_snapshot_cleanup(
+        self, item: OutboxItem, payload: dict[str, object]
+    ) -> None:
+        """Delete only the ref named and tree-bound by a managed cleanup fact."""
+        required = (
+            "cleanup_id",
+            "snapshot_id",
+            "snapshot_ref",
+            "tree_sha",
+            "commit_sha",
+            "node_id",
+            "lease_id",
+            "snapshot_role",
+        )
+        values = {key: payload.get(key) for key in required}
+        if not all(isinstance(value, str) and value for value in values.values()):
+            raise ValueError("managed snapshot cleanup has incomplete ownership identity")
+        generation = payload.get("lease_generation")
+        if not isinstance(generation, int) or isinstance(generation, bool):
+            raise ValueError("managed snapshot cleanup has invalid lease generation")
+        deleted = delete_snapshot_ref(
+            self._worktree_path,
+            str(values["snapshot_id"]),
+            expected_ref=str(values["snapshot_ref"]),
+            expected_tree_sha=str(values["tree_sha"]),
+            expected_commit_sha=str(values["commit_sha"]),
+        )
+        result = await self._handle_command_retry_stale(
+            item.run_id,
+            await self._current_position(item.run_id),
+            "record_managed_snapshot_cleanup_applied",
+            {
+                **values,
+                "lease_generation": generation,
+                "deleted_snapshot_ref": deleted,
+            },
+        )
+        rejected = next(
+            (
+                event
+                for event in result.events
+                if event.event_type == "command_rejected"
+                and event.payload.get("command_type") == "record_managed_snapshot_cleanup_applied"
+            ),
+            None,
+        )
+        if rejected is not None:
+            raise ValueError(str(rejected.payload.get("reason") or "managed cleanup rejected"))
+
+    async def _dispatch_runner_recovery(self, item: OutboxItem) -> None:
+        """Restore the requested durable baseline paths and record proof.
+
+        The outbox is at-least-once: a crash after filesystem restoration but
+        before the completion event simply performs the same selective restore
+        again. No runner scheduling, lease transition, or retry lifecycle is
+        performed here; that remains the next dispatch tranche.
+        """
+        recovery_id = item.payload.get("recovery_id")
+        if not isinstance(recovery_id, str):
+            raise RecoveryEventError("runner_recovery missing recovery_id")
+        events = await self._events(item.run_id)
+        if any(
+            event.event_type == "runner_recovery_completed"
+            and event.payload.get("recovery_id") == recovery_id
+            for event in events
+        ):
+            return
+        request = next(
+            (
+                event
+                for event in events
+                if event.event_type == "runner_recovery_requested"
+                and event.payload.get("recovery_id") == recovery_id
+            ),
+            None,
+        )
+        if request is None:
+            raise RecoveryEventError(f"unknown runner_recovery_requested: {recovery_id}")
+        try:
+            payload = RunnerRecoveryRequestedPayload.model_validate(request.payload).model_dump(
+                mode="json"
+            )
+        except ValueError as exc:
+            raise RecoveryEventError(
+                f"runner recovery {recovery_id} has malformed requested event"
+            ) from exc
+        required_strings = (
+            "execution_id",
+            "node_id",
+            "lease_id",
+            "baseline_snapshot_id",
+            "baseline_tree_sha",
+        )
+        values = {key: payload.get(key) for key in required_strings}
+        if not all(isinstance(value, str) for value in values.values()):
+            raise RecoveryEventError(f"runner recovery {recovery_id} has invalid identity")
+        lease_generation = payload.get("lease_generation")
+        paths = payload.get("paths")
+        if not isinstance(lease_generation, int) or isinstance(lease_generation, bool):
+            raise RecoveryEventError(f"runner recovery {recovery_id} has invalid lease generation")
+        if not isinstance(paths, list):
+            raise RecoveryEventError(f"runner recovery {recovery_id} has invalid paths")
+        recovery_paths: list[str] = []
+        raw_paths = cast(list[object], paths)
+        for candidate_path in raw_paths:
+            if not isinstance(candidate_path, str):
+                raise RecoveryEventError(f"runner recovery {recovery_id} has invalid paths")
+            recovery_paths.append(candidate_path)
+        recovery_scope = payload.get("recovery_scope", "selective")
+        if recovery_scope not in {"selective", "full_baseline"}:
+            raise RecoveryEventError(f"runner recovery {recovery_id} has invalid scope")
+        try:
+            baseline_ref = next(
+                (
+                    event.payload.get("baseline_snapshot_ref")
+                    for event in events
+                    if event.event_type == "runner_baseline_recorded"
+                    and event.payload.get("execution_id") == values["execution_id"]
+                ),
+                None,
+            )
+            baseline_commit = next(
+                (
+                    event.payload.get("baseline_commit_sha")
+                    for event in events
+                    if event.event_type == "runner_baseline_recorded"
+                    and event.payload.get("execution_id") == values["execution_id"]
+                ),
+                None,
+            )
+            if not isinstance(baseline_ref, str) or not isinstance(baseline_commit, str):
+                raise RecoveryEventError(f"runner recovery {recovery_id} has no owned baseline ref")
+            ensure_snapshot_ref(
+                self._worktree_path,
+                str(values["baseline_snapshot_id"]),
+                expected_ref=baseline_ref,
+                expected_commit_sha=baseline_commit,
+                expected_tree_sha=str(values["baseline_tree_sha"]),
+            )
+            if recovery_scope == "full_baseline":
+                restoration = restore_baseline_worktree(
+                    self._worktree_path,
+                    str(values["baseline_snapshot_id"]),
+                    expected_tree_sha=str(values["baseline_tree_sha"]),
+                )
+            elif recovery_paths:
+                restoration = self._runner_recovery_restorer(
+                    self._worktree_path,
+                    str(values["baseline_snapshot_id"]),
+                    recovery_paths,
+                    expected_tree_sha=str(values["baseline_tree_sha"]),
+                )
+            else:
+                restoration = SelectiveRestoreResult((), (), ())
+        except (GitError, WorktreeError) as exc:
+            raise RecoveryRestoreError(f"runner recovery {recovery_id} restore failed") from exc
+        proof = recovery_proof_hash(
+            execution_id=str(values["execution_id"]),
+            recovery_id=recovery_id,
+            node_id=str(values["node_id"]),
+            lease_id=str(values["lease_id"]),
+            lease_generation=lease_generation,
+            baseline_snapshot_id=str(values["baseline_snapshot_id"]),
+            baseline_tree_sha=str(values["baseline_tree_sha"]),
+            requested_paths=restoration.requested_paths,
+            restored_paths=restoration.restored_paths,
+            removed_paths=restoration.removed_paths,
+            recovery_scope=str(recovery_scope),
+        )
+        result = await self._handle_command_retry_stale(
+            item.run_id,
+            await self._current_position(item.run_id),
+            "complete_runner_recovery",
+            {
+                "execution_id": values["execution_id"],
+                "recovery_id": recovery_id,
+                "node_id": values["node_id"],
+                "lease_id": values["lease_id"],
+                "lease_generation": lease_generation,
+                "baseline_snapshot_id": values["baseline_snapshot_id"],
+                "baseline_tree_sha": values["baseline_tree_sha"],
+                "requested_paths": list(restoration.requested_paths),
+                "proof_hash": proof,
+                "restored_paths": list(restoration.restored_paths),
+                "removed_paths": list(restoration.removed_paths),
+                "recovery_scope": recovery_scope,
+            },
+        )
+        rejected = next(
+            (
+                event
+                for event in result.events
+                if event.event_type == "command_rejected"
+                and event.payload.get("command_type") == "complete_runner_recovery"
+            ),
+            None,
+        )
+        if rejected is not None:
+            reason = rejected.payload.get("reason") or "complete_runner_recovery rejected"
+            raise RecoveryCompletionRejectedError(str(reason))
+
 
 async def reconcile_runtime(
     controller: GraphController,
     dispatcher: GraphDispatchExecutor,
     report: object,
+    outbox_dispatcher: OutboxDispatcher | None = None,
 ) -> None:
     """Reconcile recovered active leases with in-process runtime liveness."""
 
+    # The report may contain multiple runs; reconcile each one once.  This
+    # awkward-looking extraction keeps the legacy report protocol unchanged.
+    run_ids = {
+        str(lease["run_id"])
+        for lease in [
+            *cast(Any, getattr(report, "awaiting_start_ack", [])),
+            *cast(Any, getattr(report, "awaiting_callback", [])),
+        ]
+        if isinstance(lease.get("run_id"), str)
+    }
+    run_ids.update(
+        str(attempt["run_id"])
+        for attempt in cast(Any, getattr(report, "owned_attempts", []))
+        if isinstance(attempt.get("run_id"), str)
+    )
+    managed_by_run = {
+        run_id: await dispatcher.reconcile_execution_attempts(run_id) for run_id in run_ids
+    }
     for lease in [
         *cast(Any, getattr(report, "awaiting_start_ack", [])),
         *cast(Any, getattr(report, "awaiting_callback", [])),
     ]:
         execution_id = str(lease.get("execution_id", ""))
+        if execution_id in managed_by_run.get(str(lease["run_id"]), set()):
+            continue
         if execution_id and dispatcher.is_running(execution_id):
             continue
         run_id = str(lease["run_id"])
@@ -899,6 +1827,15 @@ async def reconcile_runtime(
                     raise
                 await asyncio.sleep(delay_seconds * (attempt + 1))
                 continue
+    if outbox_dispatcher is not None:
+        for run_id in run_ids:
+            projection = await controller.read_projection(run_id)
+            allowed_kinds = (
+                frozenset({"snapshot_cleanup", "runner_recovery"})
+                if run_state(projection) in {"cancelled", "completed", "failed"}
+                else frozenset({"runner_recovery"})
+            )
+            await outbox_dispatcher.dispatch_pending(run_id=run_id, allowed_kinds=allowed_kinds)
 
 
 async def _recovered_lease_still_active(
@@ -929,15 +1866,18 @@ def build_graph_runtime(
     on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
     graph_mcp_registry: "GraphMcpExecutionRegistry | None" = None,
     base_url: str = "http://localhost:8000",
+    process_registry: GraphProcessRegistry | None = None,
 ) -> tuple[GraphController, GraphDispatchExecutor]:
     """Assemble graph controller and dispatch executor without API imports."""
 
+    capability = RuntimeBoundaryCapability()
     controller = GraphController(
         session_factory,
         clock,
         id_gen,
         auto_dispatch=False,
         journal_max_bytes=journal_max_bytes,
+        runtime_boundary_capability=capability,
     )
     executor = GraphDispatchExecutor(
         session_factory,
@@ -949,6 +1889,8 @@ def build_graph_runtime(
         on_agent_usage=on_agent_usage,
         graph_mcp_registry=graph_mcp_registry,
         base_url=base_url,
+        process_registry=process_registry or RunnerOwnedProcessRegistry(),
+        runtime_boundary_capability=capability,
     )
     return controller, executor
 
@@ -1074,6 +2016,122 @@ def _duplicate_of_rejection_reason(payload: dict[str, Any]) -> str | None:
         else None
     )
     return str(reason) if isinstance(reason, str) and reason else f"duplicate of {prior_outcome}"
+
+
+def _capture_runner_boundary(
+    worktree_path: str | Path,
+    policy: Any,
+    cache_policy: Any,
+    label: str | None = None,
+    *,
+    snapshot_id: str | None = None,
+    force_include_paths: list[str] | None = None,
+) -> RunnerBoundaryCapture:
+    """Capture a restorable tree and canonical manifest while the repository lock is held.
+
+    The manifest intentionally describes the dirty/status boundary, while the
+    snapshot contains the complete tree needed to restore a modified or deleted
+    path.  This permits selective restore without claiming unrelated clean paths
+    as execution output.
+    """
+    # Preserve the former internal helper shape for direct unit callers. The
+    # managed runtime always passes the immutable projected cache policy.
+    legacy_root_transport = label is None
+    if legacy_root_transport:
+        label = cast(str, cache_policy)
+        from orchestrator.graph import LEGACY_CACHE_AUTHORITY_V1
+
+        cache_policy = LEGACY_CACHE_AUTHORITY_V1
+    root = Path(worktree_path)
+    # Prepare the normalized output tree before observing boundary paths. The
+    # entries below are read from this immutable Git tree, closing the live
+    # worktree TOCTOU between manifest construction and publication.
+    if snapshot_id is None:
+        raise ValueError("managed runner boundary requires a deterministic snapshot id")
+    initial_status = collect_worktree_status(root, policy)
+    initial_cache_roots = list(derive_cache_roots(initial_status, cache_policy))
+    initial_classification = classify_file_state(initial_status, policy)
+    if initial_classification.verdict == "rejected":
+        raise CompromisedFileStateError("boundary file-state contains rejected paths")
+    # A baseline is authority state, not a cache archive. Git's `add -f` on a
+    # directory recursively expands it, so force only individually approved
+    # non-cache ignored files the classifier has already examined.
+    approved_ignored_paths = sorted(
+        entry.path
+        for entry in initial_classification.paths
+        if entry.source == "ignored"
+        and not entry.rejected
+        and entry.classification != "tool_cache"
+        and (root / entry.path).is_file()
+        and not (root / entry.path).is_symlink()
+    )
+    captured = prepare_snapshot(
+        root,
+        f"graph runner {label} boundary",
+        snapshot_id=snapshot_id,
+        force_include_paths=(approved_ignored_paths if label == "baseline" else [])
+        + (force_include_paths or []),
+        # Cache-root handling is deliberately narrower than full exclusion:
+        # preserve tracked source under a mixed root while dropping untracked
+        # and ignored cache residue without recursively enumerating it.
+        exclude_untracked_cache_paths=[cache_root.path for cache_root in initial_cache_roots],
+    )
+    status = collect_worktree_status(root, policy)
+    cache_roots = list(derive_cache_roots(status, cache_policy))
+    entries_by_path: dict[str, RunnerBoundaryEntry] = {}
+    for item in (*status.tracked_modified, *status.untracked, *status.ignored):
+        if any(
+            item.path == cache_root.path or item.path.startswith(f"{cache_root.path}/")
+            for cache_root in cache_roots
+        ):
+            continue
+        metadata = snapshot_path_metadata(root, captured, item.path)
+        if metadata is None:
+            file_type = "missing"
+            material = b"missing"
+            fingerprint = f"sha256:{hashlib.sha256(material).hexdigest()}"
+        else:
+            file_type = cast(Literal["file", "directory", "symlink", "missing"], metadata.file_type)
+            fingerprint = metadata.fingerprint
+        entries_by_path[item.path] = RunnerBoundaryEntry(
+            path=item.path,
+            kind=item.kind,
+            status=item.status or "modified",
+            fingerprint=fingerprint,
+            file_type=file_type,
+        )
+    entries = [entries_by_path[path] for path in sorted(entries_by_path)]
+    return RunnerBoundaryCapture(
+        snapshot=captured,
+        entries=[entry.model_dump(mode="json") for entry in entries],
+        boundary_hash=boundary_manifest_hash(
+            captured.tree_sha,
+            entries,
+            _cache_root_status_witnesses(status, cache_policy),
+            None if legacy_root_transport else cache_authority_hash(cache_policy),
+        ),
+        cache_roots=(
+            [root.path for root in cache_roots]
+            if legacy_root_transport
+            else [root.model_dump(mode="json") for root in cache_roots]
+        ),
+        cache_status_evidence=_cache_root_status_witnesses(status, cache_policy),
+    )
+
+
+def _managed_snapshot_id(label: str, execution_id: str) -> str:
+    """Return a deterministic Git-safe snapshot identifier for one boundary."""
+    return hashlib.sha256(f"runner-{label}-{execution_id}".encode()).hexdigest()
+
+
+def _cache_root_status_witnesses(status: Any, cache_policy: Any) -> list[dict[str, str]]:
+    """Persist one deterministic observed status path for each derived root."""
+    witnesses: dict[tuple[str, str], dict[str, str]] = {}
+    for item in (*status.untracked, *status.ignored):
+        root = first_authorized_cache_root(item, cache_policy)
+        if root is not None:
+            witnesses.setdefault((root.path, root.kind), {"path": item.path, "kind": item.kind})
+    return [witnesses[key] for key in sorted(witnesses)]
 
 
 def _guard_no_pending_compromised_file_state_bindings(
@@ -1640,9 +2698,9 @@ def _trim_check_output(output: str) -> str:
     return output[-MAX_CHECK_OUTPUT_CHARS:]
 
 
-def _payload_hash(output_records: list[dict[str, Any]]) -> str:
-    encoded = json.dumps(output_records, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(encoded).hexdigest()
+def _payload_hash(payload: Mapping[str, object]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _payload_int(payload: dict[str, object], key: str) -> int:

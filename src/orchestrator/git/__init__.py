@@ -27,6 +27,7 @@ from orchestrator.git.errors import (
     WorktreeCommitError,
     WorktreeResetError,
     WorktreeError,
+    SnapshotPathLimitError,
 )
 from orchestrator.git.ops import (
     BackMergeResult,
@@ -81,7 +82,21 @@ from orchestrator.git.seed import (
     classify_seed_staleness,
     resolve_branch_sha,
 )
-from orchestrator.git.snapshot import SnapshotResult, delete_snapshot_ref, restore, snapshot
+from orchestrator.git.snapshot import (
+    SelectiveRestoreResult,
+    SnapshotResult,
+    SnapshotPathMetadata,
+    PreparedSnapshot,
+    prepare_snapshot,
+    publish_snapshot,
+    ensure_snapshot_ref,
+    delete_snapshot_ref,
+    restore,
+    restore_paths,
+    restore_baseline_worktree,
+    snapshot_path_metadata,
+    snapshot,
+)
 from orchestrator.git.testing import TestRunResult, TestRunner, TestSummary
 from orchestrator.git.utils import (
     GIT_ADD_TIMEOUT_SECONDS,
@@ -150,10 +165,17 @@ __all__ = [
     "RevertBackMergeResult",
     "SeedStaleness",
     "SnapshotResult",
+    "PreparedSnapshot",
+    "prepare_snapshot",
+    "publish_snapshot",
+    "ensure_snapshot_ref",
+    "SelectiveRestoreResult",
+    "SnapshotPathMetadata",
     "TestRunResult",
     "TestRunner",
     "TestSummary",
     "WorktreeError",
+    "SnapshotPathLimitError",
     "WorktreeInfo",
     "WorktreeManager",
     "WorktreeCommitError",
@@ -199,5 +221,8 @@ __all__ = [
     "reset_worktree_to_ref",
     "resolve_branch_sha",
     "restore",
+    "restore_paths",
+    "restore_baseline_worktree",
     "snapshot",
+    "snapshot_path_metadata",
 ]

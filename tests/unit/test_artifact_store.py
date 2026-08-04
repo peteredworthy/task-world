@@ -78,6 +78,30 @@ async def test_read_rejects_missing_and_corrupt_artifacts(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_read_range_verifies_full_blob_without_returning_it(tmp_path: Path) -> None:
+    store = FilesystemArtifactStore(tmp_path / "artifacts")
+    content = (b"0123456789abcdef" * 131_072) + b"tail"
+    ref = await store.put(content, media_type="application/octet-stream")
+
+    excerpt, total = await store.read_range(ref, offset=1_048_573, limit=11)
+
+    assert total == len(content)
+    assert excerpt == content[1_048_573:1_048_584]
+
+
+@pytest.mark.asyncio
+async def test_read_range_rejects_corrupt_blob_before_returning_range(tmp_path: Path) -> None:
+    store_root = tmp_path / "artifacts"
+    store = FilesystemArtifactStore(store_root)
+    ref = await store.put(b"range integrity", media_type="text/plain")
+    digest = ref.content_hash.removeprefix("sha256:")
+    (store_root / "sha256" / digest[:2] / digest[2:]).write_bytes(b"tampered range")
+
+    with pytest.raises(ArtifactIntegrityError):
+        await store.read_range(ref, offset=0, limit=2)
+
+
+@pytest.mark.asyncio
 async def test_store_rejects_traversal_reference(tmp_path: Path) -> None:
     store = FilesystemArtifactStore(tmp_path / "artifacts")
     malformed = StoredArtifactRef.model_construct(

@@ -17,6 +17,7 @@ from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, init_db
+from orchestrator.git import snapshot
 from orchestrator.graph import file_state_records_view, Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import (
     GraphController,
@@ -25,6 +26,7 @@ from orchestrator.graph_runtime import (
     GraphEventStore,
     OutboxDispatcher,
     capture_file_state_boundary,
+    file_state_output_record,
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
 from orchestrator.runners import AgentRunner
@@ -168,12 +170,19 @@ async def test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable(
         execution_id="exec-cleanup",
         base_snapshot_id="base-snapshot",
     )
-    assert boundary.output_record is not None
-    record_id = str(boundary.output_record["record_id"])
-    old_snapshot_id = str(boundary.output_record["snapshot_id"])
+    captured = snapshot(repo, "test cleanup fixture")
+    record = file_state_output_record(
+        boundary,
+        captured,
+        node_id="worker-cleanup",
+        execution_id="exec-cleanup",
+        base_snapshot_id="base-snapshot",
+    )
+    record_id = str(record["record_id"])
+    old_snapshot_id = str(record["snapshot_id"])
     old_ref = f"refs/orchestrator/snapshots/{old_snapshot_id}"
 
-    await _append_manual_cleanup_seed(session_factory, run_id, boundary.output_record)
+    await _append_manual_cleanup_seed(session_factory, run_id, record)
     controller = GraphController(
         session_factory,
         FixedClock(),
@@ -314,8 +323,10 @@ async def test_fr15_rejected_file_state_revokes_write_lease_and_retries_cleanly(
     assert run["status"] == "completed"
     assert graph["run_state"] == "completed"
     assert graph["node_states"]["worker-step-1-task-1"] == "completed"
-    assert event_types.index("file_state_rejected") < event_types.index("agent_died")
-    assert event_types.index("agent_died") < event_types.index("runtime_retry_scheduled")
+    assert event_types.index("file_state_rejected") < event_types.index("runner_recovery_requested")
+    assert event_types.index("runner_recovery_requested") < event_types.index(
+        "runtime_retry_scheduled"
+    )
     assert len(revoked) == 1
     assert revoked[0]["payload"]["lease_id"] == granted["payload"]["lease_id"]
     assert rejection["payload"]["rejected_paths"][0]["path"] == "fake_key.pem"

@@ -109,7 +109,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
     {
         "agent_dispatch_requested": _same(
             "agent_dispatch_requested",
-            "base_snapshot_id execution_id generation lease_granted_event_id lease_id node_id resource_claims",
+            "base_snapshot_id cache_authority_hash execution_id generation lease_granted_event_id lease_id node_id resource_claims",
         ),
         "agent_died": _same("agent_died", "execution_id generation lease_id node_id reason"),
         "appeal_opened": _spec(
@@ -121,14 +121,14 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "approval_decision_recorded": _spec(
             "approval_decision_recorded",
-            projection="appeal_type candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
+            projection="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             light="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
             node_detail="candidate_id decider decision decision_type expires_at membership node_id reason record_id task_region_id",
         ),
         "authority_decision_recorded": _spec(
             "authority_decision_recorded",
-            projection="appeal_type candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
+            projection="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             light="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
             node_detail="candidate_id decider decision decision_type expires_at membership node_id reason record_id task_region_id",
@@ -163,14 +163,14 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "cleanup_applied": _spec(
             "cleanup_applied",
-            projection="authority execution_id file_state_record_id reason",
+            projection="authority cleanup_id execution_id file_state_record_id superseding_record_id old_snapshot_id snapshot_ref commit_sha tree_sha node_id lease_id lease_generation snapshot_role reason deleted_snapshot_ref",
             light="authority cleanup_id deleted_snapshot_ref execution_id file_state_record_id reason superseding_record_id",
             summary="authority cleanup_id deleted_snapshot_ref execution_id file_state_record_id reason superseding_record_id",
             node_detail="authority execution_id reason",
         ),
         "cleanup_requested": _spec(
             "cleanup_requested",
-            projection="authority execution_id file_state_record_id producer_node_id reason snapshot_id",
+            projection="authority cleanup_id execution_id file_state_record_id producer_node_id snapshot_id snapshot_ref commit_sha tree_sha node_id lease_id lease_generation snapshot_role reason",
             light="authority cleanup_id execution_id file_state_record_id producer_node_id reason",
             summary="authority cleanup_id execution_id file_state_record_id producer_node_id reason snapshot_id",
             node_detail="authority execution_id producer_node_id reason",
@@ -251,7 +251,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "lease_granted": _same(
             "lease_granted",
-            "base_snapshot_id execution_id expires_at generation kind lease_id node_id resource_claims session_id task_region_id",
+            "base_snapshot_id cache_authority_hash execution_id expires_at generation kind lease_id node_id resource_claims session_id task_region_id",
         ),
         "lease_released": _same("lease_released", "generation lease_id node_id"),
         "lease_renewed": _same(
@@ -269,7 +269,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "node_created": _spec(
             "node_created",
-            projection="allowed_actions approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason candidate_id carryover_record_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind max_attempts membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role session_id state task_region_id",
+            projection="allowed_actions approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason cache_authority_hash candidate_id carryover_record_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind max_attempts membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role session_id state task_region_id",
             light="allowed_actions appealed_node_id approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason candidate_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind max_attempts membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role session_id state task_region_id",
             summary="allowed_actions appealed_node_id approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason candidate_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind max_attempts membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role run_id session_id state task_region_id",
             node_detail="allowed_actions approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason candidate_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind max_attempts membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role session_id state task_region_id",
@@ -304,7 +304,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "oversight_decision_recorded": _spec(
             "oversight_decision_recorded",
-            projection="appeal_type candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
+            projection="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             light="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
             node_detail="candidate_id decider decision decision_type expires_at membership node_id reason record_id task_region_id",
@@ -318,7 +318,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "requirement_revision_recorded": _spec(
             "requirement_revision_recorded",
-            projection="classification id node_id requirement requirement_id",
+            projection="classification id node_id requirement requirement_id requirement_version_id revision_id version_id",
             light="active authority_required_reason behavior_change change_classification classification explicit_authority_required id new_behavior node_id patch_id previous_version_id proposal_id requirement requirement_id requirement_version_id requires_authority revision_id revision_index revision_type semantic_change validation_strengthening version_id",
             summary="active authority_required_reason behavior_change change_classification classification explicit_authority_required id new_behavior node_id patch_id previous_version_id proposal_id requirement requirement_id requirement_version_id requires_authority revision_id revision_index revision_type run_id semantic_change validation_strengthening version_id",
             node_detail="id node_id requirement requirement_id",
@@ -340,6 +340,45 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         "runtime_retry_scheduled": _same(
             "runtime_retry_scheduled",
             "generation lease_id node_id policy reason retry_not_before",
+        ),
+        "runner_baseline_recorded": _spec(
+            "runner_baseline_recorded",
+            projection="execution_id node_id lease_id lease_generation lease_base_snapshot_id baseline_snapshot_id baseline_snapshot_ref baseline_commit_sha baseline_tree_sha boundary_hash entries cache_authority_hash cache_roots cache_status_evidence",
+            light="execution_id node_id lease_id lease_generation baseline_snapshot_id baseline_tree_sha",
+            summary="execution_id node_id lease_id lease_generation baseline_snapshot_id baseline_tree_sha",
+            node_detail="execution_id node_id lease_id lease_generation baseline_snapshot_id baseline_tree_sha",
+        ),
+        "runner_submission_staged": _spec(
+            "runner_submission_staged",
+            projection="execution_id node_id lease_id lease_generation idempotency_key payload payload_hash payload_size_bytes staged_snapshot_id staged_snapshot_ref staged_commit_sha staged_tree_sha boundary_hash boundary_entries base_snapshot_id observed_graph_position is_mutating complete_node new_state cache_authority_hash cache_roots cache_status_evidence",
+            light="execution_id node_id lease_id lease_generation payload_hash payload_size_bytes boundary_hash",
+            summary="execution_id node_id lease_id lease_generation payload_hash payload_size_bytes boundary_hash",
+            node_detail="execution_id node_id lease_id lease_generation payload_hash payload_size_bytes boundary_hash",
+        ),
+        "runner_boundary_mismatch": _spec(
+            "runner_boundary_mismatch",
+            projection="execution_id node_id lease_id lease_generation staged_boundary_hash final_boundary_hash final_snapshot_id final_snapshot_ref final_commit_sha final_tree_sha final_boundary_entries cache_authority_hash cache_roots observed_cache_roots authorized_cache_roots legacy_cache_root_paths cache_status_evidence reason",
+            light="execution_id node_id lease_id lease_generation staged_boundary_hash final_boundary_hash reason",
+            summary="execution_id node_id lease_id lease_generation staged_boundary_hash final_boundary_hash reason",
+            node_detail="execution_id node_id lease_id lease_generation staged_boundary_hash final_boundary_hash reason",
+        ),
+        "runner_recovery_requested": _spec(
+            "runner_recovery_requested",
+            projection="execution_id recovery_id node_id lease_id lease_generation reason max_attempts recovery_snapshot_id recovery_snapshot_ref recovery_commit_sha baseline_snapshot_id baseline_tree_sha final_tree_sha final_snapshot_id final_snapshot_ref final_commit_sha final_boundary_hash final_boundary_entries cache_authority_hash cache_roots observed_cache_roots authorized_cache_roots legacy_cache_root_paths cache_status_evidence paths recovery_scope",
+            light="execution_id recovery_id node_id lease_id lease_generation reason",
+            summary="execution_id recovery_id node_id lease_id lease_generation reason",
+            node_detail="execution_id recovery_id node_id lease_id lease_generation reason",
+        ),
+        "runner_recovery_completed": _spec(
+            "runner_recovery_completed",
+            projection="execution_id recovery_id node_id lease_id lease_generation baseline_snapshot_id baseline_tree_sha requested_paths proof_hash restored_paths removed_paths recovery_scope",
+            light="execution_id recovery_id node_id lease_id lease_generation proof_hash",
+            summary="execution_id recovery_id node_id lease_id lease_generation proof_hash",
+            node_detail="execution_id recovery_id node_id lease_id lease_generation proof_hash",
+        ),
+        "runner_execution_finalized": _same(
+            "runner_execution_finalized",
+            "execution_id node_id lease_id lease_generation final_snapshot_id final_snapshot_ref final_commit_sha final_tree_sha boundary_hash boundary_entries cache_authority_hash cache_roots cache_status_evidence",
         ),
         "session_state_changed": _spec(
             "session_state_changed",

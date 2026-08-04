@@ -6,10 +6,33 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from orchestrator.graph.macros import MacroInvocation
-from orchestrator.graph.models import Actor, EventEnvelope, FileStateRecord
+from orchestrator.graph.models import Actor, EventEnvelope, FileStateRecord, RunnerBoundaryEntry
+from orchestrator.graph.boundary_types import (
+    BoundaryValidationError,
+    validate_callback_json,
+    boundary_manifest_hash,
+    validate_git_oid,
+    validate_recovery_paths,
+    validate_repo_relative_path,
+    validate_snapshot_ref,
+    validate_sha256,
+)
+from orchestrator.graph.cache_authority import (
+    CacheStatusEvidence,
+    RunnerCacheRoot,
+    canonicalize_cache_roots,
+    canonicalize_cache_status_evidence,
+)
 from orchestrator.graph.projections import GraphProjection
 from orchestrator.state import ModelTokenUsage
 
@@ -145,6 +168,329 @@ class SubmitCallbackCommand(StrictCommandPayload):
     def validate_payload_identity(self) -> SubmitCallbackCommand:
         if self.payload is None and self.payload_hash is None:
             raise ValueError("callback requires payload or payload_hash")
+        return self
+
+
+def _canonical_boundary_entries(
+    entries: list[RunnerBoundaryEntry],
+) -> list[RunnerBoundaryEntry]:
+    by_path: dict[str, RunnerBoundaryEntry] = {}
+    for entry in entries:
+        if entry.path in by_path:
+            raise ValueError(f"boundary entries duplicate {entry.path!r}")
+        by_path[entry.path] = entry
+    return [by_path[path] for path in sorted(by_path)]
+
+
+def _canonical_command_cache_roots(
+    roots: list[RunnerCacheRoot], cache_authority_hash: str | None
+) -> list[RunnerCacheRoot]:
+    del cache_authority_hash
+    return list(canonicalize_cache_roots(roots))
+
+
+def _empty_runner_cache_roots() -> list[RunnerCacheRoot]:
+    return []
+
+
+def _empty_cache_status_evidence() -> list[CacheStatusEvidence]:
+    return []
+
+
+class RecordRunnerBaselineCommand(StrictCommandPayload):
+    execution_id: CommandIdentifier
+    node_id: CommandIdentifier
+    lease_id: CommandIdentifier
+    lease_generation: int = Field(ge=0)
+    lease_base_snapshot_id: CommandIdentifier | None = None
+    baseline_snapshot_id: CommandIdentifier
+    baseline_snapshot_ref: CommandIdentifier
+    baseline_commit_sha: CommandIdentifier
+    baseline_tree_sha: CommandIdentifier
+    entries: list[RunnerBoundaryEntry]
+    boundary_hash: CommandIdentifier
+    cache_authority_hash: CommandIdentifier | None = None
+    cache_roots: list[RunnerCacheRoot] = Field(default_factory=_empty_runner_cache_roots)
+    cache_status_evidence: list[CacheStatusEvidence] = Field(
+        default_factory=_empty_cache_status_evidence
+    )
+
+    @field_validator("boundary_hash")
+    @classmethod
+    def hash_is_sha256(cls, value: str) -> str:
+        return validate_sha256(value)
+
+    @field_validator("baseline_tree_sha")
+    @classmethod
+    def tree_is_git_oid(cls, value: str) -> str:
+        return validate_git_oid(value)
+
+    @model_validator(mode="after")
+    def canonical_entries(self) -> RecordRunnerBaselineCommand:
+        """Store one deterministic preimage per path with no ambiguous overlap."""
+        by_path: dict[str, RunnerBoundaryEntry] = {}
+        for entry in self.entries:
+            previous = by_path.get(entry.path)
+            if previous is not None and previous != entry:
+                raise ValueError(f"baseline entries conflict for {entry.path!r}")
+            by_path[entry.path] = entry
+        paths = sorted(by_path)
+        for index, path in enumerate(paths):
+            if index and path.startswith(f"{paths[index - 1]}/"):
+                raise ValueError("baseline entries must not contain ancestor/descendant paths")
+        self.entries = [by_path[path] for path in paths]
+        try:
+            self.cache_roots = _canonical_command_cache_roots(
+                self.cache_roots, self.cache_authority_hash
+            )
+            self.cache_status_evidence = list(
+                canonicalize_cache_status_evidence(self.cache_status_evidence)
+            )
+        except BoundaryValidationError as exc:
+            raise ValueError(str(exc)) from exc
+        if self.boundary_hash != boundary_manifest_hash(
+            self.baseline_tree_sha,
+            self.entries,
+            self.cache_status_evidence,
+            self.cache_authority_hash,
+        ):
+            raise ValueError("boundary_hash does not match baseline manifest")
+        validate_snapshot_ref(self.baseline_snapshot_ref, self.baseline_snapshot_id)
+        validate_git_oid(self.baseline_commit_sha)
+        return self
+
+
+class StageRunnerSubmissionCommand(SubmitCallbackCommand):
+    staged_snapshot_id: CommandIdentifier
+    staged_snapshot_ref: CommandIdentifier
+    staged_commit_sha: CommandIdentifier
+    staged_tree_sha: CommandIdentifier
+    boundary_hash: CommandIdentifier
+    boundary_entries: list[RunnerBoundaryEntry]
+    cache_authority_hash: CommandIdentifier | None = None
+    cache_roots: list[RunnerCacheRoot] = Field(default_factory=_empty_runner_cache_roots)
+    cache_status_evidence: list[CacheStatusEvidence] = Field(
+        default_factory=_empty_cache_status_evidence
+    )
+
+    @field_validator("payload_hash", "boundary_hash")
+    @classmethod
+    def hashes_are_sha256(cls, value: str | None) -> str | None:
+        return None if value is None else validate_sha256(value)
+
+    @field_validator("staged_tree_sha")
+    @classmethod
+    def tree_is_git_oid(cls, value: str) -> str:
+        return validate_git_oid(value)
+
+    @field_validator("boundary_entries")
+    @classmethod
+    def canonical_boundary_entries(
+        cls, value: list[RunnerBoundaryEntry]
+    ) -> list[RunnerBoundaryEntry]:
+        return _canonical_boundary_entries(value)
+
+    @model_validator(mode="after")
+    def payload_is_bounded_json(self) -> StageRunnerSubmissionCommand:
+        if self.payload is None:
+            raise ValueError("managed runner staging requires the callback payload")
+        try:
+            validate_callback_json(self.payload)
+        except BoundaryValidationError as exc:
+            raise ValueError(str(exc)) from exc
+        self.cache_roots = _canonical_command_cache_roots(
+            self.cache_roots, self.cache_authority_hash
+        )
+        self.cache_status_evidence = list(
+            canonicalize_cache_status_evidence(self.cache_status_evidence)
+        )
+        if self.boundary_hash != boundary_manifest_hash(
+            self.staged_tree_sha,
+            self.boundary_entries,
+            self.cache_status_evidence,
+            self.cache_authority_hash,
+        ):
+            raise ValueError("boundary_hash does not match staged manifest")
+        validate_snapshot_ref(self.staged_snapshot_ref, self.staged_snapshot_id)
+        validate_git_oid(self.staged_commit_sha)
+        return self
+
+
+class FinalizeRunnerExecutionCommand(StrictCommandPayload):
+    execution_id: CommandIdentifier
+    node_id: CommandIdentifier
+    lease_id: CommandIdentifier
+    lease_generation: int = Field(ge=0)
+    final_snapshot_id: CommandIdentifier
+    final_snapshot_ref: CommandIdentifier
+    final_commit_sha: CommandIdentifier
+    final_tree_sha: CommandIdentifier
+    boundary_hash: CommandIdentifier
+    boundary_entries: list[RunnerBoundaryEntry]
+    cache_authority_hash: CommandIdentifier | None = None
+    cache_roots: list[RunnerCacheRoot] = Field(default_factory=_empty_runner_cache_roots)
+    cache_status_evidence: list[CacheStatusEvidence] = Field(
+        default_factory=_empty_cache_status_evidence
+    )
+
+    @field_validator("boundary_hash")
+    @classmethod
+    def boundary_is_sha256(cls, value: str) -> str:
+        return validate_sha256(value)
+
+    @field_validator("final_tree_sha")
+    @classmethod
+    def tree_is_git_oid(cls, value: str) -> str:
+        return validate_git_oid(value)
+
+    @field_validator("boundary_entries")
+    @classmethod
+    def canonical_boundary_entries(
+        cls, value: list[RunnerBoundaryEntry]
+    ) -> list[RunnerBoundaryEntry]:
+        return _canonical_boundary_entries(value)
+
+    @model_validator(mode="after")
+    def boundary_matches_manifest(self) -> FinalizeRunnerExecutionCommand:
+        self.cache_roots = _canonical_command_cache_roots(
+            self.cache_roots, self.cache_authority_hash
+        )
+        self.cache_status_evidence = list(
+            canonicalize_cache_status_evidence(self.cache_status_evidence)
+        )
+        if self.boundary_hash != boundary_manifest_hash(
+            self.final_tree_sha,
+            self.boundary_entries,
+            self.cache_status_evidence,
+            self.cache_authority_hash,
+        ):
+            raise ValueError("boundary_hash does not match final manifest")
+        validate_snapshot_ref(self.final_snapshot_ref, self.final_snapshot_id)
+        validate_git_oid(self.final_commit_sha)
+        return self
+
+
+class RequestRunnerRecoveryCommand(StrictCommandPayload):
+    """Record cleanup for a managed execution which did not reach finalization."""
+
+    execution_id: CommandIdentifier
+    node_id: CommandIdentifier
+    lease_id: CommandIdentifier
+    lease_generation: int = Field(ge=0)
+    reason: Literal["runner_died", "cancelled"]
+    max_attempts: int = Field(default=0, ge=0)
+    recovery_snapshot_id: CommandIdentifier | None = None
+    recovery_snapshot_ref: CommandIdentifier | None = None
+    recovery_commit_sha: CommandIdentifier | None = None
+    final_tree_sha: CommandIdentifier
+    boundary_hash: CommandIdentifier
+    boundary_entries: list[RunnerBoundaryEntry]
+    cache_authority_hash: CommandIdentifier | None = None
+    cache_status_evidence: list[CacheStatusEvidence] = Field(
+        default_factory=_empty_cache_status_evidence
+    )
+    observed_cache_roots: list[RunnerCacheRoot] = Field(default_factory=_empty_runner_cache_roots)
+    recovery_scope: Literal["selective", "full_baseline"] = "selective"
+
+    @field_validator("boundary_hash")
+    @classmethod
+    def boundary_is_sha256(cls, value: str) -> str:
+        return validate_sha256(value)
+
+    @field_validator("final_tree_sha")
+    @classmethod
+    def tree_is_git_oid(cls, value: str) -> str:
+        return validate_git_oid(value)
+
+    @field_validator("boundary_entries")
+    @classmethod
+    def canonical_boundary_entries(
+        cls, value: list[RunnerBoundaryEntry]
+    ) -> list[RunnerBoundaryEntry]:
+        return _canonical_boundary_entries(value)
+
+    @model_validator(mode="after")
+    def boundary_matches_manifest(self) -> RequestRunnerRecoveryCommand:
+        self.cache_status_evidence = list(
+            canonicalize_cache_status_evidence(self.cache_status_evidence)
+        )
+        self.observed_cache_roots = _canonical_command_cache_roots(
+            self.observed_cache_roots, self.cache_authority_hash
+        )
+        if self.boundary_hash != boundary_manifest_hash(
+            self.final_tree_sha,
+            self.boundary_entries,
+            self.cache_status_evidence,
+            self.cache_authority_hash,
+        ):
+            raise ValueError("boundary_hash does not match recovery manifest")
+        ownership = (
+            self.recovery_snapshot_id,
+            self.recovery_snapshot_ref,
+            self.recovery_commit_sha,
+            self.final_tree_sha,
+        )
+        if any(value is None for value in ownership) and any(
+            value is not None for value in ownership[:-1]
+        ):
+            raise ValueError(
+                "recovery snapshot id, ref, commit, and tree must be supplied together"
+            )
+        if self.recovery_snapshot_id is not None:
+            validate_snapshot_ref(self.recovery_snapshot_ref or "", self.recovery_snapshot_id)
+            validate_git_oid(self.recovery_commit_sha or "")
+        if self.recovery_scope == "full_baseline" and self.boundary_entries:
+            raise ValueError("full-baseline recovery must not serialize boundary entries")
+        return self
+
+
+class CompleteRunnerRecoveryCommand(StrictCommandPayload):
+    execution_id: CommandIdentifier
+    recovery_id: CommandIdentifier
+    node_id: CommandIdentifier
+    lease_id: CommandIdentifier
+    lease_generation: int = Field(ge=0)
+    baseline_snapshot_id: CommandIdentifier
+    baseline_tree_sha: CommandIdentifier
+    requested_paths: list[str]
+    proof_hash: CommandIdentifier
+    restored_paths: list[str] = Field(default_factory=list)
+    removed_paths: list[str] = Field(default_factory=list)
+    recovery_scope: Literal["selective", "full_baseline"] = "selective"
+
+    @field_validator("requested_paths", "restored_paths", "removed_paths")
+    @classmethod
+    def normalized_paths(cls, values: list[str]) -> list[str]:
+        return [validate_repo_relative_path(value) for value in values]
+
+    @field_validator("baseline_tree_sha")
+    @classmethod
+    def recovery_tree_is_git_oid(cls, value: str) -> str:
+        return validate_git_oid(value)
+
+    @field_validator("proof_hash")
+    @classmethod
+    def proof_is_sha256(cls, value: str) -> str:
+        return validate_sha256(value)
+
+    @model_validator(mode="after")
+    def recovery_accounting_is_exact(self) -> CompleteRunnerRecoveryCommand:
+        if self.recovery_scope == "full_baseline":
+            if self.requested_paths or self.restored_paths or self.removed_paths:
+                raise ValueError("full-baseline recovery has no path accounting")
+            return self
+        validate_recovery_paths(self.requested_paths, self.restored_paths, self.removed_paths)
+        requested = tuple(self.requested_paths)
+        restored = tuple(self.restored_paths)
+        removed = tuple(self.removed_paths)
+        if len(set(requested)) != len(requested):
+            raise ValueError("requested_paths must not contain duplicates")
+        if len(set(restored)) != len(restored) or len(set(removed)) != len(removed):
+            raise ValueError("recovery accounting paths must not contain duplicates")
+        if set(restored) & set(removed) or set(restored) | set(removed) != set(requested):
+            raise ValueError(
+                "restored and removed paths must be disjoint and exactly cover requested_paths"
+            )
         return self
 
 
@@ -332,6 +678,26 @@ class RecordCleanupAppliedCommand(StrictCommandPayload):
     reason: str | None = None
 
 
+class RecordManagedSnapshotCleanupAppliedCommand(StrictCommandPayload):
+    cleanup_id: CommandIdentifier
+    snapshot_id: CommandIdentifier
+    snapshot_ref: CommandIdentifier
+    tree_sha: CommandIdentifier
+    commit_sha: CommandIdentifier
+    node_id: CommandIdentifier
+    lease_id: CommandIdentifier
+    lease_generation: int = Field(ge=0)
+    snapshot_role: Literal["baseline", "staged", "final", "recovery"]
+    deleted_snapshot_ref: bool = False
+
+    @model_validator(mode="after")
+    def exact_ref_is_owned(self) -> "RecordManagedSnapshotCleanupAppliedCommand":
+        validate_snapshot_ref(self.snapshot_ref, self.snapshot_id)
+        validate_git_oid(self.tree_sha)
+        validate_git_oid(self.commit_sha)
+        return self
+
+
 __all__ = [
     "AcceptRunCommand",
     "AcknowledgeStartCommand",
@@ -353,6 +719,8 @@ __all__ = [
     "RaiseAppealCommand",
     "ReconcileCommand",
     "RecordCleanupAppliedCommand",
+    "RecordManagedSnapshotCleanupAppliedCommand",
+    "RecordRunnerBaselineCommand",
     "RecordDecisionCommand",
     "RecordGatekeeperVerdictsCommand",
     "RecordHeartbeatCommand",
@@ -365,6 +733,9 @@ __all__ = [
     "StartCommand",
     "StrictCommandPayload",
     "SubmitCallbackCommand",
+    "StageRunnerSubmissionCommand",
+    "FinalizeRunnerExecutionCommand",
+    "CompleteRunnerRecoveryCommand",
     "SubmitPatchCommand",
     "TriggerCommand",
 ]

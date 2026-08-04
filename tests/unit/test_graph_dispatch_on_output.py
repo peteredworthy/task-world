@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -566,6 +567,48 @@ class NoSubmitAgent(OutputAgent):
         return ExecutionResult(success=True)
 
 
+class BlockingSubmitAgent(OutputAgent):
+    def __init__(self, started: list[str], release: asyncio.Event) -> None:
+        super().__init__([])
+        self._started = started
+        self._release = release
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        self._started.append(context.node_id)
+        await self._release.wait()
+        await on_submit()
+        return ExecutionResult(success=True)
+
+
+class RecordingSubmitAgent(OutputAgent):
+    def __init__(self, started: list[str]) -> None:
+        super().__init__([])
+        self._started = started
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        self._started.append(context.node_id)
+        await on_submit()
+        return ExecutionResult(success=True)
+
+
 class PatchThenSubmitAgent(OutputAgent):
     async def execute(
         self,
@@ -887,6 +930,54 @@ async def test_executor_runs_without_output_callback() -> None:
     assert executor.submitted == [context]
     assert executor.failures == []
     assert agent.submitted is True
+
+
+@pytest.mark.asyncio
+async def test_serialized_worktree_execution_prevents_concurrent_baseline_overlap(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "README.md").write_text("initial\n", encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "add", "README.md"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "initial",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    executor = RecordingExecutor()
+    started: list[str] = []
+    release = asyncio.Event()
+    first = _context(node_id="worker-1", worktree_path=str(repo))
+    second = replace(_context(node_id="worker-2", worktree_path=str(repo)), execution_id="exec-2")
+
+    first_task = asyncio.create_task(
+        executor._run_agent_serialized(first, BlockingSubmitAgent(started, release))
+    )
+    while started != ["worker-1"]:
+        await asyncio.sleep(0)
+    second_task = asyncio.create_task(
+        executor._run_agent_serialized(second, RecordingSubmitAgent(started))
+    )
+    await asyncio.sleep(0)
+
+    assert started == ["worker-1"]
+    release.set()
+    await asyncio.gather(first_task, second_task)
+
+    assert started == ["worker-1", "worker-2"]
 
 
 @pytest.mark.asyncio

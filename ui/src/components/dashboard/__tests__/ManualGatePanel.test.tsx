@@ -104,6 +104,20 @@ describe('Manual Gate Panel', () => {
       error: null,
     } as any);
 
+    vi.spyOn(useApiModule, 'useGraphProjection').mockReturnValue({ data: undefined } as any);
+    vi.spyOn(useApiModule, 'useGraphEvents').mockReturnValue({
+      events: [],
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch: vi.fn(),
+      isError: false,
+      error: null,
+      isFetching: false,
+      isLoading: false,
+      isFetchNextPageError: false,
+      isFetchingNextPage: false,
+    } as any);
+
     vi.spyOn(useActivityModule, 'useActivityStream').mockReturnValue({
       data: { events: [] },
       isLoading: false,
@@ -186,6 +200,100 @@ describe('Manual Gate Panel', () => {
 
     expect(screen.getByText(/Manual gate: Step 1/)).toBeInTheDocument();
     expect(screen.getByText('Choose to execute or skip this step.')).toBeInTheDocument();
+  });
+
+  it('shows and invokes bounded graph mapping continuation', async () => {
+    const fetchNextPage = vi.fn();
+    vi.mocked(useApiModule.useRun).mockReturnValue({
+      data: createMockRun({ is_graph_backed: true }),
+      isLoading: false,
+      error: null,
+    } as any);
+    vi.mocked(useApiModule.useGraphEvents).mockReturnValue({
+      events: [{
+        event_id: 'event-1',
+        event_type: 'node_created',
+        run_id: 'run-1',
+        position: 1,
+        timestamp: '2026-01-01T00:00:00Z',
+        payload: { node_id: 'worker-1', kind: 'worker', task_id: 'task-1' },
+      }],
+      hasNextPage: true,
+      fetchNextPage,
+      refetch: vi.fn(),
+      isError: false,
+      error: null,
+      isFetching: false,
+      isLoading: false,
+      isFetchNextPageError: false,
+      isFetchingNextPage: false,
+    } as any);
+    renderRunDetail();
+
+    expect(screen.getByText('1 events loaded for graph node mappings; more history is available.')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Load more events' }));
+    expect(fetchNextPage).toHaveBeenCalledOnce();
+  });
+
+  it('shows an initial graph mapping error and retries it', async () => {
+    const refetch = vi.fn();
+    vi.mocked(useApiModule.useRun).mockReturnValue({
+      data: createMockRun({ is_graph_backed: true }),
+      isLoading: false,
+      error: null,
+    } as any);
+    vi.mocked(useApiModule.useGraphEvents).mockReturnValue({
+      events: [],
+      hasNextPage: false,
+      fetchNextPage: vi.fn(),
+      refetch,
+      isError: true,
+      error: new Error('event service unavailable'),
+      isFetching: false,
+      isLoading: false,
+      isFetchNextPageError: false,
+      isFetchingNextPage: false,
+    } as any);
+    renderRunDetail();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load graph events for node mappings');
+    expect(screen.queryByText(/All 0 graph events loaded/)).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry loading events' }));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+  it('retains graph mappings and retries a failed continuation', async () => {
+    const fetchNextPage = vi.fn();
+    vi.mocked(useApiModule.useRun).mockReturnValue({
+      data: createMockRun({ is_graph_backed: true }),
+      isLoading: false,
+      error: null,
+    } as any);
+    vi.mocked(useApiModule.useGraphEvents).mockReturnValue({
+      events: [{
+        event_id: 'event-1',
+        event_type: 'node_created',
+        run_id: 'run-1',
+        position: 1,
+        timestamp: '2026-01-01T00:00:00Z',
+        payload: { node_id: 'worker-1', kind: 'worker', task_id: 'task-1' },
+      }],
+      hasNextPage: true,
+      fetchNextPage,
+      refetch: vi.fn(),
+      isError: true,
+      error: new Error('temporary page failure'),
+      isFetching: false,
+      isLoading: false,
+      isFetchNextPageError: true,
+      isFetchingNextPage: false,
+    } as any);
+    renderRunDetail();
+
+    expect(screen.getByText('1 events loaded for graph node mappings; more history is available.')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load more events');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry loading more events' }));
+    expect(fetchNextPage).toHaveBeenCalledOnce();
   });
 
   it('displays Execute Step and Skip Step buttons', () => {
@@ -273,6 +381,39 @@ describe('Manual Gate Panel', () => {
     renderRunDetail();
 
     expect(screen.queryByText(/Manual gate:/)).not.toBeInTheDocument();
+  });
+
+  it('does not label a zero-ahead run as merged without a merge receipt', () => {
+    vi.spyOn(useApiModule, 'useRun').mockReturnValue({
+      data: createMockRun({ status: 'completed', pause_reason: null }),
+      isLoading: false,
+      error: null,
+    } as any);
+    vi.spyOn(useReviewModule, 'useBranchStatus').mockReturnValue({
+      data: {
+        source_branch: 'main',
+        run_branch: 'orchestrator/run-1',
+        ahead_count: 0,
+        behind_count: 0,
+        can_merge_cleanly: true,
+        has_conflicts: false,
+        predicted_conflict_count: 0,
+        merge_readiness: { status: 'ready', blocking_reasons: [] },
+        merge_disposition: {
+          status: 'no_changes',
+          reason: 'Finalization is complete, but the run branch has no commits to merge back.',
+          merge_commit: null,
+        },
+      },
+      isLoading: false,
+      error: null,
+    } as any);
+
+    renderRunDetail();
+
+    expect(screen.getByText('No changes')).toBeInTheDocument();
+    expect(screen.queryByText('Merged')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Merge run branch back to source' })).not.toBeInTheDocument();
   });
 
   it('shows the correct step number in manual gate panel', () => {

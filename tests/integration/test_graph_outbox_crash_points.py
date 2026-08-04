@@ -7,10 +7,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.artifacts import FilesystemArtifactStore
+from orchestrator.git import snapshot
 from orchestrator.db import (
     EventV2Model,
     GraphOutboxModel,
@@ -41,6 +42,7 @@ from orchestrator.graph_runtime import (
     StaleProjectionError,
     apply_cleanup_requested,
     capture_file_state_boundary,
+    file_state_output_record,
     recover,
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
@@ -325,18 +327,26 @@ def test_file_state_snapshot_excludes_ignored_tool_cache(tmp_path: Path) -> None
         base_snapshot_id="base-snapshot",
     )
 
-    assert boundary.output_record is not None
-    assert boundary.snapshot_result is not None
-    raw_classifications = boundary.output_record["classifications"]
+    captured = snapshot(
+        repo, "test file-state fixture", force_include_paths=list(boundary.force_include_paths)
+    )
+    record = file_state_output_record(
+        boundary,
+        captured,
+        node_id="worker-1",
+        execution_id="exec-1",
+        base_snapshot_id="base-snapshot",
+    )
+    raw_classifications = record["classifications"]
     assert isinstance(raw_classifications, list)
     classifications = {
         entry["path"]: entry["classification"]
         for entry in raw_classifications
         if isinstance(entry, dict)
     }
-    assert classifications[".venv/bin/python"] == "tool_cache"
+    assert classifications[".venv"] == "tool_cache"
     assert classifications["build/artifact.txt"] == "unknown_ignored"
-    tree_paths = _tree_paths(repo, boundary.snapshot_result.commit_sha)
+    tree_paths = _tree_paths(repo, captured.commit_sha)
     assert ".venv/bin/python" not in tree_paths
     assert "build/artifact.txt" in tree_paths
 
@@ -357,9 +367,16 @@ async def _seed_cleanup_request(
         execution_id="exec-1",
         base_snapshot_id="base-snapshot",
     )
-    assert boundary.output_record is not None
-    record_id = str(boundary.output_record["record_id"])
-    old_snapshot_id = str(boundary.output_record["snapshot_id"])
+    captured = snapshot(repo, "test cleanup fixture")
+    record = file_state_output_record(
+        boundary,
+        captured,
+        node_id="worker-1",
+        execution_id="exec-1",
+        base_snapshot_id="base-snapshot",
+    )
+    record_id = str(record["record_id"])
+    old_snapshot_id = str(record["snapshot_id"])
     async with session_factory() as session:
         async with session.begin():
             await GraphEventStore(session).append_events(
@@ -380,9 +397,7 @@ async def _seed_cleanup_request(
                             ],
                         },
                     ),
-                    _event(
-                        "file-state-event", run_id, "file_state_accepted", boundary.output_record
-                    ),
+                    _event("file-state-event", run_id, "file_state_accepted", record),
                 ],
             )
 
@@ -579,17 +594,9 @@ async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
         {"lease_seconds": 60, "base_snapshot_id": "S0"},
     )
 
-    async with session_factory() as session:
-        async with session.begin():
-            await session.execute(
-                update(EventV2Model)
-                .where(EventV2Model.aggregate_id == graph_aggregate_id(terminal_run_id))
-                .values(payload="{terminal event would fail if replayed")
-            )
-
     call_log: list[str] = []
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    report = await recover(session_factory, dispatcher)
+    report = await recover(session_factory, dispatcher, maintenance=True)
 
     assert report.awaiting_start_ack == [
         {
@@ -658,10 +665,54 @@ async def test_recover_without_run_id_skips_terminal_run_when_snapshot_missing(
 
     call_log: list[str] = []
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    report = await recover(session_factory, dispatcher)
+    report = await recover(session_factory, dispatcher, maintenance=True)
 
     assert report.awaiting_start_ack == []
     assert report.awaiting_callback == []
+
+
+@pytest.mark.asyncio
+async def test_maintenance_recovery_requires_explicit_bounded_pages(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    """Global maintenance never materializes every graph run in one recovery report."""
+    _, session_factory = file_db
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            for run_id in ("maintenance-a", "maintenance-b"):
+                await store.append_events(
+                    run_id,
+                    0,
+                    [
+                        _event(
+                            f"{run_id}-active",
+                            run_id,
+                            "run_lifecycle_changed",
+                            {"from_state": "queued", "to_state": "active"},
+                        )
+                    ],
+                )
+
+    dispatcher = OutboxDispatcher(session_factory, RecordingExecutor([]), FixedClock())
+    with pytest.raises(ValueError, match="maintenance=True"):
+        await recover(session_factory, dispatcher)
+
+    first = await recover(session_factory, dispatcher, maintenance=True, limit=1)
+    assert first.processed_run_ids == ("maintenance-a",)
+    assert first.has_more is True
+    assert first.next_run_id == "maintenance-a"
+
+    second = await recover(
+        session_factory,
+        dispatcher,
+        maintenance=True,
+        after_run_id=first.next_run_id,
+        limit=1,
+    )
+    assert second.processed_run_ids == ("maintenance-b",)
+    assert second.has_more is False
+    assert second.next_run_id is None
 
 
 @pytest.mark.asyncio

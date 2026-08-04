@@ -8,18 +8,6 @@ This file provides guidance to coding agents working with code in this repositor
 
 Design documentation lives in `docs/intent/`. Implementation follows the phased plan in the slice documents. Phases 1-8 are implemented.
 
-## Project-Local Superpowers Skills
-
-Superpowers is vendored in `vendor/superpowers` so project-local agents can use
-the same skill implementation without requiring a global install.
-
-- OpenCode loads the vendored plugin package through `opencode.json`.
-- Codex discovers the namespaced skills through `.agents/skills/superpowers`.
-- Claude Code discovers each skill through `.claude/skills/<skill-name>`.
-
-When updating Superpowers, replace the vendored copy and keep these discovery
-shims in sync with `vendor/superpowers/skills`.
-
 ## Run Execution Model (Worktrees + Agents)
 
 - Each run executes in its own git worktree under `worktrees/run-<run-id>/`.
@@ -211,6 +199,12 @@ All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_
 ## Database
 
 **Never delete `orchestrator.db` without an explicit user request.** The database contains run history, events, and state that cannot be recovered. If a schema change causes errors, add an Alembic migration and run `alembic upgrade head` — do not drop and recreate. Even when the user explicitly asks to wipe the database, **back it up first** (`cp orchestrator.db orchestrator.db.bak`).
+
+**Never create a no-op migration.** Create an Alembic revision only when it
+performs a required schema or durable data transformation. If a change fits in
+existing columns, JSON payloads, application logic, documentation, or tests,
+do not add an empty revision merely to satisfy a planned file list. Remove any
+accidentally generated no-op revision before proceeding.
 
 - Schema migrations: `src/orchestrator/db/migrations/versions/`
 - Create a migration: `uv run alembic -c alembic.ini revision -m "description"`

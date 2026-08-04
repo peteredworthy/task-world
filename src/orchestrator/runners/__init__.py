@@ -16,6 +16,7 @@ from orchestrator.runners.types import (
 )
 from orchestrator.runners.agent_factory import (
     create as create_agent_runner,
+    get_graph_capable_agent_runner_types,
     get_registered_agent_runner_types,
 )
 
@@ -240,6 +241,7 @@ __all__ = [
     "ExecutionResult",
     "create_agent_runner",
     "get_registered_agent_runner_types",
+    "get_graph_capable_agent_runner_types",
     # Discovery
     "discover_agents",
     # Agent classes

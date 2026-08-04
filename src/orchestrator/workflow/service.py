@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import (
@@ -26,6 +26,7 @@ from orchestrator.artifacts import (
 )
 from orchestrator.db import (
     AttemptModel,
+    EventV2Model,
     RunModel,
     RunRepository,
     SqliteEventStore,
@@ -122,6 +123,7 @@ from orchestrator.workflow.engine.errors import (
     GateBlockedError,
     InvalidTransitionError,
     RetiredAgentRunnerError,
+    RunFinalizationError,
 )
 from orchestrator.workflow.engine.gates import evaluate_checklist_gate
 from orchestrator.workflow.events.logger import PersistentEventEmitter
@@ -172,7 +174,7 @@ from orchestrator.workflow.delegation import (
 )
 from orchestrator.workflow.legacy_run_facts import durable_parent_oversight_patch
 from orchestrator.workflow.graph_driver import GRAPH_OPERATOR_REOPEN_PAUSE_REASON
-from orchestrator.graph import project_run_state
+from orchestrator.graph import run_state as query_run_state
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.git import (
     WorktreeCommitError,
@@ -774,6 +776,66 @@ class WorkflowService:
 
         return result
 
+    async def finalize_graph_run_completion(self, run_id: str) -> Run:
+        """Durably finish a graph run's worktree before its terminal transition.
+
+        A graph kernel reaching ``completed`` is not sufficient to advertise a
+        completed Run: the worktree must first have a durable, event-recorded
+        run-level commit outcome.  Re-entry after a crash is safe: a clean
+        worktree records an explicit ``created_commit=False`` completion event
+        and then performs the still-pending lifecycle transition.
+        """
+        run = await self._repo.get(run_id)
+        if run.status == RunStatus.COMPLETED:
+            return run
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(run.status.value, RunStatus.COMPLETED.value)
+        # The finalization outcome is its own durable receipt.  A process can
+        # crash after that receipt commits but before the ACTIVE -> COMPLETED
+        # transition below.  Do not re-run the Git operation on retry: use the
+        # receipt keyed by this run and commit type, then only complete the run.
+        if not await self._has_completed_worktree_commit(
+            run_id, commit_type="graph_run_finalization"
+        ):
+            if not run.worktree_path:
+                raise RunFinalizationError(run_id, "graph run has no worktree path")
+            try:
+                await self._run_event_sourced_worktree_commit(
+                    run_id=run_id,
+                    task_id="__run_finalization__",
+                    attempt_id=None,
+                    worktree_path=run.worktree_path,
+                    message=f"Finalize graph run {run_id}",
+                    commit_type="graph_run_finalization",
+                    reason="graph_run_completion",
+                )
+            except WorktreeCommitError as exc:
+                # Keep the durable failure event as the recovery authority and
+                # surface a domain error the driver can turn into a resumable
+                # paused run.
+                raise RunFinalizationError(run_id, str(exc)) from exc
+        return await self.apply_complete_run(run_id)
+
+    async def _has_completed_worktree_commit(self, run_id: str, *, commit_type: str) -> bool:
+        """Return whether a durable successful worktree-commit receipt exists.
+
+        The append-only workflow event stream is authoritative across service
+        instances, so this closes the crash window between an acknowledged Git
+        finalization and the following lifecycle transition.
+        """
+        statement = (
+            select(EventV2Model.position)
+            .where(
+                EventV2Model.aggregate_id == run_id,
+                EventV2Model.event_type == "run_worktree_commit_completed",
+                func.json_extract(EventV2Model.payload, "$.commit_type") == commit_type,
+            )
+            .order_by(EventV2Model.position)
+            .limit(1)
+        )
+        result = await self._session.execute(statement)
+        return result.scalar_one_or_none() is not None
+
     async def _pause_or_cancel_run_for_parent_control(
         self,
         parent: Run,
@@ -937,6 +999,27 @@ class WorkflowService:
         """
         run = await self._repo.get(run_id)
         if run.status == RunStatus.PAUSED:
+            # A resume can discover that the graph runtime checkpoint is
+            # unavailable before the PAUSED -> ACTIVE transition.  Preserve a
+            # durable, operator-visible reason for that otherwise invisible
+            # failed resume instead of treating the already-paused row as a
+            # complete no-op.
+            if run.pause_reason != reason or run.last_error != error_detail:
+                events = await handle_update_run_status(
+                    UpdateRunStatusCommand(
+                        run_id=run_id,
+                        old_status=RunStatus.PAUSED,
+                        new_status=RunStatus.PAUSED,
+                        pause_reason=reason,
+                        last_error=error_detail,
+                        timestamp=self._clock.now(),
+                    ),
+                    self._store_v2,
+                    self._session,
+                )
+                self._event_emitter.notify_persisted(events[0])
+                await commit_with_event_outbox(self._session)
+                return await self._repo.get(run_id)
             return run
         if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
             raise InvalidTransitionError(run.status.value, RunStatus.PAUSED.value)
@@ -1218,8 +1301,10 @@ class WorkflowService:
         # spurious reopen marker on an ordinary pause/resume cycle.
         reopen_marker: str | None = None
         if _is_graph_run(run):
-            graph_events = await GraphEventStore(self._session).read_run(run_id)
-            if project_run_state(graph_events) in {"failed", "resuming"}:
+            projection, _, _ = await GraphEventStore(self._session).load_projection_with_tail(
+                run_id
+            )
+            if query_run_state(projection) in {"failed", "resuming"}:
                 reopen_marker = GRAPH_OPERATOR_REOPEN_PAUSE_REASON
         events = await handle_update_run_status(
             UpdateRunStatusCommand(

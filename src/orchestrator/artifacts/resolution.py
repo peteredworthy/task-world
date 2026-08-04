@@ -79,12 +79,11 @@ class ProjectArtifactGarbageCollector:
             run for run in surviving_runs if await self._roots.root_for(run) == root
         ]
 
-        async def load_events() -> list[Any]:
-            retained_events: list[Any] = []
-            for run in same_project_runs:
-                retained_events.extend(await graph_store.read_run(run.id))
-            return retained_events
+        async def load_hashes() -> frozenset[str]:
+            return await graph_store.read_artifact_content_hashes(
+                [run.id for run in same_project_runs]
+            )
 
-        return await ArtifactGarbageCollector(root, self._grace_seconds).collect_after_mark(
-            load_events, now
+        return await ArtifactGarbageCollector(root, self._grace_seconds).collect_after_mark_hashes(
+            load_hashes, now
         )

@@ -16,6 +16,8 @@ import type {
   EnvFile,
   EnvSnapshot,
   GraphEventResponse,
+  GraphEventsPage,
+  GraphPatchAttemptsPage,
   DecisionViewResponse,
   FileStateReportResponse,
   GraphProjectionResponse,
@@ -538,6 +540,17 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/graph/health');
   },
 
+  getRunGraphPatchAttempts(
+    runId: string,
+    params?: { fromPosition?: number; limit?: number },
+  ): Promise<GraphPatchAttemptsPage> {
+    const sp = new URLSearchParams();
+    if (params?.fromPosition !== undefined) sp.set('from_position', String(params.fromPosition));
+    if (params?.limit !== undefined) sp.set('limit', String(params.limit));
+    const qs = sp.toString();
+    return fetchApi('/api/runs/' + runId + '/graph/patches' + (qs ? '?' + qs : ''));
+  },
+
   getRunGraphDecisions(runId: string): Promise<DecisionViewResponse> {
     return fetchApi('/api/runs/' + runId + '/graph/decisions');
   },
@@ -549,17 +562,46 @@ export const api = {
     });
   },
 
-  getRunGraphFileState(runId: string): Promise<FileStateReportResponse> {
-    return fetchApi('/api/runs/' + runId + '/graph/file-state');
+  getRunGraphFileState(
+    runId: string,
+    params?: { fromPosition?: number; limit?: number; pathLimit?: number },
+  ): Promise<FileStateReportResponse> {
+    const sp = new URLSearchParams();
+    if (params?.fromPosition !== undefined) sp.set('from_position', String(params.fromPosition));
+    if (params?.limit !== undefined) sp.set('limit', String(params.limit));
+    if (params?.pathLimit !== undefined) sp.set('path_limit', String(params.pathLimit));
+    const qs = sp.toString();
+    return fetchApi('/api/runs/' + runId + '/graph/file-state' + (qs ? '?' + qs : ''));
   },
 
-  getRunGraphEvents(runId: string, fromPosition?: number): Promise<GraphEventResponse[]> {
+  async getRunGraphEvents(
+    runId: string,
+    params?: { fromPosition?: number; limit?: number; payloadMode?: 'summary' | 'full' },
+  ): Promise<GraphEventsPage> {
     const sp = new URLSearchParams();
-    if (fromPosition !== undefined) {
-      sp.set('from_position', String(fromPosition));
-    }
+    if (params?.fromPosition !== undefined) sp.set('from_position', String(params.fromPosition));
+    if (params?.limit !== undefined) sp.set('limit', String(params.limit));
+    if (params?.payloadMode !== undefined) sp.set('payload_mode', params.payloadMode);
     const qs = sp.toString();
-    return fetchApi('/api/runs/' + runId + '/graph/events' + (qs ? '?' + qs : ''));
+    const path = '/api/runs/' + runId + '/graph/events' + (qs ? '?' + qs : '');
+    const headers: Record<string, string> = {};
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    let response: Response;
+    try {
+      response = await fetch(joinBaseUrl(BASE_URL, path), { headers });
+    } catch {
+      throw new ApiError(0, { detail: 'Unable to reach server. Is the backend running?' });
+    }
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new ApiError(response.status, body);
+    }
+    const nextPosition = response.headers.get('X-Next-Position');
+    return {
+      events: await response.json() as GraphEventResponse[],
+      has_more: response.headers.get('X-Has-More') === 'true',
+      next_position: nextPosition && nextPosition !== 'null' ? Number(nextPosition) : null,
+    };
   },
 
   getRunGraphNodeDetail(runId: string, nodeId: string): Promise<NodeDetailResponse> {

@@ -147,7 +147,7 @@ _NODE_STATE_VALUES = {state.value for state in NodeState}
 _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
 
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
-PROJECTION_SCHEMA_VERSION = 13
+PROJECTION_SCHEMA_VERSION = 14
 GRAPH_PROJECTION_PAYLOAD_FIELDS = _GENERATED_GRAPH_PROJECTION_PAYLOAD_FIELDS
 
 
@@ -561,6 +561,7 @@ def _node_spec_from_created(payload: NodeCreatedPayload, position: int) -> NodeS
         "hidden_oracle_command",
         "command_binding",
         "max_attempts",
+        "cache_authority_hash",
     )
     data = payload.model_dump(mode="json", include=fields.intersection(spec_fields))
     spec: dict[str, object] = {"node_id": payload.node_id, "creation_position": position}
@@ -993,15 +994,16 @@ def _reduce_slice_a_binding(state: GraphProjection, event: EventEnvelope) -> Gra
 def _canonical_projected_record(record: ProjectedRecord) -> dict[str, Any]:
     """Return the accepted-record content used for replay identity.
 
-    Delivery position and run id are attached to file-state records by the
-    accepting event.  They intentionally do not turn a later redelivery into
-    a conflicting accepted record.
+    Delivery timestamp, position, and graph position are attached to file-state
+    records by the accepting event. They intentionally do not turn a later
+    redelivery into a conflicting accepted record; run id remains part of the
+    logical identity.
     """
     canonical = record.model_dump(mode="json", by_alias=True)
     if isinstance(record, ProjectedFileStateRecord):
+        canonical.pop("created_at", None)
         canonical.pop("position", None)
         canonical.pop("graph_position", None)
-        canonical.pop("run_id", None)
     return canonical
 
 
@@ -1241,8 +1243,10 @@ def _reduce_projected_record_event(state: GraphProjection, event: EventEnvelope)
             update={
                 "run_id": event.run_id,
                 "position": event.position,
-                "acceptance_identity": _file_state_acceptance_identity(projected),
             }
+        )
+        projected = projected.model_copy(
+            update={"acceptance_identity": _file_state_acceptance_identity(projected)}
         )
     records = insert_projected_record(state.records, projected, event_id=event.event_id)
     if records is state.records:
@@ -1607,7 +1611,7 @@ def _reduce_governance_decision(state: GraphProjection, event: EventEnvelope) ->
                 ),
                 "oversight_decision_id_by_node": _set_aliases(
                     governance.oversight_decision_id_by_node,
-                    (payload.node_id, payload.appeal_node_id),
+                    (payload.node_id, payload.appeal_node_id, payload.appealed_node_id),
                     decision_id,
                 ),
                 "pending_appeals_by_node": pending,
@@ -1798,6 +1802,15 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
 
 
 def _reduce_slice_c(state: GraphProjection, event: EventEnvelope) -> GraphProjection | None:
+    if event.event_type in {
+        "runner_baseline_recorded",
+        "runner_submission_staged",
+        "runner_boundary_mismatch",
+        "runner_recovery_requested",
+        "runner_recovery_completed",
+        "runner_execution_finalized",
+    }:
+        return _reduce_runner_execution(state, event)
     if event.event_type == "node_usage_recorded":
         return _reduce_node_usage(state, event)
     if event.event_type in {
@@ -1814,6 +1827,515 @@ def _reduce_slice_c(state: GraphProjection, event: EventEnvelope) -> GraphProjec
     if event.event_type == "callback_accepted":
         return _reduce_callback_accepted(state, event)
     return None
+
+
+def _attempt_root_union(existing: object, observed: tuple[object, ...]) -> tuple[object, ...]:
+    """Return phase-root union without interpreting legacy strings as authority."""
+    attempt = cast(Any, existing)
+    phases = (
+        attempt.baseline_cache_roots,
+        attempt.staged_cache_roots,
+        attempt.final_cache_roots,
+        attempt.recovery_observed_cache_roots,
+        observed,
+    )
+    values: tuple[object, ...] = tuple(value for phase in phases for value in phase)
+    from orchestrator.graph.cache_authority import latest_cache_root_union
+
+    strings = [value for value in values if isinstance(value, str)]
+    typed_phases = (
+        tuple(value for value in phase if not isinstance(value, str)) for phase in phases
+    )
+    return (*tuple(sorted(set(strings))), *latest_cache_root_union(*typed_phases))
+
+
+def _validate_replay_cache_authority(state: GraphProjection, payload: object) -> None:
+    """Replay the same snapshot/hash/root checks performed by commands."""
+    from orchestrator.graph.cache_authority import validate_authorized_cache_roots
+    from orchestrator.graph.projection_queries import (
+        cache_authority_binding,
+        cache_authority_is_new_format,
+        lease_by_id,
+        node_cache_authority_hash,
+    )
+
+    value = cast(Any, payload)
+    binding = cache_authority_binding(state)
+    supplied = value.cache_authority_hash
+    if cache_authority_is_new_format(state) and supplied != binding.hash:
+        raise ProjectionReplayConflictError(
+            "runner cache_authority_hash differs from routine snapshot"
+        )
+    if supplied is not None and supplied != binding.hash:
+        raise ProjectionReplayConflictError(
+            "runner cache_authority_hash differs from routine snapshot"
+        )
+    if (
+        cache_authority_is_new_format(state)
+        and node_cache_authority_hash(state, value.node_id) != binding.hash
+    ):
+        raise ProjectionReplayConflictError(
+            "runner node cache_authority_hash differs from routine snapshot"
+        )
+    lease = lease_by_id(state, value.lease_id)
+    if lease is None or (
+        cache_authority_is_new_format(state) and lease.cache_authority_hash != binding.hash
+    ):
+        raise ProjectionReplayConflictError(
+            "runner lease cache_authority_hash differs from routine snapshot"
+        )
+    observed = getattr(value, "observed_cache_roots", None)
+    if observed is not None:
+        roots = observed
+        status = value.cache_status_evidence or ()
+    else:
+        roots = value.cache_roots
+        # Earlier typed aggregate facts did not carry observed status evidence;
+        # validate policy authority without misrepresenting them as current.
+        status = None
+    if not any(isinstance(root, str) for root in roots):
+        try:
+            validate_authorized_cache_roots(
+                roots,
+                binding.policy,
+                status=status,
+            )
+        except ValueError as exc:
+            raise ProjectionReplayConflictError(str(exc)) from exc
+
+
+def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+    from orchestrator.graph.models import (
+        RunnerBaselineRecordedPayload,
+        RunnerExecutionFinalizedPayload,
+        RunnerRecoveryCompletedPayload,
+        RunnerRecoveryRequestedPayload,
+        RunnerSubmissionStagedPayload,
+    )
+    from orchestrator.graph.projection_models import ExecutionAttemptValue
+
+    attempts = state.execution.attempts_by_execution_id
+    if event.event_type == "runner_baseline_recorded":
+        payload = RunnerBaselineRecordedPayload.model_validate(event.payload)
+        _validate_replay_cache_authority(state, payload)
+        _verify_boundary_hash(
+            payload.baseline_tree_sha,
+            payload.entries,
+            payload.boundary_hash,
+            payload.cache_status_evidence or (),
+            payload.cache_authority_hash,
+        )
+        baseline_data = payload.model_dump()
+        baseline_data["baseline_entries"] = baseline_data.pop("entries")
+        baseline_data["baseline_boundary_hash"] = baseline_data.pop("boundary_hash")
+        baseline_data["baseline_cache_roots"] = baseline_data.get("cache_roots", [])
+        baseline_data["legacy_cache_root_paths"] = tuple(
+            root for root in payload.cache_roots if isinstance(root, str)
+        )
+        baseline_data["baseline_cache_status_evidence"] = (
+            baseline_data.pop("cache_status_evidence", []) or []
+        )
+        candidate = ExecutionAttemptValue.model_validate(
+            {
+                **baseline_data,
+                "state": "baseline_captured",
+                "lease_base_snapshot_id": payload.lease_base_snapshot_id,
+                "cache_authority_hash": payload.cache_authority_hash,
+            }
+        )
+    elif event.event_type == "runner_submission_staged":
+        payload = RunnerSubmissionStagedPayload.model_validate(event.payload)
+        _validate_replay_cache_authority(state, payload)
+        _verify_boundary_hash(
+            payload.staged_tree_sha,
+            payload.boundary_entries,
+            payload.boundary_hash,
+            payload.cache_status_evidence or (),
+            payload.cache_authority_hash,
+        )
+        existing = attempts.get(payload.execution_id)
+        if existing is None:
+            raise ProjectionReplayConflictError("runner submission has no baseline")
+        if existing.state == "submission_staged":
+            if (
+                existing.node_id == payload.node_id
+                and existing.lease_id == payload.lease_id
+                and existing.lease_generation == payload.lease_generation
+                and existing.idempotency_key == payload.idempotency_key
+                and existing.payload_hash == payload.payload_hash
+                and existing.staged_snapshot_id == payload.staged_snapshot_id
+                and existing.staged_snapshot_ref == payload.staged_snapshot_ref
+                and existing.staged_commit_sha == payload.staged_commit_sha
+                and existing.staged_tree_sha == payload.staged_tree_sha
+                and existing.staged_boundary_hash == payload.boundary_hash
+                and existing.staged_boundary_entries == tuple(payload.boundary_entries)
+                and existing.callback_base_snapshot_id == payload.base_snapshot_id
+                and existing.observed_graph_position == payload.observed_graph_position
+                and existing.is_mutating == payload.is_mutating
+                and existing.complete_node == payload.complete_node
+                and existing.new_state == payload.new_state
+                and existing.payload_size_bytes == payload.payload_size_bytes
+                and existing.staged_cache_roots == tuple(payload.cache_roots)
+                and existing.cache_authority_hash == payload.cache_authority_hash
+            ):
+                return state
+            raise ProjectionReplayConflictError(
+                "runner submission duplicate conflicts during replay"
+            )
+        if (
+            existing.state != "baseline_captured"
+            or existing.node_id != payload.node_id
+            or existing.lease_id != payload.lease_id
+            or existing.lease_generation != payload.lease_generation
+        ):
+            raise ProjectionReplayConflictError("runner submission conflicts with baseline")
+        candidate = existing.model_copy(
+            update={
+                "state": "submission_staged",
+                "idempotency_key": payload.idempotency_key,
+                "payload": freeze_json(payload.payload) if payload.payload is not None else None,
+                "payload_hash": payload.payload_hash,
+                "payload_size_bytes": payload.payload_size_bytes,
+                "staged_snapshot_id": payload.staged_snapshot_id,
+                "staged_snapshot_ref": payload.staged_snapshot_ref,
+                "staged_commit_sha": payload.staged_commit_sha,
+                "staged_tree_sha": payload.staged_tree_sha,
+                "staged_boundary_hash": payload.boundary_hash,
+                "staged_boundary_entries": tuple(payload.boundary_entries),
+                "observed_graph_position": payload.observed_graph_position,
+                "callback_base_snapshot_id": payload.base_snapshot_id,
+                "is_mutating": payload.is_mutating,
+                "complete_node": payload.complete_node,
+                "new_state": payload.new_state,
+                "staged_cache_roots": tuple(payload.cache_roots),
+                "staged_cache_status_evidence": tuple(payload.cache_status_evidence or ()),
+            }
+        )
+    elif event.event_type == "runner_recovery_requested":
+        from orchestrator.graph.boundary_types import derive_recovery_paths
+        from orchestrator.graph.cache_authority import RunnerCacheRoot
+
+        payload = RunnerRecoveryRequestedPayload.model_validate(event.payload)
+        _validate_replay_cache_authority(state, payload)
+        _verify_boundary_hash(
+            payload.final_tree_sha,
+            payload.final_boundary_entries,
+            payload.final_boundary_hash,
+            payload.cache_status_evidence or (),
+            payload.cache_authority_hash,
+        )
+        existing = attempts.get(payload.execution_id)
+        if existing is None:
+            raise ProjectionReplayConflictError("runner recovery has no baseline")
+        # Older durable recovery events predate ``cache_roots`` on this event.
+        # Their requested paths were derived from the baseline attempt roots;
+        # preserve that replay behavior while all new emitters carry the union.
+        legacy_event = payload.observed_cache_roots is None
+        recovery_cache_roots = (
+            tuple(payload.observed_cache_roots or ())
+            if not legacy_event
+            else tuple(payload.cache_roots) or existing.cache_roots
+        )
+        if not legacy_event:
+            expected_authorized = tuple(
+                RunnerCacheRoot.model_validate(root)
+                for root in _attempt_root_union(existing, recovery_cache_roots)
+                if not isinstance(root, str)
+            )
+            if (
+                tuple(payload.authorized_cache_roots or ()) != expected_authorized
+                or tuple(payload.legacy_cache_root_paths or ()) != existing.legacy_cache_root_paths
+            ):
+                raise ProjectionReplayConflictError("runner recovery root authority conflicts")
+        if existing.state == "recovery_requested":
+            if (
+                existing.recovery_id == payload.recovery_id
+                and existing.recovery_reason == payload.reason
+                and existing.node_id == payload.node_id
+                and existing.lease_id == payload.lease_id
+                and existing.lease_generation == payload.lease_generation
+                and existing.baseline_snapshot_id == payload.baseline_snapshot_id
+                and existing.baseline_tree_sha == payload.baseline_tree_sha
+                and existing.recovery_paths == tuple(payload.paths)
+                and existing.recovery_scope == payload.recovery_scope
+                and existing.recovery_snapshot_id == payload.recovery_snapshot_id
+                and existing.recovery_snapshot_ref == payload.recovery_snapshot_ref
+                and existing.recovery_commit_sha == payload.recovery_commit_sha
+                and existing.recovery_max_attempts == payload.max_attempts
+                and existing.final_tree_sha == payload.final_tree_sha
+                and existing.final_snapshot_id == payload.final_snapshot_id
+                and existing.final_snapshot_ref == payload.final_snapshot_ref
+                and existing.final_commit_sha == payload.final_commit_sha
+                and existing.final_boundary_hash == payload.final_boundary_hash
+                and existing.final_boundary_entries == tuple(payload.final_boundary_entries)
+                and existing.recovery_observed_cache_roots == recovery_cache_roots
+                and existing.cache_authority_hash == payload.cache_authority_hash
+            ):
+                return state
+            raise ProjectionReplayConflictError("runner recovery duplicate conflicts during replay")
+        if (
+            existing.state not in {"baseline_captured", "submission_staged"}
+            or existing.node_id != payload.node_id
+            or existing.lease_id != payload.lease_id
+            or existing.lease_generation != payload.lease_generation
+            or existing.baseline_snapshot_id != payload.baseline_snapshot_id
+            or existing.baseline_tree_sha != payload.baseline_tree_sha
+            or (
+                payload.recovery_scope == "selective"
+                and tuple(payload.paths)
+                != derive_recovery_paths(
+                    existing.baseline_entries,
+                    existing.staged_boundary_entries,
+                    payload.final_boundary_entries,
+                    [
+                        RunnerCacheRoot.model_validate(root)
+                        for root in _attempt_root_union(existing, recovery_cache_roots)
+                        if not isinstance(root, str)
+                    ],
+                    existing.legacy_cache_root_paths,
+                )
+            )
+        ):
+            raise ProjectionReplayConflictError("runner recovery conflicts with staged execution")
+        candidate = existing.model_copy(
+            update={
+                "state": "recovery_requested",
+                "recovery_id": payload.recovery_id,
+                "recovery_reason": payload.reason,
+                "recovery_max_attempts": payload.max_attempts,
+                "recovery_snapshot_id": payload.recovery_snapshot_id,
+                "recovery_snapshot_ref": payload.recovery_snapshot_ref,
+                "recovery_commit_sha": payload.recovery_commit_sha,
+                "recovery_scope": payload.recovery_scope,
+                "recovery_paths": tuple(payload.paths),
+                "final_tree_sha": payload.final_tree_sha,
+                "final_snapshot_id": payload.final_snapshot_id,
+                "final_snapshot_ref": payload.final_snapshot_ref,
+                "final_commit_sha": payload.final_commit_sha,
+                "final_boundary_hash": payload.final_boundary_hash,
+                "final_boundary_entries": tuple(payload.final_boundary_entries),
+                "recovery_observed_cache_roots": recovery_cache_roots,
+                "recovery_authorized_cache_roots": tuple(
+                    payload.authorized_cache_roots
+                    if not legacy_event and payload.authorized_cache_roots is not None
+                    else [
+                        root
+                        for root in _attempt_root_union(existing, recovery_cache_roots)
+                        if not isinstance(root, str)
+                    ]
+                ),
+                "legacy_cache_root_paths": tuple(
+                    payload.legacy_cache_root_paths
+                    if not legacy_event and payload.legacy_cache_root_paths is not None
+                    else existing.legacy_cache_root_paths
+                ),
+                "recovery_cache_status_evidence": tuple(payload.cache_status_evidence or ()),
+                "cache_roots": _attempt_root_union(existing, recovery_cache_roots),
+            }
+        )
+    elif event.event_type == "runner_recovery_completed":
+        payload = RunnerRecoveryCompletedPayload.model_validate(event.payload)
+        existing = attempts.get(payload.execution_id)
+        if existing is None or existing.recovery_id != payload.recovery_id:
+            raise ProjectionReplayConflictError(
+                "runner recovery completion conflicts during replay"
+            )
+        if existing.state != "recovery_requested":
+            if existing.state == "recovered":
+                if (
+                    payload.node_id == existing.node_id
+                    and payload.lease_id == existing.lease_id
+                    and payload.lease_generation == existing.lease_generation
+                    and payload.baseline_snapshot_id == existing.baseline_snapshot_id
+                    and payload.baseline_tree_sha == existing.baseline_tree_sha
+                    and tuple(payload.requested_paths or ()) == existing.recovery_paths
+                    and payload.recovery_scope == existing.recovery_scope
+                    and tuple(payload.restored_paths) == existing.restored_paths
+                    and tuple(payload.removed_paths) == existing.removed_paths
+                    and payload.proof_hash == existing.recovery_proof_hash
+                ):
+                    return state
+                raise ProjectionReplayConflictError(
+                    "runner recovery completion duplicate conflicts"
+                )
+            raise ProjectionReplayConflictError("runner recovery completion is out of order")
+        if (
+            payload.node_id != existing.node_id
+            or payload.lease_id != existing.lease_id
+            or payload.lease_generation != existing.lease_generation
+            or payload.baseline_snapshot_id != existing.baseline_snapshot_id
+            or payload.baseline_tree_sha != existing.baseline_tree_sha
+            or payload.requested_paths is None
+            or tuple(payload.requested_paths) != existing.recovery_paths
+            or payload.recovery_scope != existing.recovery_scope
+            or payload.proof_hash is None
+        ):
+            raise ProjectionReplayConflictError("runner recovery proof conflicts with request")
+        if existing.recovery_scope == "selective" and (
+            len(set(payload.restored_paths)) != len(payload.restored_paths)
+            or len(set(payload.removed_paths)) != len(payload.removed_paths)
+            or set(payload.restored_paths) & set(payload.removed_paths)
+            or set(payload.restored_paths) | set(payload.removed_paths)
+            != set(existing.recovery_paths)
+        ):
+            raise ProjectionReplayConflictError("runner recovery accounting conflicts with request")
+        from orchestrator.graph.boundary_types import recovery_proof_hash
+
+        if payload.proof_hash != recovery_proof_hash(
+            execution_id=payload.execution_id,
+            recovery_id=payload.recovery_id,
+            node_id=existing.node_id,
+            lease_id=existing.lease_id,
+            lease_generation=existing.lease_generation,
+            baseline_snapshot_id=existing.baseline_snapshot_id or "",
+            baseline_tree_sha=existing.baseline_tree_sha or "",
+            requested_paths=tuple(payload.requested_paths),
+            restored_paths=tuple(payload.restored_paths),
+            removed_paths=tuple(payload.removed_paths),
+            recovery_scope=payload.recovery_scope,
+        ):
+            raise ProjectionReplayConflictError("runner recovery proof hash is invalid")
+        candidate = existing.model_copy(
+            update={
+                "state": "recovered",
+                "recovery_proof_hash": payload.proof_hash,
+                "restored_paths": tuple(payload.restored_paths),
+                "removed_paths": tuple(payload.removed_paths),
+            }
+        )
+    elif event.event_type == "runner_execution_finalized":
+        payload = RunnerExecutionFinalizedPayload.model_validate(event.payload)
+        _validate_replay_cache_authority(state, payload)
+        _verify_boundary_hash(
+            payload.final_tree_sha,
+            payload.boundary_entries,
+            payload.boundary_hash,
+            payload.cache_status_evidence or (),
+            payload.cache_authority_hash,
+        )
+        existing = attempts.get(payload.execution_id)
+        if existing is None:
+            raise ProjectionReplayConflictError("runner finalization has no baseline")
+        if existing.state == "finalized":
+            if (
+                existing.node_id == payload.node_id
+                and existing.lease_id == payload.lease_id
+                and existing.lease_generation == payload.lease_generation
+                and existing.final_snapshot_id == payload.final_snapshot_id
+                and existing.final_snapshot_ref == payload.final_snapshot_ref
+                and existing.final_commit_sha == payload.final_commit_sha
+                and existing.final_tree_sha == payload.final_tree_sha
+                and existing.final_boundary_hash == payload.boundary_hash
+                and existing.final_boundary_entries == tuple(payload.boundary_entries)
+                and existing.final_cache_roots == tuple(payload.cache_roots)
+                and existing.cache_authority_hash == payload.cache_authority_hash
+            ):
+                return state
+            raise ProjectionReplayConflictError(
+                "runner finalization duplicate conflicts during replay"
+            )
+        if (
+            existing.state != "submission_staged"
+            or existing.node_id != payload.node_id
+            or existing.lease_id != payload.lease_id
+            or existing.lease_generation != payload.lease_generation
+            or existing.staged_boundary_hash != payload.boundary_hash
+        ):
+            raise ProjectionReplayConflictError(
+                "runner finalization conflicts with staged execution"
+            )
+        candidate = existing.model_copy(
+            update={
+                "state": "finalized",
+                "final_snapshot_id": payload.final_snapshot_id,
+                "final_snapshot_ref": payload.final_snapshot_ref,
+                "final_commit_sha": payload.final_commit_sha,
+                "final_tree_sha": payload.final_tree_sha,
+                "final_boundary_hash": payload.boundary_hash,
+                "final_boundary_entries": tuple(payload.boundary_entries),
+                "final_cache_roots": tuple(payload.cache_roots),
+                "final_cache_status_evidence": tuple(payload.cache_status_evidence or ()),
+                "cache_roots": _attempt_root_union(existing, tuple(payload.cache_roots)),
+            }
+        )
+    else:
+        # A mismatch is an audit fact; recovery_requested owns the state transition.
+        from orchestrator.graph.cache_authority import RunnerCacheRoot
+        from orchestrator.graph.models import RunnerBoundaryMismatchPayload
+
+        payload = RunnerBoundaryMismatchPayload.model_validate(event.payload)
+        _validate_replay_cache_authority(state, payload)
+        _verify_boundary_hash(
+            payload.final_tree_sha,
+            payload.final_boundary_entries,
+            payload.final_boundary_hash,
+            payload.cache_status_evidence or (),
+            payload.cache_authority_hash,
+        )
+        existing = attempts.get(payload.execution_id)
+        if (
+            existing is None
+            or existing.state != "submission_staged"
+            or existing.node_id != payload.node_id
+            or existing.lease_id != payload.lease_id
+            or existing.lease_generation != payload.lease_generation
+            or existing.staged_boundary_hash != payload.staged_boundary_hash
+            or payload.staged_boundary_hash == payload.final_boundary_hash
+        ):
+            raise ProjectionReplayConflictError(
+                "runner boundary mismatch conflicts with staged execution"
+            )
+        # The mismatch is audit-only, but it still carries the same authority
+        # chain as its recovery request.  Do not permit a persisted audit fact
+        # to widen (or rewrite) the roots from which recovery is derived.
+        # Older facts used the aggregate ``cache_roots`` field only, so retain
+        # their replay compatibility when the new observed-root carrier is
+        # absent.
+        if payload.observed_cache_roots is not None:
+            expected_authorized = tuple(
+                RunnerCacheRoot.model_validate(root)
+                for root in _attempt_root_union(existing, tuple(payload.observed_cache_roots))
+                if not isinstance(root, str)
+            )
+            if (
+                tuple(payload.authorized_cache_roots or ()) != expected_authorized
+                or tuple(payload.legacy_cache_root_paths or ()) != existing.legacy_cache_root_paths
+            ):
+                raise ProjectionReplayConflictError(
+                    "runner boundary mismatch root authority conflicts"
+                )
+        return state
+    existing = attempts.get(candidate.execution_id)
+    if existing == candidate:
+        return state
+    if existing is not None and event.event_type == "runner_baseline_recorded":
+        raise ProjectionReplayConflictError(
+            f"execution {candidate.execution_id!r} conflicts during replay"
+        )
+    execution = state.execution.model_copy(
+        update={"attempts_by_execution_id": map_set(attempts, candidate.execution_id, candidate)}
+    )
+    return _replace_projection_groups(state, execution=execution)
+
+
+def _verify_boundary_hash(
+    tree_sha: str,
+    entries: object,
+    expected_hash: str,
+    cache_status_evidence: object = (),
+    cache_authority_hash: str | None = None,
+) -> None:
+    """Keep replay independently strict even for externally persisted events."""
+    from orchestrator.graph.boundary_types import BoundaryValidationError, boundary_manifest_hash
+
+    try:
+        actual_hash = boundary_manifest_hash(
+            tree_sha, cast(Any, entries), cast(Any, cache_status_evidence), cache_authority_hash
+        )
+    except BoundaryValidationError as exc:
+        raise ProjectionReplayConflictError(f"invalid runner boundary manifest: {exc}") from exc
+    if actual_hash != expected_hash:
+        raise ProjectionReplayConflictError("runner boundary hash conflicts with manifest")
 
 
 def _reduce_node_usage(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
@@ -1898,6 +2420,7 @@ def _reduce_lease(state: GraphProjection, event: EventEnvelope) -> GraphProjecti
                 )
                 if payload.resource_claims
                 else (node.spec.resource_claims if node is not None else ()),
+                "cache_authority_hash": payload.cache_authority_hash,
             }
         )
     elif event.event_type == "lease_renewed":
@@ -1978,6 +2501,26 @@ def _reduce_cleanup(state: GraphProjection, event: EventEnvelope) -> GraphProjec
         return _replace_projection_groups(state, execution=execution, records=records)
 
     payload = CleanupAppliedPayload.model_validate(event.payload)
+    requested = state.execution.cleanup_requests_by_id.get(payload.cleanup_id)
+    if requested is None:
+        raise ProjectionReplayConflictError(
+            f"cleanup application {payload.cleanup_id!r} has no matching request"
+        )
+    if requested.snapshot_role is not None:
+        ownership = (
+            (payload.old_snapshot_id, requested.snapshot_id),
+            (payload.snapshot_ref, requested.snapshot_ref),
+            (payload.tree_sha, requested.tree_sha),
+            (payload.commit_sha, requested.commit_sha),
+            (payload.node_id, requested.node_id),
+            (payload.lease_id, requested.lease_id),
+            (payload.lease_generation, requested.lease_generation),
+            (payload.snapshot_role, requested.snapshot_role),
+        )
+        if any(actual != expected for actual, expected in ownership):
+            raise ProjectionReplayConflictError(
+                f"cleanup application {payload.cleanup_id!r} conflicts with request"
+            )
     execution = state.execution
     if payload.cleanup_id not in execution.applied_cleanup_ids:
         execution = execution.model_copy(
@@ -2124,6 +2667,18 @@ def final_invariant_blockers_for_events(
     if include_completion_decision:
         blockers.extend(_completion_decision_blockers(events, projection))
     blockers.extend(_node_fulfillment_blockers(projection))
+    for cleanup_id, cleanup in sorted(projection.execution.cleanup_requests_by_id.items()):
+        if (
+            cleanup.snapshot_role is not None
+            and cleanup_id not in projection.execution.applied_cleanup_ids
+        ):
+            blockers.append(
+                {
+                    "kind": "pending_managed_snapshot_cleanup",
+                    "reason": "managed runner snapshot cleanup is pending",
+                    "state": cleanup.snapshot_role,
+                }
+            )
     blockers.extend(_non_terminal_node_blockers(projection, blockers, pending_states))
     for task_region_id, task in sorted(projection.tasks.items()):
         task_state = task.state
@@ -2866,8 +3421,20 @@ def project_node_metadata(
     return metadata
 
 
-def project_graph_topology(events: list[EventEnvelope]) -> GraphTopologyView:
-    projection = _project(events)
+def project_graph_topology(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> GraphTopologyView:
+    """Project topology from the current durable projection when supplied.
+
+    Read-model consumers deliberately pass the incrementally maintained
+    projection checkpoint here.  That keeps an API read from replaying the
+    authoritative event stream merely to render topology.  Event history is
+    still accepted for the pure replay/reference path and supplies the same
+    record-position enrichment when available.
+    """
+    projection = projection if projection is not None else _project(events)
     record_summaries = {
         record_id: cast(
             GraphRecordSummary,
@@ -3659,8 +4226,9 @@ def project_graph_projection_snapshot(
     """Build the pure policy view consumed by graph-run drivers.
 
     ``projection`` may be a transactional materialization of an event prefix.
-    Callers still provide the complete event sequence when event-only reason
-    fields are needed, but avoid folding that sequence again.
+    Runtime callers may pass an empty event list when the durable checkpoint is
+    current: all scheduling facts then come directly from the projection rather
+    than forcing an unbounded second history read merely for diagnostic text.
     """
     projection = projection if projection is not None else build_projection(events)
     node_states = project_node_states(events, projection=projection)
@@ -3669,6 +4237,29 @@ def project_graph_projection_snapshot(
         for lease_id, lease in projection.execution.leases.items()
         if lease.state == "active"
     }
+    if events:
+        failed_node_reasons = _project_failed_node_reasons(events)
+        node_deferral_reasons = _project_node_deferral_reasons(events)
+        missing_input_sources = _project_missing_input_sources(
+            projection,
+            node_deferral_reasons,
+        )
+    else:
+        failed_node_reasons = {
+            node_id: reason
+            for node_id, node in projection.nodes.items()
+            if node.runtime.state == "failed"
+            and isinstance((reason := node.runtime.suspect_reason), str)
+        }
+        node_deferral_reasons = {
+            node_id: reason
+            for node_id, node in projection.nodes.items()
+            if isinstance((reason := node.scheduling.last_deferred_reason), str)
+        }
+        missing_input_sources = _project_missing_input_sources(
+            projection,
+            node_deferral_reasons,
+        )
     return GraphProjectionSnapshot(
         run_state=project_run_state(events, projection=projection),
         ready_nodes=project_ready_nodes(events, projection=projection),
@@ -3680,16 +4271,16 @@ def project_graph_projection_snapshot(
         ],
         task_states=project_task_states(events, projection=projection),
         node_states=node_states,
-        failed_node_reasons=_project_failed_node_reasons(events),
-        node_deferral_reasons=_project_node_deferral_reasons(events),
-        missing_input_sources=_project_missing_input_sources(projection, events),
+        failed_node_reasons=failed_node_reasons,
+        node_deferral_reasons=node_deferral_reasons,
+        missing_input_sources=missing_input_sources,
         environment_failures={
             task_region_id: EnvironmentFailureProjection.model_validate(
                 failure.model_dump(mode="json")
             )
             for task_region_id, failure in projection.execution.environment_failures_by_task.items()
         },
-        node_max_attempts=project_node_max_attempts(events),
+        node_max_attempts=project_node_max_attempts(projection),
     )
 
 
@@ -3858,10 +4449,11 @@ def _project_node_deferral_reasons(events: list[EventEnvelope]) -> dict[str, str
 
 
 def _project_missing_input_sources(
-    projection: GraphProjection, events: list[EventEnvelope]
+    projection: GraphProjection,
+    node_deferral_reasons: dict[str, str],
 ) -> dict[str, list[str]]:
     details: dict[str, list[str]] = {}
-    for node_id, reason in _project_node_deferral_reasons(events).items():
+    for node_id, reason in node_deferral_reasons.items():
         if not reason.startswith("missing_required_input:"):
             continue
         missing_port = reason.removeprefix("missing_required_input:")

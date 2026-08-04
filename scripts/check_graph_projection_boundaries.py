@@ -174,9 +174,9 @@ def projection_annotation_violations(root: type[ProjectionModel]) -> tuple[str, 
         elif origin is Literal:
             if any(type(value) not in _IMMUTABLE_SCALARS for value in arguments):
                 violations.append(f"{path}: Literal contains a non-scalar value")
-        elif isinstance(annotation, type) and issubclass(annotation, ProjectionModel):
+        elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
             if annotation.model_config.get("frozen") is not True:
-                violations.append(f"{path}: projection model {annotation.__name__} is not frozen")
+                violations.append(f"{path}: model {annotation.__name__} is not frozen")
             if annotation in active_models:
                 return
             hints = get_type_hints(annotation, include_extras=True)

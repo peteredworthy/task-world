@@ -191,6 +191,7 @@ export interface RepresentativeNodeEvidence {
   role: string | null;
   title: string | null;
   evidence_summary: string | null;
+  evidence_status?: 'complete' | 'partial' | 'unavailable' | 'not_requested';
   blockers: string[];
 }
 
@@ -209,6 +210,7 @@ export interface RunEvidenceDigestResponse {
   status: RunStatus;
   execution_mode: 'legacy' | 'graph' | string;
   is_graph_backed: boolean;
+  graph_facts_status?: 'complete' | 'partial' | 'unavailable';
   generated_at: string;
   run_summary: RunEvidenceDigestRunSummary;
   blockers: string[];
@@ -224,6 +226,83 @@ export interface GraphEventResponse {
   position: number;
   timestamp: string;
   payload: Record<string, unknown>;
+}
+
+export interface GraphEventsPage {
+  events: GraphEventResponse[];
+  has_more: boolean;
+  next_position: number | null;
+}
+
+export interface GraphPatchAttemptResponse {
+  patch_id: string;
+  patch_id_truncated: boolean;
+  patch_id_original_chars: number | null;
+  patch_id_sha256: string | null;
+  proposed_by_node_id: string | null;
+  proposed_by_node_id_truncated: boolean;
+  proposed_by_node_id_original_chars: number | null;
+  proposed_by_node_id_sha256: string | null;
+  base_graph_position: number | null;
+  current_graph_position: number;
+  status: 'proposed' | 'accepted' | 'rejected' | 'superseded';
+  rejection_reason: string | null;
+  diagnostics: Record<string, unknown> | null;
+  read_set_diff: Record<string, unknown> | null;
+  accepted_event_id: string | null;
+  accepted_position: number | null;
+  rejected_event_id: string | null;
+  rejected_position: number | null;
+  created_node_ids: string[];
+  created_node_ids_total: number;
+  created_node_ids_truncated: boolean;
+  created_node_id_truncations: GraphPatchIdentifierTruncation[];
+  created_edge_ids: string[];
+  created_edge_ids_total: number;
+  created_edge_ids_truncated: boolean;
+  created_edge_id_truncations: GraphPatchIdentifierTruncation[];
+  operations: Record<string, unknown>[];
+  operations_total: number;
+  operations_truncated: boolean;
+  requirements: unknown[];
+  requirements_total: number;
+  requirements_truncated: boolean;
+  reasons: string[];
+  reasons_total: number;
+  reasons_truncated: boolean;
+  evidence: unknown[];
+  evidence_total: number;
+  evidence_truncated: boolean;
+  text_truncated: boolean;
+  max_text_chars: number;
+  payload_truncated: boolean;
+  payload_truncation_reasons: string[];
+  nested_identifier_truncations: GraphPatchNestedIdentifierTruncation[];
+  nested_identifier_truncations_truncated: boolean;
+}
+
+export interface GraphPatchIdentifierTruncation {
+  index: number;
+  original_chars: number;
+  sha256: string;
+}
+
+export interface GraphPatchNestedIdentifierTruncation {
+  path: string;
+  original_chars: number;
+  sha256: string;
+}
+
+export interface GraphPatchAttemptsPage {
+  run_id: string;
+  current_graph_position: number;
+  attempts: GraphPatchAttemptResponse[];
+  has_more: boolean;
+  next_position: number | null;
+  limit: number;
+  orphan_outcome_count: number;
+  capped_fact_count: number;
+  partial: boolean;
 }
 
 export interface GraphProjectionResponse {
@@ -270,12 +349,16 @@ export interface GraphHealthResponse {
   event_count: number;
   run_state: string | null;
   status: string;
-  counts: Record<string, number>;
+  health_status: 'partial' | 'complete' | 'unavailable';
+  facts_status: 'partial' | 'complete' | 'unavailable';
+  unavailable_checks: string[];
+  section_status: Record<string, 'partial' | 'complete' | 'unavailable'>;
+  counts: Record<string, number | null>;
   failed_nodes: Array<{ node_id: string; reason: string }>;
   expired_leases: Array<{ lease_id: string; node_id: string; reason: string }>;
   blockers: Array<{ node_id: string; kind: string; reason: string }>;
   recent_patch_decisions: Array<{ patch_id: string; decision: string; reason?: string | null }>;
-  verifier: { passed: number; failed: number; recent: Array<{ node_id: string; candidate_id: string; verdict: string }> };
+  verifier: { passed: number | null; failed: number | null; recent: Array<{ node_id: string; candidate_id: string; verdict: string }> };
   pending_gates: Array<{ node_id: string; gate_type: string }>;
   review_blockers: string[];
   detail_meta: Record<string, { total: number; truncated: boolean }>;
@@ -379,9 +462,18 @@ export interface FileStateBoundary {
   verdict: string | null;
   classification_counts: Record<string, number>;
   captured_paths: FileStatePath[];
+  captured_source_entries_total: number;
+  captured_paths_truncated: boolean;
   rejected_paths: FileStatePath[];
+  rejected_source_entries_total: number;
+  rejected_paths_truncated: boolean;
   gatekeeper_verdicts: FileStateGatekeeperVerdict[];
+  gatekeeper_verdicts_total: number | null;
+  gatekeeper_verdicts_truncated: boolean;
+  gatekeeper_facts_total: number;
+  gatekeeper_facts_truncated: boolean;
   diff_summary: FileStateDiffSummary | null;
+  diff_summary_available: boolean;
 }
 
 export interface FileStateNodeReport {
@@ -392,7 +484,14 @@ export interface FileStateNodeReport {
 export interface FileStateReportResponse {
   run_id: string;
   event_count: number;
+  from_position: number;
+  has_more: boolean;
+  next_position: number | null;
+  path_limit: number;
   nodes: FileStateNodeReport[];
+  gatekeeper_scope: 'page';
+  gatekeeper_metrics_truncated: boolean;
+  orphan_gatekeeper_fact_count: number;
   gatekeeper: Record<string, unknown> | null;
 }
 

@@ -289,6 +289,9 @@ async def test_resource_conflict_readback_matches_run_graph_scheduler_and_events
             "position": 6,
             "timestamp": deferred_events[0]["timestamp"],
             "payload": {"node_id": "writer-b", "reason": "resource_conflict:write:write"},
+            "payload_truncated": False,
+            "payload_original_bytes": None,
+            "payload_sha256": None,
         }
     ]
 

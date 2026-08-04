@@ -24,7 +24,6 @@ from orchestrator.graph import (
     run_state as query_run_state,
     Actor,
     ActorKind,
-    EventEnvelope,
     GraphProjectionSnapshot,
     GraphRunOutcome,
     GraphCommandContext,
@@ -32,14 +31,15 @@ from orchestrator.graph import (
     project_graph_completion_eligible,
     project_graph_outcome,
     project_graph_projection_snapshot,
-    project_run_state,
 )
 from orchestrator.graph import Clock, IdGenerator
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
     GraphDispatchExecutor,
+    GraphProcessRegistry,
     GraphEventStore,
+    GraphReadModelUnavailable,
     OutboxDispatcher,
     StaleProjectionError,
     build_graph_runtime,
@@ -48,6 +48,8 @@ from orchestrator.graph_runtime import (
     reconcile_runtime,
     seed_run,
 )
+from orchestrator.runners import get_graph_capable_agent_runner_types
+from orchestrator.workflow.engine.errors import RunFinalizationError
 
 if TYPE_CHECKING:
     from orchestrator.workflow.service import WorkflowService
@@ -71,8 +73,6 @@ def get_supported_graph_runner_types() -> frozenset[AgentRunnerType]:
     (``agent_factory.register(..., graph_capable=True)``), not a
     hand-maintained list — see ``runners/agent_factory.py``.
     """
-    from orchestrator.runners.agent_factory import get_graph_capable_agent_runner_types
-
     return get_graph_capable_agent_runner_types()
 
 
@@ -297,6 +297,7 @@ class GraphRunDriver:
         on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
         on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
         artifact_stores: ArtifactStoreResolver | None = None,
+        process_registry: GraphProcessRegistry | None = None,
         journal_max_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         self._session_factory = session_factory
@@ -309,6 +310,7 @@ class GraphRunDriver:
         self._on_agent_output = on_agent_output
         self._on_agent_usage = on_agent_usage
         self._artifact_stores = artifact_stores or ArtifactStoreResolver(ArtifactRootResolver())
+        self._process_registry = process_registry
         self._journal_max_bytes = journal_max_bytes
 
     async def run(self, run_id: str) -> GraphRunOutcome:
@@ -446,6 +448,8 @@ class GraphRunDriver:
             runtime_kwargs["on_agent_output"] = self._on_agent_output
         if self._on_agent_usage is not None:
             runtime_kwargs["on_agent_usage"] = self._on_agent_usage
+        if self._process_registry is not None:
+            runtime_kwargs["process_registry"] = self._process_registry
         controller, executor = self._runtime_builder(
             self._session_factory,
             self._clock,
@@ -468,7 +472,7 @@ class GraphRunDriver:
             try:
                 report = await recover(self._session_factory, dispatcher, run_id=run_id)
                 await reconcile_graph(controller, run_id=run_id)
-                await reconcile_runtime(controller, executor, report)
+                await reconcile_runtime(controller, executor, report, dispatcher)
             except Exception:
                 logger.exception(
                     "GraphRunDriver: recovery for %s failed; proceeding to drive", run_id
@@ -499,6 +503,18 @@ class GraphRunDriver:
             )
         except asyncio.CancelledError:
             raise
+        except GraphReadModelUnavailable as exc:
+            # A runtime projection checkpoint can be repaired by maintenance,
+            # but the driver must not compensate by replaying an unbounded
+            # authority stream on an ordinary execution turn.
+            logger.warning("GraphRunDriver: bounded read unavailable for %s: %s", run_id, exc)
+            await self._apply_pause(run_id, "graph_read_model_unavailable", str(exc))
+            return GraphRunOutcome(
+                run_id=run_id,
+                run_state=None,
+                completed=False,
+                blocked_reason=str(exc),
+            )
         except Exception as exc:
             # Crash-path bridge. A driver-loop exception (e.g. a transient
             # "database is locked" escaping outbox bookkeeping) would otherwise
@@ -518,7 +534,17 @@ class GraphRunDriver:
         current = await self._get_run(run_id)
         if current.status == RunStatus.ACTIVE:
             if outcome.completed:
-                await self._apply_complete(run_id)
+                try:
+                    await self._apply_complete(run_id)
+                except RunFinalizationError as exc:
+                    reason = str(exc)
+                    await self._apply_pause(run_id, "graph_finalization_failed", reason)
+                    outcome = GraphRunOutcome(
+                        run_id=run_id,
+                        run_state=outcome.run_state,
+                        completed=False,
+                        blocked_reason=reason,
+                    )
             elif outcome.run_state == "failed":
                 await self._apply_fail(run_id, outcome.blocked_reason)
             else:
@@ -659,6 +685,13 @@ class GraphRunDriver:
                 and not projection.active_leases
                 and not projection.schedulable_nodes
             ):
+                # A managed runner finalization can append cleanup intents while
+                # the dispatcher is delivering its agent-dispatch row.  SQLite's
+                # read transaction for that delivery may not observe those new
+                # rows until the next dispatch pass; drain them before deciding
+                # that the graph is quiescent or attempting final completion.
+                await dispatcher.dispatch_pending(run_id=run_id)
+                projection = await read_projection(run_id)
                 if project_graph_completion_eligible(projection):
                     await self._handle_command_at_head(controller, run_id, "complete")
                     projection = await read_projection(run_id)
@@ -719,8 +752,7 @@ class GraphRunDriver:
         # retried here instead of escaping run() uncaught and stranding the
         # run ACTIVE with no driver (see the graph_driver_crashed comment
         # below for the analogous risk in the main drive loop).
-        events = await self._read_events(run_id)
-        run_state = project_run_state(events)
+        run_state = await self._read_run_state(run_id)
         controller = GraphController(
             self._session_factory,
             self._clock,
@@ -749,8 +781,7 @@ class GraphRunDriver:
         locked" is retried instead of stranding the run ACTIVE with a still-
         failed kernel (mirrors _bootstrap_graph_lifecycle).
         """
-        events = await self._read_events(run_id)
-        run_state = project_run_state(events)
+        run_state = await self._read_run_state(run_id)
         if run_state not in {"failed", "resuming"}:
             return False
         controller = GraphController(
@@ -769,12 +800,20 @@ class GraphRunDriver:
         async with self._session_factory() as session:
             store = GraphEventStore(session)
             projection, _, _ = await store.load_projection_with_tail(run_id)
-            events = await store.read_run(run_id)
-        return project_graph_projection_snapshot(events, projection=projection)
+            facts = await store.read_bounded_runtime_projection_facts(run_id)
+        return project_graph_projection_snapshot(facts or [], projection=projection)
 
-    async def _read_events(self, run_id: str) -> list[EventEnvelope]:
+    async def _read_run_state(self, run_id: str) -> str | None:
+        """Read lifecycle state from the bounded runtime checkpoint.
+
+        Bootstrap and operator reopen used to replay the whole authority log
+        merely to inspect ``run_state``.  The checkpoint already owns that
+        fact, so an oversized/missing checkpoint now surfaces the normal
+        ``GraphReadModelUnavailable`` pause path instead.
+        """
         async with self._session_factory() as session:
-            return await GraphEventStore(session).read_run(run_id)
+            projection, _, _ = await GraphEventStore(session).load_projection_with_tail(run_id)
+        return query_run_state(projection)
 
     async def _current_position(self, run_id: str) -> int:
         async with self._session_factory() as session:
@@ -803,7 +842,7 @@ class GraphRunDriver:
     async def _apply_complete(self, run_id: str) -> None:
         async with self._session_factory() as session:
             service = await self._create_service(session)
-            await service.apply_complete_run(run_id)
+            await service.finalize_graph_run_completion(run_id)
 
     async def _apply_fail(self, run_id: str, reason: str | None = None) -> None:
         async with self._session_factory() as session:

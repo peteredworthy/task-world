@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import subprocess
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,15 @@ class NoRunningAgentFactory:
 
 class NeverRunningRegistry:
     def is_running(self, execution_id: str) -> bool:
+        return False
+
+    async def try_reattach(
+        self,
+        execution_id: str,
+        callback: Callable[[list[dict[str, object]]], Awaitable[None]],
+        worktree_execution_lock: asyncio.Lock,
+    ) -> bool:
+        del execution_id, callback, worktree_execution_lock
         return False
 
 

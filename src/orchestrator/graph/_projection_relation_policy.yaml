@@ -4,6 +4,61 @@ policies:
   family: cleanup
   rationale: Identifier is checked against represented cleanup state by an integrity resolver.
   validation: resolver
+- path: execution.attempts_by_execution_id.*.baseline_snapshot_id
+  scope: grouped
+  family: external
+  rationale: Snapshot identity is owned by the repository boundary.
+  validation: external
+- path: execution.attempts_by_execution_id.*.callback_base_snapshot_id
+  scope: grouped
+  family: external
+  rationale: Callback base identity is owned by the lease boundary.
+  validation: external
+- path: execution.attempts_by_execution_id.*.execution_id
+  scope: grouped
+  family: external
+  rationale: Execution identity is owned by the runner boundary.
+  validation: external
+- path: execution.attempts_by_execution_id.*.final_snapshot_id
+  scope: grouped
+  family: external
+  rationale: Snapshot identity is owned by the repository boundary.
+  validation: external
+- path: execution.attempts_by_execution_id.*.idempotency_key
+  scope: grouped
+  family: external
+  rationale: Callback idempotency identity is external to graph records.
+  validation: external
+- path: execution.attempts_by_execution_id.*.lease_base_snapshot_id
+  scope: grouped
+  family: external
+  rationale: Lease base identity is checked by command validation at the execution boundary.
+  validation: external
+- path: execution.attempts_by_execution_id.*.lease_id
+  scope: grouped
+  family: external
+  rationale: Lease identity is checked by command validation at the execution boundary.
+  validation: external
+- path: execution.attempts_by_execution_id.*.node_id
+  scope: grouped
+  family: external
+  rationale: Baseline capture can precede graph-node checkpoint restoration.
+  validation: external
+- path: execution.attempts_by_execution_id.*.recovery_id
+  scope: grouped
+  family: external
+  rationale: Deterministic recovery identity is owned by the runner boundary.
+  validation: external
+- path: execution.attempts_by_execution_id.*.recovery_snapshot_id
+  scope: grouped
+  family: external
+  rationale: Recovery snapshot identity is owned by the repository boundary.
+  validation: external
+- path: execution.attempts_by_execution_id.*.staged_snapshot_id
+  scope: grouped
+  family: external
+  rationale: Snapshot identity is owned by the repository boundary.
+  validation: external
 - path: execution.callback_events_by_key.*.idempotency_key
   scope: grouped
   family: external
@@ -24,6 +79,11 @@ policies:
   family: cleanup
   rationale: Identifier is checked against represented cleanup state by an integrity resolver.
   validation: resolver
+- path: execution.cleanup_requests_by_id.*.commit_sha
+  scope: grouped
+  family: external
+  rationale: Git commit identity is verified before the owned ref is deleted.
+  validation: external
 - path: execution.cleanup_requests_by_id.*.execution_id
   scope: grouped
   family: external
@@ -39,6 +99,16 @@ policies:
   family: cleanup
   rationale: Map key is checked against represented cleanup state by an integrity resolver.
   validation: resolver
+- path: execution.cleanup_requests_by_id.*.lease_id
+  scope: grouped
+  family: external
+  rationale: Lease identity is verified by the managed execution-boundary command.
+  validation: external
+- path: execution.cleanup_requests_by_id.*.node_id
+  scope: grouped
+  family: external
+  rationale: Managed cleanup retains its originating node identity for audit.
+  validation: external
 - path: execution.cleanup_requests_by_id.*.producer_node_id
   scope: grouped
   family: node
@@ -48,6 +118,11 @@ policies:
   scope: grouped
   family: external
   rationale: Identifier belongs to an external runtime, repository, artifact, or provenance system.
+  validation: external
+- path: execution.cleanup_requests_by_id.*.tree_sha
+  scope: grouped
+  family: external
+  rationale: Git tree identity is verified before the owned ref is deleted.
   validation: external
 - path: execution.environment_failures_by_task.*.key
   scope: grouped

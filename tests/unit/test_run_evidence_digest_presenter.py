@@ -5,7 +5,7 @@ from typing import Any
 from orchestrator.api import build_run_evidence_digest_response
 from orchestrator.config.enums import RunStatus, TaskStatus
 from orchestrator.config.models import RoutineConfig
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, project_lease_view
 from orchestrator.state import Attempt, ModelTokenUsage
 from orchestrator.state.factory import create_run_from_routine
 
@@ -228,6 +228,85 @@ def test_build_run_evidence_digest_response_hides_evidence_and_limits_nodes() ->
         "scheduler:waiting_resources:resource_conflict:write:write"
     ]
     assert digest.metrics.total_tokens_read == 10
+
+
+def test_evidence_summary_uses_latest_lease_lifecycle_per_identity() -> None:
+    run, step_id, task_id = _run_with_metrics()
+    created = _graph_events(step_id, task_id)[0]
+    lifecycle_cases = (
+        ("lease_granted", "active", "active"),
+        ("lease_renewed", "active", "active"),
+        ("lease_suspended", "suspended", "suspended"),
+        ("lease_released", "released", "terminal"),
+        ("lease_revoked", "revoked", "terminal"),
+        ("lease_expired", "expired", "terminal"),
+    )
+    for event_type, projected_state, summary_state in lifecycle_cases:
+        events = [
+            created,
+            _event("lease_granted", {"lease_id": "lease-a", "node_id": "node-a"}, 2),
+        ]
+        if event_type != "lease_granted":
+            events.append(_event(event_type, {"lease_id": "lease-a", "node_id": "node-a"}, 3))
+        digest = build_run_evidence_digest_response(run, events)
+        lease_view = project_lease_view(events)
+        assert len(lease_view["active"]) == (1 if projected_state == "active" else 0)
+        assert len(lease_view["suspended"]) == (1 if projected_state == "suspended" else 0)
+        assert f"lease={summary_state}" in (digest.representative_nodes[0].evidence_summary or "")
+
+
+def test_partial_evidence_does_not_claim_stale_active_lease() -> None:
+    run, step_id, task_id = _run_with_metrics()
+    created = _graph_events(step_id, task_id)[0]
+    grant = _event("lease_granted", {"lease_id": "lease-a", "node_id": "node-a"}, 2)
+    release = _event("lease_released", {"lease_id": "lease-a", "node_id": "node-a"}, 3)
+    digest = build_run_evidence_digest_response(
+        run,
+        [created, grant, release],
+        evidence_by_node={"node-a": (created, grant)},
+        partial_evidence_node_ids=frozenset({"node-a"}),
+    )
+    assert project_lease_view([created, grant, release])["active"] == []
+    assert "lease=unavailable" in (digest.representative_nodes[0].evidence_summary or "")
+
+
+def test_evidence_summary_handles_multiple_lease_identities() -> None:
+    run, step_id, task_id = _run_with_metrics()
+    created = _graph_events(step_id, task_id)[0]
+    events = [
+        created,
+        _event("lease_granted", {"lease_id": "active", "node_id": "node-a"}, 2),
+        _event("lease_granted", {"lease_id": "terminal", "node_id": "node-a"}, 3),
+        _event("lease_revoked", {"lease_id": "terminal", "node_id": "node-a"}, 4),
+        _event("lease_granted", {"lease_id": "suspended", "node_id": "node-a"}, 5),
+        _event("lease_suspended", {"lease_id": "suspended", "node_id": "node-a"}, 6),
+    ]
+    digest = build_run_evidence_digest_response(run, events)
+    lease_view = project_lease_view(events)
+    assert len(lease_view["active"]) == 1
+    assert len(lease_view["suspended"]) == 1
+    assert "lease=active" in (digest.representative_nodes[0].evidence_summary or "")
+
+
+def test_full_event_evidence_proves_node_less_terminal_lease_ownership() -> None:
+    run, step_id, task_id = _run_with_metrics()
+    node_a = _graph_events(step_id, task_id)[0]
+    node_b = _event(
+        "node_created",
+        {"node_id": "node-b", "kind": "worker", "state": "running"},
+        2,
+    )
+    events = [
+        node_a,
+        node_b,
+        _event("lease_granted", {"lease_id": "lease-a", "node_id": "node-a"}, 3),
+        _event("lease_granted", {"lease_id": "lease-b", "node_id": "node-b"}, 4),
+        _event("lease_released", {"lease_id": "lease-a"}, 5),
+    ]
+    digest = build_run_evidence_digest_response(run, events, max_nodes=2)
+    summaries = {node.node_id: node.evidence_summary or "" for node in digest.representative_nodes}
+    assert "lease=terminal" in summaries["node-a"]
+    assert "lease=active" in summaries["node-b"]
     assert digest.metrics.total_tokens_write == 20
     assert digest.metrics.total_tokens_cache == 5
     assert digest.metrics.total_duration_ms == 1234

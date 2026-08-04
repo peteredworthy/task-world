@@ -83,11 +83,11 @@ class ClaudeGatekeeperClassifier:
         )
 
 
-def policy_with_pattern_library(
+def classification_policy_with_pattern_library(
     events: list[EventEnvelope],
     base_policy: FileStatePolicy | None = None,
 ) -> FileStatePolicy:
-    """Return a policy extended with deterministic pattern-library declarations."""
+    """Return classification hints; this never changes compiled cache authority."""
     active = base_policy or FileStatePolicy()
     library = project_pattern_library(events)
     declarations: list[FileStateDeclaration] = []
@@ -114,7 +114,12 @@ def policy_with_pattern_library(
         tool_cache_patterns=active.tool_cache_patterns,
         secret_name_patterns=active.secret_name_patterns,
         secret_entropy_threshold=active.secret_entropy_threshold,
+        scan_budget=active.scan_budget,
     )
+
+
+# Compatibility name for callers during the classification-only transition.
+policy_with_pattern_library = classification_policy_with_pattern_library
 
 
 def metadata_from_file_state_record(

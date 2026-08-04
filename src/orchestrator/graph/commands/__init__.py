@@ -33,6 +33,7 @@ from orchestrator.graph.command_models import (
     RaiseAppealCommand,
     ReconcileCommand,
     RecordCleanupAppliedCommand,
+    RecordManagedSnapshotCleanupAppliedCommand,
     RecordDecisionCommand,
     RecordGatekeeperVerdictsCommand,
     RecordHeartbeatCommand,
@@ -45,6 +46,11 @@ from orchestrator.graph.command_models import (
     StartCommand,
     SubmitCallbackCommand,
     SubmitPatchCommand,
+    RecordRunnerBaselineCommand,
+    StageRunnerSubmissionCommand,
+    FinalizeRunnerExecutionCommand,
+    CompleteRunnerRecoveryCommand,
+    RequestRunnerRecoveryCommand,
 )
 from orchestrator.graph.commands.callbacks import (
     handle_acknowledge_start,
@@ -56,6 +62,14 @@ from orchestrator.graph.commands.callbacks import (
     handle_record_requirement_revision,
     handle_record_support_evidence,
     handle_submit_callback,
+)
+from orchestrator.graph.commands.boundary import (
+    handle_complete_runner_recovery,
+    handle_finalize_runner_execution,
+    handle_record_runner_baseline,
+    handle_record_managed_snapshot_cleanup_applied,
+    handle_request_runner_recovery,
+    handle_stage_runner_submission,
 )
 from orchestrator.graph.commands.lifecycle import (
     handle_accept_run,
@@ -93,6 +107,21 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "schedule_tick": CommandSpec(ScheduleTickCommand, handle_schedule_tick),
     "reconcile": CommandSpec(ReconcileCommand, handle_reconcile),
     "submit_callback": CommandSpec(SubmitCallbackCommand, handle_submit_callback),
+    "record_runner_baseline": CommandSpec(
+        RecordRunnerBaselineCommand, handle_record_runner_baseline
+    ),
+    "stage_runner_submission": CommandSpec(
+        StageRunnerSubmissionCommand, handle_stage_runner_submission
+    ),
+    "finalize_runner_execution": CommandSpec(
+        FinalizeRunnerExecutionCommand, handle_finalize_runner_execution
+    ),
+    "request_runner_recovery": CommandSpec(
+        RequestRunnerRecoveryCommand, handle_request_runner_recovery
+    ),
+    "complete_runner_recovery": CommandSpec(
+        CompleteRunnerRecoveryCommand, handle_complete_runner_recovery
+    ),
     "submit_patch": CommandSpec(SubmitPatchCommand, handle_submit_patch),
     "acknowledge_start": CommandSpec(AcknowledgeStartCommand, handle_acknowledge_start),
     "agent_died": CommandSpec(AgentDiedCommand, handle_agent_died),
@@ -112,6 +141,9 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "evaluate_final_gate": CommandSpec(EvaluateFinalGateCommand, handle_evaluate_final_gate),
     "record_cleanup_applied": CommandSpec(
         RecordCleanupAppliedCommand, handle_record_cleanup_applied
+    ),
+    "record_managed_snapshot_cleanup_applied": CommandSpec(
+        RecordManagedSnapshotCleanupAppliedCommand, handle_record_managed_snapshot_cleanup_applied
     ),
 }
 

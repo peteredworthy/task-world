@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import hashlib
 import multiprocessing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -99,18 +100,34 @@ async def test_rotation_archives_exact_position_range_without_overwriting(tmp_pa
     await observer([_event(10)])
     await observer([_event(11)])
 
-    archive = tmp_path / "history.10-10.jsonl"
-    assert archive.exists()
+    archives = discover_journal_segments(path)
+    archive = next(segment.path for segment in archives if segment.first_position == 10)
+    assert archive.name.startswith("history.10-10.")
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
     assert [
         json.loads(line)["position"]
-        for line in (tmp_path / "history.11-11.jsonl").read_text().splitlines()
+        for line in next(
+            segment.path
+            for segment in discover_journal_segments(path)
+            if segment.first_position == 11
+        )
+        .read_text()
+        .splitlines()
     ] == [11]
     assert path.read_text() == ""
 
-    path.write_text(json.dumps({"position": 10}) + "\n")
-    with pytest.raises(FileExistsError):
-        await JsonlOutboxObserver(path, max_bytes=1)([_event(12)])
+    # The exact bytes can recur after a restart/recovery. The second archive
+    # receives a collision ordinal instead of failing or replacing the first.
+    path.write_bytes(archive.read_bytes())
+    await JsonlOutboxObserver(path, max_bytes=1)([_event(12)])
+    repeated = [
+        segment.path
+        for segment in discover_journal_segments(path)
+        if segment.first_position == 10 and segment.last_position == 10
+    ]
+    assert len(repeated) == 2
+    assert len({candidate.name for candidate in repeated}) == 2
+    assert sorted(candidate.read_bytes() for candidate in repeated) == [archive.read_bytes()] * 2
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
 
 
@@ -119,7 +136,7 @@ async def test_append_that_crosses_limit_rotates_in_same_call(tmp_path: Path) ->
 
     await JsonlOutboxObserver(path, max_bytes=1)([_event(10)])
 
-    archive = tmp_path / "history.10-10.jsonl"
+    archive = discover_journal_segments(path)[0].path
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
     assert path.exists()
     assert path.read_text() == ""
@@ -164,7 +181,7 @@ async def test_rotation_retry_syncs_before_link_and_preserves_single_event(tmp_p
         "unlink",
         "fsync_parent",
     ]
-    archive = tmp_path / "history.1-1.jsonl"
+    archive = discover_journal_segments(path)[0].path
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [1]
     assert not path.exists()
 
@@ -213,13 +230,22 @@ async def test_restart_deduplicates_archived_positions_with_bounded_active_state
     assert restarted._written == set()
 
 
-async def test_rotation_failure_propagates(tmp_path: Path) -> None:
+async def test_rotation_skips_an_occupied_hashed_archive_name(tmp_path: Path) -> None:
     path = tmp_path / "history.jsonl"
     path.write_text(json.dumps({"position": 1}) + "\n")
-    (tmp_path / "history.1-1.jsonl").mkdir()
+    content_hash = hashlib.sha256(path.read_bytes()).hexdigest()[:16]
+    occupied = tmp_path / f"history.1-1.{content_hash}.jsonl"
+    occupied.mkdir()
 
-    with pytest.raises(FileExistsError):
-        await JsonlOutboxObserver(path, max_bytes=1)([_event(2)])
+    await JsonlOutboxObserver(path, max_bytes=1)([_event(2)])
+
+    archives = [
+        segment.path
+        for segment in discover_journal_segments(path)
+        if segment.first_position == 1 and segment.last_position == 1
+    ]
+    assert [archive.name for archive in archives] == [f"history.1-1.{content_hash}.1.jsonl"]
+    assert [json.loads(line)["position"] for line in archives[0].read_text().splitlines()] == [1]
 
 
 async def test_rotation_recovers_linked_active_file_before_appending(tmp_path: Path) -> None:

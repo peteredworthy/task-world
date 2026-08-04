@@ -29,6 +29,17 @@ from orchestrator.config.models import (
 )
 from orchestrator.config.template_vars import resolve_plain_variables
 from orchestrator.graph.commands import Clock, IdGenerator
+from orchestrator.graph.cache_authority import (
+    CacheAuthorityDeclaration,
+    CacheAuthorityPolicy,
+    CacheScanBudget,
+    POLICY_VERSION,
+    BUILTIN_SECRET_ENTROPY_THRESHOLD,
+    BUILTIN_SECRET_NAME_PATTERNS,
+    BUILTIN_TOOL_CACHE_PATTERNS,
+    cache_authority_hash,
+    canonicalize_cache_authority,
+)
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -83,6 +94,8 @@ class _Compiler:
         self._stem_counts = _task_stem_counts(routine)
         self._has_planner_step = any(step.kind == "planner" for step in routine.steps)
         self._dynamic_feature_inputs = _dynamic_feature_inputs(routine, self._run_config)
+        self._cache_authority_policy = _cache_authority_policy(routine)
+        self._cache_authority_hash = cache_authority_hash(self._cache_authority_policy)
 
     def compile(self) -> list[EventEnvelope]:
         self._create_root()
@@ -182,6 +195,7 @@ class _Compiler:
         self._accept_record(run_context_record.model_dump(mode="json"))
 
     def _create_routine_snapshot(self) -> None:
+        cache_authority_preimage = canonicalize_cache_authority(self._cache_authority_policy)
         snapshot_value = {
             "routine_id": self._routine.id,
             "name": self._routine.name,
@@ -194,6 +208,9 @@ class _Compiler:
             "builder_agent": self._routine.builder_agent,
             "verifier_agent": self._routine.verifier_agent,
             "dynamic_feature": self._dynamic_feature_inputs,
+            "cache_authority_preimage": cache_authority_preimage,
+            "cache_authority_hash": self._cache_authority_hash,
+            "cache_authority_version": POLICY_VERSION,
         }
         snapshot_record = RoutineSnapshotRecord.model_validate(
             {
@@ -935,6 +952,7 @@ class _Compiler:
 
     def _node(self, payload: dict[str, Any]) -> None:
         payload.setdefault("run_id", self._run_id)
+        payload.setdefault("cache_authority_hash", self._cache_authority_hash)
         self._event(
             "node_created",
             NodeCreatedPayload.model_validate(payload).model_dump(mode="json"),
@@ -1090,10 +1108,17 @@ def _dynamic_feature_acceptance_text(dynamic_feature: dict[str, Any]) -> str:
 
 def _worker_write_paths(task: TaskConfig) -> list[str]:
     paths: list[str] = []
-    for artifact in task.artifacts:
-        normalized = _repo_relative_path(artifact.path)
+    # Artifacts identify deliverables, while implementation_paths identify
+    # supporting source and test files needed to produce those deliverables.
+    # Both become lease authority so a task need not over-broaden its claim to
+    # the whole repository merely to add a helper alongside its output.
+    candidates = [*(artifact.path for artifact in task.artifacts), *task.implementation_paths]
+    for path in candidates:
+        normalized = _repo_relative_path(path)
         if normalized is not None and normalized not in paths:
             paths.append(normalized)
+    if candidates and not paths:
+        raise ValueError("task declares implementation/artifact paths but none are repo-relative")
     return paths or ["."]
 
 
@@ -1170,6 +1195,36 @@ def _routine_content_hash(routine: RoutineConfig) -> str:
         separators=(",", ":"),
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _cache_authority_policy(routine: RoutineConfig) -> CacheAuthorityPolicy:
+    config = routine.file_state_policy
+    if config is None:
+        return CacheAuthorityPolicy(
+            tool_cache_patterns=BUILTIN_TOOL_CACHE_PATTERNS,
+            secret_name_patterns=BUILTIN_SECRET_NAME_PATTERNS,
+            secret_entropy_threshold=BUILTIN_SECRET_ENTROPY_THRESHOLD,
+        )
+    return CacheAuthorityPolicy(
+        declarations=tuple(
+            CacheAuthorityDeclaration(
+                pattern=item.pattern,
+                classification=item.classification,
+                source_kinds=tuple(item.source_kinds),
+                rule=item.rule,
+                origin=item.origin,
+                retention=item.retention,
+            )
+            for item in config.declarations
+        ),
+        scan_budget=CacheScanBudget(
+            max_entries=config.scan_budget.max_entries,
+            max_bytes=config.scan_budget.max_bytes,
+        ),
+        tool_cache_patterns=BUILTIN_TOOL_CACHE_PATTERNS,
+        secret_name_patterns=BUILTIN_SECRET_NAME_PATTERNS,
+        secret_entropy_threshold=BUILTIN_SECRET_ENTROPY_THRESHOLD,
+    )
 
 
 def _slug(value: str) -> str:

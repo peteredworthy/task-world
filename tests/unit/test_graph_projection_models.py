@@ -539,6 +539,7 @@ def test_node_spec_retains_only_authority_request_record_id() -> None:
         "hidden_oracle_command": None,
         "command_binding": None,
         "max_attempts": None,
+        "cache_authority_hash": None,
     }
 
 

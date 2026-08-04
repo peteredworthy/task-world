@@ -8,18 +8,20 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import delete
 
 from orchestrator.api.app import create_app
 from orchestrator.api.auth import AuthConfig, create_token
 from orchestrator.artifacts import (
     ArtifactGarbageCollectionError,
     ArtifactGarbageCollector,
+    ArtifactIntegrityError,
     ArtifactNotFoundError,
     ArtifactRootLock,
     FilesystemArtifactStore,
     StoredArtifactRef,
 )
-from orchestrator.db import SqliteEventStore, init_db
+from orchestrator.db import EventV2Model, GraphArtifactReferenceModel, SqliteEventStore, init_db
 from orchestrator.config.global_config import GlobalConfig, PathsConfig
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
@@ -143,6 +145,67 @@ async def test_artifact_endpoint_requires_auth_and_run_reference(
     assert authorized.status_code == 206
     assert authorized.content == b"cde"
     assert authorized.headers["content-range"] == "bytes 2-4/8"
+
+
+@pytest.mark.asyncio
+async def test_artifact_endpoint_authorizes_from_durable_index_not_event_json(
+    artifact_client: tuple[AsyncClient, object, FilesystemArtifactStore, str],
+) -> None:
+    """A real API range lookup remains bounded after source event JSON is gone."""
+    client, app, store, token = artifact_client
+    ref = await store.put(b"indexed-artifact", media_type="text/plain", encoding="utf-8")
+    await _seed_reference(app, "indexed-run", ref)
+    digest = ref.content_hash.removeprefix("sha256:")
+    session_factory = app.state.session_factory  # type: ignore[union-attr]
+    async with session_factory() as session:
+        indexed = await session.get(GraphArtifactReferenceModel, ("indexed-run", ref.content_hash))
+        assert indexed is not None
+        assert indexed.position == 1
+        # The API must use the indexed authorization fact, not a JSON predicate
+        # over event history.  Remove the test source after projection to prove
+        # the product path does not fall back to replay/scanning it.
+        await session.execute(
+            delete(EventV2Model).where(EventV2Model.aggregate_id == "graph:indexed-run")
+        )
+        await session.commit()
+
+    response = await client.get(
+        f"/api/runs/indexed-run/artifacts/{digest}?offset=1&limit=5",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 206
+    assert response.content == b"ndexe"
+    assert response.headers["content-range"] == "bytes 1-5/16"
+
+
+@pytest.mark.asyncio
+async def test_artifact_range_checkpoint_detects_corruption_outside_requested_range(
+    tmp_path: Path,
+) -> None:
+    """Stable ranges use a durable checkpoint; any identity change re-verifies all bytes."""
+    store = FilesystemArtifactStore(tmp_path / "artifacts")
+    content = b"a" * (256 * 1024)
+    ref = await store.put(content, media_type="application/octet-stream")
+    digest = ref.content_hash.removeprefix("sha256:")
+    blob = tmp_path / "artifacts" / "sha256" / digest[:2] / digest[2:]
+    checkpoint = blob.with_name(f"{blob.name}.checkpoint.json")
+
+    assert checkpoint.exists()
+    selected, total = await store.read_range(ref, offset=0, limit=32)
+    assert selected == content[:32]
+    assert total == len(content)
+
+    # Corrupt a byte well beyond the requested range.  The durable identity
+    # changes, so the next range request performs complete verification and
+    # fails instead of serving a misleading partial success.
+    with blob.open("r+b") as file:
+        file.seek(len(content) - 1)
+        file.write(b"b")
+        file.flush()
+        os.fsync(file.fileno())
+    with pytest.raises(ArtifactIntegrityError, match="Artifact hash mismatch"):
+        await store.read_range(ref, offset=0, limit=32)
 
 
 @pytest.mark.asyncio

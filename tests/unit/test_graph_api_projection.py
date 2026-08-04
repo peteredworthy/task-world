@@ -1,6 +1,7 @@
 """Unit tests for graph API projection helpers."""
 
 from collections.abc import AsyncGenerator
+from hashlib import sha256
 from typing import Any
 
 import pytest
@@ -338,18 +339,24 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
     assert detail.output_records[0]["record_id"] == "out-a"
     assert detail.output_records[0]["producer_node_id"] == "node-a"
     bounded_body = detail.output_records[0]["value"]["body"]
-    assert len(bounded_body) < len(long_body)
-    assert bounded_body.endswith("...[truncated 100000 chars]")
-    assert detail.output_records[0]["value"]["__truncated_fields"][0]["field"] == "body"
-    assert detail.output_records[0]["value"]["__truncated_fields"][0]["original_length"] == len(
-        long_body
-    )
-    assert len(detail.output_records[0]["value"]["paths"]) == 200
-    assert detail.output_records[0]["value"]["__truncated_fields"][1] == {
-        "field": "paths",
-        "original_length": 201,
-        "retained_items": 200,
+    canonical_body = f'"{long_body}"'.encode()
+    assert bounded_body == {
+        "value": f"sha256:{sha256(long_body.encode()).hexdigest()}",
+        "truncated": True,
+        "original_bytes": len(canonical_body),
+        "sha256": sha256(canonical_body).hexdigest(),
     }
+    bounded_paths = detail.output_records[0]["value"]["paths"]
+    assert len(bounded_paths["value"]) == 50
+    assert bounded_paths["truncated"] is True
+    assert bounded_paths["original_bytes"] > 0
+    assert len(bounded_paths["sha256"]) == 64
+    assert "__truncated_fields" not in detail.output_records[0]["value"]
+    value_meta = detail.collection_meta["output_records"].fields["out-a.value"]
+    assert value_meta.truncated is True
+    assert value_meta.next_cursor == detail.next_cursor
+    assert isinstance(detail.next_cursor, str)
+    assert detail.next_cursor.startswith("sha256:")
 
 
 def test_build_graph_topology_response_exposes_edge_contracts_and_bindings() -> None:
@@ -732,6 +739,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
         _event(
             "node_created",
             {
+                "patch_id": "patch-accepted",
                 "node_id": "worker-1",
                 "kind": "worker",
                 "role": "builder",
@@ -817,3 +825,67 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
         "patch_read_set": ["worker-1"],
         "conflicting_event_ids": ["event-9"],
     }
+
+    # The endpoint read model pages identities, rather than an event window:
+    # the accepted patch and its later graph mutations cannot consume the
+    # rejected patch's slot.
+    first_page = await store.read_graph_patch_attempt_page("run-patches", after_position=0, limit=1)
+    assert [entry["patch_id"] for entry in first_page.proposals] == ["patch-accepted"]
+    assert first_page.has_more is True
+    accepted_facts = first_page.facts_by_patch_id["patch-accepted"]
+    assert [fact["event_type"] for fact in accepted_facts] == [
+        "graph_patch_accepted",
+        "node_created",
+        "edge_created",
+    ]
+    second_page = await store.read_graph_patch_attempt_page(
+        "run-patches", after_position=first_page.proposals[0]["position"], limit=1
+    )
+    assert [entry["patch_id"] for entry in second_page.proposals] == ["patch-rejected"]
+    assert second_page.has_more is False
+
+
+@pytest.mark.asyncio
+async def test_patch_attempt_page_uses_only_contiguous_legacy_creation_fallback(
+    session: AsyncSession,
+) -> None:
+    store = GraphEventStore(session)
+    events = [
+        _event("graph_patch_accepted", {"patch_id": "legacy-a"}, position=1),
+        _event(
+            "node_created",
+            {"node_id": "legacy-node", "kind": "worker", "state": "planned"},
+            position=2,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "legacy-edge",
+                "from_node_id": "legacy-node",
+                "from_port": "out",
+                "to_node_id": "legacy-node",
+                "to_port": "in",
+                "required": True,
+                "dependency_type": "input_binding",
+            },
+            position=3,
+        ),
+        _event("node_state_changed", {"node_id": "legacy-node", "new_state": "ready"}, position=4),
+        _event(
+            "node_created",
+            {"patch_id": "other", "node_id": "other-node", "kind": "worker", "state": "planned"},
+            position=5,
+        ),
+    ]
+    await store.append_events("run-legacy-patch-page", 0, events)
+
+    page = await store.read_graph_patch_attempt_page(
+        "run-legacy-patch-page", after_position=0, limit=10
+    )
+    facts = page.facts_by_patch_id["legacy-a"]
+    assert [fact["event_type"] for fact in facts] == [
+        "graph_patch_accepted",
+        "node_created",
+        "edge_created",
+    ]
+    assert page.creation_counts_by_patch_id["legacy-a"] == (1, 1)

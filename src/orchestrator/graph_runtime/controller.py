@@ -51,6 +51,22 @@ MAX_NODE_USAGE_WRITE_RETRIES = 5
 logger = logging.getLogger(__name__)
 
 
+class RuntimeBoundaryCapability:
+    """Unforgeable in-process authority for managed runner boundary writes."""
+
+    __slots__ = ()
+
+
+_RUNTIME_BOUNDARY_COMMANDS = frozenset(
+    {
+        "record_runner_baseline",
+        "stage_runner_submission",
+        "finalize_runner_execution",
+        "request_runner_recovery",
+    }
+)
+
+
 class GraphController:
     """Loads graph state, applies pure commands, and commits events plus outbox."""
 
@@ -63,6 +79,7 @@ class GraphController:
         dispatcher: OutboxDispatcher | None = None,
         auto_dispatch: bool = True,
         journal_max_bytes: int = 64 * 1024 * 1024,
+        runtime_boundary_capability: RuntimeBoundaryCapability | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clock = clock
@@ -70,8 +87,44 @@ class GraphController:
         self._dispatcher = dispatcher
         self._auto_dispatch = auto_dispatch
         self._journal_max_bytes = journal_max_bytes
+        self._runtime_boundary_capability = (
+            runtime_boundary_capability or RuntimeBoundaryCapability()
+        )
 
     async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
+    ) -> GraphCommandResult:
+        if command_type in _RUNTIME_BOUNDARY_COMMANDS:
+            raise ValueError("managed runner boundary commands require runtime capability")
+        return await self._handle_command(
+            run_id, expected_position, command_type, payload, context=context
+        )
+
+    async def handle_runtime_boundary_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object] | None,
+        capability: RuntimeBoundaryCapability,
+        *,
+        context: GraphCommandContext | None = None,
+    ) -> GraphCommandResult:
+        if command_type not in _RUNTIME_BOUNDARY_COMMANDS:
+            raise ValueError("runtime capability is reserved for boundary commands")
+        if capability is not self._runtime_boundary_capability:
+            raise ValueError("invalid runtime boundary capability")
+        return await self._handle_command(
+            run_id, expected_position, command_type, payload, context=context
+        )
+
+    async def _handle_command(
         self,
         run_id: str,
         expected_position: int,
@@ -132,9 +185,9 @@ class GraphController:
         patch_base_position = _patch_base_graph_position(command_type, command_payload)
         if patch_base_position is not None and patch_base_position < current_position:
             async with self._session_factory() as read_session:
-                command_events = await GraphEventStore(read_session).read_run(
+                command_events = await GraphEventStore(read_session).read_bounded_runtime_events(
                     run_id,
-                    patch_base_position + 1,
+                    from_position=patch_base_position + 1,
                 )
         planned_events = apply_command(
             projection,
@@ -257,10 +310,10 @@ class GraphController:
         raise StaleProjectionError(f"graph usage write retry loop exhausted: {context.run_id}")
 
     async def read_projection(self, run_id: str) -> GraphProjection:
-        """Return the current durable graph projection for a run."""
+        """Return the current projection through the bounded runtime checkpoint."""
         async with self._session_factory() as session:
-            events = await GraphEventStore(session).read_run(run_id)
-        return rebuild_projection(events)
+            projection, _, _ = await GraphEventStore(session).load_projection_with_tail(run_id)
+        return projection
 
     def _add_dispatch_intent_events(
         self,
@@ -314,6 +367,7 @@ class GraphController:
                             "execution_id": event.payload.get("execution_id"),
                             "base_snapshot_id": event.payload.get("base_snapshot_id"),
                             "resource_claims": resource_claims,
+                            "cache_authority_hash": event.payload.get("cache_authority_hash"),
                         },
                     ),
                 )

@@ -277,13 +277,11 @@ _SUMMARY_EXTRA_FIELDS = {
 # Event types whose compact event-timeline summary is genuinely empty today
 # (summarize_graph_event's payload filter matches none of their fields).
 # Traced by hand against SUMMARY_PAYLOAD_FIELDS + _SUMMARY_EXTRA_FIELDS on
-# 2026-07-20; not necessarily *correct* (an edge_created summary carrying no
-# from/to node identity is a thin UX), but this test's job is to catch a
-# *new* event type landing with zero summary coverage, not to relitigate
-# these three. Remove an entry here (and add real coverage) rather than
+# 2026-07-20; this test's job is to catch a new event type landing with zero
+# summary coverage, not to relitigate these gaps. Remove an entry here (and
+# add real coverage) rather than
 # growing this list for a genuinely new gap.
 _SUMMARY_KNOWN_EMPTY_EVENT_TYPES = {
-    "edge_created",
     "input_bound",
     "support_evidence_recorded",
 }
@@ -325,7 +323,10 @@ def test_summary_payload_fields_covers_every_event_type_or_is_a_documented_gap()
         if event_type in _SUMMARY_KNOWN_EMPTY_EVENT_TYPES:
             continue
         fields = _effective_payload_fields(model)
-        if not (fields & covered):
+        edge_covered = event_type == "edge_created" and bool(
+            fields & set(store.SUMMARY_EDGE_FIELDS)
+        )
+        if not (fields & covered) and not edge_covered:
             newly_empty.append(event_type)
 
     assert not newly_empty, (

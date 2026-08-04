@@ -84,6 +84,11 @@ class SignalConsumer:
         # RunWorkflow instances owned by this consumer (keyed by run_id)
         self._active_workflows: dict[str, RunWorkflow] = {}
         self._active_graph_runs: set[str] = set()
+        # A graph run has an owned task as well as a membership marker.  The
+        # task is required to fence pause/cancel against a live driver before a
+        # later resume can transfer ownership to a new driver.
+        self._graph_driver_tasks: dict[str, asyncio.Task[None]] = {}
+        self._graph_driver_generations: dict[str, int] = {}
         # Per-run signal-processing tasks
         self._run_tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -109,6 +114,8 @@ class SignalConsumer:
                 await self._poll_task
             except asyncio.CancelledError:
                 pass
+        for run_id in tuple(self._graph_driver_tasks):
+            await self._quiesce_graph_run(run_id)
 
     # ------------------------------------------------------------------
     # Projector rebuild
@@ -442,6 +449,13 @@ class SignalConsumer:
                 "SignalConsumer: ignoring stale RESUME for already active run %s",
                 run_id,
             )
+            if getattr(current_run, "execution_mode", "legacy") == "graph":
+                if self.arm_graph_run(run_id):
+                    logger.info(
+                        "SignalConsumer: active RESUME for %s — graph driver re-armed",
+                        run_id,
+                    )
+                return
             if run_id not in self._active_workflows:
                 workflow = RunWorkflow(
                     run_id=run_id,
@@ -462,12 +476,33 @@ class SignalConsumer:
                 )
                 return
 
-        run = await service.apply_resume_run(
-            run_id,
-            agent_runner_type=agent_runner_type,
-            agent_runner_config=agent_runner_config,
-            resume_strategy=resume_strategy,
-        )
+        # Import only when the graph resume path needs the typed boundary
+        # failure.  Importing graph_runtime while workflow is initializing
+        # creates a runner/workflow cycle during application startup.
+        from orchestrator.graph_runtime import GraphReadModelUnavailable
+
+        try:
+            run = await service.apply_resume_run(
+                run_id,
+                agent_runner_type=agent_runner_type,
+                agent_runner_config=agent_runner_config,
+                resume_strategy=resume_strategy,
+            )
+        except GraphReadModelUnavailable as exc:
+            # ``apply_resume_run`` probes the bounded graph checkpoint to
+            # decide whether an operator reopen marker is needed.  The probe
+            # must not leak through the signal loop (which would redeliver the
+            # same RESUME forever while leaving an ambiguous PAUSED row).
+            await service.apply_pause_run(
+                run_id,
+                reason="graph_read_model_unavailable",
+                error_detail=str(exc),
+            )
+            logger.warning(
+                "SignalConsumer: RESUME for %s remains paused; graph read model unavailable",
+                run_id,
+            )
+            return
         if getattr(run, "execution_mode", "legacy") == "graph":
             # Graph runs resume onto the (re-enterable) GraphRunDriver, not the
             # legacy RunWorkflow. The driver picks up from the durable graph
@@ -502,6 +537,8 @@ class SignalConsumer:
             del self._active_workflows[run_id]
             logger.info("SignalConsumer: PAUSE for %s with active workflow — removed", run_id)
 
+        await self._quiesce_graph_run(run_id)
+
         await service.apply_pause_run(run_id, reason=reason, error_detail=error_detail)
         logger.info("SignalConsumer: PAUSE applied for %s (reason=%s)", run_id, reason)
 
@@ -523,7 +560,7 @@ class SignalConsumer:
         if getattr(current_run, "execution_mode", "legacy") == "graph":
             from orchestrator.workflow.graph_driver import apply_graph_cancel_until_terminal
 
-            self._active_graph_runs.discard(run_id)
+            await self._quiesce_graph_run(run_id)
             await apply_graph_cancel_until_terminal(
                 self._session_factory,
                 run_id,
@@ -621,10 +658,26 @@ class SignalConsumer:
         if run_id in self._active_graph_runs:
             return False
         self._active_graph_runs.add(run_id)
-        asyncio.create_task(self._safe_run_graph_driver(run_id))
+        generation = self._graph_driver_generations.get(run_id, 0) + 1
+        self._graph_driver_generations[run_id] = generation
+        self._graph_driver_tasks[run_id] = asyncio.create_task(
+            self._safe_run_graph_driver(run_id, generation)
+        )
         return True
 
-    async def _safe_run_graph_driver(self, run_id: str) -> None:
+    async def _quiesce_graph_run(self, run_id: str) -> None:
+        """Cancel and await this consumer's graph driver before ownership moves."""
+        task = self._graph_driver_tasks.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        self._graph_driver_tasks.pop(run_id, None)
+        self._active_graph_runs.discard(run_id)
+
+    async def _safe_run_graph_driver(self, run_id: str, generation: int) -> None:
         """Run a graph driver via the injected callback, cleaning up on completion."""
         try:
             if self._graph_runner is not None:
@@ -634,7 +687,10 @@ class SignalConsumer:
         except Exception:
             logger.exception("SignalConsumer: graph driver for %s failed", run_id)
         finally:
-            self._active_graph_runs.discard(run_id)
+            # A stale task must never clear a newer driver's ownership marker.
+            if self._graph_driver_generations.get(run_id) == generation:
+                self._graph_driver_tasks.pop(run_id, None)
+                self._active_graph_runs.discard(run_id)
 
     # ------------------------------------------------------------------
     # Startup redelivery

@@ -4,10 +4,12 @@ from pydantic import ValidationError
 from orchestrator.config import RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    node_allowed_actions,
     node_allowed_actions_view,
     node_attempts_view,
-    node_creation_payloads_view,
+    node_preconditions,
     node_preconditions_view,
+    resource_claims_for_node,
     node_resource_claims_view,
     node_task_regions_view,
     FakeClock,
@@ -109,11 +111,11 @@ def test_direct_authority_controls_take_precedence_over_nested_authority() -> No
             )
         ]
     )
-    created = node_creation_payloads_view(projection)["worker-1"]
-
-    assert [claim.paths for claim in created.resource_claims] == [["direct"]]
-    assert created.allowed_actions == ["direct_action"]
-    assert created.preconditions == ["direct_precondition"]
+    assert [claim.paths for claim in resource_claims_for_node(projection, "worker-1")] == [
+        ["direct"]
+    ]
+    assert node_allowed_actions(projection, "worker-1") == ("direct_action",)
+    assert node_preconditions(projection, "worker-1") == ("direct_precondition",)
 
 
 def test_explicit_empty_direct_controls_take_precedence_on_node_created() -> None:
@@ -138,11 +140,9 @@ def test_explicit_empty_direct_controls_take_precedence_on_node_created() -> Non
             )
         ]
     )
-    created = node_creation_payloads_view(projection)["worker-1"]
-
-    assert created.resource_claims == []
-    assert created.allowed_actions == []
-    assert created.preconditions == []
+    assert resource_claims_for_node(projection, "worker-1") == ()
+    assert node_allowed_actions(projection, "worker-1") == ()
+    assert node_preconditions(projection, "worker-1") == ()
 
 
 def test_explicit_empty_authority_change_controls_override_nested_authority() -> None:

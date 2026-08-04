@@ -1,18 +1,26 @@
 from __future__ import annotations
 
 import subprocess
+import json
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.artifacts import ArtifactStore, FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
+from orchestrator.db import (
+    EventV2Model,
+    RunRepository,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -102,6 +110,51 @@ class SubmitAgent:
 
     async def cancel(self) -> None:
         return None
+
+
+class WritingSubmitAgent(SubmitAgent):
+    """A real graph worker that leaves a finalization-worthy worktree change."""
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        del on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
+        (Path(context.working_dir) / "graph-finalized.txt").write_text("accepted\n")
+        await on_submit()
+        return ExecutionResult(success=True)
+
+
+class FinalizationLockAgent(WritingSubmitAgent):
+    """Creates a real Git write conflict only after its graph callback succeeds."""
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        result = await super().execute(
+            context,
+            on_checklist_update,
+            on_submit,
+            on_output,
+            on_grade,
+            on_agent_metadata,
+            on_escalation,
+        )
+        (Path(context.working_dir) / ".git" / "index.lock").write_text("held by test\n")
+        return result
 
 
 class PlannerPatchAgent(SubmitAgent):
@@ -340,6 +393,21 @@ async def _events(
         return await GraphEventStore(session).read_run(run_id)
 
 
+async def _workflow_events(
+    session_factory: async_sessionmaker[AsyncSession], run_id: str
+) -> list[dict[str, Any]]:
+    async with session_factory() as session:
+        rows = await session.execute(
+            select(EventV2Model.event_type, EventV2Model.payload)
+            .where(EventV2Model.aggregate_id == run_id)
+            .order_by(EventV2Model.position)
+        )
+    return [
+        {"event_type": event_type, "payload": json.loads(payload)}
+        for event_type, payload in rows.all()
+    ]
+
+
 def _graph_event(
     run_id: str,
     position: int,
@@ -427,6 +495,195 @@ async def test_driver_runs_single_worker_verifier_to_accepted(
     assert project_run_state(events) == "completed"
     assert outcome.completed is True
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_driver_durably_finalizes_worktree_before_completed(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """The graph kernel cannot publish COMPLETED ahead of its final worktree commit."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-finalization"
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    run_id = "graph-driver-finalization"
+    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": WritingSubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=[],
+    )
+
+    outcome = await driver.run(run_id)
+
+    assert outcome.completed is True
+    assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
+    workflow_events = await _workflow_events(session_factory, run_id)
+    finalization = next(
+        event["payload"]
+        for event in workflow_events
+        if event["event_type"] == "run_worktree_commit_completed"
+        and event["payload"]["commit_type"] == "graph_run_finalization"
+    )
+    assert finalization["task_id"] == "__run_finalization__"
+    assert finalization["created_commit"] is True
+    assert finalization["head_before"] != finalization["head_after"]
+    status_events = [
+        event
+        for event in workflow_events
+        if event["event_type"] == "run_status_changed"
+        and event["payload"]["new_status"] == RunStatus.COMPLETED.value
+    ]
+    assert status_events
+    assert workflow_events.index(
+        next(
+            event
+            for event in workflow_events
+            if event["event_type"] == "run_worktree_commit_completed"
+            and event["payload"]["commit_type"] == "graph_run_finalization"
+        )
+    ) < workflow_events.index(status_events[-1])
+
+
+@pytest.mark.asyncio
+async def test_finalization_retry_reuses_durable_receipt_after_crash_window(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A retry completes from the finalization receipt without a second Git outcome."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-finalization-retry"
+    _init_repo(repo)
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    run_id = "graph-driver-finalization-retry"
+    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    async with session_factory() as session:
+        await WorkflowService(session).apply_start_run(run_id)
+    (repo / "graph-finalized.txt").write_text("accepted\n")
+
+    # Simulate the process dying after the durable finalization receipt commits
+    # and before it can append ACTIVE -> COMPLETED.  This is a separate real
+    # SQLite session, not a mocked lifecycle transition.
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service._run_event_sourced_worktree_commit(
+            run_id=run_id,
+            task_id="__run_finalization__",
+            attempt_id=None,
+            worktree_path=str(repo),
+            message=f"Finalize graph run {run_id}",
+            commit_type="graph_run_finalization",
+            reason="graph_run_completion",
+        )
+
+    assert await _run_status(session_factory, run_id) == RunStatus.ACTIVE
+
+    async with session_factory() as session:
+        retry = WorkflowService(session)
+        completed = await retry.finalize_graph_run_completion(run_id)
+
+    assert completed.status == RunStatus.COMPLETED
+    workflow_events = await _workflow_events(session_factory, run_id)
+    finalizations = [
+        event
+        for event in workflow_events
+        if event["event_type"] == "run_worktree_commit_completed"
+        and event["payload"]["commit_type"] == "graph_run_finalization"
+    ]
+    assert len(finalizations) == 1
+    assert finalizations[0]["payload"]["created_commit"] is True
+    assert (
+        sum(
+            event["event_type"] == "run_worktree_commit_requested"
+            and event["payload"]["commit_type"] == "graph_run_finalization"
+            for event in workflow_events
+        )
+        == 1
+    )
+    assert not any(
+        event["event_type"] == "run_worktree_commit_failed"
+        and event["payload"]["commit_type"] == "graph_run_finalization"
+        for event in workflow_events
+    )
+    assert (
+        sum(
+            event["event_type"] == "run_status_changed"
+            and event["payload"]["new_status"] == RunStatus.COMPLETED.value
+            for event in workflow_events
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_driver_keeps_run_recoverable_when_finalization_commit_fails(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A real git finalization error is visible and cannot produce COMPLETED."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-finalization-failure"
+    _init_repo(repo)
+    run_id = "graph-driver-finalization-failure"
+    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": FinalizationLockAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=[],
+    )
+
+    outcome = await driver.run(run_id)
+
+    assert outcome.completed is False
+    assert outcome.blocked_reason is not None
+    assert "finalization failed" in outcome.blocked_reason
+    async with session_factory() as session:
+        run = await RunRepository(session).get(run_id)
+    assert run.status == RunStatus.PAUSED
+    assert run.pause_reason == "graph_finalization_failed"
+    assert run.last_error == outcome.blocked_reason
+    workflow_events = await _workflow_events(session_factory, run_id)
+    failed = next(
+        event["payload"]
+        for event in workflow_events
+        if event["event_type"] == "run_worktree_commit_failed"
+        and event["payload"]["commit_type"] == "graph_run_finalization"
+    )
+    assert failed["task_id"] == "__run_finalization__"
+    assert not any(
+        event["event_type"] == "run_status_changed"
+        and event["payload"]["new_status"] == RunStatus.COMPLETED.value
+        for event in workflow_events
+    )
 
 
 @pytest.mark.asyncio

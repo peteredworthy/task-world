@@ -640,7 +640,9 @@ async def test_append_keeps_graph_read_models_synchronized(
         snapshot = await store.read_projection_snapshot(run_id)
 
     assert [summary.position for summary in summaries] == [1, 2, 3, 4]
-    assert summaries[2].payload == {
+    state_payload = dict(summaries[2].payload)
+    state_contract = state_payload.pop("_graph_read_contract")
+    assert state_payload == {
         "node_id": "worker-1",
         "new_state": "ready",
         "blockers": ["waiting-for-input"],
@@ -649,12 +651,18 @@ async def test_append_keeps_graph_read_models_synchronized(
         "tokens_by_node_kind": {"worker": 30},
         "patch_ops": 2,
     }
-    assert summaries[-1].payload == {
+    assert state_contract["owner"] == "events_summary"
+    assert state_contract["truncated"] is False
+    record_payload = dict(summaries[-1].payload)
+    record_contract = record_payload.pop("_graph_read_contract")
+    assert record_payload == {
         "producer_node_id": "worker-1",
         "record_id": "record-1",
         "record_kind": "output",
         "port": "candidate",
     }
+    assert record_contract["owner"] == "events_summary"
+    assert record_contract["truncated"] is False
     assert snapshot is not None
     assert snapshot.position == 4
     assert snapshot.run_state == "active"
