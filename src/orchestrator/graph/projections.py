@@ -341,6 +341,67 @@ class FinalInvariantBlocker(TypedDict, total=False):
     support_ids: list[str]
 
 
+_GRAPH_ARCHIVAL_READ_CONTRACT_KEY = "_graph_archival_read_contract"
+_GRAPH_ARCHIVAL_READ_CONTRACT_REVISION = 1
+
+
+def _with_archival_collection_metadata(
+    payload: FinalInvariantBlocker,
+    *,
+    owner: str,
+    path: str,
+    total_known: int,
+    retained: list[str],
+    enabled: bool,
+) -> FinalInvariantBlocker:
+    if not enabled or total_known <= len(retained):
+        return payload
+    result = cast(dict[str, Any], dict(payload))
+    contract = cast(
+        dict[str, Any],
+        result.setdefault(
+            _GRAPH_ARCHIVAL_READ_CONTRACT_KEY,
+            {
+                "revision": _GRAPH_ARCHIVAL_READ_CONTRACT_REVISION,
+                "partial": True,
+                "fields": {},
+            },
+        ),
+    )
+    fields = cast(dict[str, Any], contract.setdefault("fields", {}))
+    fields[path] = {
+        "revision": _GRAPH_ARCHIVAL_READ_CONTRACT_REVISION,
+        "owner": owner,
+        "truncated": True,
+        "total_known": total_known,
+        "next_cursor": retained[-1] if retained else None,
+        "original_bytes": None,
+        "sha256": None,
+    }
+    contract["partial"] = True
+    return cast(FinalInvariantBlocker, result)
+
+
+def _bound_archival_blocker_support_ids(
+    blocker: FinalInvariantBlocker,
+    collection_limit: int,
+) -> FinalInvariantBlocker:
+    support_ids = blocker.get("support_ids")
+    if not isinstance(support_ids, (list, tuple)):
+        return blocker
+    retained = list(support_ids[:collection_limit])
+    result = cast(FinalInvariantBlocker, dict(blocker))
+    result["support_ids"] = retained
+    return _with_archival_collection_metadata(
+        result,
+        owner="final_blockers",
+        path="$.support_ids",
+        total_known=len(support_ids),
+        retained=retained,
+        enabled=True,
+    )
+
+
 TERMINAL_GRAPH_NODE_STATES = frozenset({"completed", "failed", "cancelled", "retired"})
 
 
@@ -2604,7 +2665,7 @@ def project_final_invariant_blockers(
     projection: GraphProjection | None = None,
 ) -> list[FinalInvariantBlocker]:
     proj = projection if projection is not None else _project(events)
-    return final_invariant_blockers_for_events(events, proj)
+    return list(iter_final_invariant_blockers(events, proj))
 
 
 def final_invariant_blockers_for_events(
@@ -2613,7 +2674,66 @@ def final_invariant_blockers_for_events(
     *,
     include_completion_decision: bool = True,
 ) -> list[FinalInvariantBlocker]:
-    blockers: list[FinalInvariantBlocker] = []
+    return list(
+        iter_final_invariant_blockers(
+            events,
+            projection,
+            include_completion_decision=include_completion_decision,
+        )
+    )
+
+
+def iter_final_invariant_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+    *,
+    include_completion_decision: bool = True,
+) -> Iterable[FinalInvariantBlocker]:
+    """Yield final blockers without constructing the aggregate blocker list."""
+    return _iter_final_invariant_blockers(
+        events,
+        projection,
+        include_completion_decision=include_completion_decision,
+        support_ids_limit=None,
+    )
+
+
+def iter_archival_final_invariant_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+    *,
+    include_completion_decision: bool = True,
+    collection_limit: int = 50,
+) -> Iterable[FinalInvariantBlocker]:
+    """Yield blockers whose nested collections are capped before row creation."""
+    if collection_limit < 1:
+        raise ValueError("collection_limit must be positive")
+    return _iter_final_invariant_blockers(
+        events,
+        projection,
+        include_completion_decision=include_completion_decision,
+        support_ids_limit=collection_limit,
+    )
+
+
+def _iter_final_invariant_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+    *,
+    include_completion_decision: bool,
+    support_ids_limit: int | None,
+) -> Iterable[FinalInvariantBlocker]:
+    blocked_node_ids: set[str] = set()
+
+    def emit(values: Iterable[FinalInvariantBlocker]) -> Iterable[FinalInvariantBlocker]:
+        for blocker in values:
+            if support_ids_limit is not None:
+                blocker = _bound_archival_blocker_support_ids(blocker, support_ids_limit)
+            node_id = blocker.get("node_id")
+            if isinstance(node_id, str):
+                blocked_node_ids.add(node_id)
+            yield blocker
+
     pending_states = {"planned", "ready", "leased", "running", "blocked", "suspended"}
     for node_id, node in sorted(projection.nodes.items()):
         node_state = node.runtime.state
@@ -2624,81 +2744,111 @@ def final_invariant_blockers_for_events(
         is_planner = kind == "planner" and role == "planner"
         is_gap_planner = kind == "gap_planner" or role == "gap_planner"
         if (is_planner or is_gap_planner) and node_state in pending_states:
-            blockers.append(
-                {
-                    "kind": "pending_gap_planner" if is_gap_planner else "pending_planner",
-                    "reason": "planner node has not completed",
-                    "node_id": node_id,
-                    "state": node_state,
-                }
-            )
+            blocked_node_ids.add(node_id)
+            blocker: FinalInvariantBlocker = {
+                "kind": "pending_gap_planner" if is_gap_planner else "pending_planner",
+                "reason": "planner node has not completed",
+                "node_id": node_id,
+                "state": node_state,
+            }
+            if node.spec.task_region_id is not None:
+                blocker["task_region_id"] = node.spec.task_region_id
+            yield blocker
             continue
         if (
             kind == "gate"
             and role == "planner_generation_budget_gate"
             and node_state in pending_states
         ):
-            blockers.append(
-                {
-                    "kind": "pending_planner_generation_budget_gate",
-                    "reason": "planner generation budget gate is unresolved",
-                    "node_id": node_id,
-                    "state": node_state,
-                }
-            )
+            blocked_node_ids.add(node_id)
+            blocker = {
+                "kind": "pending_planner_generation_budget_gate",
+                "reason": "planner generation budget gate is unresolved",
+                "node_id": node_id,
+                "state": node_state,
+            }
+            if node.spec.task_region_id is not None:
+                blocker["task_region_id"] = node.spec.task_region_id
+            yield blocker
             continue
         if kind == "check" and node_state in pending_states:
-            blockers.append(
-                {
-                    "kind": "pending_check",
-                    "reason": "check node has not completed",
-                    "node_id": node_id,
-                    "state": node_state,
-                }
-            )
-    blockers.extend(_open_proposal_blockers(events, projection))
-    blockers.extend(_suspect_node_blockers(events, projection))
-    blockers.extend(_requirement_evidence_blockers(events, projection))
-    blockers.extend(_authority_revision_blockers(events, projection))
-    blockers.extend(_blocked_requirement_node_blockers(events, projection))
-    blockers.extend(_dead_required_input_blockers(projection))
-    blockers.extend(_impossible_input_blockers(projection))
-    blockers.extend(_failed_check_result_blockers(events, projection))
+            blocked_node_ids.add(node_id)
+            blocker = {
+                "kind": "pending_check",
+                "reason": "check node has not completed",
+                "node_id": node_id,
+                "state": node_state,
+            }
+            if node.spec.task_region_id is not None:
+                blocker["task_region_id"] = node.spec.task_region_id
+            yield blocker
+    yield from emit(_open_proposal_blockers(events, projection))
+    yield from emit(_suspect_node_blockers(events, projection))
+    yield from emit(
+        _requirement_evidence_blockers(
+            events,
+            projection,
+            support_ids_limit=support_ids_limit,
+        )
+    )
+    yield from emit(
+        _authority_revision_blockers(
+            events,
+            projection,
+            support_ids_limit=support_ids_limit,
+        )
+    )
+    yield from emit(_blocked_requirement_node_blockers(events, projection))
+    yield from emit(_dead_required_input_blockers(projection))
+    yield from emit(_impossible_input_blockers(projection))
+    yield from emit(_failed_check_result_blockers(events, projection))
     if include_completion_decision:
-        blockers.extend(_completion_decision_blockers(events, projection))
-    blockers.extend(_node_fulfillment_blockers(projection))
+        yield from emit(_completion_decision_blockers(events, projection))
+    yield from emit(_node_fulfillment_blockers(projection))
     for cleanup_id, cleanup in sorted(projection.execution.cleanup_requests_by_id.items()):
         if (
             cleanup.snapshot_role is not None
             and cleanup_id not in projection.execution.applied_cleanup_ids
         ):
-            blockers.append(
-                {
-                    "kind": "pending_managed_snapshot_cleanup",
-                    "reason": "managed runner snapshot cleanup is pending",
-                    "state": cleanup.snapshot_role,
-                }
-            )
-    blockers.extend(_non_terminal_node_blockers(projection, blockers, pending_states))
+            yield {
+                "kind": "pending_managed_snapshot_cleanup",
+                "reason": "managed runner snapshot cleanup is pending",
+                "state": cleanup.snapshot_role,
+            }
+    for node_id, node in sorted(projection.nodes.items()):
+        node_state = node.runtime.state
+        if (
+            node_state is None
+            or node_id in blocked_node_ids
+            or node_state not in pending_states
+            or node.spec.kind == "final_gate"
+        ):
+            continue
+        blocker: FinalInvariantBlocker = {
+            "kind": "pending_node",
+            "reason": "node has not reached a terminal state",
+            "node_id": node_id,
+            "state": node_state,
+        }
+        task_region_id = node.spec.task_region_id
+        if task_region_id is not None:
+            blocker["task_region_id"] = task_region_id
+        yield blocker
     for task_region_id, task in sorted(projection.tasks.items()):
         task_state = task.state
         if task_state is None:
             continue
         if task_state == "accepted":
             continue
-        blockers.append(
-            {
-                "kind": "task_not_accepted",
-                "reason": "task region has not reached accepted",
-                "task_region_id": task_region_id,
-                "state": task_state,
-            }
-        )
-    return blockers
+        yield {
+            "kind": "task_not_accepted",
+            "reason": "task region has not reached accepted",
+            "task_region_id": task_region_id,
+            "state": task_state,
+        }
 
 
-def _node_fulfillment_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
-    blockers: list[FinalInvariantBlocker] = []
+def _node_fulfillment_blockers(projection: GraphProjection) -> Iterable[FinalInvariantBlocker]:
     for node_id, node in sorted(projection.nodes.items()):
         node_state = node.runtime.state
         if node_state is None:
@@ -2727,12 +2877,10 @@ def _node_fulfillment_blockers(projection: GraphProjection) -> list[FinalInvaria
         task_region_id = node.spec.task_region_id
         if task_region_id is not None:
             blocker["task_region_id"] = task_region_id
-        blockers.append(blocker)
-    return blockers
+        yield blocker
 
 
-def _impossible_input_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
-    blockers: list[FinalInvariantBlocker] = []
+def _impossible_input_blockers(projection: GraphProjection) -> Iterable[FinalInvariantBlocker]:
     terminal_states = {"completed", "failed", "cancelled", "retired"}
     for edge_id, edge in sorted(projection.topology.edges.items()):
         if not edge.required:
@@ -2760,12 +2908,10 @@ def _impossible_input_blockers(projection: GraphProjection) -> list[FinalInvaria
         task_region_id = target.spec.task_region_id if target is not None else None
         if task_region_id is not None:
             blocker["task_region_id"] = task_region_id
-        blockers.append(blocker)
-    return blockers
+        yield blocker
 
 
-def _dead_required_input_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
-    blockers: list[FinalInvariantBlocker] = []
+def _dead_required_input_blockers(projection: GraphProjection) -> Iterable[FinalInvariantBlocker]:
     dead_source_states = {"failed", "cancelled", "retired"}
     target_terminal_states = {"completed", "failed", "cancelled", "retired"}
     for edge_id, edge in sorted(projection.topology.edges.items()):
@@ -2804,50 +2950,16 @@ def _dead_required_input_blockers(projection: GraphProjection) -> list[FinalInva
         task_region_id = target.spec.task_region_id if target is not None else None
         if task_region_id is not None:
             blocker["task_region_id"] = task_region_id
-        blockers.append(blocker)
-    return blockers
-
-
-def _non_terminal_node_blockers(
-    projection: GraphProjection,
-    existing_blockers: list[FinalInvariantBlocker],
-    pending_states: set[str],
-) -> list[FinalInvariantBlocker]:
-    blocked_node_ids = {
-        node_id
-        for blocker in existing_blockers
-        if isinstance((node_id := blocker.get("node_id")), str)
-    }
-    blockers: list[FinalInvariantBlocker] = []
-    for node_id, node in sorted(projection.nodes.items()):
-        node_state = node.runtime.state
-        if node_state is None:
-            continue
-        if (
-            node_id in blocked_node_ids
-            or node_state not in pending_states
-            or node.spec.kind == "final_gate"
-        ):
-            continue
-        blocker: FinalInvariantBlocker = {
-            "kind": "pending_node",
-            "reason": "node has not reached a terminal state",
-            "node_id": node_id,
-            "state": node_state,
-        }
-        task_region_id = node.spec.task_region_id
-        if task_region_id is not None:
-            blocker["task_region_id"] = task_region_id
-        blockers.append(blocker)
-    return blockers
+        yield blocker
 
 
 def _failed_check_result_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
-) -> list[FinalInvariantBlocker]:
+) -> Iterable[FinalInvariantBlocker]:
     if not _has_full_event_history(events):
-        return _failed_check_result_blockers_from_projection(projection)
+        yield from _failed_check_result_blockers_from_projection(projection)
+        return
     blockers_by_record: dict[str, FinalInvariantBlocker] = {}
     for event in events:
         if event.event_type != "output_record_accepted":
@@ -2896,12 +3008,13 @@ def _failed_check_result_blockers(
             blocker["task_region_id"] = task_region_id
         blocker["state"] = status
         blockers_by_record[key] = blocker
-    return [blockers_by_record[key] for key in sorted(blockers_by_record)]
+    for key in sorted(blockers_by_record):
+        yield blockers_by_record[key]
 
 
 def _failed_check_result_blockers_from_projection(
     projection: GraphProjection,
-) -> list[FinalInvariantBlocker]:
+) -> Iterable[FinalInvariantBlocker]:
     blockers_by_record: dict[str, FinalInvariantBlocker] = {}
     for node_id, payload in projection.verification.check_results_by_node.items():
         status = payload.status
@@ -2933,7 +3046,8 @@ def _failed_check_result_blockers_from_projection(
         if payload.task_region_id is not None:
             blocker["task_region_id"] = payload.task_region_id
         blockers_by_record[key] = blocker
-    return [blockers_by_record[key] for key in sorted(blockers_by_record)]
+    for key in sorted(blockers_by_record):
+        yield blockers_by_record[key]
 
 
 def _is_check_result_record(payload: dict[str, Any]) -> bool:
@@ -2959,27 +3073,27 @@ def _check_result_status(payload: dict[str, Any]) -> str | None:
 def _completion_decision_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
-) -> list[FinalInvariantBlocker]:
+) -> Iterable[FinalInvariantBlocker]:
     final_gate_node_ids = {
         node_id
         for node_id, node in projection.nodes.items()
         if node.spec.kind == "final_gate" and node.runtime.state != "retired"
     }
     if not final_gate_node_ids:
-        return []
+        return
 
-    latest: dict[str, tuple[str, list[FinalInvariantBlocker]]] = {}
+    latest: dict[str, tuple[str, dict[str, Any]]] = {}
     payloads: Iterable[dict[str, Any]]
     if _has_full_event_history(events):
-        payloads = [
+        payloads = (
             event.payload for event in events if event.event_type == "output_record_accepted"
-        ]
+        )
     else:
-        payloads = [
+        payloads = (
             record.model_dump(mode="json", by_alias=True)
             for record in projection.records.by_id.values()
             if record.record_type != "file_state"
-        ]
+        )
     for payload in payloads:
         node_id = payload.get("producer_node_id")
         if not isinstance(node_id, str) or node_id not in final_gate_node_ids:
@@ -2989,36 +3103,33 @@ def _completion_decision_blockers(
         status = _completion_decision_status(payload)
         if status is None:
             continue
-        latest[node_id] = (status, _completion_decision_payload_blockers(payload))
+        latest[node_id] = (status, payload)
 
-    blockers: list[FinalInvariantBlocker] = []
     for node_id in sorted(final_gate_node_ids):
         decision = latest.get(node_id)
         if decision is None:
-            blockers.append(
-                {
-                    "kind": "missing_completion_decision",
-                    "reason": "final gate has not produced a completion_decision",
-                    "node_id": node_id,
-                    "state": projection.nodes[node_id].runtime.state or "unknown",
-                }
-            )
-            continue
-        status, decision_blockers = decision
-        if status == "passed":
-            continue
-        if decision_blockers:
-            blockers.extend(decision_blockers)
-            continue
-        blockers.append(
-            {
-                "kind": "blocked_completion_decision",
-                "reason": "final gate completion_decision is blocked",
+            yield {
+                "kind": "missing_completion_decision",
+                "reason": "final gate has not produced a completion_decision",
                 "node_id": node_id,
                 "state": projection.nodes[node_id].runtime.state or "unknown",
             }
-        )
-    return blockers
+            continue
+        status, payload = decision
+        if status == "passed":
+            continue
+        emitted = False
+        for blocker in _completion_decision_payload_blockers(payload):
+            emitted = True
+            yield blocker
+        if emitted:
+            continue
+        yield {
+            "kind": "blocked_completion_decision",
+            "reason": "final gate completion_decision is blocked",
+            "node_id": node_id,
+            "state": projection.nodes[node_id].runtime.state or "unknown",
+        }
 
 
 def _completion_decision_status(payload: dict[str, Any]) -> str | None:
@@ -3033,14 +3144,15 @@ def _completion_decision_status(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _completion_decision_payload_blockers(payload: dict[str, Any]) -> list[FinalInvariantBlocker]:
+def _completion_decision_payload_blockers(
+    payload: dict[str, Any],
+) -> Iterable[FinalInvariantBlocker]:
     value = payload.get("value")
     raw_blockers: Any = payload.get("blockers")
     if raw_blockers is None and isinstance(value, dict):
         raw_blockers = cast(dict[str, Any], value).get("blockers")
     if not isinstance(raw_blockers, list):
-        return []
-    blockers: list[FinalInvariantBlocker] = []
+        return
     for raw_blocker in cast(list[Any], raw_blockers):
         if not isinstance(raw_blocker, dict):
             continue
@@ -3049,16 +3161,15 @@ def _completion_decision_payload_blockers(payload: dict[str, Any]) -> list[Final
         reason = blocker.get("reason")
         if not isinstance(kind, str) or not isinstance(reason, str):
             continue
-        blockers.append(cast(FinalInvariantBlocker, dict(blocker)))
-    return blockers
+        yield cast(FinalInvariantBlocker, dict(blocker))
 
 
 def _open_proposal_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
-) -> list[FinalInvariantBlocker]:
+) -> Iterable[FinalInvariantBlocker]:
     if not _has_full_event_history(events):
-        return []
+        return
     open_proposals: dict[str, FinalInvariantBlocker] = {}
     for event in events:
         payload = _patch_event_payload(event)
@@ -3069,13 +3180,14 @@ def _open_proposal_blockers(
             continue
         if event.event_type in {"graph_patch_accepted", "graph_patch_rejected"}:
             open_proposals.pop(proposal_id, None)
-    return [open_proposals[key] for key in sorted(open_proposals)]
+    for key in sorted(open_proposals):
+        yield open_proposals[key]
 
 
 def _suspect_node_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
-) -> list[FinalInvariantBlocker]:
+) -> Iterable[FinalInvariantBlocker]:
     if _has_full_event_history(events):
         suspect_nodes: dict[str, str] = {}
         for event in events:
@@ -3091,7 +3203,6 @@ def _suspect_node_blockers(
             if node.runtime.suspect_reason is not None
         }
 
-    blockers: list[FinalInvariantBlocker] = []
     inactive_states = {"completed", "failed", "cancelled", "retired"}
     for node_id in sorted(suspect_nodes):
         node = projection.nodes[node_id] if node_id in projection.nodes else None
@@ -3105,51 +3216,94 @@ def _suspect_node_blockers(
         }
         if node_state is not None:
             blocker["state"] = node_state
-        blockers.append(blocker)
-    return blockers
+        yield blocker
 
 
 def _requirement_evidence_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
-) -> list[FinalInvariantBlocker]:
-    blockers: list[FinalInvariantBlocker] = []
-    for fact in requirement_freshness_facts_from_projection(projection):
-        if fact["unsupported"]:
-            stale_support_ids = list(fact["stale_support_ids"])
-            if stale_support_ids:
-                blockers.append(
-                    {
-                        "kind": "stale_support_evidence",
-                        "reason": "active requirement is supported only by stale evidence",
-                        "requirement_id": fact["requirement_id"],
-                        "support_ids": stale_support_ids,
-                    }
-                )
-            blockers.append(
+    *,
+    support_ids_limit: int | None,
+) -> Iterable[FinalInvariantBlocker]:
+    del events
+    for requirement_id, _active_version_id in sorted(
+        projection.requirements.active_version_id_by_requirement.items()
+    ):
+        stale_support_ids: list[str] = []
+        stale_total = 0
+        has_fresh_support = False
+        for support_id, support in sorted(projection.requirements.support_by_id.items()):
+            if support.requirement_id != requirement_id:
+                continue
+            stale_reason = _support_stale_reason(projection, support)
+            if stale_reason is None and support.status == "active":
+                has_fresh_support = True
+                continue
+            stale_total += 1
+            if support_ids_limit is None or len(stale_support_ids) < support_ids_limit:
+                stale_support_ids.append(support_id)
+        if has_fresh_support:
+            continue
+        if stale_support_ids:
+            yield _with_archival_collection_metadata(
                 {
-                    "kind": "unsupported_active_requirement",
-                    "reason": "active requirement has no current supporting evidence",
-                    "requirement_id": fact["requirement_id"],
+                    "kind": "stale_support_evidence",
+                    "reason": "active requirement is supported only by stale evidence",
+                    "requirement_id": requirement_id,
                     "support_ids": stale_support_ids,
-                }
+                },
+                owner="final_blockers",
+                path="$.support_ids",
+                total_known=stale_total,
+                retained=stale_support_ids,
+                enabled=support_ids_limit is not None,
             )
-
-    return blockers
+        yield _with_archival_collection_metadata(
+            {
+                "kind": "unsupported_active_requirement",
+                "reason": "active requirement has no current supporting evidence",
+                "requirement_id": requirement_id,
+                "support_ids": stale_support_ids,
+            },
+            owner="final_blockers",
+            path="$.support_ids",
+            total_known=stale_total,
+            retained=stale_support_ids,
+            enabled=support_ids_limit is not None,
+        )
 
 
 def _authority_revision_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
-) -> list[FinalInvariantBlocker]:
+    *,
+    support_ids_limit: int | None,
+) -> Iterable[FinalInvariantBlocker]:
     if not _has_full_event_history(events):
-        return [
-            cast(
+        for _, projected_blocker in sorted(
+            projection.governance.authority_revision_blockers.items()
+        ):
+            payload = cast(
                 FinalInvariantBlocker,
-                blocker.model_dump(mode="json", exclude_none=True),
+                projected_blocker.model_dump(
+                    mode="json", exclude_none=True, exclude={"support_ids"}
+                ),
             )
-            for _, blocker in sorted(projection.governance.authority_revision_blockers.items())
-        ]
+            support_ids = list(
+                projected_blocker.support_ids
+                if support_ids_limit is None
+                else projected_blocker.support_ids[:support_ids_limit]
+            )
+            payload["support_ids"] = support_ids
+            yield _with_archival_collection_metadata(
+                payload,
+                owner="final_blockers",
+                path="$.support_ids",
+                total_known=len(projected_blocker.support_ids),
+                retained=support_ids,
+                enabled=support_ids_limit is not None,
+            )
+        return
     unresolved: dict[str, FinalInvariantBlocker] = {}
     for event in events:
         if event.event_type == "authority_decision_recorded":
@@ -3177,14 +3331,14 @@ def _authority_revision_blockers(
             if requirement_id is not None:
                 blocker["requirement_id"] = requirement_id
             unresolved[revision_id] = blocker
-    return [unresolved[key] for key in sorted(unresolved)]
+    for key in sorted(unresolved):
+        yield unresolved[key]
 
 
 def _blocked_requirement_node_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
-) -> list[FinalInvariantBlocker]:
-    blockers: list[FinalInvariantBlocker] = []
+) -> Iterable[FinalInvariantBlocker]:
     for node_id, node in sorted(projection.nodes.items()):
         node_state = node.runtime.state
         if node.spec.kind != "requirement" or node_state != "blocked":
@@ -3194,16 +3348,13 @@ def _blocked_requirement_node_blockers(
         if priority not in {"must", "expected", "critical"}:
             continue
         requirement_id = _requirement_id(payload) or node_id
-        blockers.append(
-            {
-                "kind": "blocked_requirement",
-                "reason": "must or expected requirement is blocked without accepted blocker",
-                "node_id": node_id,
-                "requirement_id": requirement_id,
-                "state": node_state,
-            }
-        )
-    return blockers
+        yield {
+            "kind": "blocked_requirement",
+            "reason": "must or expected requirement is blocked without accepted blocker",
+            "node_id": node_id,
+            "requirement_id": requirement_id,
+            "state": node_state,
+        }
 
 
 def _proposal_id(payload: dict[str, Any]) -> str | None:
@@ -3463,6 +3614,160 @@ def project_graph_topology(
         for _, edge in sorted(projection.topology.edges.items())
     ]
     return {"nodes": nodes, "edges": edges}
+
+
+def iter_graph_topology_entries(
+    projection: GraphProjection,
+) -> Iterable[tuple[str, str, dict[str, Any]]]:
+    """Yield topology rows directly from durable projection groups.
+
+    The archival contract is canonical rather than insertion ordered: nodes
+    precede edges and identities are lexical within each kind.  This makes
+    keyset pages stable across live maintenance and delete-and-rebuild paths.
+    """
+    for node_id, projected_node in sorted(projection.nodes.items()):
+        kind = projected_node.spec.kind
+        role = projected_node.spec.role
+        node: GraphTopologyNode = {
+            "node_id": node_id,
+            "kind": kind,
+            "role": role,
+            "state": projected_node.runtime.state,
+        }
+        contract = node_contract_summary(kind, role)
+        if contract is not None:
+            node["contract"] = contract
+        yield "node", node_id, dict(node)
+    for edge_id, edge in sorted(projection.topology.edges.items()):
+        binding = _binding_for_edge(projection, edge)
+        record_summaries: dict[str, GraphRecordSummary] = {}
+        if binding is not None:
+            for record_id in binding.record_ids:
+                summary = projection.records.summaries_by_id.get(record_id)
+                if summary is not None:
+                    record_summaries[record_id] = cast(
+                        GraphRecordSummary,
+                        summary.model_dump(mode="json", by_alias=True, exclude_none=True),
+                    )
+        yield "edge", str(edge_id), dict(_topology_edge(edge, projection, record_summaries))
+
+
+def iter_archival_graph_topology_entries(
+    projection: GraphProjection,
+    *,
+    collection_limit: int = 50,
+) -> Iterable[tuple[str, str, dict[str, Any]]]:
+    """Yield topology rows with binding collections capped before allocation."""
+    if collection_limit < 1:
+        raise ValueError("collection_limit must be positive")
+    for node_id, projected_node in sorted(projection.nodes.items()):
+        kind = projected_node.spec.kind
+        role = projected_node.spec.role
+        node: GraphTopologyNode = {
+            "node_id": node_id,
+            "kind": kind,
+            "role": role,
+            "state": projected_node.runtime.state,
+        }
+        contract = node_contract_summary(kind, role)
+        if contract is not None:
+            node["contract"] = contract
+        yield "node", node_id, dict(node)
+
+    for edge_id, edge in sorted(projection.topology.edges.items()):
+        topology_edge = _topology_edge_base(edge, projection)
+        binding = _binding_for_edge(projection, edge)
+        if binding is not None:
+            total_record_ids = len(binding.record_ids)
+            retained_record_ids = list(binding.record_ids[:collection_limit])
+            topology_edge["binding"] = _topology_binding(
+                binding,
+                record_ids=retained_record_ids,
+                record_bound_position_ids=retained_record_ids,
+            )
+            _attach_topology_archival_metadata(
+                topology_edge,
+                path="$.binding.record_ids",
+                total_known=total_record_ids,
+                retained_cursor=retained_record_ids[-1] if retained_record_ids else None,
+                retained_count=len(retained_record_ids),
+            )
+
+            retained_records: list[GraphRecordSummary] = []
+            total_records = 0
+            last_retained_record_id: str | None = None
+            for record_id in binding.record_ids:
+                summary = projection.records.summaries_by_id.get(record_id)
+                if summary is None:
+                    continue
+                total_records += 1
+                if len(retained_records) >= collection_limit:
+                    continue
+                retained_records.append(
+                    cast(
+                        GraphRecordSummary,
+                        summary.model_dump(mode="json", by_alias=True, exclude_none=True),
+                    )
+                )
+                last_retained_record_id = record_id
+            topology_edge["bound_records"] = retained_records
+            _attach_topology_archival_metadata(
+                topology_edge,
+                path="$.bound_records",
+                total_known=total_records,
+                retained_cursor=last_retained_record_id,
+                retained_count=len(retained_records),
+            )
+
+            positions = binding.record_bound_positions
+            if positions is not None:
+                total_positions = len(positions)
+                retained_position_ids = [
+                    record_id for record_id in retained_record_ids if record_id in positions
+                ]
+                _attach_topology_archival_metadata(
+                    topology_edge,
+                    path="$.binding.record_bound_positions",
+                    total_known=total_positions,
+                    retained_cursor=(retained_position_ids[-1] if retained_position_ids else None),
+                    retained_count=len(retained_position_ids),
+                )
+        yield "edge", str(edge_id), cast(dict[str, Any], topology_edge)
+
+
+def _attach_topology_archival_metadata(
+    payload: GraphTopologyEdge,
+    *,
+    path: str,
+    total_known: int,
+    retained_cursor: str | None,
+    retained_count: int,
+) -> None:
+    if total_known <= retained_count:
+        return
+    raw_payload = cast(dict[str, Any], payload)
+    contract = cast(
+        dict[str, Any],
+        raw_payload.setdefault(
+            _GRAPH_ARCHIVAL_READ_CONTRACT_KEY,
+            {
+                "revision": _GRAPH_ARCHIVAL_READ_CONTRACT_REVISION,
+                "partial": True,
+                "fields": {},
+            },
+        ),
+    )
+    fields = cast(dict[str, Any], contract.setdefault("fields", {}))
+    fields[path] = {
+        "revision": _GRAPH_ARCHIVAL_READ_CONTRACT_REVISION,
+        "owner": "topology",
+        "truncated": True,
+        "total_known": total_known,
+        "next_cursor": retained_cursor,
+        "original_bytes": None,
+        "sha256": None,
+    }
+    contract["partial"] = True
 
 
 def project_graph_patch_attempts(
@@ -3921,6 +4226,22 @@ def _topology_edge(
     projection: GraphProjection,
     record_summaries: dict[str, GraphRecordSummary],
 ) -> GraphTopologyEdge:
+    topology_edge = _topology_edge_base(edge, projection)
+    binding = _binding_for_edge(projection, edge)
+    if binding is not None:
+        binding_summary = _topology_binding(binding)
+        topology_edge["binding"] = binding_summary
+        record_ids = binding_summary.get("record_ids", [])
+        topology_edge["bound_records"] = [
+            record_summaries[record_id] for record_id in record_ids if record_id in record_summaries
+        ]
+    return topology_edge
+
+
+def _topology_edge_base(
+    edge: EdgeValue,
+    projection: GraphProjection,
+) -> GraphTopologyEdge:
     source_contract, target_contract = _edge_port_contracts(edge, projection)
     metadata = {
         key: thaw_json(value)
@@ -3954,15 +4275,6 @@ def _topology_edge(
     if target_contract is not None:
         topology_edge["target_port_contract"] = port_contract_summary(target_contract)
 
-    binding = _binding_for_edge(projection, edge)
-    if binding is not None:
-        binding_summary = _topology_binding(binding)
-        topology_edge["binding"] = binding_summary
-        record_ids = binding_summary.get("record_ids", [])
-        bound_records: list[GraphRecordSummary] = [
-            record_summaries[record_id] for record_id in record_ids if record_id in record_summaries
-        ]
-        topology_edge["bound_records"] = bound_records
     return topology_edge
 
 
@@ -4034,9 +4346,14 @@ def _binding_for_edge(
     return None
 
 
-def _topology_binding(binding: InputBindingValue) -> GraphTopologyBinding:
+def _topology_binding(
+    binding: InputBindingValue,
+    *,
+    record_ids: list[str] | None = None,
+    record_bound_position_ids: list[str] | None = None,
+) -> GraphTopologyBinding:
     summary: GraphTopologyBinding = {
-        "record_ids": _bound_record_ids(binding),
+        "record_ids": _bound_record_ids(binding) if record_ids is None else record_ids,
     }
     for key in ("edge_id", "to_node_id", "to_port", "binding_policy", "trigger"):
         value = getattr(binding, key)
@@ -4046,7 +4363,14 @@ def _topology_binding(binding: InputBindingValue) -> GraphTopologyBinding:
     summary["bound_at_position"] = bound_at_position
     record_bound_positions = binding.record_bound_positions
     if record_bound_positions is not None:
-        summary["record_bound_positions"] = dict(record_bound_positions.items())
+        if record_bound_position_ids is None:
+            summary["record_bound_positions"] = dict(record_bound_positions.items())
+        else:
+            summary["record_bound_positions"] = {
+                record_id: record_bound_positions[record_id]
+                for record_id in record_bound_position_ids
+                if record_id in record_bound_positions
+            }
     return summary
 
 

@@ -8,7 +8,7 @@ Addresses weakness **W6** (medium) and improvement **#7** in
 The W6 scope has landed in commit `23746c228`.
 
 Closed:
-- `graph_outbox.next_attempt_at` exists with migration coverage.
+- `graph_outbox.next_attempt_at` exists in current ORM metadata with fresh-schema coverage.
 - Failed attempts use exponential backoff plus stable jitter.
 - Pending rows with future `next_attempt_at` are not claimed.
 - Failed outbox rows are visible through graph final blockers.
@@ -22,7 +22,7 @@ Evidence:
 - `tests/integration/test_graph_outbox_crash_points.py`
 - `tests/integration/test_graph_api.py::test_graph_final_blockers_surface_failed_outbox_rows`
 - `tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event`
-- `tests/integration/test_migrations.py::test_init_db_adds_graph_outbox_backoff_schema`
+- `tests/integration/test_database.py::test_file_database_is_created_directly_from_current_metadata`
 - `tests/unit/test_graph_driver_logic.py::test_driver_waits_for_future_outbox_backoff_before_declaring_blocked`
 
 ## Problem
@@ -37,8 +37,8 @@ Evidence:
 
 ## Architecture
 
-1. **Backoff.** Add `next_attempt_at` to the outbox row (Alembic migration — see
-   constraints). `_mark_failed_attempt` sets it via exponential backoff with jitter
+1. **Backoff.** Add `next_attempt_at` to the outbox ORM row and current schema.
+   `_mark_failed_attempt` sets it via exponential backoff with jitter
    (e.g. base 2s, factor 4, cap 60s — constants injectable for tests). The claim
    query skips rows with `next_attempt_at` in the future. Use the injected
    clock/session time, not `datetime.now()` scattered in logic, so tests stay
@@ -76,9 +76,8 @@ returns idle (no spin). *Expected.*
 
 ## Constraints
 
-- New column ⇒ **Alembic migration** (`create_all` won't add columns — project
-  memory). Never touch `orchestrator.db` directly; stop server before local schema
-  work.
+- New columns belong in current ORM metadata and are verified through `init_db`
+  on a fresh temporary database. Never touch `orchestrator.db` directly.
 - At-least-once contract unchanged; do not add dedup logic to executors.
 - No `mock`/`patch` in tests (AGENTS.md) — use a stub executor class and the
   injectable clock.
@@ -92,5 +91,5 @@ uv run pytest tests/unit/test_jsonl_outbox.py \
   tests/integration/test_graph_api.py -q
 ```
 
-All pass, plus new R1–R3/R5 tests and `uv run alembic upgrade head` succeeding on a
-scratch copy of the DB.
+All pass, plus new R1–R3/R5 tests and fresh-file schema inspection through
+`init_db`.

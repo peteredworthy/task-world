@@ -2,7 +2,13 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { useGraphEvents, useGraphPatchAttempts } from './useApi';
+import {
+  retryGraphRead,
+  useArchivalGraphSnapshot,
+  useGraphEvents,
+  useGraphPatchAttempts,
+} from './useApi';
+import { ApiError } from '../api/client';
 
 const originalFetch = globalThis.fetch;
 
@@ -90,5 +96,137 @@ describe('useGraphEvents', () => {
     expect(requests[0]).toContain('payload_mode=summary');
     expect(requests[1]).toContain('/run-2/graph/events');
     expect(requests[1]).toContain('payload_mode=full');
+  });
+});
+
+describe('retryGraphRead', () => {
+  it('retries a catch-up response but never repeats an obsolete position', () => {
+    expect(retryGraphRead(0, new ApiError(503, {
+      detail: { code: 'read_model_unavailable', retryable: true },
+    }))).toBe(true);
+    expect(retryGraphRead(0, new ApiError(409, {
+      detail: { code: 'expected_position_mismatch', retryable: true },
+    }))).toBe(false);
+  });
+});
+
+function graphProjection(position: number): Response {
+  return new Response(JSON.stringify({
+    run_id: 'run-1',
+    event_count: position,
+    run_state: 'active',
+    node_states: {},
+    task_states: {},
+    leases: {},
+    ready_nodes: [],
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
+function archivalView(url: string, position: number): Response {
+  const body = url.includes('/topology')
+    ? { nodes: [{ node_id: `node-${position}` }], edges: [] }
+    : url.includes('/final-blockers')
+      ? { blockers: [{ blocker_id: `blocker-${position}` }] }
+      : { regions: [{ region_id: `region-${position}` }] };
+  return new Response(JSON.stringify({
+    run_id: 'run-1',
+    event_count: position,
+    ...body,
+    truncated: false,
+    total_known: 1,
+    next_cursor: null,
+    partial: false,
+    collection_meta: {},
+  }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+
+function archivalHookWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retryDelay: 0 } },
+  });
+  return ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  );
+}
+
+describe('useArchivalGraphSnapshot', () => {
+  it('restarts all three views from a fresh anchor when one view returns position 409', async () => {
+    const requests: string[] = [];
+    let anchorReads = 0;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.endsWith('/graph')) {
+        anchorReads += 1;
+        return graphProjection(anchorReads === 1 ? 10 : 11);
+      }
+      if (url.includes('/final-blockers?expected_position=10')) {
+        return new Response(JSON.stringify({
+          detail: {
+            code: 'expected_position_mismatch',
+            expected_position: 10,
+            current_position: 11,
+            run_id: 'run-1',
+            retryable: true,
+          },
+        }), { status: 409, headers: { 'Content-Type': 'application/json' } });
+      }
+      const position = url.includes('expected_position=10') ? 10 : 11;
+      return archivalView(url, position);
+    };
+
+    const { result } = renderHook(() => useArchivalGraphSnapshot('run-1'), {
+      wrapper: archivalHookWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.position).toBe(11);
+    expect(result.current.data?.topology.nodes).toEqual([{ node_id: 'node-11' }]);
+    expect(result.current.data?.finalBlockers.blockers).toEqual([{ blocker_id: 'blocker-11' }]);
+    expect(result.current.data?.regions.regions).toEqual([{ region_id: 'region-11' }]);
+    expect(requests).toEqual([
+      '/api/runs/run-1/graph',
+      '/api/runs/run-1/graph/topology?expected_position=10',
+      '/api/runs/run-1/graph/final-blockers?expected_position=10',
+      '/api/runs/run-1/graph/regions?expected_position=10',
+      '/api/runs/run-1/graph',
+      '/api/runs/run-1/graph/topology?expected_position=11',
+      '/api/runs/run-1/graph/final-blockers?expected_position=11',
+      '/api/runs/run-1/graph/regions?expected_position=11',
+    ]);
+  });
+
+  it('retries a retryable 503 by assembling all three views again from a new anchor', async () => {
+    const requests: string[] = [];
+    let anchorReads = 0;
+    let unavailableReturned = false;
+    globalThis.fetch = async (input) => {
+      const url = String(input);
+      requests.push(url);
+      if (url.endsWith('/graph')) {
+        anchorReads += 1;
+        return graphProjection(anchorReads === 1 ? 20 : 21);
+      }
+      if (url.includes('/regions?expected_position=20') && !unavailableReturned) {
+        unavailableReturned = true;
+        return new Response(JSON.stringify({
+          detail: { code: 'read_model_unavailable', retryable: true },
+        }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+      }
+      const position = url.includes('expected_position=20') ? 20 : 21;
+      return archivalView(url, position);
+    };
+
+    const { result } = renderHook(() => useArchivalGraphSnapshot('run-1'), {
+      wrapper: archivalHookWrapper(),
+    });
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(result.current.data?.position).toBe(21);
+    expect(requests.filter((url) => url.endsWith('/graph'))).toHaveLength(2);
+    for (const route of ['topology', 'final-blockers', 'regions']) {
+      expect(requests).toContain(`/api/runs/run-1/graph/${route}?expected_position=20`);
+      expect(requests).toContain(`/api/runs/run-1/graph/${route}?expected_position=21`);
+    }
   });
 });

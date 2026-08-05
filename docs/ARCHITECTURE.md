@@ -149,7 +149,6 @@ task-world/
 │   │   ├── bootstrap.py       # JSONL bootstrap: seeds events_v2 on empty-DB startup
 │   │   ├── recovery/          # Backup utilities
 │   │   │   └── backup.py      # DB backup / restore helpers
-│   │   └── migrations/        # Alembic migrations
 │   │
 │   ├── envfiles/              # Environment file management
 │   │   ├── models.py, store.py, lifecycle.py
@@ -347,7 +346,6 @@ task-world/
 ├── AGENTS.md                  # Coding agent instructions
 ├── CLAUDE.md                  # Redirects to AGENTS.md
 ├── pyproject.toml             # Python project configuration
-├── alembic.ini                # Database migration config
 └── config.json                # Global app configuration
 ```
 
@@ -642,7 +640,7 @@ The stub `_scheduled_resume_check()` method has been removed from `workflow/sign
 
 ### ~~TD-07: Unimplemented Task Phase Schema~~ — RESOLVED
 
-The unused `PhaseType` enum, `PhaseConfig` model, `TaskConfig.phases` field, planner-agent routine override fields, and phase validator path have been removed. The historical Alembic revision remains in the migration chain, and a follow-up migration removes the unused task phase columns from the final schema.
+The unused `PhaseType` enum, `PhaseConfig` model, `TaskConfig.phases` field, planner-agent routine override fields, and phase validator path have been removed. Fresh databases are created directly from the current ORM schema, so no historical phase columns remain.
 
 ---
 
@@ -736,14 +734,22 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/graph/scheduler` | Graph scheduler buckets and leases |
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
 | GET | `/api/runs/{id}/graph/patches` | Graph patch proposal/result readback |
-| GET | `/api/runs/{id}/graph/final-blockers` | Typed final invariant blocker readback |
-| GET | `/api/runs/{id}/graph/regions` | Graph task-region state and blocker readback |
+| GET | `/api/runs/{id}/graph/topology` | Byte- and count-bounded archival topology page |
+| GET | `/api/runs/{id}/graph/final-blockers` | Byte- and count-bounded final-invariant blocker page |
+| GET | `/api/runs/{id}/graph/regions` | Byte- and count-bounded task-region and blocker page |
 | GET | `/api/runs/{id}/graph/file-state` | Bounded, cursor-paged graph file-state boundary report (`from_position`, `limit`, `path_limit`) |
 | GET | `/api/runs/{id}/graph/nodes/{node_id}` | Graph node detail with inputs, outputs, callbacks, and file-state facts |
 | GET | `/api/runs/{id}/branch-status` | Branch ahead/behind status |
 | POST | `/api/runs/{id}/back-merge` | Pull source branch into run |
 | POST | `/api/runs/{id}/merge-back` | Merge run branch into source |
 | POST | `/api/runs/{id}/steps/{step_id}/approve` | Approve a step gate |
+
+The topology, final-blocker, and region routes share one archival publication
+position. Graph appends mark that generation dirty; background maintenance
+publishes all three owners atomically. While maintenance is catching up, reads
+return a structured retryable 503 and never replay history. Clients may pass
+`expected_position`; a different current position returns a structured
+retryable 409 so the complete three-view read can restart from a new anchor.
 
 ### Tasks
 

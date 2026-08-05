@@ -7,6 +7,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.api import advance_graph_archival_maintenance_once
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db.access.mutations import save_run
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
@@ -551,6 +552,20 @@ async def test_record_rejected_approval_is_durable_and_dead_inputs_successor(
     assert scheduler.status_code == 200
     assert scheduler.json()["scheduler"]["ready"] == []
     assert scheduler.json()["leases"]["active"] == []
+
+    blockers = await client.get(f"/api/runs/{run_id}/graph/final-blockers")
+    assert blockers.status_code == 503
+    assert blockers.json()["detail"] == {
+        "code": "read_model_unavailable",
+        "run_id": run_id,
+        "read_model": "graph_final_blockers_view",
+        "current_position": response.json()["graph_position"],
+        "reason": "missing_or_stale",
+        "retryable": True,
+    }
+
+    assert await advance_graph_archival_maintenance_once(app) is True
+    assert await advance_graph_archival_maintenance_once(app) is False
 
     blockers = await client.get(f"/api/runs/{run_id}/graph/final-blockers")
     assert blockers.status_code == 200

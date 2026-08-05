@@ -4,7 +4,7 @@ routine:
   description: |
     Rename the current "agents" concept to "agent-runners" throughout backend and UI,
     then introduce Model Profiles (per-runner model mappings) and Agents (prompt+profile
-    pairings). Uses rope for Python renames, Alembic for DB migrations, and incremental
+    pairings). Uses rope for Python renames, current ORM metadata for database schema, and incremental
     milestones to keep the system functional throughout.
 
   inputs:
@@ -21,7 +21,7 @@ routine:
         Programmatic rename of all backend Python references from "Agent" to
         "AgentRunner" using rope for Python files + manual find-replace for
         non-Python files. Rename directory, files, schemas, endpoints, and
-        DB columns via Alembic migration.
+        DB columns in the current ORM schema.
       tasks:
         - id: "T-01"
           title: "Rename Python Classes with Rope"
@@ -119,31 +119,32 @@ routine:
             max_attempts: 2
 
         - id: "T-04"
-          title: "Create Alembic Migration for DB Column Renames"
+          title: "Update Current ORM Schema for DB Column Renames"
           task_context: |
-            Create an Alembic migration to rename columns on the runs table:
+            Update the RunModel mapping so fresh databases expose these runs-table columns:
             agent_type -> runner_type, agent_config -> runner_config,
             agent_started_at -> runner_started_at.
 
-            Migration must be reversible (downgrade support). Use op.alter_column()
-            with new_column_name. No data loss -- column rename only.
+            Initialize a fresh temporary SQLite database through init_db and inspect
+            the resulting runs table with SQLAlchemy. Existing databases are outside
+            this routine's schema contract.
           requirements:
             - id: "R1"
-              desc: "Alembic migration file exists in alembic/versions/"
+              desc: "RunModel maps runner_type, runner_config, and runner_started_at"
               priority: critical
             - id: "R2"
-              desc: "Migration applies cleanly (upgrade head)"
+              desc: "init_db creates the current runs schema in a fresh temporary database"
               priority: critical
             - id: "R3"
-              desc: "Migration reverses cleanly (downgrade -1)"
+              desc: "SQLAlchemy inspection confirms the three renamed columns"
               priority: expected
             - id: "R4"
               desc: "No old column names in db/models.py"
               priority: critical
           auto_verify:
             items:
-              - id: "migration_upgrade"
-                cmd: "uv run alembic upgrade head"
+              - id: "fresh_schema_columns"
+                cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"runs\\\")})\\n    assert {\\\"runner_type\\\", \\\"runner_config\\\", \\\"runner_started_at\\\"} <= columns\\n    await engine.dispose()'); asyncio.run(check())\""
                 must: true
               - id: "no_old_columns"
                 cmd: "! grep -rn 'agent_type\\|agent_config\\|agent_started_at' src/orchestrator/db/models.py"
@@ -325,7 +326,7 @@ routine:
       step_context: |
         Introduce Model Profiles as a first-class concept: an enum of cognitive
         work classes (ARCHITECT, DESIGNER, CODER, SUMMARIZER) with per-runner
-        default model mappings. Includes DB model, Alembic migration, API
+        default model mappings. Includes the DB model, fresh-schema verification, API
         endpoints, and wiring into execution context.
       tasks:
         - id: "T-01"
@@ -356,26 +357,26 @@ routine:
                 must: true
 
         - id: "T-02"
-          title: "Create Alembic Migration and Pydantic Schemas"
+          title: "Verify Current ORM Table and Create Pydantic Schemas"
           task_context: |
-            Generate Alembic migration for agent_runner_model_profile_defaults table.
+            Ensure current ORM metadata defines the agent_runner_model_profile_defaults table.
             Create Pydantic schemas: ModelProfileSchema (name, description),
             AgentRunnerModelProfileDefaultsSchema (agent_runner_type, model_profile_defaults dict).
-            Migration must be reversible.
+            Use init_db on a fresh temporary database and inspect the table and constraints.
           requirements:
             - id: "R1"
-              desc: "Alembic migration creates agent_runner_model_profile_defaults table"
+              desc: "Current ORM metadata creates agent_runner_model_profile_defaults"
               priority: critical
             - id: "R2"
-              desc: "Migration applies and reverses cleanly"
+              desc: "init_db and SQLAlchemy inspection confirm the table on a fresh database"
               priority: critical
             - id: "R3"
               desc: "Pydantic schemas validate correctly"
               priority: expected
           auto_verify:
             items:
-              - id: "migration_applies"
-                cmd: "uv run alembic upgrade head"
+              - id: "fresh_schema_table"
+                cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        tables = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))\\n    assert \\\"agent_runner_model_profile_defaults\\\" in tables\\n    await engine.dispose()'); asyncio.run(check())\""
                 must: true
 
         - id: "T-03"
@@ -514,19 +515,20 @@ routine:
         Verifier (CODER). Factory default prompts stored separately for reset.
       tasks:
         - id: "T-01"
-          title: "Create AgentConfig DB Model and Migration"
+          title: "Create AgentConfig DB Model in Current Schema"
           task_context: |
             Create src/orchestrator/agents/ directory (new, for the Agent concept).
             Create AgentConfigModel SQLAlchemy model with columns: id (UUID PK),
             name (str, unique), system_prompt (text), default_prompt (text),
             model_profile (ModelProfile enum), created_at, updated_at.
-            Generate and apply Alembic migration for agent_configs table.
+            Ensure the model is registered in current ORM metadata so init_db creates
+            agent_configs in a fresh database.
           requirements:
             - id: "R1"
               desc: "AgentConfigModel is importable from orchestrator.agents.models"
               priority: critical
             - id: "R2"
-              desc: "agent_configs table created via migration"
+              desc: "agent_configs table is created by init_db from current ORM metadata"
               priority: critical
             - id: "R3"
               desc: "Unique constraint on name column"
@@ -536,8 +538,8 @@ routine:
               - id: "model_import"
                 cmd: "uv run python -c \"from orchestrator.agents.models import AgentConfigModel; print('OK')\""
                 must: true
-              - id: "migration"
-                cmd: "uv run alembic upgrade head"
+              - id: "fresh_schema_table"
+                cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        tables = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))\\n    assert \\\"agent_configs\\\" in tables\\n    await engine.dispose()'); asyncio.run(check())\""
                 must: true
 
         - id: "T-02"

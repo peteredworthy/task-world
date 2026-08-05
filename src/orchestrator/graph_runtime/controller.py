@@ -135,8 +135,10 @@ class GraphController:
     ) -> GraphCommandResult:
         """Apply a command and atomically commit accepted events plus outbox rows.
 
-        The expensive part of this — reading the full run event log and
-        rebuilding the projection — happens BEFORE any write lock is taken.
+        Before taking a write lock, the controller loads the latest persisted
+        projection checkpoint and folds only its bounded event tail. If that
+        tail exceeds the runtime cap, the read model is reported unavailable;
+        command handling never falls back to replaying the full event log.
         Only the cheap position re-check and the append itself run inside the
         ``BEGIN IMMEDIATE`` write transaction, so the write lock is held for a
         bounded, small amount of work regardless of how large the run's event

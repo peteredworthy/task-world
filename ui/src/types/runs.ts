@@ -315,6 +315,50 @@ export interface GraphProjectionResponse {
   ready_nodes: string[];
 }
 
+export interface GraphReadPageMetadata {
+  owner?: string | null;
+  truncated: boolean;
+  total_known: number;
+  next_cursor: string | number | null;
+  original_bytes?: number | null;
+  sha256?: string | null;
+  fields: Record<string, GraphReadPageMetadata>;
+}
+
+export interface GraphTopologyResponse {
+  run_id: string;
+  event_count: number;
+  nodes: Array<Record<string, unknown>>;
+  edges: Array<Record<string, unknown>>;
+  truncated: boolean;
+  total_known: number;
+  next_cursor: number | null;
+  partial: boolean;
+  collection_meta: Record<string, GraphReadPageMetadata>;
+}
+
+export interface FinalInvariantBlockersResponse {
+  run_id: string;
+  event_count: number;
+  blockers: Array<Record<string, unknown>>;
+  truncated: boolean;
+  total_known: number;
+  next_cursor: string | number | null;
+  partial: boolean;
+  collection_meta: Record<string, GraphReadPageMetadata>;
+}
+
+export interface GraphRegionsResponse {
+  run_id: string;
+  event_count: number;
+  regions: Array<Record<string, unknown>>;
+  truncated: boolean;
+  total_known: number;
+  next_cursor: number | null;
+  partial: boolean;
+  collection_meta: Record<string, GraphReadPageMetadata>;
+}
+
 export interface SchedulerBlockedNode {
   node_id: string;
   reason: string;

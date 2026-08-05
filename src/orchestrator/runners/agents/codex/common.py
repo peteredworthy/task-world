@@ -961,7 +961,7 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
         "Do not run `git commit` manually; the orchestrator auto-commits allowed changes when you submit.\n"
         "- Leave only task-requested documentation/metadata changed, such as "
         "`docs/super-parent/`\n"
-        "- Do not edit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
+        "- Do not edit source code, tests, dependency files, lockfiles, or UI files.\n"
         "- Always use `git --no-pager` for git commands.\n"
         if context.work_mode == "oversight"
         else "## Git Workflow\n"

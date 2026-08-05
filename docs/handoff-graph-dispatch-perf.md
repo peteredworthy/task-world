@@ -113,8 +113,9 @@ Top `tottime` entries for the same test:
 ## Constraints
 
 - Run backend commands from `/Users/peter/code/task-world`.
-- **Never** `rm orchestrator.db`. New DB columns need an Alembic migration —
-  `create_all` (used for in-memory test DBs) does not add columns.
+- **Never** `rm orchestrator.db`. The project has no schema-upgrade contract;
+  schema changes belong in current ORM metadata and are validated on a fresh
+  temporary database. `init_db()` never alters existing tables.
 - Don't `git stash`/`git checkout` casually from the main root:
   `.orchestrator/state/history.jsonl` is git-tracked and has been truncated that
   way before.

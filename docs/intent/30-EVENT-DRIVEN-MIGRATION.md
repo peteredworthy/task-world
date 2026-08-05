@@ -93,10 +93,10 @@ Prep work that has value standalone and does not depend on the rest. Land first.
 
 #### 0.1 Per-aggregate sequence numbers
 - **Add** `sequence_number: Mapped[int]` column to `EventModel` (`orm/models.py:245`).
-- **Add** `UNIQUE(run_id, sequence_number)` index. Alembic migration.
+- **Add** `UNIQUE(run_id, sequence_number)` to current ORM metadata and verify
+  it through `init_db()` on a fresh temporary database.
 - **Add** `RunModel.next_event_sequence: Mapped[int] = mapped_column(default=0)` — server-side monotonic counter incremented in same transaction as event insert.
-- **Bootstrap**: backfill `sequence_number` for existing events by `(run_id, id)` order.
-- **Acceptance:** concurrent attempts to insert two events for the same run with the same sequence raise `IntegrityError`; existing test suite passes.
+- **Acceptance:** concurrent attempts to insert two events for the same run with the same sequence raise `IntegrityError`; fresh-schema inspection and the existing test suite pass.
 
 #### 0.2 Row-level optimistic locking on `RunModel`
 - **Add** `version: Mapped[int]` column to `RunModel` mirroring `TaskModel.version` (`orm/models.py:175`).

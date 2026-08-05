@@ -17,7 +17,11 @@ from orchestrator.graph import (
 )
 from orchestrator.graph_runtime.controller import GraphController
 from orchestrator.graph_runtime.errors import StaleProjectionError
-from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem
+from orchestrator.graph_runtime.outbox import (
+    OUTBOX_MAINTENANCE_BATCH_LIMIT,
+    OutboxDispatcher,
+    OutboxItem,
+)
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, GraphEventStore
 
 _TERMINAL_RUN_STATES = {"cancelled", "completed", "failed"}
@@ -30,6 +34,15 @@ def _empty_owned_attempts() -> list[dict[str, object]]:
 
 @dataclass(frozen=True)
 class RecoveryReport:
+    """Bounded startup reconciliation result.
+
+    ``pending_cleanups`` is a diagnostic prefix, not an exhaustive inventory.
+    It contains at most ``processed runs * OUTBOX_MAINTENANCE_BATCH_LIMIT``
+    items.  ``pending_items_truncated`` is true when at least one processed run
+    had additional pending rows beyond its reported prefix.  Dispatch is also
+    limited to one fixed batch per run; normal drive ticks provide convergence.
+    """
+
     redispatched: list[OutboxItem]
     pending_cleanups: list[OutboxItem]
     awaiting_start_ack: list[dict[str, object]]
@@ -38,6 +51,7 @@ class RecoveryReport:
     processed_run_ids: tuple[str, ...] = ()
     has_more: bool = False
     next_run_id: str | None = None
+    pending_items_truncated: bool = False
 
 
 async def recover(
@@ -117,15 +131,34 @@ async def recover(
 
     pending_before: list[OutboxItem] = []
     redispatched: list[OutboxItem] = []
+    pending_items_truncated = False
     for current_run_id in run_ids:
-        await dispatcher.requeue_failed_snapshot_cleanups_for_startup(
+        after_outbox_id: int | None = None
+        while True:
+            requeued_batch = await dispatcher.requeue_failed_snapshot_cleanups_for_startup(
+                run_id=current_run_id,
+                immediate=current_run_id in terminal_run_ids,
+                after_outbox_id=after_outbox_id,
+            )
+            if not requeued_batch:
+                break
+            after_outbox_id = requeued_batch[-1].outbox_id
+            del requeued_batch
+
+        pending_batch = await dispatcher.pending_items(
             run_id=current_run_id,
-            immediate=current_run_id in terminal_run_ids,
+            limit=OUTBOX_MAINTENANCE_BATCH_LIMIT,
         )
-        pending_before.extend(await dispatcher.pending_items(run_id=current_run_id))
+        pending_before.extend(pending_batch)
+        if pending_batch and await dispatcher.has_pending_items_after(
+            pending_batch[-1].outbox_id,
+            run_id=current_run_id,
+        ):
+            pending_items_truncated = True
         redispatched.extend(
             await dispatcher.dispatch_pending(
                 run_id=current_run_id,
+                limit=OUTBOX_MAINTENANCE_BATCH_LIMIT,
                 # Terminal recovery can only restore/delete owned snapshots.
                 # In particular, it never redelivers agent_dispatch.
                 allowed_kinds=(
@@ -145,6 +178,7 @@ async def recover(
         processed_run_ids=run_ids,
         has_more=has_more,
         next_run_id=next_run_id,
+        pending_items_truncated=pending_items_truncated,
     )
 
 

@@ -402,6 +402,7 @@ class GraphArchivalViewCheckpointModel(Base):
 
     run_id: Mapped[str] = mapped_column(String, primary_key=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class GraphTopologyViewEntryModel(Base):
@@ -415,6 +416,7 @@ class GraphTopologyViewEntryModel(Base):
     entry_kind: Mapped[str] = mapped_column(String, nullable=False)
     entry_id: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class GraphFinalBlockerViewEntryModel(Base):
@@ -423,11 +425,19 @@ class GraphFinalBlockerViewEntryModel(Base):
     __tablename__ = "graph_final_blocker_view_entries"
     __table_args__ = (
         Index("idx_graph_final_blocker_view_entries_run_sequence", "run_id", "sequence"),
+        Index(
+            "idx_graph_final_blocker_view_entries_run_region_sequence",
+            "run_id",
+            "task_region_id",
+            "sequence",
+        ),
     )
 
     run_id: Mapped[str] = mapped_column(String, primary_key=True)
     sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
+    task_region_id: Mapped[str | None] = mapped_column(String, nullable=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class GraphRegionViewEntryModel(Base):
@@ -443,6 +453,7 @@ class GraphRegionViewEntryModel(Base):
     sequence: Mapped[int] = mapped_column(Integer, primary_key=True)
     task_region_id: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class GraphNodeDetailSummaryModel(Base):
@@ -481,6 +492,40 @@ class GraphNodeDetailSummaryCheckpointModel(Base):
 
     run_id: Mapped[str] = mapped_column(String, primary_key=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class GraphNodeDetailCollectionFactModel(Base):
+    """Normalized durable fact backing compact node-detail collections.
+
+    Summary rows retain only their public prefix. These keyed, individually
+    bounded facts support scalar counts and capped keyset prefix reads without
+    trusting a previously trimmed summary row.
+    """
+
+    __tablename__ = "graph_node_detail_collection_facts"
+    __table_args__ = (
+        Index(
+            "idx_graph_node_detail_collection_facts_keyset",
+            "run_id",
+            "node_id",
+            "collection_name",
+            "item_key",
+        ),
+        Index(
+            "idx_graph_node_detail_collection_facts_lookup",
+            "run_id",
+            "collection_name",
+            "item_key",
+        ),
+    )
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    node_id: Mapped[str] = mapped_column(String, primary_key=True)
+    collection_name: Mapped[str] = mapped_column(String, primary_key=True)
+    item_key: Mapped[str] = mapped_column(String, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
 class GraphOutboxModel(Base):

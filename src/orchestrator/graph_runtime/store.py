@@ -12,7 +12,16 @@ from types import MappingProxyType
 from typing import Annotated, Any, Generic, Literal, Mapping, TypeVar, cast, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, ValidationError
-from sqlalchemy import LargeBinary, case, cast as sql_cast, delete, func, select, true, union_all
+from sqlalchemy import (
+    LargeBinary,
+    case,
+    cast as sql_cast,
+    delete,
+    func,
+    select,
+    true,
+    union_all,
+)
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +31,7 @@ from orchestrator.db import (
     GraphArtifactReferenceModel,
     GraphEventSummaryModel,
     GraphFinalBlockerViewEntryModel,
+    GraphNodeDetailCollectionFactModel,
     GraphNodeDetailSummaryCheckpointModel,
     GraphNodeDetailSummaryModel,
     GraphProjectionSnapshotModel,
@@ -54,12 +64,12 @@ from orchestrator.graph import (
     StoredArtifactRef,
     SUMMARY_REBUILD_PAYLOAD_FIELDS,
     initial_projection,
+    iter_archival_final_invariant_blockers,
+    iter_archival_graph_topology_entries,
     build_projection,
     merge_bound_record_ids,
     project_decision_view,
     project_decision_view_from_projection,
-    project_final_invariant_blockers,
-    project_graph_topology,
     project_leases,
     project_lease_view,
     projection_from_checkpoint,
@@ -87,6 +97,11 @@ GRAPH_JSON_ARRAY_ITEMS = 50
 GRAPH_JSON_DEPTH = 6
 GRAPH_RESPONSE_BYTES = 262_144
 GRAPH_FIXED_VIEW_ITEMS = 100
+GRAPH_ARCHIVAL_ENTRY_BYTES = GRAPH_RESPONSE_BYTES // 4
+# Keep room for route envelopes, Pydantic serialization differences, and the
+# failed-outbox overlay on /final-blockers.  The page reader uses only this
+# budget before it decodes persisted JSON.
+GRAPH_ARCHIVAL_PAGE_PAYLOAD_BYTES = GRAPH_RESPONSE_BYTES - (4 * 1024)
 GRAPH_EVENT_PAYLOAD_BYTES = 16_384
 GRAPH_RUNTIME_TAIL_EVENTS = 128
 GRAPH_READ_MODEL_REBUILD_BATCH_EVENTS = 100
@@ -97,6 +112,7 @@ _CHECKPOINT_TERMINAL_KEY = "_projection_terminal"
 # Compatibility-only location used by snapshots written before the dedicated
 # archival view tables.  No public route reads this adjunct.
 _MATERIALIZED_VIEWS_KEY = "_materialized_views"
+_ARCHIVAL_READ_CONTRACT_KEY = "_graph_archival_read_contract"
 HEAVY_GRAPH_EVENT_TYPES = frozenset(
     {
         "callback_accepted",
@@ -403,6 +419,25 @@ class GraphReadModelUnavailable(RuntimeError):
         )
 
 
+class GraphExpectedPositionMismatch(RuntimeError):
+    """A caller's graph read precondition no longer matches authority.
+
+    This is deliberately distinct from a stale read model.  A stale owner can
+    catch up to the requested position, whereas a graph that has advanced
+    requires the caller to discard its assembled multi-view result and begin
+    again from a new anchor position.
+    """
+
+    def __init__(self, run_id: str, expected_position: int, current_position: int) -> None:
+        self.run_id = run_id
+        self.expected_position = expected_position
+        self.current_position = current_position
+        super().__init__(
+            "graph position precondition failed for "
+            f"run {run_id}: expected {expected_position}, found {current_position}"
+        )
+
+
 def _contract(
     route_name: str,
     sql_rows: int,
@@ -571,6 +606,197 @@ def _canonical_json_bytes(value: Any) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
     ).encode()
+
+
+def _bounded_json_is_partial(value: Any) -> bool:
+    """Return whether a bounded JSON value carries nested truncation truth."""
+    if isinstance(value, dict):
+        mapping = cast(dict[str, Any], value)
+        if mapping.get("truncated") is True:
+            return True
+        contract = mapping.get(_READ_CONTRACT_KEY)
+        if isinstance(contract, dict):
+            typed_contract = cast(dict[str, Any], contract)
+            if typed_contract.get("partial") is True or typed_contract.get("truncated") is True:
+                return True
+        return any(_bounded_json_is_partial(item) for item in mapping.values())
+    if isinstance(value, list):
+        return any(_bounded_json_is_partial(item) for item in cast(list[Any], value))
+    return False
+
+
+def _archival_metadata(
+    owner: str,
+    original: Any,
+    *,
+    truncated: bool,
+) -> dict[str, Any]:
+    original_bytes = _canonical_json_bytes(original)
+    if isinstance(original, dict):
+        total_known = len(cast(dict[Any, Any], original))
+    elif isinstance(original, (list, tuple)):
+        total_known = len(cast(list[Any] | tuple[Any, ...], original))
+    else:
+        total_known = 1
+    return {
+        "revision": GRAPH_READ_CONTRACT_REVISION,
+        "owner": owner,
+        "truncated": truncated,
+        "total_known": total_known,
+        "next_cursor": f"sha256:{sha256(original_bytes).hexdigest()}" if truncated else None,
+        "original_bytes": len(original_bytes) if truncated else None,
+        "sha256": sha256(original_bytes).hexdigest() if truncated else None,
+    }
+
+
+def _bound_archival_value(
+    value: Any,
+    *,
+    owner: str,
+    path: str,
+    string_bytes: int,
+    array_items: int,
+    object_entries: int,
+    depth: int = 0,
+    root: bool = False,
+    metadata: dict[str, dict[str, Any]],
+) -> tuple[Any, bool]:
+    """Bound one archival entry while retaining JSON types required by routes.
+
+    ``bound_graph_json`` deliberately represents a truncated list as an
+    object containing value/hash metadata.  That is right for opaque JSON,
+    but not for response-model fields such as ``record_ids: list[str]``.  The
+    archival owner instead keeps the field's JSON shape and records equivalent
+    metadata in a reserved envelope stripped before model validation.
+    """
+    if isinstance(value, str):
+        if len(value.encode()) <= string_bytes:
+            return value, False
+        bounded = f"sha256:{sha256(value.encode()).hexdigest()}"
+        metadata[path] = _archival_metadata(owner, value, truncated=True)
+        return bounded, True
+    if value is None or isinstance(value, (bool, int, float)):
+        return value, False
+    if depth >= GRAPH_JSON_DEPTH:
+        metadata[path] = _archival_metadata(owner, value, truncated=True)
+        return None, True
+    if isinstance(value, list):
+        source = cast(list[Any], value)
+        retained = source[:array_items]
+        bounded_items: list[Any] = []
+        truncated = len(source) > len(retained)
+        for index, item in enumerate(retained):
+            bounded, child_truncated = _bound_archival_value(
+                item,
+                owner=owner,
+                path=f"{path}[{index}]",
+                string_bytes=string_bytes,
+                array_items=array_items,
+                object_entries=object_entries,
+                depth=depth + 1,
+                metadata=metadata,
+            )
+            bounded_items.append(bounded)
+            truncated = truncated or child_truncated
+        if len(source) > len(retained):
+            metadata[path] = _archival_metadata(owner, source, truncated=True)
+        return bounded_items, truncated
+    if isinstance(value, dict):
+        source = cast(dict[str, Any], value)
+        entries = list(source.items()) if root else sorted(source.items())[:object_entries]
+        bounded_mapping: dict[str, Any] = {}
+        truncated = len(entries) < len(source)
+        for key, item in entries:
+            bounded_key, key_truncated = _bound_archival_value(
+                str(key),
+                owner=owner,
+                path=f"{path}.key",
+                string_bytes=string_bytes,
+                array_items=array_items,
+                object_entries=object_entries,
+                depth=depth + 1,
+                metadata=metadata,
+            )
+            bounded, child_truncated = _bound_archival_value(
+                item,
+                owner=owner,
+                path=f"{path}.{bounded_key}",
+                string_bytes=string_bytes,
+                array_items=array_items,
+                object_entries=object_entries,
+                depth=depth + 1,
+                metadata=metadata,
+            )
+            bounded_mapping[str(bounded_key)] = bounded
+            truncated = truncated or key_truncated or child_truncated
+        if len(entries) < len(source):
+            metadata[path] = _archival_metadata(owner, source, truncated=True)
+        return bounded_mapping, truncated
+    return _bound_archival_value(
+        str(value),
+        owner=owner,
+        path=path,
+        string_bytes=string_bytes,
+        array_items=array_items,
+        object_entries=object_entries,
+        depth=depth,
+        metadata=metadata,
+    )
+
+
+def _bound_archival_payload(
+    run_id: str,
+    owner: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist one typed archival row under a hard individual byte budget."""
+    existing_contract = payload.get(_ARCHIVAL_READ_CONTRACT_KEY)
+    existing_fields: dict[str, dict[str, Any]] = {}
+    existing_partial = False
+    if isinstance(existing_contract, dict):
+        typed_contract = cast(dict[str, Any], existing_contract)
+        raw_fields = typed_contract.get("fields")
+        if isinstance(raw_fields, dict):
+            existing_fields = {
+                str(path): dict(cast(dict[str, Any], metadata))
+                for path, metadata in cast(dict[Any, Any], raw_fields).items()
+                if isinstance(metadata, dict)
+            }
+        existing_partial = typed_contract.get("partial") is True
+    source_payload = {
+        key: value for key, value in payload.items() if key != _ARCHIVAL_READ_CONTRACT_KEY
+    }
+    candidates = (
+        (GRAPH_STRING_BYTES, GRAPH_JSON_ARRAY_ITEMS, GRAPH_JSON_OBJECT_ENTRIES),
+        (1_024, 20, 16),
+        (256, 5, 8),
+        (64, 1, 4),
+    )
+    for string_bytes, array_items, object_entries in candidates:
+        fields = {path: dict(metadata) for path, metadata in existing_fields.items()}
+        bounded, partial = _bound_archival_value(
+            source_payload,
+            owner=owner,
+            path="$",
+            string_bytes=string_bytes,
+            array_items=array_items,
+            object_entries=object_entries,
+            root=True,
+            metadata=fields,
+        )
+        typed = cast(dict[str, Any], bounded)
+        if partial or existing_partial:
+            typed[_ARCHIVAL_READ_CONTRACT_KEY] = {
+                "revision": GRAPH_READ_CONTRACT_REVISION,
+                "partial": True,
+                "fields": fields,
+            }
+        if len(_canonical_json_bytes(typed)) <= GRAPH_ARCHIVAL_ENTRY_BYTES:
+            return typed
+    # The root only contains route-required fields and bounded scalar values;
+    # reaching this branch signals a malformed owner rather than silently
+    # storing an entry the public byte contract can never serve.
+    raise GraphReadModelUnavailable(run_id, owner, "entry_exceeds_byte_cap")
 
 
 def _json_utf8_byte_length(value: Any) -> Any:
@@ -928,6 +1154,34 @@ def _normalize_typed_value(
     if model_type is not None and value is not None:
         instance = value if isinstance(value, model_type) else model_type.model_validate(value)
         return _normalize_typed_model(instance, budget, owner=owner)
+    origin = get_origin(annotation)
+    if origin in {list, tuple}:
+        source = list(cast(list[Any] | tuple[Any, ...], value or []))
+        item_args = get_args(annotation)
+        item_annotation = item_args[0] if item_args else Any
+        bounded_items: list[Any] = []
+        nested_metadata: dict[str, dict[str, Any]] = {}
+        for index, item in enumerate(source[: budget.array_item_cap]):
+            normalized, _, child_metadata = _normalize_typed_value(
+                item,
+                item_annotation,
+                budget,
+                owner=f"{owner}.{index}",
+            )
+            bounded_items.append(normalized)
+            nested_metadata.update(
+                {f"{index}.{path}": metadata for path, metadata in child_metadata.items()}
+            )
+        truncated = len(source) > len(bounded_items)
+        if truncated:
+            nested_metadata["$"] = _typed_collection_metadata(
+                owner,
+                source,
+                bounded_items,
+                truncated=True,
+                contract=_list_contract(budget.array_item_cap, "self"),
+            )
+        return bounded_items, truncated, nested_metadata
     normalized, truncated = _normalize_graph_json(
         value,
         budget,
@@ -2068,16 +2322,29 @@ class GraphEventStore:
             for row in result
         ]
 
-    async def read_artifact_content_hashes(self, run_ids: list[str]) -> frozenset[str]:
-        """Read durable artifact mark facts without scanning event JSON history."""
-        if not run_ids:
-            return frozenset()
-        result = await self._session.execute(
+    async def artifact_content_hash_is_referenced(
+        self,
+        content_hash: str,
+        *,
+        repo_name: str,
+        excluding_run_id: str,
+    ) -> bool:
+        """Probe one project-scoped artifact mark without loading survivor IDs.
+
+        Garbage collection walks the filesystem one candidate at a time.  A
+        scalar join against the durable ``runs.repo_name`` project key keeps
+        that deletion path constant-memory even when the project has an
+        arbitrarily large number of surviving runs and references.
+        """
+        referenced = await self._session.scalar(
             select(GraphArtifactReferenceModel.content_hash)
-            .where(GraphArtifactReferenceModel.run_id.in_(run_ids))
-            .order_by(GraphArtifactReferenceModel.content_hash)
+            .join(RunModel, RunModel.id == GraphArtifactReferenceModel.run_id)
+            .where(GraphArtifactReferenceModel.content_hash == content_hash)
+            .where(GraphArtifactReferenceModel.run_id != excluding_run_id)
+            .where(RunModel.repo_name == repo_name)
+            .limit(1)
         )
-        return frozenset(str(content_hash) for content_hash in result.scalars())
+        return referenced is not None
 
     async def append_artifact_references(
         self,
@@ -4125,6 +4392,7 @@ class GraphEventStore:
         *,
         after_sequence: int,
         limit: int,
+        expected_position: int | None = None,
     ) -> tuple[int, BoundedGraphPage[dict[str, Any]]] | None:
         """Read one exact, keyset-paginated archival view without replaying events.
 
@@ -4133,17 +4401,76 @@ class GraphEventStore:
         decision owner's JSON budget or make a GET silently fold history.
         """
         current = await self.current_position(run_id)
+        if expected_position is not None and expected_position != current:
+            raise GraphExpectedPositionMismatch(run_id, expected_position, current)
         if current == 0:
             return None
         checkpoint = await self._session.get(GraphArchivalViewCheckpointModel, run_id)
         owner = GRAPH_READ_CONTRACTS[view_name].owner_read_model_name
-        if checkpoint is None or checkpoint.position != current:
+        if (
+            checkpoint is None
+            or checkpoint.position != current
+            or checkpoint.target_position is not None
+        ):
             raise GraphReadModelUnavailable(
                 run_id,
                 owner,
                 "missing_or_stale",
                 current_position=current,
             )
+
+        async def page_rows(model: Any) -> tuple[list[Any], bool]:
+            """Select a byte-fitting keyset page before JSON ORM decoding."""
+            # Never trust the denormalized size column as the decode guard. A
+            # corrupt/legacy row may claim a small positive value; SQLite must
+            # measure the JSON text before the ORM is allowed to deserialize it.
+            payload_size = _json_utf8_byte_length(model.payload)
+            candidate_result = await self._session.execute(
+                select(model.sequence, payload_size.label("payload_size"))
+                .where(model.run_id == run_id)
+                .where(model.sequence > after_sequence)
+                .order_by(model.sequence)
+                .limit(limit + 1)
+            )
+            selected_sequences: list[int] = []
+            used_bytes = 0
+            candidates = list(candidate_result)
+            for candidate in candidates[:limit]:
+                size = int(candidate.payload_size or 0)
+                if size > GRAPH_ARCHIVAL_ENTRY_BYTES:
+                    raise GraphReadModelUnavailable(
+                        run_id,
+                        owner,
+                        "entry_exceeds_byte_cap",
+                        current_position=current,
+                    )
+                # The row is still JSON at this point.  Count a conservative
+                # response-envelope allowance before electing to decode it.
+                contribution = size + 128
+                if (
+                    selected_sequences
+                    and used_bytes + contribution > GRAPH_ARCHIVAL_PAGE_PAYLOAD_BYTES
+                ):
+                    break
+                if not selected_sequences and contribution > GRAPH_ARCHIVAL_PAGE_PAYLOAD_BYTES:
+                    raise GraphReadModelUnavailable(
+                        run_id,
+                        owner,
+                        "entry_exceeds_page_byte_cap",
+                        current_position=current,
+                    )
+                selected_sequences.append(int(candidate.sequence))
+                used_bytes += contribution
+            if not selected_sequences:
+                return [], bool(candidates)
+            decoded_result = await self._session.execute(
+                select(model)
+                .where(model.run_id == run_id)
+                .where(model.sequence.in_(selected_sequences))
+                .order_by(model.sequence)
+            )
+            has_more = len(selected_sequences) < len(candidates)
+            return list(decoded_result.scalars()), has_more
 
         if view_name == "topology":
             total_known = int(
@@ -4154,14 +4481,7 @@ class GraphEventStore:
                 )
                 or 0
             )
-            result = await self._session.execute(
-                select(GraphTopologyViewEntryModel)
-                .where(GraphTopologyViewEntryModel.run_id == run_id)
-                .where(GraphTopologyViewEntryModel.sequence > after_sequence)
-                .order_by(GraphTopologyViewEntryModel.sequence)
-                .limit(limit)
-            )
-            rows = list(result.scalars())
+            rows, has_more = await page_rows(GraphTopologyViewEntryModel)
             items = [{**dict(row.payload), "_entry_kind": row.entry_kind} for row in rows]
         elif view_name == "final_blockers":
             total_known = int(
@@ -4172,14 +4492,7 @@ class GraphEventStore:
                 )
                 or 0
             )
-            result = await self._session.execute(
-                select(GraphFinalBlockerViewEntryModel)
-                .where(GraphFinalBlockerViewEntryModel.run_id == run_id)
-                .where(GraphFinalBlockerViewEntryModel.sequence > after_sequence)
-                .order_by(GraphFinalBlockerViewEntryModel.sequence)
-                .limit(limit)
-            )
-            rows = list(result.scalars())
+            rows, has_more = await page_rows(GraphFinalBlockerViewEntryModel)
             items = [dict(row.payload) for row in rows]
         else:
             total_known = int(
@@ -4190,16 +4503,9 @@ class GraphEventStore:
                 )
                 or 0
             )
-            result = await self._session.execute(
-                select(GraphRegionViewEntryModel)
-                .where(GraphRegionViewEntryModel.run_id == run_id)
-                .where(GraphRegionViewEntryModel.sequence > after_sequence)
-                .order_by(GraphRegionViewEntryModel.sequence)
-                .limit(limit)
-            )
-            rows = list(result.scalars())
+            rows, has_more = await page_rows(GraphRegionViewEntryModel)
             items = [dict(row.payload) for row in rows]
-        next_cursor = rows[-1].sequence if rows and rows[-1].sequence < total_known else None
+        next_cursor = rows[-1].sequence if rows and has_more else None
         return checkpoint.position, BoundedGraphPage(
             items=tuple(items),
             truncated=next_cursor is not None,
@@ -4448,25 +4754,38 @@ class GraphEventStore:
             await self.delete_node_detail_summaries(run_id)
             return
 
-        existing_node_ids = await self._node_detail_node_ids(run_id)
-        if _has_missing_preexisting_node_reference(events, existing_node_ids):
-            await self.delete_node_detail_summaries(run_id)
-            return
         lease_update_ids = _lease_update_ids(events)
         lease_rows = await self._node_detail_rows_for_leases(run_id, lease_update_ids)
         rows = await self._node_detail_rows_for_events(
             run_id,
             events,
-            existing_node_ids | set(lease_rows),
+            set(lease_rows),
         )
         rows.update(lease_rows)
+        created_node_ids = {
+            node_id
+            for event in events
+            if event.event_type == "node_created"
+            and isinstance((node_id := event.payload.get("node_id")), str)
+        }
+        referenced_node_ids: set[str] = set()
+        for event in events:
+            referenced_node_ids.update(
+                _referenced_node_ids(_node_detail_light_event(event).payload, set())
+            )
+        if checkpoint is not None and any(
+            node_id not in rows and node_id not in created_node_ids
+            for node_id in referenced_node_ids
+        ):
+            await self.delete_node_detail_summaries(run_id)
+            return
         summaries = {node_id: _node_detail_summary_from_row(row) for node_id, row in rows.items()}
         edge_ports = await self._edge_ports_for_input_bounds(run_id, events)
         updated = _apply_node_detail_events(
             run_id,
             events,
             position=current_position,
-            existing_node_ids=existing_node_ids | set(summaries),
+            existing_node_ids=set(summaries),
             summaries=summaries,
             edge_ports=edge_ports,
         )
@@ -4476,11 +4795,30 @@ class GraphEventStore:
                 row = GraphNodeDetailSummaryModel(run_id=run_id, node_id=summary.node_id)
                 self._session.add(row)
             _assign_node_detail_summary(row, summary)
+            rows[summary.node_id] = row
 
+        affected = await self._upsert_node_detail_collection_facts(
+            run_id,
+            events,
+            summaries=updated,
+        )
+        await self._session.flush()
+        for node_id, collection_names in affected.items():
+            row = rows.get(node_id)
+            if row is not None:
+                await self._refresh_node_detail_collections(
+                    row,
+                    collection_names=collection_names,
+                    position=current_position,
+                )
         if checkpoint is None:
-            checkpoint = GraphNodeDetailSummaryCheckpointModel(run_id=run_id, position=0)
+            checkpoint = GraphNodeDetailSummaryCheckpointModel(
+                run_id=run_id,
+                position=current_position,
+            )
             self._session.add(checkpoint)
-        checkpoint.position = current_position
+        else:
+            checkpoint.position = current_position
         await self._session.flush()
 
     async def advance_projection_snapshot(
@@ -4540,133 +4878,351 @@ class GraphEventStore:
         projection: GraphProjection,
         position: int,
     ) -> GraphProjectionSnapshotModel:
-        """Persist a full projection checkpoint plus compact API columns."""
+        """Persist the current projection and mark archival views dirty in O(1)."""
         row = await self._session.get(GraphProjectionSnapshotModel, run_id)
         if row is None:
             row = GraphProjectionSnapshotModel(run_id=run_id)
             self._session.add(row)
         _assign_projection_snapshot(row, run_id, projection, position)
-        await self._sync_archival_projection_views(run_id, projection, position)
+        await self._mark_archival_views_dirty(run_id, position)
         await self._session.flush()
         return row
 
-    async def _sync_archival_projection_views(
+    async def _mark_archival_views_dirty(self, run_id: str, position: int) -> None:
+        """Record the newest archival target without replacing published rows."""
+        checkpoint = await self._session.get(GraphArchivalViewCheckpointModel, run_id)
+        if checkpoint is None:
+            self._session.add(
+                GraphArchivalViewCheckpointModel(
+                    run_id=run_id,
+                    position=0,
+                    target_position=position,
+                )
+            )
+            return
+        if checkpoint.position == position and checkpoint.target_position is None:
+            return
+        checkpoint.target_position = position
+
+    async def rebuild_archival_views(
         self,
         run_id: str,
-        projection: GraphProjection,
-        position: int,
-    ) -> None:
-        """Synchronize exact archival read owners from one projection state.
+        *,
+        batch_size: int = GRAPH_READ_MODEL_REBUILD_BATCH_EVENTS,
+    ) -> bool:
+        """Rebuild one complete archival generation from bounded event batches.
 
-        These owners are intentionally allowed to hold every row.  The public
-        byte/page budgets apply when rendering a page, whereas persisted
-        topology, blockers, and regions must stay complete for later pages.
-
-        An event append must not delete and recreate every archival row.  In
-        addition to creating needless write amplification, that briefly makes
-        a committed projection look empty to another reader.  Stable sequence
-        rows are therefore updated in place and only the obsolete suffix is
-        removed.  A projection's entries are ordered deterministically, so a
-        changed prefix naturally replaces the corresponding primary keys.
+        The reducer holds memory proportional to current graph state, never
+        authority history. Published rows remain untouched until the complete
+        topology, blocker, and region generation is ready; one transaction then
+        replaces all three owners and advances their shared checkpoint last.
         """
-        topology = cast(dict[str, Any], project_graph_topology([], projection=projection))
-        topology_rows: list[tuple[int, str, str, dict[str, Any]]] = []
-        sequence = 0
-        for entry_kind in ("node", "edge"):
-            maybe_entries = topology.get(f"{entry_kind}s", [])
-            raw_entries = (
-                cast(list[Mapping[str, Any]], maybe_entries)
-                if isinstance(maybe_entries, list)
-                else []
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        target_position = await self.current_position(run_id)
+        if target_position == 0:
+            return True
+
+        checkpoint = await self._session.get(GraphArchivalViewCheckpointModel, run_id)
+        if checkpoint is None:
+            checkpoint = GraphArchivalViewCheckpointModel(
+                run_id=run_id,
+                position=0,
+                target_position=target_position,
             )
-            for raw_entry in raw_entries:
-                entry: dict[str, Any] = dict(raw_entry)
-                entry_id = entry.get(f"{entry_kind}_id")
-                if not isinstance(entry_id, str):
-                    continue
-                sequence += 1
-                topology_rows.append((sequence, entry_kind, entry_id, dict(entry)))
-        for sequence, entry_kind, entry_id, payload in topology_rows:
-            row = await self._session.get(
-                GraphTopologyViewEntryModel, {"run_id": run_id, "sequence": sequence}
+            self._session.add(checkpoint)
+        elif checkpoint.position == target_position and checkpoint.target_position is None:
+            return True
+        else:
+            checkpoint.target_position = target_position
+        await self._session.flush()
+
+        projection = initial_projection()
+        from_position = 1
+        reduced_position = 0
+        while from_position <= target_position:
+            events = await self.read_run_projection(
+                run_id,
+                from_position=from_position,
+                limit=min(batch_size, target_position - from_position + 1),
             )
-            if row is None:
-                self._session.add(
+            if not events:
+                raise GraphReadModelUnavailable(
+                    run_id,
+                    "graph_archival_maintenance",
+                    "incomplete_authority_batch",
+                    current_position=target_position,
+                )
+            for event in events:
+                if event.position > target_position:
+                    break
+                projection = reduce_event(projection, event)
+                reduced_position = event.position
+            from_position = reduced_position + 1
+        if reduced_position != target_position:
+            raise GraphReadModelUnavailable(
+                run_id,
+                "graph_archival_maintenance",
+                "incomplete_authority_batch",
+                current_position=target_position,
+            )
+
+        # One current projection is the documented global-state tradeoff.  The
+        # generation writer below never adds a second complete topology,
+        # blocker, or region collection in Python.  Its savepoint is also the
+        # publication boundary: a failed generation restores every old row,
+        # while the already-dirty outer checkpoint remains retryable.
+        async with self._session.begin_nested():
+            await self._session.execute(
+                delete(GraphTopologyViewEntryModel).where(
+                    GraphTopologyViewEntryModel.run_id == run_id
+                )
+            )
+            await self._session.execute(
+                delete(GraphFinalBlockerViewEntryModel).where(
+                    GraphFinalBlockerViewEntryModel.run_id == run_id
+                )
+            )
+            await self._session.execute(
+                delete(GraphRegionViewEntryModel).where(GraphRegionViewEntryModel.run_id == run_id)
+            )
+
+            pending_rows: list[Any] = []
+
+            async def add_batched(row: Any) -> None:
+                pending_rows.append(row)
+                if len(pending_rows) >= batch_size:
+                    self._session.add_all(pending_rows)
+                    await self._session.flush()
+                    pending_rows.clear()
+
+            async def flush_batch() -> None:
+                if pending_rows:
+                    self._session.add_all(pending_rows)
+                    await self._session.flush()
+                    pending_rows.clear()
+
+            for sequence, (entry_kind, entry_id, payload) in enumerate(
+                iter_archival_graph_topology_entries(
+                    projection,
+                    collection_limit=GRAPH_JSON_ARRAY_ITEMS,
+                ),
+                start=1,
+            ):
+                bounded = _bound_archival_payload(run_id, "topology", payload)
+                await add_batched(
                     GraphTopologyViewEntryModel(
                         run_id=run_id,
                         sequence=sequence,
                         entry_kind=entry_kind,
                         entry_id=entry_id,
-                        payload=payload,
+                        payload=bounded,
+                        payload_bytes=len(_canonical_json_bytes(bounded)),
                     )
                 )
-            else:
-                row.entry_kind = entry_kind
-                row.entry_id = entry_id
-                row.payload = payload
-        await self._session.execute(
-            delete(GraphTopologyViewEntryModel)
-            .where(GraphTopologyViewEntryModel.run_id == run_id)
-            .where(GraphTopologyViewEntryModel.sequence > len(topology_rows))
-        )
+            await flush_batch()
 
-        blockers = project_final_invariant_blockers([], projection=projection)
-        for sequence, blocker in enumerate(blockers, start=1):
-            row = await self._session.get(
-                GraphFinalBlockerViewEntryModel, {"run_id": run_id, "sequence": sequence}
-            )
-            if row is None:
-                self._session.add(
+            for sequence, blocker in enumerate(
+                iter_archival_final_invariant_blockers(
+                    [],
+                    projection,
+                    collection_limit=GRAPH_JSON_ARRAY_ITEMS,
+                ),
+                start=1,
+            ):
+                payload = dict(blocker)
+                bounded = _bound_archival_payload(run_id, "final_blockers", payload)
+                task_region_id = payload.get("task_region_id")
+                typed_region_id = str(task_region_id) if isinstance(task_region_id, str) else None
+                await add_batched(
                     GraphFinalBlockerViewEntryModel(
-                        run_id=run_id, sequence=sequence, payload=dict(blocker)
-                    )
-                )
-            else:
-                row.payload = dict(blocker)
-        await self._session.execute(
-            delete(GraphFinalBlockerViewEntryModel)
-            .where(GraphFinalBlockerViewEntryModel.run_id == run_id)
-            .where(GraphFinalBlockerViewEntryModel.sequence > len(blockers))
-        )
-        task_states = task_states_view(projection)
-        blockers_by_region: dict[str, list[dict[str, Any]]] = {}
-        for blocker in blockers:
-            region = blocker.get("task_region_id")
-            if isinstance(region, str) and region:
-                blockers_by_region.setdefault(region, []).append(dict(blocker))
-        region_ids = sorted(set(task_states) | set(blockers_by_region))
-        for sequence, region_id in enumerate(region_ids, start=1):
-            payload = {
-                "task_region_id": region_id,
-                "state": task_states.get(region_id, "blocked"),
-                "blockers": blockers_by_region.get(region_id, []),
-            }
-            row = await self._session.get(
-                GraphRegionViewEntryModel, {"run_id": run_id, "sequence": sequence}
-            )
-            if row is None:
-                self._session.add(
-                    GraphRegionViewEntryModel(
                         run_id=run_id,
                         sequence=sequence,
-                        task_region_id=region_id,
-                        payload=payload,
+                        task_region_id=typed_region_id,
+                        payload=bounded,
+                        payload_bytes=len(_canonical_json_bytes(bounded)),
                     )
                 )
-            else:
-                row.task_region_id = region_id
-                row.payload = payload
-        await self._session.execute(
-            delete(GraphRegionViewEntryModel)
-            .where(GraphRegionViewEntryModel.run_id == run_id)
-            .where(GraphRegionViewEntryModel.sequence > len(region_ids))
-        )
-        checkpoint = await self._session.get(GraphArchivalViewCheckpointModel, run_id)
-        if checkpoint is None:
-            checkpoint = GraphArchivalViewCheckpointModel(run_id=run_id, position=position)
-            self._session.add(checkpoint)
-        else:
-            checkpoint.position = position
+            await flush_batch()
+
+            task_states = task_states_view(projection)
+            task_region_ids = sorted(str(region_id) for region_id in task_states)
+            task_index = 0
+            blocker_region_page: list[str] = []
+            blocker_region_index = 0
+            blocker_region_after: str | None = None
+            blocker_regions_exhausted = False
+            region_sequence = 0
+
+            while True:
+                if (
+                    blocker_region_index >= len(blocker_region_page)
+                    and not blocker_regions_exhausted
+                ):
+                    region_stmt = (
+                        select(GraphFinalBlockerViewEntryModel.task_region_id)
+                        .where(GraphFinalBlockerViewEntryModel.run_id == run_id)
+                        .where(GraphFinalBlockerViewEntryModel.task_region_id.is_not(None))
+                        .distinct()
+                        .order_by(GraphFinalBlockerViewEntryModel.task_region_id)
+                        .limit(batch_size)
+                    )
+                    if blocker_region_after is not None:
+                        region_stmt = region_stmt.where(
+                            GraphFinalBlockerViewEntryModel.task_region_id > blocker_region_after
+                        )
+                    blocker_region_page = [
+                        str(value) for value in (await self._session.scalars(region_stmt)).all()
+                    ]
+                    blocker_region_index = 0
+                    if blocker_region_page:
+                        blocker_region_after = blocker_region_page[-1]
+                    else:
+                        blocker_regions_exhausted = True
+
+                task_region_id = (
+                    task_region_ids[task_index] if task_index < len(task_region_ids) else None
+                )
+                blocker_region_id = (
+                    blocker_region_page[blocker_region_index]
+                    if blocker_region_index < len(blocker_region_page)
+                    else None
+                )
+                if task_region_id is None and blocker_region_id is None:
+                    if blocker_regions_exhausted:
+                        break
+                    continue
+                if blocker_region_id is None or (
+                    task_region_id is not None and task_region_id < blocker_region_id
+                ):
+                    assert task_region_id is not None
+                    region_id = task_region_id
+                    task_index += 1
+                elif task_region_id is None or blocker_region_id < task_region_id:
+                    region_id = blocker_region_id
+                    blocker_region_index += 1
+                else:
+                    assert task_region_id is not None
+                    region_id = task_region_id
+                    task_index += 1
+                    blocker_region_index += 1
+
+                blocker_count = int(
+                    await self._session.scalar(
+                        select(func.count())
+                        .select_from(GraphFinalBlockerViewEntryModel)
+                        .where(GraphFinalBlockerViewEntryModel.run_id == run_id)
+                        .where(GraphFinalBlockerViewEntryModel.task_region_id == region_id)
+                    )
+                    or 0
+                )
+                blocker_payload_size = _json_utf8_byte_length(
+                    GraphFinalBlockerViewEntryModel.payload
+                )
+                blocker_prefix_result = await self._session.execute(
+                    select(
+                        GraphFinalBlockerViewEntryModel.sequence,
+                        blocker_payload_size.label("payload_size"),
+                        case(
+                            (
+                                blocker_payload_size <= GRAPH_ARCHIVAL_ENTRY_BYTES,
+                                GraphFinalBlockerViewEntryModel.payload,
+                            ),
+                            else_=None,
+                        ).label("bounded_payload"),
+                    )
+                    .where(GraphFinalBlockerViewEntryModel.run_id == run_id)
+                    .where(GraphFinalBlockerViewEntryModel.task_region_id == region_id)
+                    .order_by(GraphFinalBlockerViewEntryModel.sequence)
+                    .limit(GRAPH_JSON_ARRAY_ITEMS)
+                )
+                retained: list[dict[str, Any]] = []
+                retained_sequences: list[int] = []
+                for blocker_row in blocker_prefix_result:
+                    if blocker_row.bounded_payload is None:
+                        raise GraphReadModelUnavailable(
+                            run_id,
+                            "regions",
+                            "nested_blocker_exceeds_byte_cap",
+                            current_position=target_position,
+                        )
+                    raw_payload = blocker_row.bounded_payload
+                    if isinstance(raw_payload, str):
+                        try:
+                            decoded_payload = json.loads(raw_payload)
+                        except json.JSONDecodeError as exc:
+                            raise GraphReadModelUnavailable(
+                                run_id,
+                                "regions",
+                                "malformed_nested_blocker_payload",
+                                current_position=target_position,
+                            ) from exc
+                    else:
+                        decoded_payload = raw_payload
+                    if not isinstance(decoded_payload, dict):
+                        raise GraphReadModelUnavailable(
+                            run_id,
+                            "regions",
+                            "malformed_nested_blocker_payload",
+                            current_position=target_position,
+                        )
+                    retained.append(dict(cast(dict[str, Any], decoded_payload)))
+                    retained_sequences.append(int(blocker_row.sequence))
+
+                bounded = _bound_archival_payload(
+                    run_id,
+                    "regions",
+                    {
+                        "task_region_id": region_id,
+                        "state": str(task_states.get(region_id, "blocked")),
+                        "blockers": retained,
+                    },
+                )
+                if blocker_count > len(retained):
+                    contract = bounded.setdefault(
+                        _ARCHIVAL_READ_CONTRACT_KEY,
+                        {
+                            "revision": GRAPH_READ_CONTRACT_REVISION,
+                            "partial": True,
+                            "fields": {},
+                        },
+                    )
+                    fields = contract.setdefault("fields", {})
+                    fields["$.blockers"] = {
+                        "revision": GRAPH_READ_CONTRACT_REVISION,
+                        "owner": "regions",
+                        "truncated": True,
+                        "total_known": blocker_count,
+                        "next_cursor": retained_sequences[-1] if retained_sequences else 0,
+                        "original_bytes": None,
+                        "sha256": None,
+                    }
+                    contract["partial"] = True
+                region_sequence += 1
+                await add_batched(
+                    GraphRegionViewEntryModel(
+                        run_id=run_id,
+                        sequence=region_sequence,
+                        task_region_id=region_id,
+                        payload=bounded,
+                        payload_bytes=len(_canonical_json_bytes(bounded)),
+                    )
+                )
+            await flush_batch()
+
+            checkpoint.position = target_position
+            checkpoint.target_position = None
+            await self._session.flush()
+        return True
+
+    async def advance_archival_view_maintenance(
+        self,
+        run_id: str,
+        *,
+        batch_size: int = GRAPH_READ_MODEL_REBUILD_BATCH_EVENTS,
+    ) -> bool:
+        """Compatibility name for the explicit generation rebuild."""
+        return await self.rebuild_archival_views(run_id, batch_size=batch_size)
 
     async def commit_read_model_changes(self) -> None:
         """Persist disposable read-model rebuilds performed during API reads."""
@@ -4703,6 +5259,11 @@ class GraphEventStore:
 
     async def delete_node_detail_summaries(self, run_id: str, *, flush: bool = True) -> None:
         """Delete disposable compact node-detail rows for a run."""
+        await self._session.execute(
+            delete(GraphNodeDetailCollectionFactModel).where(
+                GraphNodeDetailCollectionFactModel.run_id == run_id
+            )
+        )
         await self._session.execute(
             delete(GraphNodeDetailSummaryModel).where(GraphNodeDetailSummaryModel.run_id == run_id)
         )
@@ -4877,27 +5438,36 @@ class GraphEventStore:
         model.token_usage_by_model = existing
         await self._session.flush()
 
-    async def rebuild_node_detail_summaries(self, run_id: str) -> None:
-        """Rebuild disposable compact node-detail rows for a run from events_v2."""
-        await self.delete_node_detail_summaries(run_id)
-        events = await self.read_run_node_detail(run_id)
-        if not events:
-            return
-        position = max(event.position for event in events)
-        _add_node_detail_summaries(
-            self._session,
-            _node_detail_summaries_from_events(run_id, events, position=position),
-        )
-        self._session.add(GraphNodeDetailSummaryCheckpointModel(run_id=run_id, position=position))
-        await self._session.flush()
+    async def rebuild_node_detail_summaries(self, run_id: str, *, batch_size: int = 100) -> None:
+        """Rebuild node-detail owners by bounded, keyset event windows.
 
-    async def _node_detail_node_ids(self, run_id: str) -> set[str]:
-        result = await self._session.execute(
-            select(GraphNodeDetailSummaryModel.node_id).where(
-                GraphNodeDetailSummaryModel.run_id == run_id
+        Each window is applied through the same incremental writer used by live
+        appends. Normalized facts retain exact totals while public summaries
+        retain only capped prefixes and stable continuations; arbitrarily large
+        collections do not promise whole-list byte counts or digests.
+        """
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        await self.delete_node_detail_summaries(run_id)
+        from_position = 1
+        checkpoint_position = 0
+        while True:
+            events = await self.read_run_node_detail(
+                run_id,
+                from_position=from_position,
+                limit=batch_size,
             )
-        )
-        return {str(node_id) for node_id in result.scalars()}
+            if not events:
+                return
+            await self.append_node_detail_summaries(
+                run_id,
+                events,
+                expected_position=checkpoint_position,
+            )
+            checkpoint_position = events[-1].position
+            from_position = checkpoint_position + 1
+            if len(events) < batch_size:
+                return
 
     async def _node_detail_rows_for_events(
         self,
@@ -4908,7 +5478,8 @@ class GraphEventStore:
         node_ids: set[str] = set()
         for event in events:
             light_event = _node_detail_light_event(event)
-            node_ids.update(_referenced_node_ids(light_event.payload, known_node_ids | node_ids))
+            node_ids.update(_referenced_node_ids(light_event.payload, set()))
+        node_ids.update(known_node_ids)
         if not node_ids:
             return {}
         result = await self._session.execute(
@@ -4925,23 +5496,390 @@ class GraphEventStore:
     ) -> dict[str, GraphNodeDetailSummaryModel]:
         if not lease_ids:
             return {}
-        result = await self._session.execute(
-            select(GraphNodeDetailSummaryModel).where(GraphNodeDetailSummaryModel.run_id == run_id)
+        node_result = await self._session.execute(
+            select(GraphNodeDetailCollectionFactModel.node_id)
+            .where(GraphNodeDetailCollectionFactModel.run_id == run_id)
+            .where(GraphNodeDetailCollectionFactModel.collection_name == "leases")
+            .where(GraphNodeDetailCollectionFactModel.item_key.in_(sorted(lease_ids)))
         )
-        rows: dict[str, GraphNodeDetailSummaryModel] = {}
-        for row in result.scalars():
-            active_lease = row.active_lease
-            if isinstance(active_lease, dict) and active_lease.get("lease_id") in lease_ids:
-                rows[row.node_id] = row
-                continue
-            for lease in row.leases:
+        node_ids = sorted({str(node_id) for node_id in node_result.scalars()})
+        if not node_ids:
+            return {}
+        result = await self._session.execute(
+            select(GraphNodeDetailSummaryModel)
+            .where(GraphNodeDetailSummaryModel.run_id == run_id)
+            .where(GraphNodeDetailSummaryModel.node_id.in_(node_ids))
+        )
+        return {row.node_id: row for row in result.scalars()}
+
+    async def _upsert_node_detail_collection_facts(
+        self,
+        run_id: str,
+        events: list[EventEnvelope],
+        *,
+        summaries: dict[str, GraphNodeDetailSummary],
+    ) -> dict[str, set[str]]:
+        """Apply event-targeted normalized collection facts.
+
+        Facts are keyed by their canonical public ordering identity.  Updating
+        an old lease therefore replaces one row, while inserting a record with
+        a lexically lower id naturally dirties the retained prefix without
+        requiring the discarded summary tail.
+        """
+
+        affected: dict[str, set[str]] = {}
+
+        async def upsert(
+            node_id: str,
+            collection_name: str,
+            item_key: str,
+            position: int,
+            payload: dict[str, Any],
+        ) -> None:
+            if len(_canonical_json_bytes(payload)) <= GRAPH_ARCHIVAL_ENTRY_BYTES:
+                bounded_payload = payload
+            else:
+                bounded_payload = _bound_archival_payload(
+                    run_id,
+                    f"node_detail.{collection_name}",
+                    payload,
+                )
+            payload_json = _canonical_json_bytes(bounded_payload).decode()
+            row = await self._session.get(
+                GraphNodeDetailCollectionFactModel,
+                (run_id, node_id, collection_name, item_key),
+            )
+            if row is None:
+                row = GraphNodeDetailCollectionFactModel(
+                    run_id=run_id,
+                    node_id=node_id,
+                    collection_name=collection_name,
+                    item_key=item_key,
+                    position=position,
+                    payload_json=payload_json,
+                    payload_bytes=len(payload_json.encode()),
+                )
+                self._session.add(row)
+            else:
+                row.position = position
+                row.payload_json = payload_json
+                row.payload_bytes = len(payload_json.encode())
+            affected.setdefault(node_id, set()).add(collection_name)
+
+        for event in events:
+            light_event = _node_detail_light_event(event)
+            payload = light_event.payload
+            node_ids = _referenced_node_ids(payload, set())
+            event_payload = _node_event_response(light_event)
+            event_key = f"{light_event.position:020d}"
+            for node_id in sorted(node_ids):
+                await upsert(node_id, "events", event_key, light_event.position, event_payload)
+                if _is_callback_history_event(light_event):
+                    await upsert(
+                        node_id,
+                        "callback_history",
+                        event_key,
+                        light_event.position,
+                        event_payload,
+                    )
+
+            if light_event.event_type == "output_record_accepted":
+                node_id = payload.get("producer_node_id")
+                record_id = payload.get("record_id")
+                record_kind = payload.get("record_kind")
                 if (
-                    isinstance(lease, dict)
-                    and cast(dict[str, Any], lease).get("lease_id") in lease_ids
+                    isinstance(node_id, str)
+                    and isinstance(record_id, str)
+                    and isinstance(record_kind, str)
+                    and record_kind != "file_state"
                 ):
-                    rows[row.node_id] = row
-                    break
-        return rows
+                    await upsert(
+                        node_id,
+                        "output_records",
+                        record_id,
+                        light_event.position,
+                        dict(payload),
+                    )
+            elif light_event.event_type == "file_state_accepted":
+                node_id = payload.get("producer_node_id")
+                record_id = payload.get("record_id")
+                if isinstance(node_id, str) and isinstance(record_id, str):
+                    await upsert(
+                        node_id,
+                        "file_state_records",
+                        record_id,
+                        light_event.position,
+                        _compact_file_state_record(payload),
+                    )
+            elif light_event.event_type == "lease_granted":
+                node_id = payload.get("node_id")
+                lease_id = payload.get("lease_id")
+                if isinstance(node_id, str) and isinstance(lease_id, str):
+                    summary = summaries.get(node_id)
+                    await upsert(
+                        node_id,
+                        "leases",
+                        lease_id,
+                        light_event.position,
+                        _lease_from_grant(
+                            payload,
+                            summary.kind if summary is not None else None,
+                            summary.task_region_id if summary is not None else None,
+                        ),
+                    )
+            elif light_event.event_type in {
+                "lease_suspended",
+                "lease_revoked",
+                "lease_expired",
+                "lease_released",
+            }:
+                lease_id = payload.get("lease_id")
+                if not isinstance(lease_id, str):
+                    continue
+                lease_payload_bytes = func.length(
+                    sql_cast(GraphNodeDetailCollectionFactModel.payload_json, LargeBinary)
+                )
+                fact_result = await self._session.execute(
+                    select(
+                        GraphNodeDetailCollectionFactModel.node_id,
+                        GraphNodeDetailCollectionFactModel.position,
+                        case(
+                            (
+                                lease_payload_bytes <= GRAPH_ARCHIVAL_ENTRY_BYTES,
+                                GraphNodeDetailCollectionFactModel.payload_json,
+                            ),
+                            else_=None,
+                        ).label("bounded_payload_json"),
+                        lease_payload_bytes.label("actual_payload_bytes"),
+                    )
+                    .where(GraphNodeDetailCollectionFactModel.run_id == run_id)
+                    .where(GraphNodeDetailCollectionFactModel.collection_name == "leases")
+                    .where(GraphNodeDetailCollectionFactModel.item_key == lease_id)
+                )
+                for fact in fact_result:
+                    if int(fact.actual_payload_bytes or 0) > GRAPH_ARCHIVAL_ENTRY_BYTES:
+                        raise GraphReadModelUnavailable(
+                            run_id,
+                            "node_detail",
+                            "collection_fact_exceeds_byte_cap",
+                            current_position=light_event.position,
+                        )
+                    lease = cast(dict[str, Any], json.loads(str(fact.bounded_payload_json)))
+                    lease["state"] = light_event.event_type.removeprefix("lease_")
+                    if fact.node_id not in node_ids:
+                        await upsert(
+                            fact.node_id,
+                            "events",
+                            event_key,
+                            light_event.position,
+                            event_payload,
+                        )
+                    await upsert(
+                        fact.node_id,
+                        "leases",
+                        lease_id,
+                        light_event.position,
+                        lease,
+                    )
+        return affected
+
+    async def _read_node_detail_collection_prefix(
+        self,
+        run_id: str,
+        node_id: str,
+        collection_name: str,
+    ) -> tuple[list[dict[str, Any]], int, dict[str, Any] | None]:
+        """Read one collection's exact count and at most its first 50 facts."""
+        where = (
+            GraphNodeDetailCollectionFactModel.run_id == run_id,
+            GraphNodeDetailCollectionFactModel.node_id == node_id,
+            GraphNodeDetailCollectionFactModel.collection_name == collection_name,
+        )
+        total_known = int(
+            await self._session.scalar(
+                select(func.count()).select_from(GraphNodeDetailCollectionFactModel).where(*where)
+            )
+            or 0
+        )
+        actual_bytes = func.length(
+            sql_cast(GraphNodeDetailCollectionFactModel.payload_json, LargeBinary)
+        )
+        sized_result = await self._session.execute(
+            select(
+                GraphNodeDetailCollectionFactModel.item_key,
+                actual_bytes.label("actual_payload_bytes"),
+            )
+            .where(*where)
+            .order_by(GraphNodeDetailCollectionFactModel.item_key)
+            .limit(GRAPH_JSON_ARRAY_ITEMS)
+        )
+        sized = list(sized_result)
+        if any(int(fact.actual_payload_bytes or 0) > GRAPH_ARCHIVAL_ENTRY_BYTES for fact in sized):
+            raise GraphReadModelUnavailable(
+                run_id,
+                "node_detail",
+                "collection_fact_exceeds_byte_cap",
+            )
+        keys = [str(fact.item_key) for fact in sized]
+        retained: list[dict[str, Any]] = []
+        if keys:
+            payload_result = await self._session.execute(
+                select(GraphNodeDetailCollectionFactModel.payload_json)
+                .where(*where)
+                .where(GraphNodeDetailCollectionFactModel.item_key.in_(keys))
+                .order_by(GraphNodeDetailCollectionFactModel.item_key)
+            )
+            retained = [
+                cast(dict[str, Any], json.loads(str(payload_json)))
+                for payload_json in payload_result.scalars()
+            ]
+
+        selected_lease: dict[str, Any] | None = None
+        if collection_name == "leases":
+            active_key = await self._session.scalar(
+                select(GraphNodeDetailCollectionFactModel.item_key)
+                .where(*where)
+                .where(
+                    func.json_extract(
+                        GraphNodeDetailCollectionFactModel.payload_json,
+                        "$.state",
+                    )
+                    == "active"
+                )
+                .order_by(GraphNodeDetailCollectionFactModel.item_key)
+                .limit(1)
+            )
+            selected_key = str(active_key) if active_key is not None else keys[0] if keys else None
+            if selected_key is not None:
+                selected_size = await self._session.scalar(
+                    select(actual_bytes)
+                    .where(*where)
+                    .where(GraphNodeDetailCollectionFactModel.item_key == selected_key)
+                )
+                if int(selected_size or 0) > GRAPH_ARCHIVAL_ENTRY_BYTES:
+                    raise GraphReadModelUnavailable(
+                        run_id,
+                        "node_detail",
+                        "collection_fact_exceeds_byte_cap",
+                    )
+                selected_json = await self._session.scalar(
+                    select(GraphNodeDetailCollectionFactModel.payload_json)
+                    .where(*where)
+                    .where(GraphNodeDetailCollectionFactModel.item_key == selected_key)
+                )
+                if selected_json is not None:
+                    selected_lease = cast(
+                        dict[str, Any],
+                        json.loads(str(selected_json)),
+                    )
+        return retained, total_known, selected_lease
+
+    async def _refresh_node_detail_collections(
+        self,
+        row: GraphNodeDetailSummaryModel,
+        *,
+        collection_names: set[str],
+        position: int,
+    ) -> None:
+        """Refresh affected prefixes with scalar counts and capped fact reads."""
+        current_values: dict[str, list[dict[str, Any]]] = {
+            "output_records": [dict(item) for item in row.output_records],
+            "file_state_records": [dict(item) for item in row.file_state_records],
+            "leases": [dict(item) for item in row.leases],
+            "callback_history": [dict(item) for item in row.callback_history],
+            "events": [dict(item) for item in row.events],
+        }
+        totals: dict[str, int] = {}
+        active_lease = dict(row.active_lease) if row.active_lease is not None else None
+        for name in sorted(collection_names):
+            retained, total_known, selected_lease = await self._read_node_detail_collection_prefix(
+                row.run_id,
+                row.node_id,
+                name,
+            )
+            current_values[name] = retained
+            totals[name] = total_known
+            if name == "leases":
+                active_lease = selected_lease
+
+        prompt_summary = dict(row.prompt_summary or {})
+        old_contract = prompt_summary.pop(_READ_CONTRACT_KEY, None)
+        bounded, metadata = bound_node_detail_owner(
+            {
+                "input_ports": dict(row.input_ports),
+                **current_values,
+                "active_lease": active_lease,
+                "prompt_summary": prompt_summary,
+            }
+        )
+        if isinstance(old_contract, dict):
+            old_collections = cast(dict[str, Any], old_contract).get("collections")
+            if isinstance(old_collections, dict):
+                for name, old_metadata in cast(dict[str, Any], old_collections).items():
+                    if name not in collection_names and isinstance(old_metadata, dict):
+                        metadata[name] = dict(cast(dict[str, Any], old_metadata))
+
+        exact_metadata: dict[str, dict[str, Any]] = {}
+        for name, total_known in totals.items():
+            retained = cast(list[dict[str, Any]], bounded[name])
+            collection_meta = cast(dict[str, Any], metadata[name])
+            truncated = (
+                bool(collection_meta.get("truncated"))
+                or total_known > len(retained)
+                or _bounded_json_is_partial(retained)
+            )
+            next_cursor: str | int | None = None
+            if truncated:
+                if (
+                    name in {"events", "callback_history"}
+                    and retained
+                    and isinstance(retained[-1].get("position"), int)
+                ):
+                    next_cursor = int(retained[-1]["position"]) + 1
+                else:
+                    next_cursor = _retained_cursor(retained) or len(retained)
+            collection_meta.update(
+                {
+                    "total_known": total_known,
+                    "truncated": truncated,
+                    "next_cursor": next_cursor,
+                    "original_bytes": None,
+                    "sha256": None,
+                }
+            )
+            exact_metadata[name] = {
+                "total_known": total_known,
+                "truncated": truncated,
+                "next_cursor": next_cursor,
+                "original_bytes": None,
+                "sha256": None,
+            }
+
+        row.output_records = cast(list[dict[str, Any]], bounded["output_records"])
+        row.file_state_records = cast(list[dict[str, Any]], bounded["file_state_records"])
+        row.leases = cast(list[dict[str, Any]], bounded["leases"])
+        row.active_lease = cast(dict[str, Any] | None, bounded["active_lease"])
+        row.callback_history = cast(list[dict[str, Any]], bounded["callback_history"])
+        row.events = cast(list[dict[str, Any]], bounded["events"])
+        prompt_storage = cast(dict[str, Any], bounded["prompt_summary"] or {})
+        prompt_storage[_READ_CONTRACT_KEY] = {
+            "revision": GRAPH_READ_CONTRACT_REVISION,
+            "collections": metadata,
+        }
+        row.prompt_summary = prompt_storage
+        row.position = position
+        _pack_node_detail_row(row)
+
+        packed_prompt = dict(row.prompt_summary or {})
+        packed_contract = packed_prompt.get(_READ_CONTRACT_KEY)
+        if isinstance(packed_contract, dict):
+            packed_collections = cast(dict[str, Any], packed_contract).get("collections")
+            if isinstance(packed_collections, dict):
+                for name, exact in exact_metadata.items():
+                    packed = cast(dict[str, Any], packed_collections).get(name)
+                    if isinstance(packed, dict):
+                        cast(dict[str, Any], packed).update(exact)
+                row.prompt_summary = packed_prompt
 
     async def _edge_ports_for_input_bounds(
         self,
@@ -5319,16 +6257,6 @@ def _is_terminal_run_state(run_state: str | None) -> bool:
     return run_state in {"completed", "failed", "cancelled"}
 
 
-def _add_node_detail_summaries(
-    session: AsyncSession,
-    summaries: dict[str, GraphNodeDetailSummary],
-) -> None:
-    for summary in summaries.values():
-        row = GraphNodeDetailSummaryModel(run_id=summary.run_id, node_id=summary.node_id)
-        _assign_node_detail_summary(row, summary)
-        session.add(row)
-
-
 def _node_detail_summaries_from_events(
     run_id: str,
     events: list[EventEnvelope],
@@ -5343,6 +6271,11 @@ def _node_detail_summaries_from_events(
         summaries={},
         edge_ports={},
     )
+
+
+# Kept as a supported pure reducer for parity probes; the durable rebuild above
+# intentionally uses its bounded keyset writer instead.
+node_detail_summaries_from_events = _node_detail_summaries_from_events
 
 
 def _apply_node_detail_events(
@@ -5779,28 +6712,6 @@ def _lease_update_ids(events: list[EventEnvelope]) -> set[str]:
     return ids
 
 
-def _has_missing_preexisting_node_reference(
-    events: list[EventEnvelope],
-    existing_node_ids: set[str],
-) -> bool:
-    known_node_ids = set(existing_node_ids)
-    created_node_ids: set[str] = set()
-    for event in events:
-        payload = _node_detail_light_event(event).payload
-        node_id = payload.get("node_id")
-        if event.event_type == "node_created" and isinstance(node_id, str):
-            created_node_ids.add(node_id)
-            known_node_ids.add(node_id)
-            continue
-        referenced_node_ids = _referenced_node_ids(payload, known_node_ids)
-        if any(
-            node_id not in existing_node_ids and node_id not in created_node_ids
-            for node_id in referenced_node_ids
-        ):
-            return True
-    return False
-
-
 def _input_bound_edge_ids_needing_ports(events: list[EventEnvelope]) -> set[str]:
     edge_ids: set[str] = set()
     for event in events:
@@ -5917,6 +6828,19 @@ def _assign_node_detail_summary(
             ),
         }
     )
+    if isinstance(summary.read_contract, dict):
+        old_collections = summary.read_contract.get("collections")
+        if isinstance(old_collections, dict):
+            for name in (
+                "output_records",
+                "file_state_records",
+                "leases",
+                "callback_history",
+                "events",
+            ):
+                old_metadata = cast(dict[str, Any], old_collections).get(name)
+                if isinstance(old_metadata, dict):
+                    metadata[name] = dict(cast(dict[str, Any], old_metadata))
     row.input_ports = cast(dict[str, list[str]], bounded["input_ports"])
     row.output_records = cast(list[dict[str, Any]], bounded["output_records"])
     row.file_state_records = cast(list[dict[str, Any]], bounded["file_state_records"])

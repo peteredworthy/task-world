@@ -244,7 +244,7 @@ class CLIAgent:
                     "- Allowed paths are task-requested documentation/metadata such as "
                     "`docs/super-parent/`\n"
                     "- Do not edit source code, tests, dependency files, lockfiles, "
-                    "migrations, or UI files during oversight tasks\n"
+                    "or UI files during oversight tasks\n"
                     "- If implementation changes seem required, record the need in oversight "
                     "state, request clarification, or escalate instead\n"
                     "- ALWAYS use `git --no-pager` for git commands that produce output\n"

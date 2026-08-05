@@ -166,9 +166,10 @@ task:
 
 ---
 
-### 4.1 Database Migrations ✅
+### 4.1 Database Schema ✅
 
-**Decision:** **Alembic, deferred** - Implement when schema stabilizes. Early work local-only.
+**Decision:** **Current schema only** — Fresh databases are created directly
+from SQLAlchemy ORM metadata. There is no schema-upgrade contract.
 
 ---
 

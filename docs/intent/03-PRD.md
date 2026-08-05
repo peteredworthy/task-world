@@ -204,9 +204,9 @@ detect_all() -> list[AgentOption]
 - Option to store in repo
 - Organized by run/step/task/attempt
 
-#### FR-SP-3: Migrations
-- Use Alembic when schema stabilizes
-- Defer implementation during rapid development
+#### FR-SP-3: Schema initialization
+- Create fresh databases directly from current SQLAlchemy ORM metadata
+- Do not provide automatic schema upgrades or database recreation
 
 ---
 

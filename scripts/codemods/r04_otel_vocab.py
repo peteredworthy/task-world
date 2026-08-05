@@ -100,8 +100,6 @@ INTENTIONAL_LITERAL_PATHS = frozenset(
         "tests/unit/test_r04_otel_vocab_codemod.py",
     }
 )
-MIGRATION_HISTORY_PATH_PREFIX = "src/orchestrator/db/migrations/versions/"
-
 # Every entry is an internal telemetry producer or consumer reviewed in the
 # Task 3 inventory.  Path membership is an additional proof; it is never
 # inferred from an identifier suffix.
@@ -202,7 +200,6 @@ HISTORICAL_PERSISTENCE_FIXTURE_PATHS = frozenset(
         "tests/integration/test_event_sourced_workflow.py",
         "tests/integration/test_graph_file_state_report_api.py",
         "tests/integration/test_graph_usage_persistence.py",
-        "tests/integration/test_migrations.py",
         "tests/unit/test_command_handlers.py",
         "tests/unit/test_compare_carriers.py",
         "tests/unit/test_projectors.py",
@@ -302,11 +299,7 @@ def _is_provider_boundary(path: str) -> bool:
 
 
 def _is_literal_boundary(path: str) -> bool:
-    return (
-        path in INTENTIONAL_LITERAL_PATHS
-        or path == "scripts/codemods/r04_otel_vocab.py"
-        or path.startswith(MIGRATION_HISTORY_PATH_PREFIX)
-    )
+    return path in INTENTIONAL_LITERAL_PATHS or path == "scripts/codemods/r04_otel_vocab.py"
 
 
 def _is_test_provider_raw_fixture(path: str, node: cst.CSTNode) -> bool:

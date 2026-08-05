@@ -156,10 +156,10 @@ steps:
           max_attempts: 2
 
       - id: "T-03"
-        title: "Add DB Columns and Alembic Migration"
+        title: "Add DB Columns to the Current ORM Schema"
         task_context: |
           Add new columns to StepModel and TaskModel in src/orchestrator/db/models.py,
-          then create and apply an Alembic migration.
+          then verify the current ORM schema through init_db on a fresh database.
 
           StepModel additions:
             verifying: Mapped[bool] = mapped_column(Integer, default=0)
@@ -171,12 +171,8 @@ steps:
             gap_report_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)
 
           Follow existing pattern: StepModel.completed uses mapped_column(Integer, default=0).
-          After adding to models, generate migration:
-            uv run alembic revision --autogenerate -m "add step_verifier columns"
-          Inspect the generated file to confirm all 5 columns are present, then:
-            uv run alembic upgrade head
-
-          Migration must be additive — no data loss, no dropped columns.
+          After adding to the models, initialize a fresh temporary SQLite database
+          with init_db and use SQLAlchemy inspection to confirm all five columns.
 
           Reference: docs/gap-analyzer/steps/step-01.md Task 3
         requirements:
@@ -187,7 +183,7 @@ steps:
             desc: "TaskModel has spawned_by_gap_report, gap_report_feedback ORM attributes"
             priority: critical
           - id: "R3"
-            desc: "Alembic migration file exists and applies cleanly"
+            desc: "init_db creates a fresh schema containing all five ORM columns"
             priority: critical
         auto_verify:
           items:
@@ -197,8 +193,8 @@ steps:
             - id: "task_model_attrs"
               cmd: "uv run python -c \"from orchestrator.db.models import TaskModel; assert all(hasattr(TaskModel, f) for f in ['spawned_by_gap_report','gap_report_feedback'])\""
               must: true
-            - id: "migration_applies"
-              cmd: "uv run alembic upgrade head"
+            - id: "fresh_schema_columns"
+              cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        step_columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"steps\\\")})\\n        task_columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"tasks\\\")})\\n    assert {\\\"verifying\\\", \\\"verifier_iterations\\\", \\\"gap_reports\\\"} <= step_columns\\n    assert {\\\"spawned_by_gap_report\\\", \\\"gap_report_feedback\\\"} <= task_columns\\n    await engine.dispose()'); asyncio.run(check())\""
               must: true
         verifier:
           rubric:
@@ -209,8 +205,8 @@ steps:
                 F: attributes missing from ORM models.
             - id: "R3"
               text: |
-                R3 — A: migration file in alembic/versions/ adds all 5 columns with correct
-                defaults; upgrade applies without error. F: migration missing or fails.
+                R3 — A: init_db creates all five columns with correct defaults on a fresh
+                temporary database. F: current ORM metadata or fresh-schema creation fails.
         retry:
           max_attempts: 2
 
@@ -846,7 +842,7 @@ steps:
 
           Use two-track approach:
           - Track A (service direct calls, scenarios 1-6, 8): use WorkflowService directly
-            with in-memory DB (create_all, no Alembic). Pattern from test_mock_agent_workflow.py.
+            with an in-memory DB initialized from current ORM metadata. Pattern from test_mock_agent_workflow.py.
           - Track B (API response, scenario 7): test HTTP client + GET /api/runs/{id}
 
           Scenarios:

@@ -47,12 +47,18 @@ from orchestrator.graph_runtime.horizon_templates import (
     horizon_region_templates,
     instantiate_horizon_template,
 )
-from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, SideEffectExecutor
+from orchestrator.graph_runtime.outbox import (
+    OUTBOX_MAINTENANCE_BATCH_LIMIT,
+    OutboxDispatcher,
+    OutboxItem,
+    SideEffectExecutor,
+)
 from orchestrator.graph_runtime.prompts import hydrate_artifact_excerpt, planner_evidence
 from orchestrator.graph_runtime.recovery import RecoveryReport, recover, reconcile_graph
 from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
 from orchestrator.graph_runtime.store import (
     BoundedGraphPage,
+    GraphExpectedPositionMismatch,
     GraphReadBudget,
     GraphReadContract,
     GraphReadModelUnavailable,
@@ -75,6 +81,7 @@ __all__ = [
     "GraphDispatchExecutor",
     "GraphProcessRegistry",
     "GraphEventStore",
+    "GraphExpectedPositionMismatch",
     "GraphReadBudget",
     "GraphReadContract",
     "GraphReadModelUnavailable",
@@ -93,6 +100,7 @@ __all__ = [
     "ClaudeGatekeeperClassifier",
     "GatekeeperVerdict",
     "OutboxAppendError",
+    "OUTBOX_MAINTENANCE_BATCH_LIMIT",
     "ProcessQuiescenceError",
     "RecoveryCompletionRejectedError",
     "RecoveryEventError",

@@ -5,7 +5,7 @@ description: |
   lifecycle signals pass unconditionally. Eliminates has_active_workflow branching,
   introduces a consumer loop, adds STOPPING state, and enforces registry isolation.
   Phases: schema → consumer → sender rewiring → registry isolation → guards → validation.
-  v2: migration assumes clean server stop (no backfill); rename processed_at → handled_at.
+  v2: current schema uses handled_at rather than processed_at.
 
 steps:
   - id: "S-01"
@@ -15,7 +15,7 @@ steps:
       add STOPPING to RunStatus, and define RUN_START signal type.
     tasks:
       - id: "T-01"
-        title: "Alembic migration for pending_signals and STOPPING status"
+        title: "Current pending_signals schema and STOPPING status"
         context_from:
           - artifact: "docs/single-queue-2/plan.md"
             as: "plan"
@@ -39,13 +39,11 @@ steps:
           {{context.plan}}
 
           Tasks to complete:
-          1. Create Alembic migration at src/orchestrator/db/migrations/versions/ (NOT alembic/versions/)
-             that:
+          1. Update the PendingSignal ORM model and current metadata so init_db:
              (a) replaces UUID string PK with INTEGER PRIMARY KEY AUTOINCREMENT,
-             (b) renames existing processed_at column to handled_at (repurpose, do not add new column),
+             (b) defines handled_at instead of processed_at,
              (c) adds delivered_at TIMESTAMP NULL as a new column,
              (d) retains created_at for audit only — must NOT appear in any ORDER BY clause.
-             NOTE: Migration assumes clean server stop with no pending signals; no backfill needed.
 
           2. Update PendingSignal ORM model in src/orchestrator/db/models.py:
              - id: Integer primary key (autoincrement)
@@ -76,13 +74,12 @@ steps:
           8. Run all existing tests and confirm they pass with no regressions.
 
           CAVEATS:
-          - Migration directory is src/orchestrator/db/migrations/versions/ NOT alembic/versions/
-          - Use batch_alter_table() for SQLite schema changes (not hard-coded constraint names)
-          - processed_at is RENAMED to handled_at (not deleted and re-added as new column)
+          - Verify only through init_db and SQLAlchemy inspection on a fresh temporary DB
+          - Current metadata defines handled_at and does not define processed_at
           - RunStatus enum is in src/orchestrator/config/enums.py (NOT src/orchestrator/db/models.py)
         requirements:
           - id: "R1"
-            desc: "Alembic migration exists in src/orchestrator/db/migrations/versions/ and applies cleanly"
+            desc: "init_db creates the current pending_signals schema cleanly on a fresh database"
             priority: critical
           - id: "R2"
             desc: "PendingSignal ORM model has integer id PK, delivered_at (new), handled_at (renamed from processed_at); drain queries order by integer PK"
@@ -101,12 +98,9 @@ steps:
             priority: critical
         auto_verify:
           items:
-            - id: "migration_exists"
-              cmd: "uv run python -c \"import os; files = os.listdir('src/orchestrator/db/migrations/versions/'); matches = [f for f in files if 'single_queue' in f or 'signal' in f or 'stopping' in f or 'pending' in f]; assert matches, 'No signal/stopping migration found in versions/: ' + str(files)\""
+            - id: "fresh_schema_columns"
+              cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"pending_signals\\\")})\\n    assert {\\\"id\\\", \\\"delivered_at\\\", \\\"handled_at\\\"} <= columns and \\\"processed_at\\\" not in columns\\n    await engine.dispose()'); asyncio.run(check())\""
               must: true
-            - id: "migration_has_correct_columns"
-              cmd: "uv run python -c \"import os; content = open([f'src/orchestrator/db/migrations/versions/{f}' for f in os.listdir('src/orchestrator/db/migrations/versions/') if any(k in f for k in ['signal', 'stopping', 'pending', 'single_queue', 'queue'])][0]).read(); assert 'delivered_at' in content, 'delivered_at missing from migration'; assert 'handled_at' in content or 'processed_at' in content, 'handled_at/processed_at rename missing'\""
-              must: false
             - id: "stopping_enum"
               cmd: "uv run python -c \"from src.orchestrator.config.enums import RunStatus; assert RunStatus.STOPPING.value == 'stopping', f'STOPPING not found, values: {[s.value for s in RunStatus]}'\""
               must: true
@@ -129,11 +123,10 @@ steps:
           rubric:
             - id: "R1"
               text: |
-                R1 — Read the migration file in src/orchestrator/db/migrations/versions/.
-                A: migration exists, uses batch_alter_table(), renames processed_at to handled_at, adds delivered_at,
-                replaces UUID PK with integer autoincrement. No backfill logic needed (clean server stop assumption).
-                B: migration exists but wrong directory, uses hardcoded constraint names, or misses a column change.
-                F: no migration file found.
+                R1 — Inspect current ORM metadata and a fresh init_db database.
+                A: pending_signals uses integer autoincrement id, handled_at, and delivered_at,
+                with no processed_at column. B: ORM is correct but fresh-schema proof is incomplete.
+                F: current schema is missing a required field.
             - id: "R2"
               text: |
                 R2 — Read PendingSignal ORM model definition and drain query code.

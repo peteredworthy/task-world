@@ -15,6 +15,7 @@ from orchestrator.api import (
 )
 from orchestrator.db import (
     EventV2Model,
+    GraphNodeDetailCollectionFactModel,
     GraphNodeDetailSummaryCheckpointModel,
     GraphNodeDetailSummaryModel,
     create_engine,
@@ -350,12 +351,50 @@ async def test_node_detail_event_positions_use_numeric_ordering_and_cursor(
     assert event_meta["truncated"] is True
     assert event_meta["total_known"] == 60
     assert event_meta["next_cursor"] == 51
-    assert isinstance(event_meta["original_bytes"], int)
-    assert event_meta["original_bytes"] > 0
-    assert isinstance(event_meta["sha256"], str)
-    assert len(event_meta["sha256"]) == 64
+    assert event_meta["original_bytes"] is None
+    assert event_meta["sha256"] is None
     assert event_meta["fields"] == {}
     assert full_event_meta == event_meta
+
+
+@pytest.mark.asyncio
+async def test_node_detail_rebuild_keysets_past_packed_prefix_with_truthful_metadata(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A bounded rebuild keeps exact totals without whole-list digest state."""
+    run_id = "node-detail-keyset-streaming-rebuild"
+    node_id = "worker-1"
+    events = [
+        _event(
+            "evt-worker",
+            run_id,
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+        ),
+        *[
+            _event(
+                f"evt-state-{index:03d}",
+                run_id,
+                "node_state_changed",
+                {"node_id": node_id, "new_state": "planned"},
+            )
+            for index in range(2, 122)
+        ],
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            await store.append_events(run_id, 0, events)
+        live = await _materialized_response(session, run_id, node_id)
+        await store.rebuild_node_detail_summaries(run_id, batch_size=17)
+        rebuilt = await _materialized_response(session, run_id, node_id)
+
+    assert rebuilt == live
+    metadata = rebuilt["collection_meta"]["events"]
+    assert metadata["total_known"] == len(events)
+    assert metadata["next_cursor"] == 51
+    assert metadata["original_bytes"] is None
+    assert metadata["sha256"] is None
 
 
 @pytest.mark.asyncio
@@ -768,3 +807,107 @@ async def test_compact_node_detail_rows_do_not_store_heavy_value_bodies(
     assert "value" not in encoded
     assert "tracked" not in encoded
     assert "residue" not in encoded
+
+
+@pytest.mark.asyncio
+async def test_normalized_collection_facts_handle_lower_keys_and_packed_lease_mutation(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "node-detail-normalized-facts"
+    node_id = "worker-1"
+    initial = [
+        _event(
+            "evt-worker",
+            run_id,
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+        ),
+        *[
+            _event(
+                f"evt-output-{index:03d}",
+                run_id,
+                "output_record_accepted",
+                {
+                    "record_id": f"record-z-{index:03d}",
+                    "record_kind": "output",
+                    "candidate_id": f"candidate-z-{index:03d}",
+                    "producer_node_id": node_id,
+                    "port": "candidate",
+                    "schema": "Candidate",
+                    "value": {"summary": f"candidate {index}"},
+                },
+            )
+            for index in range(60)
+        ],
+        *[
+            _event(
+                f"evt-lease-{index:03d}",
+                run_id,
+                "lease_granted",
+                {
+                    "lease_id": f"lease-{index:03d}",
+                    "node_id": node_id,
+                    "generation": index + 1,
+                    "execution_id": f"exec-{index:03d}",
+                },
+            )
+            for index in range(60)
+        ],
+    ]
+    tail = [
+        _event(
+            "evt-output-lower",
+            run_id,
+            "output_record_accepted",
+            {
+                "record_id": "record-a-lower",
+                "record_kind": "output",
+                "candidate_id": "candidate-a-lower",
+                "producer_node_id": node_id,
+                "port": "candidate",
+                "schema": "Candidate",
+                "value": {"summary": "lower candidate"},
+            },
+        ),
+        _event(
+            "evt-release-packed-tail",
+            run_id,
+            "lease_released",
+            {"lease_id": "lease-059"},
+        ),
+    ]
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            await store.append_events(run_id, 0, initial)
+            await store.append_events(run_id, len(initial), tail)
+        live = await _materialized_response(session, run_id, node_id)
+        lease_fact = await session.get(
+            GraphNodeDetailCollectionFactModel,
+            (run_id, node_id, "leases", "lease-059"),
+        )
+        assert lease_fact is not None
+        assert json.loads(lease_fact.payload_json)["state"] == "released"
+        await store.rebuild_node_detail_summaries(run_id, batch_size=13)
+        rebuilt = await _materialized_response(session, run_id, node_id)
+        rebuilt_event_result = await session.execute(
+            select(GraphNodeDetailCollectionFactModel.payload_json)
+            .where(GraphNodeDetailCollectionFactModel.run_id == run_id)
+            .where(GraphNodeDetailCollectionFactModel.node_id == node_id)
+            .where(GraphNodeDetailCollectionFactModel.collection_name == "events")
+            .order_by(GraphNodeDetailCollectionFactModel.item_key)
+        )
+        rebuilt_event_ids = [
+            json.loads(value)["event_id"] for value in rebuilt_event_result.scalars()
+        ]
+
+    assert rebuilt_event_ids[-1] == "evt-release-packed-tail"
+    assert len(rebuilt_event_ids) == len(initial) + len(tail)
+    assert rebuilt == live
+    assert live["output_records"][0]["record_id"] == "record-a-lower"
+    output_meta = live["collection_meta"]["output_records"]
+    assert output_meta["total_known"] == 61
+    assert output_meta["original_bytes"] is None
+    assert output_meta["sha256"] is None
+    assert live["collection_meta"]["leases"]["total_known"] == 60

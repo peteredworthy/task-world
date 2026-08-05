@@ -127,7 +127,7 @@ def generate_builder_prompt(
             "CRITICAL requirements must pass with grade A; EXPECTED with B; NICE are advisory.\n"
             "- Whether a requirement is optional is determined solely by its priority tag. "
             "Do not treat a requirement as optional based on task instructions alone.\n"
-            "- Do not edit source code, tests, dependency files, lockfiles, migrations, or UI files "
+            "- Do not edit source code, tests, dependency files, lockfiles, or UI files "
             "during oversight tasks. Record, replan, request clarification, or escalate instead.\n"
             "- Do not run `git commit` manually. The orchestrator auto-commits on submit.\n"
             "- The verifier will review the submitted oversight artifacts and grade each requirement.\n"

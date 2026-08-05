@@ -22,6 +22,9 @@ import type {
   FileStateReportResponse,
   GraphProjectionResponse,
   GraphHealthResponse,
+  GraphTopologyResponse,
+  FinalInvariantBlockersResponse,
+  GraphRegionsResponse,
   SchedulerViewResponse,
   NodeDetailResponse,
   GlobalConfig,
@@ -75,6 +78,34 @@ export class ApiError extends Error {
     this.status = status;
     this.body = body;
   }
+}
+
+type GraphReadErrorDetail = {
+  code?: unknown;
+  retryable?: unknown;
+};
+
+function graphReadErrorDetail(error: unknown): GraphReadErrorDetail | null {
+  if (!(error instanceof ApiError) || !error.body || typeof error.body !== 'object') return null;
+  const detail = (error.body as Record<string, unknown>).detail;
+  return detail && typeof detail === 'object' ? detail as GraphReadErrorDetail : null;
+}
+
+/** True only when the same graph read can succeed once durable maintenance catches up. */
+export function isRetryableGraphReadError(error: unknown): boolean {
+  const detail = graphReadErrorDetail(error);
+  return error instanceof ApiError
+    && error.status === 503
+    && detail?.code === 'read_model_unavailable'
+    && detail.retryable === true;
+}
+
+/** A stale anchor requires a fresh multi-view assembly, never a blind retry. */
+export function isExpectedGraphPositionMismatch(error: unknown): boolean {
+  const detail = graphReadErrorDetail(error);
+  return error instanceof ApiError
+    && error.status === 409
+    && detail?.code === 'expected_position_mismatch';
 }
 
 export class RecoverTaskNotFoundError extends ApiError {
@@ -538,6 +569,42 @@ export const api = {
 
   getRunGraphHealth(runId: string): Promise<GraphHealthResponse> {
     return fetchApi('/api/runs/' + runId + '/graph/health');
+  },
+
+  getRunGraphTopology(
+    runId: string,
+    params?: { cursor?: number; limit?: number; expectedPosition?: number },
+  ): Promise<GraphTopologyResponse> {
+    const sp = new URLSearchParams();
+    if (params?.cursor !== undefined) sp.set('cursor', String(params.cursor));
+    if (params?.limit !== undefined) sp.set('limit', String(params.limit));
+    if (params?.expectedPosition !== undefined) sp.set('expected_position', String(params.expectedPosition));
+    const qs = sp.toString();
+    return fetchApi('/api/runs/' + runId + '/graph/topology' + (qs ? '?' + qs : ''));
+  },
+
+  getRunGraphFinalBlockers(
+    runId: string,
+    params?: { cursor?: string | number; limit?: number; expectedPosition?: number },
+  ): Promise<FinalInvariantBlockersResponse> {
+    const sp = new URLSearchParams();
+    if (params?.cursor !== undefined) sp.set('cursor', String(params.cursor));
+    if (params?.limit !== undefined) sp.set('limit', String(params.limit));
+    if (params?.expectedPosition !== undefined) sp.set('expected_position', String(params.expectedPosition));
+    const qs = sp.toString();
+    return fetchApi('/api/runs/' + runId + '/graph/final-blockers' + (qs ? '?' + qs : ''));
+  },
+
+  getRunGraphRegions(
+    runId: string,
+    params?: { cursor?: number; limit?: number; expectedPosition?: number },
+  ): Promise<GraphRegionsResponse> {
+    const sp = new URLSearchParams();
+    if (params?.cursor !== undefined) sp.set('cursor', String(params.cursor));
+    if (params?.limit !== undefined) sp.set('limit', String(params.limit));
+    if (params?.expectedPosition !== undefined) sp.set('expected_position', String(params.expectedPosition));
+    const qs = sp.toString();
+    return fetchApi('/api/runs/' + runId + '/graph/regions' + (qs ? '?' + qs : ''));
   },
 
   getRunGraphPatchAttempts(

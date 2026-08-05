@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from collections.abc import AsyncGenerator
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import event as sqlalchemy_event, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from orchestrator.config import (
     AgentRunnerType,
@@ -1141,9 +1141,37 @@ async def test_delete_run_preserves_old_artifact_referenced_by_retained_run(
     await GraphEventStore(session).append_events("run-2", 0, [event])
     await session.commit()
 
-    await service.delete_run("run-1")
+    statements: list[str] = []
+
+    def capture_sql(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: bool,
+    ) -> None:
+        statements.append(" ".join(statement.split()).upper())
+
+    async_engine = session.bind
+    assert isinstance(async_engine, AsyncEngine)
+    sqlalchemy_event.listen(async_engine.sync_engine, "before_cursor_execute", capture_sql)
+    try:
+        await service.delete_run("run-1")
+    finally:
+        sqlalchemy_event.remove(async_engine.sync_engine, "before_cursor_execute", capture_sql)
 
     assert await store.read(retained) == b"retained"
+    reference_probes = [
+        statement for statement in statements if "GRAPH_ARTIFACT_REFERENCES" in statement
+    ]
+    assert reference_probes
+    assert all(" JOIN RUNS " in statement for statement in reference_probes)
+    assert all(" IN (" not in statement for statement in reference_probes)
+    assert not any(
+        "FROM RUNS" in statement and "ORDER BY RUNS.CREATED_AT DESC" in statement
+        for statement in statements
+    )
 
 
 async def test_delete_run_sweeps_old_unreferenced_artifacts_after_tombstone(

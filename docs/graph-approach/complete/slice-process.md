@@ -266,9 +266,8 @@ mode) with `claude_sdk`, which is not subject to the codex outage or the cli
 `.venv` argv issue.
 
 Slice 2.7 ran as orchestrator run `04818168` (codex_server / gpt-5.5,
-first-pass all-A). Audit-pass correction before merge: the builder's Alembic
-migration declared a merge `down_revision` against an ancestor + descendant;
-fixed to the linear single head and verified (upgrade/downgrade round-trip,
+first-pass all-A). Audit-pass correction before merge fixed an obsolete schema
+revision chain before that migration subsystem was later removed; the slice was verified (schema round-trip,
 clean application to the live DB). The graph runtime now has a production
 caller. The live dogfood gate (graph-mode run executing in the server) is
 implementable as of this slice — run it manually per the 2.7 spec's

@@ -243,7 +243,7 @@ routine:
             parent action, current blocker, and evidence digest. Do not append raw evidence dumps to the
             Markdown file; use the persisted oversight snapshot and validated evidence payloads as the machine state.
             This is an orchestration-only
-            task: do not edit source code, tests, dependency files, lockfiles, migrations, UI files,
+            task: do not edit source code, tests, dependency files, lockfiles, UI files,
             routine files, generated child work, or child worktree files. If evidence exposes missing
             service behavior, record it as target inventory, a replan input, or a human action instead
             of implementing it in this parent task. If a child is paused because the runner or executor

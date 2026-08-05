@@ -14,11 +14,11 @@ step_context: |
   written to events_v2 before committed projection state, can be ordered and
   replayed from the database alone, survives retry without duplication, and
   does not depend on the JSONL journal for acceptance or rebuild.
-  Real verification surface: SQLAlchemy metadata, Alembic migration SQL,
+  Real verification surface: SQLAlchemy metadata, init_db-created schema,
   temporary SQLite files, temporary JSONL journal files, the standard
   create_wired_event_store_v2/service/API dependency path, real event-store
   reads/writes, and existing ProjectionRegistry/projector code.
-  Evidence artifacts: migration revision/SQL shape, exact uv run pytest
+  Evidence artifacts: inspected current-schema SQL shape, exact uv run pytest
   commands and relevant output, before/after canonical projection snapshots,
   event counts and aggregate version ranges, temp database/journal path
   patterns, backup/import evidence if touched, graph-reference conflict status,
@@ -49,7 +49,7 @@ tasks:
       - Real workflow activity cannot create durable run/task events without
         unrelated workflow engine rewrites.
       - Existing real-surface tests already fully cover the missing proof.
-      - Required SQLite, Alembic, journal, workflow, or projection rebuild
+      - Required SQLite, ORM schema, journal, workflow, or projection rebuild
         surfaces cannot run in this environment.
       - The chosen slice expands beyond one workflow path plus rebuild/crash
         drills.
@@ -136,18 +136,17 @@ tasks:
           text: "R4 — A: only justified volatile fields are excluded and mismatch output includes serialized before/after state. B: exclusions are broader than needed but documented. F: mismatches are masked or state evidence is unavailable."
 
   - id: "T-03"
-    title: "Confirm events_v2 schema and migration contract"
+    title: "Confirm events_v2 current-schema contract"
     task_context: |
-      Inspect and, only where necessary, extend EventV2Model and the Alembic
-      migration surface so the proof can rely on:
+      Inspect and, only where necessary, extend EventV2Model and current ORM
+      metadata so the proof can rely on:
       - durable global position ordering;
       - per-aggregate version ordering with a database uniqueness constraint;
       - payload/timestamp metadata needed by projection rebuild and evidence.
 
-      If additive metadata or constraints require a new Alembic revision, record
-      the revision name and SQL shape in the evidence notes. Do not mutate prior
-      event rows to correct history; append-only semantics remain the application
-      contract.
+      Initialize a fresh temporary SQLite database with init_db and record the
+      SQLAlchemy-inspected SQL shape in the evidence notes. Do not mutate prior
+      event rows to correct history; append-only semantics remain the application contract.
 
       Make the retry/import identity explicit. Either add a stable event/import
       identity column with a uniqueness constraint, or record that this proof
@@ -155,15 +154,18 @@ tasks:
       limitation directly.
     requirements:
       - id: "R5"
-        desc: "events_v2 SQLAlchemy metadata and Alembic migrations expose durable position ordering, aggregate/version ordering, payload, timestamp, and idempotency or duplicate-detection metadata required by the proof."
+        desc: "events_v2 SQLAlchemy metadata and init_db-created schema expose durable position ordering, aggregate/version ordering, payload, timestamp, and idempotency or duplicate-detection metadata required by the proof."
         priority: critical
     auto_verify:
       items:
         - id: "events_v2_metadata_imports"
           cmd: "uv run python -c \"from orchestrator.db import EventV2Model; table = EventV2Model.__table__; cols = set(table.c.keys()); required = {'position','aggregate_id','event_type','payload','timestamp','version'}; assert required <= cols, sorted(required - cols); unique_sets = [set(c.columns.keys()) for c in table.constraints if c.__class__.__name__ == 'UniqueConstraint']; assert {'aggregate_id', 'version'} in unique_sets, unique_sets\""
           must: true
+        - id: "events_v2_fresh_schema"
+          cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"events_v2\\\")})\\n    assert {\\\"position\\\", \\\"aggregate_id\\\", \\\"event_type\\\", \\\"payload\\\", \\\"timestamp\\\", \\\"version\\\"} <= columns\\n    await engine.dispose()'); asyncio.run(check())\""
+          must: true
         - id: "durability_schema_tests"
-          cmd: "uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'schema or migration or ordering'"
+          cmd: "uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'schema or ordering'"
           must: true
         - id: "retry_identity_decision_present"
           cmd: "grep -R \"retry identity\\|import identity\\|stable.*identity\\|aggregate_id.*version\" -n tests/integration/test_event_log_durability.py docs/event-log-durability"
@@ -171,7 +173,7 @@ tasks:
     verifier:
       rubric:
         - id: "R5"
-          text: "R5 — A: model and migration provide all required ordering, payload, timestamp, and idempotency/duplicate-detection metadata, with migration evidence recorded. B: existing schema satisfies most contract but evidence misses one metadata detail. F: deterministic ordering or retry identity is missing."
+          text: "R5 — A: model and fresh init_db schema provide all required ordering, payload, timestamp, and idempotency/duplicate-detection metadata, with inspection evidence recorded. B: existing schema satisfies most contract but evidence misses one metadata detail. F: deterministic ordering or retry identity is missing."
 
   - id: "T-04"
     title: "Verify event-store append and ordered reads"
@@ -369,8 +371,7 @@ tasks:
     task_context: |
       Leave concise evidence notes in the implementation artifacts or a durability
       evidence document that identify:
-      - Alembic migration revision name if added, and the inspected/generated
-        events_v2 SQL shape;
+      - the SQLAlchemy-inspected events_v2 SQL shape from a fresh init_db database;
       - test file names and exact targeted commands with relevant output;
       - serialized before/after canonical rebuild state or where assertion output
         provides it;
@@ -407,7 +408,7 @@ tasks:
           cmd: "uv run python -c \"from pathlib import Path; paths = list(Path('tests/integration').glob('*event_log_durability*.py')); text = '\\n'.join(p.read_text() for p in paths if p.exists()); forbidden = ['unittest.mock', 'MagicMock', 'patch(', 'monkeypatch']; assert not any(token in text for token in forbidden), [token for token in forbidden if token in text]\""
           must: true
         - id: "evidence_artifacts_present"
-          cmd: "grep -R \"migration.*SQL\\|before.*after\\|event counts\\|aggregate.*range\\|temp.*journal\\|next-cycle\\|next cycle\" -n docs/event-log-durability tests/integration/test_event_log_durability.py"
+          cmd: "grep -R \"schema.*SQL\\|before.*after\\|event counts\\|aggregate.*range\\|temp.*journal\\|next-cycle\\|next cycle\" -n docs/event-log-durability tests/integration/test_event_log_durability.py"
           must: true
     verifier:
       rubric:

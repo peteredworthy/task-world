@@ -196,7 +196,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "file_state_accepted": _spec(
             "file_state_accepted",
-            projection="base_snapshot_id candidate_id port producer_node_id record_id record_kind record_type schema snapshot_id supersedes_record_id task_region_id verdict",
+            projection="base_snapshot_id candidate_id port producer_node_id record_id record_kind record_type residue schema snapshot_id supersedes_record_id task_region_id verdict",
             light="base_snapshot_id candidate_id cleanup_id port producer_node_id record_id record_kind record_type schema supersedes_record_id task_region_id verdict",
             summary="base_snapshot_id candidate_id cleanup_id payload port producer_node_id provenance record_id record_kind record_type run_id schema snapshot_id supersedes_record_id task_region_id verdict",
             node_detail="base_snapshot_id candidate_id classifications patch_bundle_id port producer_node_id record_id record_kind schema supersedes_record_id task_region_id verdict",
@@ -297,7 +297,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "output_record_accepted": _spec(
             "output_record_accepted",
-            projection="attempt_number base_snapshot_id candidate_id evidence file_state_record_id outcome port producer_node_id record_id record_kind record_type schema snapshot_id supersedes_record_id supersedes_task_region_id supersedes_task_region_ids task_region_id value verdict",
+            projection="attempt_number base_snapshot_id candidate_id evidence file_state_record_id outcome port producer_node_id record_id record_kind record_type residue schema snapshot_id supersedes_record_id supersedes_task_region_id supersedes_task_region_ids task_region_id value verdict",
             light="attempt_number base_snapshot_id candidate_id candidate_record_id candidate_record_ids cleanup_id evaluated_record_ids file_state_record_id file_state_record_ids outcome port producer_node_id record_id record_kind record_type schema supersedes_record_id supersedes_task_region_id supersedes_task_region_ids task_region_id verdict",
             summary="attempt_number base_snapshot_id candidate_id candidate_record_id candidate_record_ids cleanup_id evaluated_record_ids evidence file_state_record_id file_state_record_ids outcome payload port producer_node_id provenance record_id record_kind record_type run_id schema snapshot_id supersedes_record_id supersedes_task_region_id supersedes_task_region_ids task_region_id value verdict",
             node_detail="attempt_number base_snapshot_id candidate_id candidate_record_id candidate_record_ids classifications evaluated_record_ids file_state_record_ids outcome patch_bundle_id port producer_node_id record_id record_kind schema supersedes_record_id task_region_id verdict",
@@ -389,7 +389,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "support_evidence_recorded": _spec(
             "support_evidence_recorded",
-            projection="edge_id requirement_id status",
+            projection="confidence edge_id evidence_id requirement_id requirement_version_id stale_reason status support_id version_id",
             light="confidence edge_id evidence_id requirement_id requirement_version_id stale_reason status support_id version_id",
             summary="confidence edge_id evidence_id requirement_id requirement_version_id run_id stale_reason status support_id version_id",
             node_detail="edge_id requirement_id",

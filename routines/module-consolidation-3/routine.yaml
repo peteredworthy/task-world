@@ -31,7 +31,7 @@ steps:
           map explicit `F-XX` dependencies and stop/go rules for Steps 2-5.
 
           Required commands to record and interpret:
-          - `rg "from orchestrator\\.[^.]+\\.|import orchestrator\\.[^.]+\\." src tests scripts src/orchestrator/db/migrations -g '*.py'`
+          - `rg "from orchestrator\\.[^.]+\\.|import orchestrator\\.[^.]+\\." src tests scripts -g '*.py'`
           - `uv run python scripts/check_module_imports.py`
           - `uv run pytest tests/unit -v`
 
@@ -46,7 +46,7 @@ steps:
             desc: "step-01-audit.md contains a Verified Gap List with stable F-XX finding IDs, allowed statuses, exact evidence, and explicit execution-time unknowns"
             priority: critical
           - id: "R3"
-            desc: "Every verified finding has a consumer inventory covering runtime code, tests, scripts, migrations, startup wiring, and policy tooling where relevant, or an explicit blocker when scope is unbounded"
+            desc: "Every verified finding has a consumer inventory covering runtime code, tests, scripts, schema/bootstrap code, startup wiring, and policy tooling where relevant, or an explicit blocker when scope is unbounded"
             priority: critical
           - id: "R4"
             desc: "Dependencies and Gates maps Steps 2-5 to exact F-XX findings, names stop conditions with required document updates and blocked steps, and records the baseline test-gate outcome"
@@ -63,7 +63,7 @@ steps:
               cmd: "uv run python -c \"from pathlib import Path; import re; text = Path('docs/module-consolidation-3/step-01-audit.md').read_text(); findings = re.findall(r'F-\\d{2}', text); assert findings, 'no finding ids'; statuses = {'verified', 'not_found', 'docs_stale_code_ok', 'docs_code_conflict_stop'}; assert any(status in text for status in statuses), 'no allowed status'; assert 'execution-time' in text.lower() or 'unknown' in text.lower()\""
               must: true
             - id: "step1_consumer_inventory_and_gates"
-              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-01-audit.md').read_text(); required = ['runtime code', 'tests', 'scripts', 'migrations', 'startup wiring', 'policy tooling', 'Step 2', 'Step 3', 'Step 4', 'Step 5', 'trigger', 'required_doc_update', 'next_allowed_action', 'blocked_steps']; missing = [item for item in required if item not in text]; assert not missing, missing; assert any(x in text for x in ['passed', 'failed_repository', 'blocked_environment']), 'missing baseline gate outcome'\""
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-01-audit.md').read_text(); required = ['runtime code', 'tests', 'scripts', 'schema/bootstrap', 'startup wiring', 'policy tooling', 'Step 2', 'Step 3', 'Step 4', 'Step 5', 'trigger', 'required_doc_update', 'next_allowed_action', 'blocked_steps']; missing = [item for item in required if item not in text]; assert not missing, missing; assert any(x in text for x in ['passed', 'failed_repository', 'blocked_environment']), 'missing baseline gate outcome'\""
               must: true
         verifier:
           rubric:
@@ -113,7 +113,7 @@ steps:
           - candidate review scan for cross-module sub-package imports
           - `uv run python scripts/check_module_imports.py`
           - `uv run pyright`
-          - manual review criteria for runtime, tests, scripts, migrations,
+          - manual review criteria for runtime, tests, scripts, schema/bootstrap,
             startup callers, and transport-facing callers
         requirements:
           - id: "R1"
@@ -143,7 +143,7 @@ steps:
               cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-02-interface-audit.md').read_text(); required = ['canonical_import_path', 'owner_module', 'ownership_status', 'Missing Public Exports', 'Private Internal Leaks', 'planned_cleanup_type', 'downstream_dependency']; missing = [item for item in required if item not in text]; assert not missing, missing; assert 'orchestrator.api' in text or 'orchestrator.cli' in text or 'orchestrator.config' in text\""
               must: true
             - id: "step2_batches_and_verification_contract"
-              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-02-interface-audit.md').read_text(); required = ['batch_id', 'exact_consumer_files', 'old_paths_to_remove', 'target_future_step', 'active_runtime_call_site', 'batch_status', 'uv run python scripts/check_module_imports.py', 'uv run pyright', 'runtime code', 'tests', 'scripts', 'migrations', 'startup callers', 'transport-facing']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-02-interface-audit.md').read_text(); required = ['batch_id', 'exact_consumer_files', 'old_paths_to_remove', 'target_future_step', 'active_runtime_call_site', 'batch_status', 'uv run python scripts/check_module_imports.py', 'uv run pyright', 'runtime code', 'tests', 'scripts', 'schema/bootstrap', 'startup callers', 'transport-facing']; missing = [item for item in required if item not in text]; assert not missing, missing\""
               must: true
         verifier:
           rubric:
@@ -265,7 +265,7 @@ steps:
     title: "High-Risk Consumer Sweep"
     step_context: |
       After each completed Step 3 batch, validate the non-source callers most
-      likely to preserve obsolete internal imports: tests, scripts, migrations,
+      likely to preserve obsolete internal imports: tests, scripts, schema/bootstrap code,
       startup wiring, and policy tooling where relevant.
     tasks:
       - id: "T-01"
@@ -277,8 +277,8 @@ steps:
           `docs/module-consolidation-3/step-04-recurring-gates.md`.
 
           Rebuild the consumer checklist from Step 1 inventory plus the completed
-          Step 3 batch note, inspect tests, scripts, migrations, startup entry
-          points, and operational tooling category by category, migrate any
+          Step 3 batch note, inspect tests, scripts, schema/bootstrap code, startup entry
+          points, schema/bootstrap code, and operational tooling category by category, migrate any
           remaining obsolete imports to the approved canonical top-level import,
           and treat every unresolved caller as a blocker that stops the batch.
 
@@ -288,13 +288,13 @@ steps:
           - `uv run python -c "from orchestrator.api import create_app; app = create_app(db_path=':memory:', routine_dirs=[]); assert app is not None"`
           - `uv run python -c "import scripts.serve; assert scripts.serve.app is not None"`
           - `ORCHESTRATOR_DB=/tmp/step4.db uv run python -c "import scripts.worker; print('ok')"`
-          - `uv run alembic -c alembic.ini upgrade head`
+          - `uv run python -c "import asyncio, tempfile; from orchestrator.db import init_db; asyncio.run(init_db(tempfile.mktemp(suffix='.db')))"`
         requirements:
           - id: "R1"
             desc: "Each completed Step 3 batch has a consumer sweep checklist with exact file paths, caller categories, current and canonical imports, status, and note fields, built from current code rather than stale assumptions"
             priority: critical
           - id: "R2"
-            desc: "Tests, scripts, migrations, startup wiring, and operational tooling are inspected category by category with explicit outcomes, exact file paths for remaining migrations, and assertion logic for test-based verification"
+            desc: "Tests, scripts, schema/bootstrap code, startup wiring, and operational tooling are inspected category by category with explicit outcomes, exact file paths for remaining callers, and assertion logic for test-based verification"
             priority: critical
           - id: "R3"
             desc: "Remaining high-risk callers for the completed batch are migrated to the canonical top-level imports in bounded edit batches, and targeted obsolete-prefix searches plus caller-specific checks prove the active caller path now uses the canonical import"
@@ -313,13 +313,13 @@ steps:
         auto_verify:
           items:
             - id: "step4_sweep_and_categories"
-              cmd: "uv run python -c \"from pathlib import Path; sweeps = sorted(Path('docs/module-consolidation-3').glob('step-04-consumer-sweep-*.md')); assert sweeps, 'no consumer sweep notes'; text = '\\n'.join(p.read_text() for p in sweeps); required = ['file_path', 'caller_category', 'current_import', 'canonical_import', 'status', 'already_canonical', 'migrate_in_step_4', 'false_positive', 'blocker', 'tests', 'scripts', 'migrations', 'startup']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              cmd: "uv run python -c \"from pathlib import Path; sweeps = sorted(Path('docs/module-consolidation-3').glob('step-04-consumer-sweep-*.md')); assert sweeps, 'no consumer sweep notes'; text = '\\n'.join(p.read_text() for p in sweeps); required = ['file_path', 'caller_category', 'current_import', 'canonical_import', 'status', 'already_canonical', 'migrate_in_step_4', 'false_positive', 'blocker', 'tests', 'scripts', 'schema', 'startup']; missing = [item for item in required if item not in text]; assert not missing, missing\""
               must: true
             - id: "step4_blockers_and_status"
               cmd: "uv run python -c \"from pathlib import Path; blockers = Path('docs/module-consolidation-3/step-04-blockers.md').read_text(); sweeps = '\\n'.join(p.read_text() for p in Path('docs/module-consolidation-3').glob('step-04-consumer-sweep-*.md')); required_blocker = ['batch_id', 'file_path', 'current_obsolete_import', 'expected_canonical_import', 'reason_it_cannot_be_fixed_now', 'owner_step', 'restart_condition']; missing = [item for item in required_blocker if item not in blockers]; assert not missing, missing; assert 'complete' in sweeps or 'stopped_blocked' in sweeps\""
               must: true
             - id: "step4_behavior_checks_and_recurring_gates"
-              cmd: "uv run python -c \"from pathlib import Path; text = '\\n'.join(p.read_text() for p in Path('docs/module-consolidation-3').glob('step-04-consumer-sweep-*.md')); gates = Path('docs/module-consolidation-3/step-04-recurring-gates.md').read_text(); required = ['uv run pytest', 'uv run python -m orchestrator.cli.main --help', 'from orchestrator.api import create_app', 'import scripts.serve', 'import scripts.worker', 'uv run alembic -c alembic.ini upgrade head', 'command', 'caller_category', 'why_it_exists', 'failure_it_caught_in_this_batch']; missing = [item for item in required if item not in (text + '\\n' + gates)]; assert not missing, missing\""
+              cmd: "uv run python -c \"from pathlib import Path; text = '\\n'.join(p.read_text() for p in Path('docs/module-consolidation-3').glob('step-04-consumer-sweep-*.md')); gates = Path('docs/module-consolidation-3/step-04-recurring-gates.md').read_text(); required = ['uv run pytest', 'uv run python -m orchestrator.cli.main --help', 'from orchestrator.api import create_app', 'import scripts.serve', 'import scripts.worker', 'from orchestrator.db import init_db', 'command', 'caller_category', 'why_it_exists', 'failure_it_caught_in_this_batch']; missing = [item for item in required if item not in (text + '\\n' + gates)]; assert not missing, missing\""
               must: true
         verifier:
           rubric:
@@ -328,7 +328,7 @@ steps:
             - id: "R2"
               text: "R2 — A: non-source callers are inspected category by category and test validations include explicit assertion logic. B: categories are covered but assertion logic or exact paths are incomplete."
             - id: "R3"
-              text: "R3 — A: remaining callers are migrated in bounded batches and verified with caller-specific commands plus obsolete-prefix searches, proving the active path now uses canonical imports. B: migrations exist but proof still relies mainly on import smoke checks."
+              text: "R3 — A: remaining callers are migrated in bounded batches and verified with caller-specific commands plus obsolete-prefix searches, proving the active path now uses canonical imports. B: caller updates exist but proof still relies mainly on import smoke checks."
             - id: "R4"
               text: "R4 — A: unresolved callers are blocker records with restart conditions, and no deferred TODO cleanup remains. B: blockers exist but the batch status or restart path is still ambiguous."
             - id: "R5"

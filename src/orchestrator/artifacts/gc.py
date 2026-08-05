@@ -31,7 +31,6 @@ class ArtifactGarbageCollectionCoordinator(Protocol):
     async def collect_after_delete(
         self,
         deleted_run: Any,
-        surviving_runs: list[Any],
         graph_store: Any,
         now: datetime,
     ) -> frozenset[str]: ...
@@ -65,26 +64,6 @@ class ArtifactGarbageCollector:
         except (OSError, ValueError) as exc:
             raise ArtifactGarbageCollectionError("Artifact garbage collection failed") from exc
 
-    async def collect_after_mark_hashes(
-        self,
-        load_hashes: Callable[[], Awaitable[Iterable[str]]],
-        now: datetime,
-    ) -> frozenset[str]:
-        """Sweep after loading exact durable artifact marks.
-
-        This is the request-path counterpart to ``collect_after_mark`` for
-        graph runs.  Artifact authorization rows are already written in the
-        same transaction as accepted graph output, so re-reading and parsing
-        every retained event would add history-dependent latency without
-        improving the mark set.
-        """
-        try:
-            async with ArtifactRootLock(self._root).sweep():
-                retained_hashes = frozenset(await load_hashes())
-                return await self._sweep_retained(retained_hashes, now)
-        except (OSError, ValueError) as exc:
-            raise ArtifactGarbageCollectionError("Artifact garbage collection failed") from exc
-
     async def _sweep_retained(
         self, retained_hashes: frozenset[str], now: datetime
     ) -> frozenset[str]:
@@ -95,19 +74,28 @@ class ArtifactGarbageCollector:
     async def collect_after_delete(
         self,
         deleted_run: Any,
-        surviving_runs: list[Any],
         graph_store: Any,
         now: datetime,
     ) -> frozenset[str]:
-        """Collect from the durable artifact-reference projection only."""
-        del deleted_run
+        """Collect from project-scoped scalar probes without survivor lists."""
 
-        async def load_hashes() -> frozenset[str]:
-            return await graph_store.read_artifact_content_hashes(
-                [str(run.id) for run in surviving_runs]
+        async def is_retained(content_hash: str) -> bool:
+            return await graph_store.artifact_content_hash_is_referenced(
+                content_hash,
+                repo_name=str(deleted_run.repo_name),
+                excluding_run_id=str(deleted_run.id),
             )
 
-        return await self.collect_after_mark_hashes(load_hashes, now)
+        try:
+            async with ArtifactRootLock(self._root).sweep():
+                return await _sweep_with_retention_probe(
+                    self._root,
+                    now,
+                    is_retained,
+                    self._grace_seconds,
+                )
+        except (OSError, ValueError) as exc:
+            raise ArtifactGarbageCollectionError("Artifact garbage collection failed") from exc
 
 
 def collect_artifact_refs(events: Iterable[Any]) -> frozenset[str]:
@@ -194,6 +182,66 @@ def _sweep_sync(
                         content_hash = f"sha256:{digest}"
                         modified_at = datetime.fromtimestamp(file_stat.st_mtime, tz=UTC)
                         if content_hash in retained_hashes or modified_at >= cutoff:
+                            continue
+                        try:
+                            os.unlink(blob_name, dir_fd=prefix_fd)
+                        except FileNotFoundError:
+                            continue
+                        deleted.add(content_hash)
+                finally:
+                    os.close(prefix_fd)
+            return frozenset(deleted)
+        finally:
+            os.close(sha256_fd)
+    finally:
+        os.close(root_fd)
+
+
+async def _sweep_with_retention_probe(
+    root: Path,
+    now: datetime,
+    is_retained: Callable[[str], Awaitable[bool]],
+    grace_seconds: int,
+) -> frozenset[str]:
+    """Sweep eligible blobs with one constant-size durable mark probe each."""
+    if grace_seconds < 0:
+        raise ValueError("grace_seconds must be non-negative")
+    cutoff = now.astimezone(UTC) - timedelta(seconds=grace_seconds)
+    root_fd = _open_directory(root)
+    if root_fd is None:
+        return frozenset()
+    try:
+        sha256_fd = _open_directory("sha256", parent_fd=root_fd)
+        if sha256_fd is None:
+            return frozenset()
+        try:
+            deleted: set[str] = set()
+            for prefix_name in os.listdir(sha256_fd):
+                if re.fullmatch(r"[0-9a-f]{2}", prefix_name) is None:
+                    continue
+                prefix_fd = _open_directory(prefix_name, parent_fd=sha256_fd)
+                if prefix_fd is None:
+                    continue
+                try:
+                    for blob_name in os.listdir(prefix_fd):
+                        digest = prefix_name + blob_name
+                        if _DIGEST.fullmatch(digest) is None:
+                            continue
+                        try:
+                            file_stat = os.stat(
+                                blob_name,
+                                dir_fd=prefix_fd,
+                                follow_symlinks=False,
+                            )
+                        except FileNotFoundError:
+                            continue
+                        if not stat.S_ISREG(file_stat.st_mode):
+                            continue
+                        modified_at = datetime.fromtimestamp(file_stat.st_mtime, tz=UTC)
+                        if modified_at >= cutoff:
+                            continue
+                        content_hash = f"sha256:{digest}"
+                        if await is_retained(content_hash):
                             continue
                         try:
                             os.unlink(blob_name, dir_fd=prefix_fd)

@@ -63,8 +63,9 @@ in-flight run: only the in-flight run is replayed/reconciled. *Expected.*
 
 - Kernel stays pure: version constant and reduce live in `graph/`; persistence in
   `graph_runtime/store.py`.
-- DB schema change (snapshot table/columns) needs an Alembic migration — `create_all`
-  does not add columns (see project memory). Never touch `orchestrator.db` directly.
+- Register snapshot tables and columns in current ORM metadata and verify them
+  through `init_db` on a fresh temporary database. Never touch
+  `orchestrator.db` directly.
 - `StaleProjectionError` optimistic-concurrency semantics unchanged.
 
 ## Acceptance

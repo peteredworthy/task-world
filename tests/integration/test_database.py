@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import Base, create_engine, create_session_factory, init_db
 from orchestrator.db import AttemptModel, EventV2Model, RunModel, StepModel, TaskModel
 
 
@@ -190,8 +190,8 @@ def test_event_v2_metadata_exposes_durability_contract() -> None:
     assert indexes["idx_events_v2_type"] == ("event_type", "position")
 
 
-async def test_events_v2_alembic_schema_and_retry_identity(tmp_path: Path) -> None:
-    db_path = tmp_path / "events-v2-migration.sqlite"
+async def test_file_database_current_schema_and_retry_identity(tmp_path: Path) -> None:
+    db_path = tmp_path / "events-v2-current-schema.sqlite"
     engine = create_engine(db_path)
     await init_db(engine)
     factory = create_session_factory(engine)
@@ -226,8 +226,8 @@ async def test_events_v2_alembic_schema_and_retry_identity(tmp_path: Path) -> No
     assert indexes["idx_events_v2_aggregate"] == ["aggregate_id", "position"]
     assert indexes["idx_events_v2_type"] == ["event_type", "position"]
 
-    async with factory() as migrated_session:
-        await migrated_session.execute(
+    async with factory() as current_session:
+        await current_session.execute(
             text(
                 "INSERT INTO events_v2"
                 " (aggregate_id, event_type, payload, timestamp, version)"
@@ -241,11 +241,11 @@ async def test_events_v2_alembic_schema_and_retry_identity(tmp_path: Path) -> No
                 "version": 1,
             },
         )
-        await migrated_session.flush()
-        await migrated_session.commit()
+        await current_session.flush()
+        await current_session.commit()
 
         with pytest.raises(IntegrityError):
-            await migrated_session.execute(
+            await current_session.execute(
                 text(
                     "INSERT INTO events_v2"
                     " (aggregate_id, event_type, payload, timestamp, version)"
@@ -259,9 +259,9 @@ async def test_events_v2_alembic_schema_and_retry_identity(tmp_path: Path) -> No
                     "version": 1,
                 },
             )
-            await migrated_session.flush()
+            await current_session.flush()
 
-        await migrated_session.rollback()
+        await current_session.rollback()
 
     async with factory() as verify_session:
         count = await verify_session.scalar(
@@ -272,6 +272,61 @@ async def test_events_v2_alembic_schema_and_retry_identity(tmp_path: Path) -> No
             {"aggregate_id": "retry-run", "version": 1},
         )
         assert count == 1
+
+    await engine.dispose()
+
+
+async def test_file_database_is_created_directly_from_current_metadata(tmp_path: Path) -> None:
+    db_path = tmp_path / "current-schema.sqlite"
+    engine = create_engine(db_path)
+    await init_db(engine)
+
+    async with engine.begin() as conn:
+        schema = await conn.run_sync(
+            lambda sync_conn: {
+                "tables": set(inspect(sync_conn).get_table_names()),
+                "archival_columns": {
+                    column["name"]
+                    for column in inspect(sync_conn).get_columns("graph_archival_view_checkpoints")
+                },
+                "fact_columns": {
+                    column["name"]
+                    for column in inspect(sync_conn).get_columns(
+                        "graph_node_detail_collection_facts"
+                    )
+                },
+                "blocker_indexes": {
+                    index["name"]
+                    for index in inspect(sync_conn).get_indexes("graph_final_blocker_view_entries")
+                },
+            }
+        )
+
+    assert schema["tables"] == set(Base.metadata.tables)
+    assert "alembic_version" not in schema["tables"]
+    assert schema["archival_columns"] == {"run_id", "position", "target_position"}
+    assert schema["fact_columns"] == {
+        "run_id",
+        "node_id",
+        "collection_name",
+        "item_key",
+        "position",
+        "payload_json",
+        "payload_bytes",
+    }
+    assert "idx_graph_final_blocker_view_entries_run_region_sequence" in schema["blocker_indexes"]
+
+    factory = create_session_factory(engine)
+    async with factory() as session:
+        session.add(_make_run(run_id="preserved-run"))
+        await session.commit()
+
+    await init_db(engine)
+    async with factory() as session:
+        assert (
+            await session.scalar(select(RunModel.id).where(RunModel.id == "preserved-run"))
+            == "preserved-run"
+        )
 
     await engine.dispose()
 

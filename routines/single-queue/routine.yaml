@@ -20,7 +20,7 @@ steps:
       add STOPPING to RunStatus, and define RUN_START signal type.
     tasks:
       - id: "T-01"
-        title: "Alembic migration for pending_signals and STOPPING status"
+        title: "Current pending_signals schema and STOPPING status"
         context_from:
           - artifact: "docs/single-queue/plan.md"
             as: "context.plan"
@@ -38,11 +38,10 @@ steps:
           {{context.plan}}
 
           Tasks to complete:
-          1. Create Alembic migration at src/orchestrator/db/migrations/versions/ (NOT alembic/versions/)
-             that: (a) replaces UUID string PK with INTEGER PRIMARY KEY AUTOINCREMENT,
+          1. Update the PendingSignal ORM model and current metadata so init_db
+             creates: (a) INTEGER PRIMARY KEY AUTOINCREMENT,
              (b) adds delivered_at TIMESTAMP NULL and handled_at TIMESTAMP NULL columns,
-             (c) retains created_at for audit only (must not be used in ORDER BY),
-             (d) backfills existing rows using SQLite ROWID as tie-breaker for ordering.
+             (c) retains created_at for audit only (must not be used in ORDER BY).
           2. Update PendingSignal ORM model in src/orchestrator/db/models.py:
              - id: Integer primary key
              - delivered_at: Optional[datetime] = None
@@ -60,12 +59,11 @@ steps:
           8. Run all existing tests and confirm they pass.
 
           CAVEATS:
-          - Migration directory is src/orchestrator/db/migrations/versions/ NOT alembic/versions/
-          - Use ROWID as tie-breaker for signals with identical created_at timestamps
+          - Verify through init_db and SQLAlchemy inspection on a fresh temporary database
           - STOPPING is a transient internal state; no user action should target it
         requirements:
           - id: "R1"
-            desc: "Alembic migration exists in src/orchestrator/db/migrations/versions/ and applies cleanly"
+            desc: "init_db creates the current pending_signals schema cleanly on a fresh database"
             priority: critical
           - id: "R2"
             desc: "PendingSignal ORM model has integer id PK, delivered_at, handled_at fields; drain queries order by integer PK"
@@ -84,8 +82,8 @@ steps:
             priority: critical
         auto_verify:
           items:
-            - id: "migration_exists"
-              cmd: "uv run python -c \"import os; assert any('single_queue' in f for f in os.listdir('src/orchestrator/db/migrations/versions/')), 'No single_queue migration found'\""
+            - id: "fresh_schema_columns"
+              cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"pending_signals\\\")})\\n    assert {\\\"id\\\", \\\"delivered_at\\\", \\\"handled_at\\\"} <= columns\\n    await engine.dispose()'); asyncio.run(check())\""
               must: true
             - id: "stopping_enum"
               cmd: "uv run python -c \"from src.orchestrator.db.models import RunStatus; assert RunStatus.STOPPING.value == 'stopping'\""
@@ -103,10 +101,10 @@ steps:
           rubric:
             - id: "R1"
               text: |
-                R1 — Read the migration file in src/orchestrator/db/migrations/versions/.
-                A: migration exists, alters pending_signals table to add integer PK + delivery tracking columns, includes backfill logic for existing rows using ROWID tie-breaker.
-                B: migration exists but missing backfill or uses created_at ordering.
-                F: no migration file found, or migration is in wrong directory (alembic/versions/).
+                R1 — Inspect current ORM metadata and a fresh init_db database.
+                A: pending_signals has an integer PK plus delivered_at and handled_at.
+                B: metadata is correct but fresh-schema proof is incomplete.
+                F: a required current-schema field is missing.
             - id: "R2"
               text: |
                 R2 — Read src/orchestrator/db/models.py PendingSignal model definition.

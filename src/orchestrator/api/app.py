@@ -313,6 +313,52 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
         logger.warning(f"Graph startup recovery failed: {e}")
 
 
+async def advance_graph_archival_maintenance_once(app: FastAPI) -> bool:
+    """Rebuild one dirty run's complete archival generation."""
+    from sqlalchemy import select
+
+    from orchestrator.db import GraphArchivalViewCheckpointModel
+    from orchestrator.graph_runtime import GraphEventStore, GraphReadModelUnavailable
+
+    session_factory = app.state.session_factory
+    async with session_factory() as session:
+        run_id = await session.scalar(
+            select(GraphArchivalViewCheckpointModel.run_id)
+            .where(GraphArchivalViewCheckpointModel.target_position.is_not(None))
+            .order_by(GraphArchivalViewCheckpointModel.run_id)
+            .limit(1)
+        )
+        if run_id is None:
+            return False
+        store = GraphEventStore(session)
+        try:
+            await store.rebuild_archival_views(str(run_id))
+        except GraphReadModelUnavailable as exc:
+            logger.warning("Graph archival maintenance deferred %s: %s", run_id, exc)
+            await session.commit()
+            return False
+        await session.commit()
+    return True
+
+
+async def run_graph_archival_maintenance(app: FastAPI) -> None:
+    """Continuously publish dirty archival generations outside public GETs."""
+    import asyncio as _asyncio
+
+    while True:
+        try:
+            if not await advance_graph_archival_maintenance_once(app):
+                await _asyncio.sleep(0.25)
+                continue
+            # Give command/outbox traffic a scheduling point between runs.
+            await _asyncio.sleep(0)
+        except _asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Graph archival maintenance slice failed: %s", exc)
+            await _asyncio.sleep(0.25)
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
@@ -564,6 +610,9 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     graph_recovery_task = _asyncio.create_task(_run_graph_startup_recovery(app))
     app.state.graph_recovery_task = graph_recovery_task
 
+    graph_archival_maintenance_task = _asyncio.create_task(run_graph_archival_maintenance(app))
+    app.state.graph_archival_maintenance_task = graph_archival_maintenance_task
+
     yield
 
     if not startup_recovery_task.done():
@@ -577,6 +626,13 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         graph_recovery_task.cancel()
         try:
             await graph_recovery_task
+        except _asyncio.CancelledError:
+            pass
+
+    if not graph_archival_maintenance_task.done():
+        graph_archival_maintenance_task.cancel()
+        try:
+            await graph_archival_maintenance_task
         except _asyncio.CancelledError:
             pass
 

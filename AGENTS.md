@@ -198,18 +198,15 @@ All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_
 
 ## Database
 
-**Never delete `orchestrator.db` without an explicit user request.** The database contains run history, events, and state that cannot be recovered. If a schema change causes errors, add an Alembic migration and run `alembic upgrade head` — do not drop and recreate. Even when the user explicitly asks to wipe the database, **back it up first** (`cp orchestrator.db orchestrator.db.bak`).
+**Never delete `orchestrator.db` without an explicit user request.** The database contains run history, events, and state that cannot be recovered. Even when the user explicitly asks to wipe the database, **back it up first** (`cp orchestrator.db orchestrator.db.bak`).
 
-**Never create a no-op migration.** Create an Alembic revision only when it
-performs a required schema or durable data transformation. If a change fits in
-existing columns, JSON payloads, application logic, documentation, or tests,
-do not add an empty revision merely to satisfy a planned file list. Remove any
-accidentally generated no-op revision before proceeding.
+The application has no database schema-upgrade contract. `init_db()` creates
+missing tables directly from the current SQLAlchemy ORM metadata for both file
+and in-memory databases; it does not alter existing tables. Make schema changes
+in the ORM models and validate them against a fresh temporary database. Do not
+add migration frameworks, revision files, upgrade/downgrade code, or automatic
+database deletion/recreation.
 
-- Schema migrations: `src/orchestrator/db/migrations/versions/`
-- Create a migration: `uv run alembic -c alembic.ini revision -m "description"`
-- Apply migrations: `uv run alembic -c alembic.ini upgrade head`
-- `init_db()` runs Alembic migrations for file-based DBs, `create_all` only for in-memory (tests)
 - `*.db` is in `.gitignore` — database files are never tracked and cannot be restored from git
 
 ## Non-Negotiable Design Constraints
@@ -396,8 +393,11 @@ When adding new modules, API routes, or CLI commands, update `docs/ARCHITECTURE.
 
 These rules lock in the invariants of the single-queue signal model. Violations are caught by `scripts/check_signal_routing.py` (enforced as a pre-commit hook).
 
-**Rule 1 — No registry function calls outside consumer.py.**
-`register_active_run`, `unregister_active_run`, and `has_active_workflow` are consumer-internal. Only `consumer.py` and its dedicated test files (`test_signal_consumer.py`, `test_signal_redelivery.py`) may import or call them. All other code must treat the active-workflow registry as an opaque implementation detail of the consumer.
+**Rule 1 — Retired active-workflow registry names stay removed.**
+`register_active_run`, `unregister_active_run`, and `has_active_workflow` were
+removed by the event-backed signal transport. Production code and tests must
+not reintroduce, import, or call those names. The permanent signal-routing
+check enforces their absence.
 
 **Rule 2 — No process-local shared state that crosses the API/executor boundary.**
 In-memory state (sets, dicts, locks) must not be shared between the HTTP request handlers and the executor/consumer. Dependencies are passed via constructor injection or FastAPI `Depends`. Never read another component's internal `_` fields from a different component.

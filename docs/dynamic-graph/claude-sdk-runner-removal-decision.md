@@ -44,7 +44,7 @@ must select Codex Server (or another active runner where valid) before a
 retired draft/run can start or resume. The system does not silently change a
 run's execution backend.
 
-## Historical compatibility and migration
+## Historical compatibility
 
 `AgentRunnerType.RETIRED` is a readback-only compatibility state. It is not
 selectable, returned by active runner discovery, accepted by runner defaults,
@@ -52,17 +52,14 @@ or dispatchable by the factory, executor, lifecycle consumer, or graph driver.
 The historical string `claude_sdk` normalizes to `retired` at repository,
 session-state, and workflow-event deserialization boundaries.
 
-Alembic migration `zg1h2i3j4k5l` converts mutable relational runner fields in
-`runs`, `attempts`, `cost_records`, `interaction_log_artifacts`, and
-`agent_runner_model_profile_defaults` to `retired`. Model-default collisions
-are resolved deterministically before conversion. Immutable event payload and
-state/journal bytes are not rewritten: normalization happens on in-memory
-copies at read time and only for runner-typed keys.
+Current ORM defaults use `retired`, while historical `claude_sdk` values are
+normalized on in-memory copies at repository and deserialization boundaries.
+Immutable event payload and state/journal bytes are not rewritten.
 
 There is no journal rewrite and no database wipe. Existing run history,
 incident evidence, IDs, content, events, and audit files remain available.
-Downgrade cannot recover whether a `retired` relational value originally came
-from `claude_sdk`, so reintroduction must not attempt to infer that provenance.
+Reintroduction must not attempt to infer whether a `retired` value originally
+came from `claude_sdk`.
 
 ## Consequences
 
@@ -97,15 +94,12 @@ git diff --check
 uv run python scripts/export_enums.py --check
 # OK: /Users/peter/code/task-world/worktrees/backlog-closeout/ui/src/types/generated-enums.ts is up to date.
 
-uv run alembic -c alembic.ini heads
-# zg1h2i3j4k5l (head)
 ```
 
 The three warnings were Python 3.12 default-datetime-adapter
 `DeprecationWarning`s from `aiosqlite/core.py:63`. The Pyright update notice was
 advisory; the check itself reported zero errors, warnings, and informations.
-Generated enums were up to date, and Alembic reported the single head
-`zg1h2i3j4k5l`. The verifier status showed modified
+Generated enums were up to date. The verifier status showed modified
 `.superpowers/sdd/progress.md` and unrelated untracked
 `docs/superpowers/plans/2026-07-18-migrate-claude-sdk-history.md`; neither was
 part of verified source `200102e0e4f9ab3d0b727faabe9f032f125894df`.
@@ -119,7 +113,7 @@ The fresh no-context verifier identified by
 evidence-commit predecessor
 `4da2e64e631b537b5bb69f4f2bb10c9db807316b`. The source lineage for this
 decision remains retired-history representation
-`fbf7c72fa9d6762e8d4bdc9a36bec31d8881cf6a`, relational migration
+`fbf7c72fa9d6762e8d4bdc9a36bec31d8881cf6a`, relational compatibility
 `3a741da27a4638fba7ec80268a69efe7c4fccdff`, implementation removal
 `528b46baeab013cd7655bf3d29ab25645503a81e`, and prior independent verifier
 source `200102e0e4f9ab3d0b727faabe9f032f125894df`.
@@ -140,9 +134,6 @@ git diff --check
 
 uv run python scripts/export_enums.py --check
 # generated-enums.ts is up to date
-
-uv run alembic -c alembic.ini heads
-# zg1h2i3j4k5l (head)
 
 uv run pytest tests/ --collect-only -q
 # 4794 tests collected in 4.28s
@@ -174,7 +165,7 @@ At that source, the full suite reported **4792 passed, 3 skipped, and 3
 deprecation warnings**; Ruff was clean; Pyright reported **0 errors, 0
 warnings, and 0 informations** plus the advisory `v1.1.408 -> v1.1.411` update
 notice; and `git diff --check` was clean. Generated enums were current,
-Alembic reported the single head `zg1h2i3j4k5l`, **4795 tests** collected, the
+**4795 tests** collected, the
 targeted backend checks reported **20 passed**, and the UI GraphPanel decisions
 suite reported **7 passed**. The three warnings were the Python 3.12
 `aiosqlite/core.py:63` default-datetime-adapter deprecations named in the
@@ -199,7 +190,7 @@ the following before becoming selectable:
    rate-missing data) through the shared accounting path.
 4. Factory, discovery, API-boundary, lifecycle, resume, and graph-driver tests
    proving unsupported states cannot dispatch.
-5. A documented migration plan that preserves the meaning of existing
+5. A documented transition plan that preserves the meaning of existing
    `retired` history without journal/event rewrites or provenance guesses.
 
 Until those criteria are met, `retired` remains permanently readback-only and

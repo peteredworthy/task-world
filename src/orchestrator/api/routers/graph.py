@@ -62,6 +62,7 @@ from orchestrator.graph import (
 from orchestrator.graph_runtime import (
     GRAPH_READ_CONTRACTS,
     GraphController,
+    GraphExpectedPositionMismatch,
     GraphPatchAttemptPage,
     GraphReadModelUnavailable,
     StaleProjectionError,
@@ -100,7 +101,10 @@ MAX_GRAPH_PATCH_JSON_SEQUENCE_ITEMS = 50
 MAX_GRAPH_PATCH_PAYLOAD_CHARS = 20_000
 MAX_GRAPH_PATCH_JSON_KEY_CHARS = 200
 _GRAPH_READ_CONTRACT_KEY = "_graph_read_contract"
+_ARCHIVAL_READ_CONTRACT_KEY = "_graph_archival_read_contract"
 _FINAL_BLOCKER_OUTBOX_CURSOR_PREFIX = "outbox:"
+_GRAPH_RESPONSE_BYTES = 262_144
+_FINAL_BLOCKER_OUTBOX_STRING_BYTES = 512
 
 GraphIdentifier = Annotated[
     str,
@@ -153,6 +157,20 @@ def _raise_read_model_unavailable(error: GraphReadModelUnavailable) -> NoReturn:
             "read_model": error.owner_read_model_name,
             "current_position": error.current_position,
             "reason": error.reason,
+            "retryable": True,
+        },
+    ) from error
+
+
+def _raise_expected_position_mismatch(error: GraphExpectedPositionMismatch) -> NoReturn:
+    """Tell a multi-view client to abandon its obsolete graph anchor."""
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "expected_position_mismatch",
+            "run_id": error.run_id,
+            "expected_position": error.expected_position,
+            "current_position": error.current_position,
             "retryable": True,
         },
     ) from error
@@ -234,6 +252,8 @@ class GraphTopologyResponse(ApiModel):
     truncated: bool = False
     total_known: int = 0
     next_cursor: str | int | None = None
+    partial: bool = False
+    collection_meta: dict[str, GraphReadPageMetadataResponse] = Field(default_factory=dict)
 
 
 class SchedulerBlockedNodeResponse(ApiModel):
@@ -650,6 +670,8 @@ class FinalInvariantBlockersResponse(ApiModel):
     truncated: bool = False
     total_known: int = 0
     next_cursor: str | int | None = None
+    partial: bool = False
+    collection_meta: dict[str, GraphReadPageMetadataResponse] = Field(default_factory=dict)
 
 
 class GraphRegionResponse(ApiModel):
@@ -665,6 +687,46 @@ class GraphRegionsResponse(ApiModel):
     truncated: bool = False
     total_known: int = 0
     next_cursor: str | int | None = None
+    partial: bool = False
+    collection_meta: dict[str, GraphReadPageMetadataResponse] = Field(default_factory=dict)
+
+
+def _unpack_archival_items(
+    items: Iterable[dict[str, Any]],
+    *,
+    identity_fields: tuple[str, ...],
+) -> tuple[list[dict[str, Any]], bool, dict[str, GraphReadPageMetadataResponse]]:
+    """Remove storage-only archival metadata and expose it truthfully at the API boundary."""
+    unpacked: list[dict[str, Any]] = []
+    partial = False
+    metadata: dict[str, GraphReadPageMetadataResponse] = {}
+    for index, raw_item in enumerate(items, start=1):
+        item = dict(raw_item)
+        raw_contract = item.pop(_ARCHIVAL_READ_CONTRACT_KEY, None)
+        identity = next(
+            (
+                item[field]
+                for field in identity_fields
+                if isinstance(item.get(field), str) and item[field]
+            ),
+            f"entry-{index}",
+        )
+        if isinstance(raw_contract, dict):
+            typed_contract = cast(dict[str, object], raw_contract)
+        else:
+            typed_contract = None
+        if typed_contract is not None and typed_contract.get("partial") is True:
+            partial = True
+            raw_fields = typed_contract.get("fields")
+            if isinstance(raw_fields, dict):
+                prefix = str(identity)
+                for path, value in cast(dict[str, object], raw_fields).items():
+                    if isinstance(value, dict):
+                        metadata[f"{prefix}:{path}"] = GraphReadPageMetadataResponse(
+                            **cast(dict[str, Any], value)
+                        )
+        unpacked.append(item)
+    return unpacked, partial, metadata
 
 
 def _event_to_response(
@@ -1030,6 +1092,23 @@ def _route_metadata_cursor(
         return cursors[0][1]
     encoded = json.dumps(cursors, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return f"aggregate:sha256:{sha256(encoded.encode()).hexdigest()}"
+
+
+def _contains_partial_graph_contract(value: Any) -> bool:
+    """Detect truthful nested truncation already embedded by bounded owners."""
+    if isinstance(value, dict):
+        mapping = cast(dict[str, Any], value)
+        if mapping.get("truncated") is True:
+            return True
+        contract = mapping.get("_graph_read_contract")
+        if isinstance(contract, dict):
+            typed_contract = cast(dict[str, Any], contract)
+            if typed_contract.get("partial") is True or typed_contract.get("truncated") is True:
+                return True
+        return any(_contains_partial_graph_contract(item) for item in mapping.values())
+    if isinstance(value, list):
+        return any(_contains_partial_graph_contract(item) for item in cast(list[Any], value))
+    return False
 
 
 def _graph_api_run_state(
@@ -1593,7 +1672,7 @@ def build_final_invariant_blockers_response(
             FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
             for blocker in project_final_invariant_blockers(events)
         ]
-        + _failed_outbox_blocker_responses(run_id, failed_outbox_rows or []),
+        + _failed_outbox_blocker_responses(run_id, failed_outbox_rows or [])[0],
     )
 
 
@@ -1615,7 +1694,7 @@ def build_final_invariant_blockers_response_from_projection(
     blockers = [
         FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
         for blocker in project_final_invariant_blockers([], projection=projection)
-    ] + _failed_outbox_blocker_responses(run_id, failed_outbox_rows or [])
+    ] + _failed_outbox_blocker_responses(run_id, failed_outbox_rows or [])[0]
     page = blockers[cursor : cursor + limit]
     next_cursor = cursor + len(page) if cursor + len(page) < len(blockers) else None
     return FinalInvariantBlockersResponse(
@@ -1641,7 +1720,7 @@ def build_final_invariant_blockers_response_from_view(
         FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
         for blocker in view.get("blockers", [])
         if isinstance(blocker, dict)
-    ] + _failed_outbox_blocker_responses(run_id, failed_outbox_rows)
+    ] + _failed_outbox_blocker_responses(run_id, failed_outbox_rows)[0]
     page = blockers[cursor : cursor + limit]
     next_cursor = cursor + len(page) if cursor + len(page) < len(blockers) else None
     return FinalInvariantBlockersResponse(
@@ -1654,28 +1733,116 @@ def build_final_invariant_blockers_response_from_view(
     )
 
 
+@dataclass(frozen=True)
+class _FailedOutboxRow:
+    """The non-payload columns needed by the failed-outbox overlay."""
+
+    outbox_id: int
+    event_id: str
+    kind: str
+    last_error: str | None
+    attempts: int
+
+
+def _bounded_outbox_text(
+    value: str,
+    *,
+    field: str,
+    metadata: dict[str, GraphReadPageMetadataResponse],
+    identity: str,
+) -> str:
+    """Keep an outbox overlay typed while reporting an omitted string exactly.
+
+    Outbox ``payload`` is deliberately never selected by this route.  These
+    text columns are independently bounded before becoming part of a public
+    final-blocker response, so a failed side effect cannot bypass the archival
+    page contract.
+    """
+    encoded = value.encode()
+    if len(encoded) <= _FINAL_BLOCKER_OUTBOX_STRING_BYTES:
+        return value
+    digest = sha256(encoded).hexdigest()
+    metadata[f"{identity}:$.{field}"] = GraphReadPageMetadataResponse(
+        owner="final_blockers",
+        truncated=True,
+        total_known=1,
+        next_cursor=f"sha256:{digest}",
+        original_bytes=len(encoded),
+        sha256=digest,
+    )
+    return f"sha256:{digest}"
+
+
 def _failed_outbox_blocker_responses(
     run_id: str,
-    rows: list[GraphOutboxModel],
-) -> list[FinalInvariantBlockerResponse]:
-    return [
-        FinalInvariantBlockerResponse(
-            kind="failed_outbox_row",
-            reason=(
-                f"outbox row failed for run {run_id}: "
-                f"{row.kind}: {row.last_error or 'unknown error'}"
-            ),
-            state="failed",
-            support_ids=[row.event_id],
-            run_id=run_id,
-            outbox_id=row.outbox_id,
-            outbox_event_id=row.event_id,
-            outbox_kind=row.kind,
-            outbox_last_error=row.last_error,
-            outbox_attempts=row.attempts,
+    rows: Iterable[_FailedOutboxRow | GraphOutboxModel],
+) -> tuple[list[FinalInvariantBlockerResponse], bool, dict[str, GraphReadPageMetadataResponse]]:
+    """Build bounded failed-outbox overlays without decoding their JSON payloads."""
+    blockers: list[FinalInvariantBlockerResponse] = []
+    metadata: dict[str, GraphReadPageMetadataResponse] = {}
+    for row in rows:
+        identity = f"outbox:{row.outbox_id}"
+        event_id = _bounded_outbox_text(
+            row.event_id, field="support_ids[0]", metadata=metadata, identity=identity
         )
-        for row in rows
-    ]
+        kind = _bounded_outbox_text(
+            row.kind, field="outbox_kind", metadata=metadata, identity=identity
+        )
+        error = _bounded_outbox_text(
+            row.last_error or "unknown error",
+            field="outbox_last_error",
+            metadata=metadata,
+            identity=identity,
+        )
+        blockers.append(
+            FinalInvariantBlockerResponse(
+                kind="failed_outbox_row",
+                reason=f"outbox row failed for run {run_id}: {kind}: {error}",
+                state="failed",
+                support_ids=[event_id],
+                run_id=run_id,
+                outbox_id=row.outbox_id,
+                outbox_event_id=event_id,
+                outbox_kind=kind,
+                outbox_last_error=error,
+                outbox_attempts=row.attempts,
+            )
+        )
+    return blockers, bool(metadata), metadata
+
+
+def _pack_failed_outbox_overlay(
+    blockers: list[FinalInvariantBlockerResponse],
+    metadata: dict[str, GraphReadPageMetadataResponse],
+    *,
+    byte_budget: int,
+) -> tuple[list[FinalInvariantBlockerResponse], dict[str, GraphReadPageMetadataResponse]]:
+    """Select a fitting overlay prefix before it joins an archival page.
+
+    The response model adds a small amount of JSON framing around each
+    blocker.  Reserve that framing here rather than assuming the archival
+    owner's budget covers a separate, live outbox namespace.
+    """
+    packed: list[FinalInvariantBlockerResponse] = []
+    used = 0
+    for blocker in blockers:
+        item_bytes = (
+            len(json.dumps(blocker.model_dump(mode="json"), separators=(",", ":")).encode()) + 64
+        )
+        if packed and used + item_bytes > byte_budget:
+            break
+        if not packed and item_bytes > byte_budget:
+            break
+        packed.append(blocker)
+        used += item_bytes
+    kept_ids = {
+        f"outbox:{blocker.outbox_id}:" for blocker in packed if blocker.outbox_id is not None
+    }
+    return packed, {
+        key: value
+        for key, value in metadata.items()
+        if any(key.startswith(prefix) for prefix in kept_ids)
+    }
 
 
 def build_graph_regions_response(
@@ -2797,7 +2964,10 @@ def build_node_detail_response_from_summary(
         item = _read_page_metadata(raw)
         if item is not None:
             collection_meta[name] = item
-    truncated = any(item.truncated for item in collection_meta.values())
+    truncated = any(item.truncated for item in collection_meta.values()) or any(
+        _contains_partial_graph_contract(value)
+        for value in (output_records, file_state_records, callback_history, response_events)
+    )
     next_cursor = _route_metadata_cursor(collection_meta)
     return NodeDetailResponse(
         run_id=summary.run_id,
@@ -3143,6 +3313,7 @@ async def get_graph_topology(
     graph_store: GraphEventStore = Depends(get_graph_store),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=GRAPH_FIXED_VIEW_ITEMS, ge=1, le=GRAPH_FIXED_VIEW_ITEMS),
+    expected_position: int | None = Query(default=None, ge=0),
 ) -> GraphTopologyResponse:
     try:
         archival = await graph_store.read_current_archival_view_page(
@@ -3150,7 +3321,10 @@ async def get_graph_topology(
             "topology",
             after_sequence=cursor,
             limit=limit,
+            expected_position=expected_position,
         )
+    except GraphExpectedPositionMismatch as error:
+        _raise_expected_position_mismatch(error)
     except GraphReadModelUnavailable as error:
         _raise_read_model_unavailable(error)
     if archival is None:
@@ -3158,8 +3332,11 @@ async def get_graph_topology(
     position, page = archival
     nodes: list[GraphTopologyNodeResponse] = []
     edges: list[GraphTopologyEdgeResponse] = []
-    for raw_item in page.items:
-        item = dict(raw_item)
+    items, partial, collection_meta = _unpack_archival_items(
+        page.items,
+        identity_fields=("node_id", "edge_id"),
+    )
+    for item in items:
         entry_kind = item.pop("_entry_kind", None)
         if entry_kind == "node":
             nodes.append(GraphTopologyNodeResponse(**item))
@@ -3173,6 +3350,8 @@ async def get_graph_topology(
         truncated=page.truncated,
         total_known=page.total_known,
         next_cursor=page.next_cursor,
+        partial=partial,
+        collection_meta=collection_meta,
     )
 
 
@@ -3284,6 +3463,7 @@ async def get_graph_final_blockers(
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
     cursor: str = Query(default="0"),
     limit: int = Query(default=GRAPH_FIXED_VIEW_ITEMS, ge=1, le=GRAPH_FIXED_VIEW_ITEMS),
+    expected_position: int | None = Query(default=None, ge=0),
 ) -> FinalInvariantBlockersResponse:
     cursor_kind, cursor_value = _parse_final_blocker_cursor(cursor)
     try:
@@ -3294,12 +3474,21 @@ async def get_graph_final_blockers(
             # The outbox continuation only needs the checkpoint/total facts;
             # do not fetch a page that belongs to the previous namespace.
             limit=limit if cursor_kind == "archival" else 1,
+            expected_position=expected_position,
         )
+    except GraphExpectedPositionMismatch as error:
+        _raise_expected_position_mismatch(error)
     except GraphReadModelUnavailable as error:
         _raise_read_model_unavailable(error)
     archived_total = archival[1].total_known if archival is not None else 0
     archival_items = archival[1].items if archival is not None and cursor_kind == "archival" else ()
-    remaining = max(0, limit - len(archival_items))
+    archival_has_more = bool(
+        archival is not None and cursor_kind == "archival" and archival[1].truncated
+    )
+    # Failed-outbox rows are a second cursor namespace.  Overlay them only
+    # after the archival namespace is exhausted; otherwise every archival page
+    # would repeat the same outbox prefix before its cursor can advance.
+    remaining = 0 if archival_has_more else max(0, limit - len(archival_items))
     async with session_factory() as session:
         failed_count = int(
             await session.scalar(
@@ -3310,8 +3499,17 @@ async def get_graph_final_blockers(
             )
             or 0
         )
+        # Do not select ``payload`` here.  It is opaque side-effect input and
+        # may be much larger than the public diagnostic overlay; selecting the
+        # explicit scalar columns keeps this read outside the JSON decode path.
         failed_query = (
-            select(GraphOutboxModel)
+            select(
+                GraphOutboxModel.outbox_id,
+                GraphOutboxModel.event_id,
+                GraphOutboxModel.kind,
+                GraphOutboxModel.last_error,
+                GraphOutboxModel.attempts,
+            )
             .where(GraphOutboxModel.run_id == run_id)
             .where(GraphOutboxModel.status == "failed")
         )
@@ -3320,17 +3518,32 @@ async def get_graph_final_blockers(
         result = await session.execute(
             failed_query.order_by(GraphOutboxModel.outbox_id).limit(remaining)
         )
-        failed_outbox_rows = list(result.scalars())
-    failed = _failed_outbox_blocker_responses(run_id, failed_outbox_rows)
+        failed_outbox_rows = [
+            _FailedOutboxRow(
+                outbox_id=int(row.outbox_id),
+                event_id=str(row.event_id),
+                kind=str(row.kind),
+                last_error=str(row.last_error) if row.last_error is not None else None,
+                attempts=int(row.attempts),
+            )
+            for row in result
+        ]
+    failed, failed_partial, failed_meta = _failed_outbox_blocker_responses(
+        run_id, failed_outbox_rows
+    )
 
     if cursor_kind == "outbox":
+        failed, failed_meta = _pack_failed_outbox_overlay(
+            failed, failed_meta, byte_budget=_GRAPH_RESPONSE_BYTES - 4_096
+        )
+        failed_partial = bool(failed_meta)
         # A page can be exactly full even when there is no subsequent row.
         # Probe only the keyset successor, never a skipped offset range.
         next_cursor = (
             await _next_failed_outbox_cursor(
-                session_factory, run_id, failed_outbox_rows[-1].outbox_id
+                session_factory, run_id, cast(int, failed[-1].outbox_id)
             )
-            if failed_outbox_rows
+            if failed_outbox_rows and failed
             else None
         )
         return FinalInvariantBlockersResponse(
@@ -3340,14 +3553,20 @@ async def get_graph_final_blockers(
             truncated=next_cursor is not None,
             total_known=archived_total + failed_count,
             next_cursor=next_cursor,
+            partial=failed_partial,
+            collection_meta=failed_meta,
         )
 
     if archival is None:
+        failed, failed_meta = _pack_failed_outbox_overlay(
+            failed, failed_meta, byte_budget=_GRAPH_RESPONSE_BYTES - 4_096
+        )
+        failed_partial = bool(failed_meta)
         next_cursor = (
             await _next_failed_outbox_cursor(
                 session_factory,
                 run_id,
-                failed_outbox_rows[-1].outbox_id if failed_outbox_rows else 0,
+                cast(int, failed[-1].outbox_id) if failed else 0,
             )
             if failed_outbox_rows
             else (f"{_FINAL_BLOCKER_OUTBOX_CURSOR_PREFIX}0" if failed_count else None)
@@ -3359,17 +3578,37 @@ async def get_graph_final_blockers(
             truncated=next_cursor is not None,
             total_known=failed_count,
             next_cursor=next_cursor,
+            partial=failed_partial,
+            collection_meta=failed_meta,
         )
 
     position, page = archival
-    blockers = [FinalInvariantBlockerResponse(**item) for item in archival_items]
+    archival_payloads, archival_partial, archival_meta = _unpack_archival_items(
+        archival_items,
+        identity_fields=("node_id", "edge_id", "task_region_id", "proposal_id", "requirement_id"),
+    )
+    blockers = [FinalInvariantBlockerResponse(**item) for item in archival_payloads]
+    archival_bytes = sum(
+        len(json.dumps(blocker.model_dump(mode="json"), separators=(",", ":")).encode()) + 64
+        for blocker in blockers
+    )
+    failed, failed_meta = _pack_failed_outbox_overlay(
+        failed,
+        failed_meta,
+        byte_budget=max(0, _GRAPH_RESPONSE_BYTES - 4_096 - archival_bytes),
+    )
+    failed_partial = bool(failed_meta)
     blockers.extend(failed)
     total_known = archived_total + failed_count
     if page.truncated:
         next_cursor: str | int | None = page.next_cursor
     elif failed_outbox_rows:
-        next_cursor = await _next_failed_outbox_cursor(
-            session_factory, run_id, failed_outbox_rows[-1].outbox_id
+        next_cursor = (
+            await _next_failed_outbox_cursor(
+                session_factory, run_id, cast(int, failed[-1].outbox_id)
+            )
+            if failed
+            else f"{_FINAL_BLOCKER_OUTBOX_CURSOR_PREFIX}0"
         )
     else:
         next_cursor = f"{_FINAL_BLOCKER_OUTBOX_CURSOR_PREFIX}0" if failed_count else None
@@ -3380,6 +3619,8 @@ async def get_graph_final_blockers(
         truncated=next_cursor is not None,
         total_known=total_known,
         next_cursor=next_cursor,
+        partial=archival_partial or failed_partial,
+        collection_meta={**archival_meta, **failed_meta},
     )
 
 
@@ -3420,6 +3661,7 @@ async def get_graph_regions(
     graph_store: GraphEventStore = Depends(get_graph_store),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=GRAPH_FIXED_VIEW_ITEMS, ge=1, le=GRAPH_FIXED_VIEW_ITEMS),
+    expected_position: int | None = Query(default=None, ge=0),
 ) -> GraphRegionsResponse:
     try:
         archival = await graph_store.read_current_archival_view_page(
@@ -3427,19 +3669,28 @@ async def get_graph_regions(
             "regions",
             after_sequence=cursor,
             limit=limit,
+            expected_position=expected_position,
         )
+    except GraphExpectedPositionMismatch as error:
+        _raise_expected_position_mismatch(error)
     except GraphReadModelUnavailable as error:
         _raise_read_model_unavailable(error)
     if archival is None:
         return GraphRegionsResponse(run_id=run_id, event_count=0, regions=[])
     position, page = archival
+    region_payloads, partial, collection_meta = _unpack_archival_items(
+        page.items,
+        identity_fields=("task_region_id",),
+    )
     return GraphRegionsResponse(
         run_id=run_id,
         event_count=position,
-        regions=[GraphRegionResponse(**item) for item in page.items],
+        regions=[GraphRegionResponse(**item) for item in region_payloads],
         truncated=page.truncated,
         total_known=page.total_known,
         next_cursor=page.next_cursor,
+        partial=partial,
+        collection_meta=collection_meta,
     )
 
 

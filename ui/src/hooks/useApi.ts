@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useMemo } from 'react';
-import { api, getConfig, validateRoutine } from '../api/client';
+import { api, getConfig, isExpectedGraphPositionMismatch, isRetryableGraphReadError, validateRoutine } from '../api/client';
 import type {
   CreateRunRequest,
   RecoverRequest,
@@ -13,12 +13,21 @@ import type {
   FileStateReportResponse,
   SchedulerViewResponse,
   GraphHealthResponse,
+  GraphTopologyResponse,
+  FinalInvariantBlockersResponse,
+  GraphRegionsResponse,
   NodeDetailResponse,
   RunEvidenceDigestResponse,
   RecordGraphDecisionRequest,
 } from '../types';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'stopping']);
+
+/** Graph owners may briefly lag their authority stream; obsolete positions never will recover. */
+export function retryGraphRead(failureCount: number, error: unknown): boolean {
+  if (isExpectedGraphPositionMismatch(error)) return false;
+  return isRetryableGraphReadError(error) && failureCount < 3;
+}
 
 export function useRuns(params?: { status?: string; repo_name?: string; limit?: number }) {
   return useQuery({
@@ -71,6 +80,46 @@ export function useGraphProjection(runId: string | undefined) {
     queryFn: () => api.getRunGraphProjection(runId!),
     enabled: !!runId,
     staleTime: 5000,
+    retry: retryGraphRead,
+  });
+}
+
+export interface ArchivalGraphSnapshot {
+  position: number;
+  topology: GraphTopologyResponse;
+  finalBlockers: FinalInvariantBlockersResponse;
+  regions: GraphRegionsResponse;
+}
+
+/**
+ * Load the three coupled archival views from one graph position.  A 409 is
+ * never retried against its obsolete position: the query obtains a new anchor
+ * and restarts all siblings together.  A 503 remains a catch-up retry.
+ */
+export function useArchivalGraphSnapshot(runId: string | undefined) {
+  return useQuery<ArchivalGraphSnapshot>({
+    queryKey: ['archivalGraphSnapshot', runId],
+    queryFn: async () => {
+      let lastMismatch: unknown = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const anchor = await api.getRunGraphProjection(runId!);
+        try {
+          const [topology, finalBlockers, regions] = await Promise.all([
+            api.getRunGraphTopology(runId!, { expectedPosition: anchor.event_count }),
+            api.getRunGraphFinalBlockers(runId!, { expectedPosition: anchor.event_count }),
+            api.getRunGraphRegions(runId!, { expectedPosition: anchor.event_count }),
+          ]);
+          return { position: anchor.event_count, topology, finalBlockers, regions };
+        } catch (error) {
+          if (!isExpectedGraphPositionMismatch(error)) throw error;
+          lastMismatch = error;
+        }
+      }
+      throw lastMismatch;
+    },
+    enabled: !!runId,
+    staleTime: 5000,
+    retry: retryGraphRead,
   });
 }
 
@@ -167,6 +216,7 @@ export function useSchedulerView(runId: string | undefined) {
     queryFn: () => api.getRunGraphScheduler(runId!),
     enabled: !!runId,
     staleTime: 5000,
+    retry: retryGraphRead,
   });
 }
 
@@ -185,6 +235,7 @@ export function useDecisionView(runId: string | undefined) {
     queryFn: () => api.getRunGraphDecisions(runId!),
     enabled: !!runId,
     staleTime: 5000,
+    retry: retryGraphRead,
   });
 }
 

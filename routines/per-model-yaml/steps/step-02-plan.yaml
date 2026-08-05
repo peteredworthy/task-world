@@ -1,16 +1,16 @@
 id: "S-02"
-title: "DB Migration and Persistence"
+title: "Current DB Schema and Persistence"
 step_context: |
-  Persist the new token_usage_by_model fields to the database via Alembic migration
-  and ORM changes. After this step, per-model token data can be stored and retrieved
+  Persist the new token_usage_by_model fields through current ORM metadata.
+  After this step, per-model token data can be stored and retrieved
   from the database.
 
   Prerequisites: Step 01 complete — ModelTokenUsage class exists in state/models.py,
   token_usage_by_model fields on Attempt and Run domain models.
 
   Key constraints:
-  - Use Alembic migrations only — never rm orchestrator.db or use create_all
-  - server_default='[]' on both new columns so existing rows get empty arrays
+  - Verify schema only on fresh temporary databases through init_db
+  - ORM defaults produce empty arrays for newly created rows
   - Corrupt JSON in columns must be handled gracefully (return empty list)
   - All existing tests must continue to pass after each task
 
@@ -35,8 +35,7 @@ tasks:
       The ORM column definition:
           token_usage_by_model = Column(JSON, default=list)
 
-      Note: the server_default will be set in the Alembic migration (T-02); the
-      ORM default=list handles in-memory object creation.
+      The ORM default=list handles newly created objects and rows.
 
       Do NOT modify any other files in this task. Run existing tests to confirm
       no regressions before marking done.
@@ -66,59 +65,30 @@ tasks:
       max_attempts: 2
 
   - id: "T-02"
-    title: "Create Alembic migration for token_usage_by_model columns"
+    title: "Verify token_usage_by_model in the Fresh Current Schema"
     context_from:
       - artifact: "docs/per-model-yaml/ctx/step-02-plan-architecture-context.md"
         as: "arch"
         required: false
     task_context: |
-      Create an Alembic migration file in src/orchestrator/db/migrations/versions/
-      that adds token_usage_by_model JSON columns to both attempts and runs tables.
-
-      Migration directory: src/orchestrator/db/migrations/versions/
-      (NOT alembic/versions/ — use the orchestrator's own migrations path)
-
-      Migration operations:
-          op.add_column('attempts', sa.Column('token_usage_by_model', sa.JSON(),
-                        server_default='[]', nullable=True))
-          op.add_column('runs', sa.Column('token_usage_by_model', sa.JSON(),
-                        server_default='[]', nullable=True))
-
-      Downgrade must drop both columns:
-          op.drop_column('attempts', 'token_usage_by_model')
-          op.drop_column('runs', 'token_usage_by_model')
-
-      The migration revises the most recent migration in the chain. Check existing
-      migration files to find the current head revision ID.
-
-      Generate a short hex revision ID (e.g. p1a2b3c4d5e6). The migration filename
-      should follow the existing pattern (e.g. p1a2b3c4d5e6_add_token_usage_by_model.py).
-
-      After creating the file, verify it applies cleanly with:
-          uv run alembic -c src/orchestrator/db/migrations/alembic.ini upgrade head
+      Initialize a fresh temporary SQLite database through init_db, then inspect
+      attempts and runs with SQLAlchemy. Both tables must expose a JSON
+      token_usage_by_model column, and newly persisted rows must default to an
+      empty list through the normal repository path.
     requirements:
       - id: "R4"
-        desc: "Alembic migration file exists in src/orchestrator/db/migrations/versions/ adding token_usage_by_model to attempts and runs tables"
+        desc: "Current ORM metadata defines token_usage_by_model on attempts and runs"
         priority: critical
       - id: "R5"
-        desc: "Migration applies cleanly: uv run alembic upgrade head succeeds"
+        desc: "init_db creates both token_usage_by_model columns on a fresh temporary database"
         priority: critical
       - id: "R6"
-        desc: "Migration rolls back cleanly: uv run alembic downgrade -1 then upgrade head round-trips"
+        desc: "SQLAlchemy inspection reports JSON-compatible types for both columns"
         priority: expected
     auto_verify:
       items:
-        - id: "migration_file_exists"
-          cmd: "ls src/orchestrator/db/migrations/versions/*token_usage_by_model*.py 2>/dev/null && echo 'Migration file found'"
-          must: true
-        - id: "migration_has_attempts"
-          cmd: "grep -r \"add_column.'attempts'.*token_usage_by_model\" src/orchestrator/db/migrations/versions/ && echo 'Migration covers attempts table'"
-          must: true
-        - id: "migration_has_runs"
-          cmd: "grep -r \"add_column.'runs'.*token_usage_by_model\" src/orchestrator/db/migrations/versions/ && echo 'Migration covers runs table'"
-          must: true
-        - id: "alembic_upgrade"
-          cmd: "uv run alembic -c src/orchestrator/db/migrations/alembic.ini upgrade head"
+        - id: "fresh_schema_columns"
+          cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        attempts = await conn.run_sync(lambda c: {x[\\\"name\\\"]: str(x[\\\"type\\\"]) for x in inspect(c).get_columns(\\\"attempts\\\")})\\n        runs = await conn.run_sync(lambda c: {x[\\\"name\\\"]: str(x[\\\"type\\\"]) for x in inspect(c).get_columns(\\\"runs\\\")})\\n    assert \\\"token_usage_by_model\\\" in attempts and \\\"token_usage_by_model\\\" in runs\\n    assert \\\"JSON\\\" in attempts[\\\"token_usage_by_model\\\"].upper() and \\\"JSON\\\" in runs[\\\"token_usage_by_model\\\"].upper()\\n    await engine.dispose()'); asyncio.run(check())\""
           must: true
       tail_lines: 15
     retry:
@@ -155,7 +125,7 @@ tasks:
 
       Import: from orchestrator.state.models import ModelTokenUsage
 
-      Do NOT modify migration files or ORM models in this task.
+      Do NOT modify ORM models in this task.
 
       Run the full test suite after changes to confirm no regressions.
     requirements:

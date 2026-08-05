@@ -68,14 +68,11 @@ Agent CRUD: `GET/POST /api/agents`, `GET/PUT/DELETE /api/agents/{id}`, `POST /ap
 
 ## Database
 
-Never delete `orchestrator.db` without explicit user request. Migrations only, never drop/recreate.
-
-```bash
-uv run alembic -c alembic.ini revision -m "description"
-uv run alembic -c alembic.ini upgrade head
-```
-
-`init_db()` runs Alembic for file DBs, `create_all` for in-memory (tests only). `*.db` in `.gitignore`.
+Never delete `orchestrator.db` without explicit user request. There is no
+schema-upgrade contract: change ORM metadata and validate a fresh temporary
+database. `init_db()` creates missing current-schema tables directly for file
+and in-memory databases; it never alters or recreates existing tables. Do not
+add migration frameworks or revision files. `*.db` is in `.gitignore`.
 
 **NEVER touch `~/.codex/auth.json`.** Use `OPENAI_API_KEY` env var for Codex credentials.
 

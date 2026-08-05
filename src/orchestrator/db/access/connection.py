@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import Connection, event
+from sqlalchemy import event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -18,9 +18,6 @@ from sqlalchemy.pool import NullPool, StaticPool
 from orchestrator.db.orm.base import Base
 
 logger = logging.getLogger(__name__)
-
-# Path to Alembic migration scripts (two levels up from this file)
-_MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations"
 
 
 def create_engine(db_path: Path | str = ":memory:") -> AsyncEngine:
@@ -111,27 +108,16 @@ def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSessi
     return async_sessionmaker(engine, expire_on_commit=False, class_=_ResilientAsyncSession)
 
 
-def _run_alembic_upgrade(connection: Connection) -> None:
-    """Run Alembic migrations on a synchronous connection."""
-    from alembic import command
-    from alembic.config import Config
-
-    cfg = Config()
-    cfg.set_main_option("script_location", str(_MIGRATIONS_DIR))
-    cfg.attributes["connection"] = connection
-    command.upgrade(cfg, "head")
-
-
 async def init_db(engine: AsyncEngine | str) -> None:
-    """Initialise the database schema.
+    """Create the current database schema when its tables do not exist.
 
-    Accepts either an ``AsyncEngine`` or a SQLAlchemy URL string.  When a
+    Accepts either an ``AsyncEngine`` or a SQLite database path string. When a
     string is passed a temporary engine is created and disposed after use.
 
-    For file-based databases, runs Alembic migrations so the schema is always
-    up-to-date with the migration history.  For in-memory databases (used in
-    tests), falls back to ``metadata.create_all()`` since migration tracking
-    is unnecessary.
+    The application has no schema-upgrade contract. Both file-backed and
+    in-memory databases are initialized directly from the current ORM
+    metadata; existing tables are left untouched and are never rewritten or
+    deleted implicitly.
     """
     if isinstance(engine, str):
         tmp_engine = create_engine(engine)
@@ -139,12 +125,5 @@ async def init_db(engine: AsyncEngine | str) -> None:
         await tmp_engine.dispose()
         return
 
-    url_str = str(engine.url)
-    is_memory = url_str == "sqlite+aiosqlite://" or ":memory:" in url_str
-
-    if is_memory:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-    else:
-        async with engine.begin() as conn:
-            await conn.run_sync(_run_alembic_upgrade)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)

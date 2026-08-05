@@ -91,15 +91,15 @@ steps:
     step_context: "Build the unified SQLite event store (events_v2), concurrency strategy, JSONL outbox observer, and wire PersistentEventEmitter to use it. Preserve legacy EventStore during transition."
     tasks:
       - id: "T-01"
-        title: "events_v2 ORM model and Alembic migration"
+        title: "events_v2 ORM model and fresh-schema verification"
         task_context: |
-          Add EventV2Model to src/orchestrator/db/orm/models.py and create an Alembic migration
-          that creates the events_v2 table. Schema: position (INTEGER PK autoincrement),
+          Add EventV2Model to src/orchestrator/db/orm/models.py and register it in current
+          ORM metadata so init_db creates events_v2. Schema: position (INTEGER PK autoincrement),
           aggregate_id (TEXT NOT NULL), event_type (TEXT NOT NULL), payload (TEXT NOT NULL),
           timestamp (TEXT NOT NULL), version (INTEGER NOT NULL). Add UNIQUE(aggregate_id, version),
           idx_events_v2_aggregate on (aggregate_id, position), idx_events_v2_type on
           (event_type, position). Export EventV2Model from src/orchestrator/db/__init__.py.
-          Do not modify any existing migration or ORM class.
+          Do not modify unrelated ORM classes.
 
           See docs/event-source/steps/step-01-plan.md Task 1.1 for naming conventions.
         context_from:
@@ -108,25 +108,25 @@ steps:
             required: true
         requirements:
           - id: "R1"
-            desc: "EventV2Model ORM class with correct schema; Alembic migration creates events_v2 with UNIQUE(aggregate_id, version) constraint and both indexes; migration is reversible"
+            desc: "EventV2Model ORM class and current metadata create events_v2 with UNIQUE(aggregate_id, version) and both indexes"
             priority: critical
           - id: "R2"
-            desc: "EventV2Model exported from orchestrator.db; init_db runs migration cleanly on an empty DB"
+            desc: "EventV2Model exported from orchestrator.db; init_db creates the current schema cleanly on an empty DB"
             priority: expected
         auto_verify:
           items:
             - id: "event_v2_import"
               cmd: "uv run python -c \"from orchestrator.db import EventV2Model; assert EventV2Model.__tablename__ == 'events_v2', 'wrong tablename'\""
               must: true
-            - id: "migration_runs"
-              cmd: "uv run python -c \"import asyncio; from orchestrator.db.access.connection import init_db; asyncio.run(init_db('sqlite+aiosqlite://'))\""
+            - id: "fresh_schema"
+              cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        tables = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))\\n    assert \\\"events_v2\\\" in tables\\n    await engine.dispose()'); asyncio.run(check())\""
               must: true
         verifier:
           rubric:
             - id: "R1"
-              text: "R1 — A: EventV2Model has all required columns with correct types; migration creates the table with UNIQUE(aggregate_id, version) and both indexes; downgrade drops cleanly. B: schema exists but missing an index or the unique constraint."
+              text: "R1 — A: EventV2Model has all required columns with correct types; fresh init_db schema has UNIQUE(aggregate_id, version) and both indexes. B: schema exists but misses an index or the unique constraint."
             - id: "R2"
-              text: "R2 — A: EventV2Model importable from orchestrator.db; init_db completes without error on a fresh DB. B: importable but migration has minor issues."
+              text: "R2 — A: EventV2Model importable from orchestrator.db; init_db completes without error on a fresh DB. B: importable but fresh-schema inspection has minor issues."
           submission_template:
             grade_scale: [A, B, C, D, F]
             require_reason_if_below: "B"
@@ -258,11 +258,12 @@ steps:
     step_context: "Build the projection framework: Projector protocol, ProjectionRegistry, concrete projectors, projection_checkpoints table, and rebuild-projections CLI command."
     tasks:
       - id: "T-01"
-        title: "ProjectionCheckpointModel ORM model, Alembic migration, and Projector protocol"
+        title: "ProjectionCheckpointModel ORM model, current schema, and Projector protocol"
         task_context: |
           1. Add ProjectionCheckpointModel to src/orchestrator/db/orm/models.py. Table name:
              'projection_checkpoints'. Columns: projector_name (TEXT, PK), last_position
-             (INTEGER, NOT NULL, default 0), updated_at (TEXT, NOT NULL). Create Alembic migration.
+             (INTEGER, NOT NULL, default 0), updated_at (TEXT, NOT NULL). Register it in
+             current ORM metadata for init_db and inspect it on a fresh database.
              Export from orchestrator.db.
 
           2. Create src/orchestrator/db/projections/ package with registry.py defining:
@@ -281,7 +282,7 @@ steps:
             required: true
         requirements:
           - id: "R1"
-            desc: "ProjectionCheckpointModel ORM class with correct schema; Alembic migration creates projection_checkpoints table; Projector protocol and ProjectionRegistry implemented"
+            desc: "ProjectionCheckpointModel ORM class and current metadata create projection_checkpoints; Projector protocol and ProjectionRegistry implemented"
             priority: critical
           - id: "R2"
             desc: "Registry dispatches events only to projectors that declare the type in handled_events; projector exceptions propagate; checkpoint advances only for projectors that handled events"
@@ -294,8 +295,8 @@ steps:
             - id: "registry_import"
               cmd: "uv run python -c \"from orchestrator.db.projections import Projector, ProjectionRegistry; r = ProjectionRegistry(); print('ok')\""
               must: true
-            - id: "migration_runs"
-              cmd: "uv run python -c \"import asyncio; from orchestrator.db.access.connection import init_db; asyncio.run(init_db('sqlite+aiosqlite://'))\""
+            - id: "fresh_schema"
+              cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        tables = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))\\n    assert \\\"projection_checkpoints\\\" in tables\\n    await engine.dispose()'); asyncio.run(check())\""
               must: true
         verifier:
           rubric:
@@ -628,7 +629,7 @@ steps:
             require_remediation_if_below: "C"
 
       - id: "T-02"
-        title: "EventSignalTransport, remove _active_run_ids, wire transport, add migration"
+        title: "EventSignalTransport, remove _active_run_ids, and wire transport"
         task_context: |
           Implement EventSignalTransport in src/orchestrator/workflow/signals/signals.py:
           - enqueue(run_id, signal_type, payload): appends SignalEnqueued event to SqliteEventStore;
@@ -648,7 +649,6 @@ steps:
           Update default transport in RunWorkflow to EventSignalTransport.
           Update SignalConsumer._find_pending_run_ids() to query events_v2 instead of pending_signals.
 
-          Add Alembic migration to deprecate pending_signals (add _deprecated column or comment).
           Write tests/unit/test_event_signal_transport.py and tests/integration/test_signal_events.py.
 
           See docs/event-source/steps/step-04-plan.md Tasks 4.3, 4.4, 4.5, 4.6, 4.7, 4.8.
@@ -803,7 +803,7 @@ steps:
           - Read history.jsonl line by line; parse each record; insert into events_v2
             (idempotent: skip on position conflict)
           - Call projection_registry.rebuild_all(events, session)
-          Wire bootstrap_from_jsonl into application startup sequence after Alembic migrations
+          Wire bootstrap_from_jsonl into application startup sequence after init_db
           and before accepting requests. Export from orchestrator.db.
 
           Write tests/integration/test_jsonl_bootstrap.py with three test scenarios:
@@ -853,7 +853,8 @@ steps:
           (the JsonlOutboxObserver from S-01 is now the live JSONL writer).
           Remove dead legacy re-exports from orchestrator.db.__init__.py.
 
-          Add Alembic migration to DROP the pending_signals table (deprecated in S-04).
+          Remove PendingSignalModel from current ORM metadata so fresh databases do not
+          create the retired pending_signals table.
 
           Update docs/ARCHITECTURE.md: remove references to legacy dual-write path, pending_signals,
           _active_run_ids, and recovery modules; add concise description of the event-sourced data
@@ -872,7 +873,7 @@ steps:
             desc: "Legacy recovery modules deleted; no imports of event_journal/journal_replay/recovery from orchestrator.db.recovery in src/; JsonlEventJournal not referenced in event_store.py"
             priority: critical
           - id: "R2"
-            desc: "Alembic migration drops pending_signals table; migration runs cleanly on a fresh DB"
+            desc: "Current ORM metadata omits pending_signals; init_db creates a fresh DB without that table"
             priority: critical
           - id: "R3"
             desc: "Full test suite passes with no regressions; ARCHITECTURE.md updated to describe event-sourced architecture with no references to removed components"
@@ -885,8 +886,8 @@ steps:
             - id: "no_recovery_imports_in_src"
               cmd: "uv run python -c \"import pathlib; files = [f for f in pathlib.Path('src').rglob('*.py') if 'recovery/event_journal' not in str(f) and 'recovery/journal_replay' not in str(f) and 'recovery/recovery' not in str(f)]; text = ''.join(f.read_text() for f in files); assert 'from orchestrator.db.recovery.event_journal' not in text and 'from orchestrator.db.recovery.journal_replay' not in text, 'legacy recovery imports found'\""
               must: true
-            - id: "migration_runs"
-              cmd: "uv run python -c \"import asyncio; from orchestrator.db.access.connection import init_db; asyncio.run(init_db('sqlite+aiosqlite://'))\""
+            - id: "fresh_schema_omits_pending_signals"
+              cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        tables = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))\\n    assert \\\"pending_signals\\\" not in tables\\n    await engine.dispose()'); asyncio.run(check())\""
               must: true
             - id: "full_suite"
               cmd: "uv run pytest -v"
@@ -896,7 +897,7 @@ steps:
             - id: "R1"
               text: "R1 — A: event_journal.py, journal_replay.py, recovery.py deleted; grep of src/ shows no imports from orchestrator.db.recovery.event_journal or journal_replay; event_store.py has no JsonlEventJournal reference. B: files deleted but one import reference remains in a non-recovery file."
             - id: "R2"
-              text: "R2 — A: Alembic migration drops pending_signals; init_db runs cleanly on a fresh DB; schema inspection (sqlite_master) confirms table absent. B: migration exists but does not run cleanly."
+              text: "R2 — A: current ORM metadata omits pending_signals; init_db runs cleanly on a fresh DB; SQLAlchemy inspection confirms the table is absent. B: ORM no longer uses the table but fresh-schema proof is missing."
             - id: "R3"
               text: "R3 — A: full pytest suite passes with zero failures; ARCHITECTURE.md describes the event-sourced data flow with no references to removed components; latency regression documented as <10%. B: suite passes but ARCHITECTURE.md not fully updated."
           submission_template:

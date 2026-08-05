@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useDecisionView, useFileStateReport, useGraphEvents, useGraphHealth, useGraphProjection, useSchedulerView } from '../hooks/useApi';
+import { useArchivalGraphSnapshot, useDecisionView, useFileStateReport, useGraphEvents, useGraphHealth, useGraphProjection, useSchedulerView } from '../hooks/useApi';
+import { isRetryableGraphReadError } from '../api/client';
 import { FileStateViewer } from './FileStateViewer';
 import { GraphDecisionModal } from './GraphDecisionModal';
 import { NodeDetailPanel } from './NodeDetailPanel';
@@ -547,7 +548,21 @@ function EventModal({
 }
 
 export function GraphPanel({ runId, run, open, onClose, activityEvents = [], initialNodeId = null }: GraphPanelProps) {
-  const { data: projection } = useGraphProjection(runId);
+  const {
+    data: projection,
+    error: projectionError,
+    isLoading: isProjectionLoading,
+    isFetched: isProjectionFetched,
+    isFetching: isProjectionFetching,
+    refetch: retryProjection,
+  } = useGraphProjection(runId);
+  const {
+    data: archivalSnapshot,
+    error: archivalError,
+    isLoading: isArchivalLoading,
+    isFetching: isArchivalFetching,
+    refetch: retryArchival,
+  } = useArchivalGraphSnapshot(runId);
   const { data: schedulerView } = useSchedulerView(runId);
   const { data: health } = useGraphHealth(runId, open);
   const { data: decisionView } = useDecisionView(runId);
@@ -583,8 +598,38 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
     }
   }, [initialNodeId, open]);
 
-  if (!open || !projection) {
+  if (!open) {
     return null;
+  }
+
+  if (!projection) {
+    const catchingUp = isRetryableGraphReadError(projectionError);
+    const firstLoad = isProjectionLoading && !isProjectionFetched;
+    const projectionStatus = firstLoad
+      ? 'Loading graph data…'
+      : isProjectionFetching
+        ? 'Retrying graph data…'
+        : catchingUp
+          ? 'Graph data is catching up. Please retry shortly.'
+          : `Could not load graph data${projectionError instanceof Error ? `: ${projectionError.message}` : '.'}`;
+    return (
+      <div className="fixed inset-0 z-50 pointer-events-none">
+        <div className="absolute inset-0 bg-black/60 pointer-events-auto" onClick={onClose} />
+        <aside className="absolute inset-y-0 right-0 w-full max-w-lg border-l border-border bg-bg-elevated pointer-events-auto p-4">
+          <div className="flex items-start justify-between">
+            <div>
+              <h2 className="text-sm font-semibold text-text-primary">Graph projection</h2>
+              <p className="text-xs text-text-muted mt-1 break-all">{runId}</p>
+            </div>
+            <button type="button" onClick={onClose} className="p-1 rounded text-text-muted hover:bg-bg-hover hover:text-text-primary transition-colors" aria-label="Close graph panel">×</button>
+          </div>
+          <div className="mt-6 rounded border border-border bg-bg-card p-3 text-xs text-text-muted" role="alert">
+            <p>{projectionStatus}</p>
+            {isProjectionFetched && <button type="button" onClick={() => void retryProjection()} disabled={isProjectionFetching} className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60">{isProjectionFetching ? 'Retrying graph data…' : 'Retry graph data'}</button>}
+          </div>
+        </aside>
+      </div>
+    );
   }
 
   return (
@@ -618,6 +663,40 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
         </div>
 
         <div className="mt-4 space-y-4">
+          <div className="rounded border border-border bg-bg-card p-3 text-xs text-text-muted" aria-live="polite">
+            {archivalSnapshot ? (
+              <>
+                <p className="font-medium text-text-secondary">Archival graph views at position {archivalSnapshot.position}</p>
+                <p className="mt-1">
+                  {archivalSnapshot.topology.total_known} topology entries ·{' '}
+                  {archivalSnapshot.finalBlockers.total_known} final blockers ·{' '}
+                  {archivalSnapshot.regions.total_known} regions
+                </p>
+                {(archivalSnapshot.topology.partial || archivalSnapshot.finalBlockers.partial || archivalSnapshot.regions.partial) && (
+                  <p className="mt-1">Oversized nested values are shown as bounded partial summaries.</p>
+                )}
+                {archivalError && <p className="mt-1">Refreshing archival views; showing the last complete position.</p>}
+              </>
+            ) : isArchivalLoading || isArchivalFetching ? (
+              <p>Loading archival graph views…</p>
+            ) : (
+              <div role="alert">
+                <p>
+                  {isRetryableGraphReadError(archivalError)
+                    ? 'Archival graph views are catching up. The graph remains available while they publish together.'
+                    : `Could not load archival graph views${archivalError instanceof Error ? `: ${archivalError.message}` : '.'}`}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void retryArchival()}
+                  disabled={isArchivalFetching}
+                  className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
+                >
+                  {isArchivalFetching ? 'Retrying archival graph views…' : 'Retry archival graph views'}
+                </button>
+              </div>
+            )}
+          </div>
           {health && <GraphHealth health={health} />}
           <OperatorSummary
             projection={projection}

@@ -63,7 +63,6 @@ class ProjectArtifactGarbageCollector:
     async def collect_after_delete(
         self,
         deleted_run: Run,
-        surviving_runs: list[Run],
         graph_store: Any,
         now: datetime,
     ) -> frozenset[str]:
@@ -75,15 +74,8 @@ class ProjectArtifactGarbageCollector:
             raise ArtifactGarbageCollectionError(
                 f"cannot resolve artifact root for deleted run {deleted_run.id}"
             ) from exc
-        same_project_runs = [
-            run for run in surviving_runs if await self._roots.root_for(run) == root
-        ]
-
-        async def load_hashes() -> frozenset[str]:
-            return await graph_store.read_artifact_content_hashes(
-                [run.id for run in same_project_runs]
-            )
-
-        return await ArtifactGarbageCollector(root, self._grace_seconds).collect_after_mark_hashes(
-            load_hashes, now
+        return await ArtifactGarbageCollector(root, self._grace_seconds).collect_after_delete(
+            deleted_run,
+            graph_store,
+            now,
         )

@@ -170,8 +170,7 @@ those source identities.
 The final full suite reported **4791 passed, 3 skipped, 3 warnings in 105.14s**;
 Ruff was clean; Pyright reported **0 errors, 0 warnings, 0 informations** plus
 the advisory `v1.1.408 -> v1.1.411` update notice; and `git diff --check` was
-clean. Generated enums were current, Alembic reported the single head
-`zg1h2i3j4k5l`, collection reported **4794 tests**, and the public-export plus
+clean. Generated enums were current, collection reported **4794 tests**, and the public-export plus
 Claude SDK removal checks reported **2 passed**. The three warnings were the
 same Python 3.12 `aiosqlite/core.py:63` default-datetime-adapter deprecations
 identified in the verifier report.
@@ -196,7 +195,7 @@ At that source, the full suite reported **4792 passed, 3 skipped, and 3
 deprecation warnings**; Ruff was clean; Pyright reported **0 errors, 0
 warnings, and 0 informations** plus the advisory `v1.1.408 -> v1.1.411` update
 notice; and `git diff --check` was clean. Generated enums were current,
-Alembic reported the single head `zg1h2i3j4k5l`, **4795 tests** collected, the
+**4795 tests** collected, the
 targeted backend checks reported **20 passed**, and the UI GraphPanel decisions
 suite reported **7 passed**. The three warnings were the Python 3.12
 `aiosqlite/core.py:63` default-datetime-adapter deprecations named in the

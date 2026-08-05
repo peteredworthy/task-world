@@ -87,11 +87,12 @@ function renderPanel(
   decisionView = makeDecisionView(),
   preloadEvents = true,
   preloadFileState = true,
+  preloadProjection = true,
 ) {
   const run = makeRun();
   const queryClient = new QueryClient({
     defaultOptions: {
-      queries: { retry: false, refetchOnMount: false },
+      queries: { retry: false, retryDelay: 0, refetchOnMount: preloadProjection ? false : true },
       mutations: { retry: false },
     },
   });
@@ -104,7 +105,24 @@ function renderPanel(
     leases: {},
     ready_nodes: [],
   };
-  queryClient.setQueryData(['graphProjection', run.id], projection);
+  if (preloadProjection) {
+    queryClient.setQueryData(['graphProjection', run.id], projection);
+  }
+  queryClient.setQueryData(['archivalGraphSnapshot', run.id], {
+    position: 2,
+    topology: {
+      run_id: run.id, event_count: 2, nodes: [], edges: [], truncated: false,
+      total_known: 3, next_cursor: null, partial: false, collection_meta: {},
+    },
+    finalBlockers: {
+      run_id: run.id, event_count: 2, blockers: [], truncated: false,
+      total_known: 1, next_cursor: null, partial: false, collection_meta: {},
+    },
+    regions: {
+      run_id: run.id, event_count: 2, regions: [], truncated: false,
+      total_known: 2, next_cursor: null, partial: false, collection_meta: {},
+    },
+  });
   queryClient.setQueryData(['graphDecisions', run.id], decisionView);
   if (preloadEvents) {
     queryClient.setQueryData(['graphEvents', run.id, 0, 50, 'summary'], {
@@ -185,6 +203,56 @@ function fileStateResponse(hasMore: boolean, nextPosition: number | null): Respo
 }
 
 describe('GraphPanel human-gate decisions', () => {
+  it('renders the coupled archival snapshot in the product graph panel', () => {
+    renderPanel();
+
+    expect(screen.getByText('Archival graph views at position 2')).toBeInTheDocument();
+    expect(screen.getByText('3 topology entries · 1 final blockers · 2 regions')).toBeInTheDocument();
+  });
+
+  it('keeps the panel visible through loading, catch-up exhaustion, and manual retry', async () => {
+    let projectionAttempts = 0;
+    let allowProjection = false;
+    let releaseManualRetry: (() => void) | null = null;
+    globalThis.fetch = async (input, init) => {
+      if (String(input).endsWith('/graph')) {
+        projectionAttempts += 1;
+        if (allowProjection) {
+          await new Promise<void>((resolve) => {
+            releaseManualRetry = resolve;
+          });
+          return new Response(JSON.stringify({
+            run_id: 'run-1', event_count: 4, run_state: 'active', node_states: {}, task_states: {}, leases: {}, ready_nodes: [],
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return new Response(JSON.stringify({
+          detail: { code: 'read_model_unavailable', retryable: true },
+        }), { status: 503, headers: { 'Content-Type': 'application/json' } });
+      }
+      return graphApiResponse(input, init);
+    };
+    renderPanel(makeDecisionView(), true, true, false);
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Loading graph data');
+    expect(screen.getByRole('heading', { name: 'Graph projection' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close graph panel' })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent('Graph data is catching up');
+    });
+    expect(screen.getByRole('heading', { name: 'Graph projection' })).toBeInTheDocument();
+    expect(projectionAttempts).toBeGreaterThan(1);
+
+    allowProjection = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry graph data' }));
+    await screen.findByRole('button', { name: 'Retrying graph data…' });
+    releaseManualRetry?.();
+
+    expect(await screen.findByText('event_count: 4')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Graph projection' })).toBeInTheDocument();
+    expect(screen.queryByText('Graph data is catching up. Please retry shortly.')).not.toBeInTheDocument();
+  });
+
   it('shows an initial graph-event error and retries the initial page', async () => {
     let eventAttempts = 0;
     globalThis.fetch = async (input, init) => {

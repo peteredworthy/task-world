@@ -238,20 +238,17 @@ routine:
           retry:
             max_attempts: 2
 
-    # ── Step 2: DB Migration (M1 Remaining) ──────────────────────────
+    # ── Step 2: Current DB Schema (M1 Remaining) ─────────────────────
     - id: "S-02"
-      title: "DB Migration (M1 Remaining)"
+      title: "Current DB Schema (M1 Remaining)"
       step_context: |
-        Create and apply the Alembic migration that adds all six new expansion columns
-        from Step 1 to the live database schema. Deliberately isolated so the migration
-        is reviewable on its own.
+        Register all six expansion columns from Step 1 in current ORM metadata and
+        prove init_db creates them in a fresh temporary database.
       tasks:
         - id: "T-01"
-          title: "Generate and Write Alembic Migration"
+          title: "Complete and Inspect the Current ORM Schema"
           task_context: |
-            Run alembic revision --autogenerate and trim to the six new expansion columns.
-
-            Migration adds:
+            Current ORM metadata must create:
             - tasks: expanded_from_task_id (VARCHAR, FK tasks.id, nullable),
               expansion_justification (VARCHAR, nullable),
               is_expansion (BOOLEAN, NOT NULL default False)
@@ -259,48 +256,41 @@ routine:
               expanded_from_task_id (VARCHAR, FK tasks.id, nullable)
             - runs: expansion_count (INTEGER, NOT NULL default 0)
 
-            Use batch_alter_table for SQLite FK compatibility.
-            Write full downgrade() function that drops all six columns in reverse order.
+            Run init_db against a fresh temporary SQLite file and inspect each table
+            with SQLAlchemy, including nullability, defaults, and foreign keys.
           requirements:
             - id: "R1"
-              desc: "Alembic migration file exists in alembic/versions/ adding exactly the six expansion columns"
+              desc: "Current ORM metadata defines exactly the six expansion columns on tasks, steps, and runs"
               priority: critical
             - id: "R2"
-              desc: "Migration applies cleanly on a fresh DB (alembic upgrade head succeeds)"
+              desc: "init_db creates the current expansion schema on a fresh temporary database"
               priority: critical
             - id: "R3"
-              desc: "Migration downgrade removes all six columns (alembic downgrade -1 succeeds)"
+              desc: "SQLAlchemy inspection confirms column placement, defaults, and foreign keys"
               priority: critical
           auto_verify:
             items:
-              - id: "migration_file_content"
-                cmd: "uv run python -c \"import glob; files = glob.glob('src/orchestrator/db/migrations/versions/*.py'); assert len(files) > 0, 'No migration files found in src/orchestrator/db/migrations/versions/'; content = ''.join(open(f).read() for f in files); assert 'is_expansion' in content, 'is_expansion column missing from migration'; assert 'expansion_count' in content, 'expansion_count column missing from migration'; assert 'expansion_justification' in content, 'expansion_justification column missing from migration'; print('OK')\""
-                must: true
-              - id: "migration_applies"
-                cmd: "uv run alembic upgrade head"
-                must: true
-              - id: "migration_downgrade"
-                cmd: "uv run alembic downgrade -1 && uv run alembic upgrade head"
+              - id: "fresh_schema_columns"
+                cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        tasks = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"tasks\\\")})\\n        steps = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"steps\\\")})\\n        runs = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"runs\\\")})\\n    assert {\\\"expanded_from_task_id\\\", \\\"expansion_justification\\\", \\\"is_expansion\\\"} <= tasks\\n    assert {\\\"expanded_from_task_id\\\", \\\"is_expansion\\\"} <= steps\\n    assert \\\"expansion_count\\\" in runs\\n    await engine.dispose()'); asyncio.run(check())\""
                 must: true
           retry:
             max_attempts: 3
 
         - id: "T-02"
-          title: "Validate Migration with Tests"
+          title: "Validate Fresh-Schema Persistence with Tests"
           task_context: |
-            Verify the migration applied correctly: inspect DB schema for new columns,
-            confirm existing rows are valid, run all tests for no regressions.
+            Verify current ORM metadata and persistence behavior: inspect a fresh DB
+            schema for the new columns and run all tests for regressions.
 
-            - Apply to seeded DB: uv run python scripts/seed_db.py, then alembic upgrade head
             - Confirm new columns exist with correct defaults
-            - Run round-trip: downgrade -1 then upgrade head again
+            - Persist and reload expansion records through repositories
             - Run full test suite to confirm no regressions
           requirements:
             - id: "R1"
-              desc: "Migration applies cleanly to a seeded DB without data loss"
+              desc: "Expansion fields persist and reload correctly on a fresh init_db database"
               priority: critical
             - id: "R2"
-              desc: "uv run pytest tests/unit/ tests/integration/ passes after migration"
+              desc: "uv run pytest tests/unit/ tests/integration/ passes after current-schema changes"
               priority: critical
           auto_verify:
             items:

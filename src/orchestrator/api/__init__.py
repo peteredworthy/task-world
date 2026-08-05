@@ -4,7 +4,11 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.api.app import create_app
+from orchestrator.api.app import (
+    advance_graph_archival_maintenance_once,
+    create_app,
+    run_graph_archival_maintenance,
+)
 from orchestrator.api.deps import (
     get_artifact_garbage_collector,
     get_artifact_store_resolver,
@@ -98,6 +102,8 @@ __all__ = [
     "TurnMetricsSchema",
     "UpdateChecklistRequest",
     "create_app",
+    "advance_graph_archival_maintenance_once",
+    "run_graph_archival_maintenance",
     "compute_run_totals_from_attempts",
     "compute_cost_rollup",
     "estimate_cost",

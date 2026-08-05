@@ -3873,11 +3873,9 @@ class WorkflowService:
         )
         self._event_emitter.notify_persisted(events[0])
         await commit_with_event_outbox(self._session)
-        surviving_runs = await self._repo.list_all()
         graph_store = GraphEventStore(self._session)
         await self._artifact_gc.collect_after_delete(
             deleted_run,
-            surviving_runs,
             graph_store,
             self._clock.now(),
         )

@@ -4,7 +4,7 @@ Enforce signal routing constraints.
 
 Registry functions (register_active_run, unregister_active_run,
 has_active_workflow) were removed in the EventSignalTransport migration.
-This hook is kept as a placeholder for future signal-routing constraints.
+This hook prevents those process-local ownership paths from returning.
 
 To suppress a line, add:  # noqa: signal-routing
 """
@@ -13,11 +13,13 @@ import ast
 import sys
 from pathlib import Path
 
-# No restricted names after registry functions were removed in the
-# EventSignalTransport migration (signals now use events_v2).
-RESTRICTED_NAMES: set[str] = set()
+# These retired names must remain absent now that signals use events_v2.
+RESTRICTED_NAMES = {
+    "register_active_run",
+    "unregister_active_run",
+    "has_active_workflow",
+}
 
-# No files need allowlisting when RESTRICTED_NAMES is empty.
 ALLOWED_FILE_SUFFIXES: set[str] = set()
 
 
@@ -94,8 +96,7 @@ def check_file(filepath: Path, project_root: Path | None) -> list[str]:
                     violations.append(
                         f"{filepath}:{node.lineno}: "
                         f"`from {node.module} import {name}` — "
-                        f"'{name}' is a consumer-internal registry function; "
-                        f"only consumer.py and its test files may use it"
+                        f"'{name}' is a retired process-local registry function"
                     )
             continue
 
@@ -108,8 +109,7 @@ def check_file(filepath: Path, project_root: Path | None) -> list[str]:
             violations.append(
                 f"{filepath}:{node.lineno}: "
                 f"call to `{node.id}` — "
-                f"'{node.id}' is a consumer-internal registry function; "
-                f"only consumer.py and its test files may call it"
+                f"'{node.id}' is a retired process-local registry function"
             )
             continue
 
@@ -118,8 +118,7 @@ def check_file(filepath: Path, project_root: Path | None) -> list[str]:
             violations.append(
                 f"{filepath}:{node.lineno}: "
                 f"access to `.{node.attr}` — "
-                f"'{node.attr}' is a consumer-internal registry function; "
-                f"only consumer.py and its test files may use it"
+                f"'{node.attr}' is a retired process-local registry function"
             )
             continue
 

@@ -212,7 +212,7 @@ steps:
       All M1 parity tests must still pass after this milestone.
     tasks:
       - id: "T-01"
-        title: "Signal Types, DB Migrations, RunWorkflow Shell, and Signal Routing"
+        title: "Signal Types, Current DB Schema, RunWorkflow Shell, and Signal Routing"
         task_context: |
           Implement the signal queue infrastructure and RunWorkflow shell as described in
           docs/temporal-alignment/plan.md (Milestone 2).
@@ -228,7 +228,8 @@ steps:
                * drain(run_id) -> returns list of unprocessed signals, marks them processed
                * Transport is abstracted so DB polling can be swapped for LISTEN/NOTIFY later
 
-          2. Create two Alembic migrations in src/orchestrator/db/migrations/versions/:
+          2. Define both additions in current ORM metadata and verify them through
+             init_db on a fresh temporary SQLite database:
              - pending_signals table: (id TEXT PK, run_id TEXT FK, signal_type TEXT,
                payload TEXT, created_at TIMESTAMP, processed_at TIMESTAMP nullable)
                + index on (run_id) WHERE processed_at IS NULL
@@ -258,7 +259,7 @@ steps:
             desc: "RunWorkflow importable from orchestrator.workflow.runtime with run() and on_signal() methods; RunWorkflow.run() replaces executor._run_agent_loop() as the single owner of run execution — the executor creates a RunWorkflow instance and delegates to .run() rather than running the loop itself"
             priority: critical
           - id: "R3"
-            desc: "Alembic migrations exist for pending_signals table (with index) and scheduled_resume_at column on runs"
+            desc: "Current ORM metadata and a fresh init_db schema contain pending_signals (with index) and runs.scheduled_resume_at"
             priority: critical
           - id: "R4"
             desc: "All six M1 parity tests still pass after signal routing changes (no regressions)"
@@ -277,11 +278,8 @@ steps:
             - id: "signal_queue_methods"
               cmd: "uv run python -c \"from orchestrator.workflow.signals import SignalQueue; assert hasattr(SignalQueue, 'enqueue'); assert hasattr(SignalQueue, 'drain'); print('OK')\""
               must: true
-            - id: "pending_signals_migration"
-              cmd: "uv run python -c \"import glob; content = ' '.join(open(f).read() for f in glob.glob('src/orchestrator/db/migrations/versions/*.py')); assert 'pending_signals' in content, 'No pending_signals migration found'; print('OK')\""
-              must: true
-            - id: "scheduled_resume_migration"
-              cmd: "uv run python -c \"import glob; content = ' '.join(open(f).read() for f in glob.glob('src/orchestrator/db/migrations/versions/*.py')); assert 'scheduled_resume_at' in content, 'No scheduled_resume_at migration found'; print('OK')\""
+            - id: "signal_fresh_schema"
+              cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        tables = await conn.run_sync(lambda c: set(inspect(c).get_table_names()))\\n        run_columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"runs\\\")})\\n    assert \\\"pending_signals\\\" in tables and \\\"scheduled_resume_at\\\" in run_columns\\n    await engine.dispose()'); asyncio.run(check())\""
               must: true
             - id: "signal_queue_fifo_and_exactly_once"
               cmd: "uv run python -c \"from orchestrator.workflow.signals import SignalQueue; import inspect; src = inspect.getsource(SignalQueue.drain); assert 'processed_at' in src, 'drain() does not mark processed_at for exactly-once semantics'; print('OK')\""
@@ -312,9 +310,10 @@ steps:
                 missing.
             - id: "R3"
               text: |
-                R3 — A: pending_signals migration creates table with all required columns plus an
-                index on (run_id) WHERE processed_at IS NULL; scheduled_resume_at migration adds
-                nullable datetime to runs. B: migrations exist but missing index. F: either missing.
+                R3 — A: current ORM metadata and fresh init_db schema create pending_signals with
+                all required columns plus an index on (run_id) WHERE processed_at IS NULL, and
+                scheduled_resume_at is nullable on runs. B: schema exists but misses the index.
+                F: either current-schema addition is missing.
             - id: "R4"
               text: |
                 R4 — A: all 6 M1 parity tests pass. B: 1 test has minor fixture update needed.
@@ -798,7 +797,7 @@ steps:
 
           Fan-out child identity:
           1. Add child_id (UUID) to fan-out child task states:
-             - Alembic migration: add child_id (nullable UUID/TEXT) column to task_states table
+             - Add child_id (nullable UUID/TEXT) to the current task_states ORM schema
              - Each fan-out child gets a UUID assigned at creation time (durable across restarts)
           2. Per-child event stream:
              - Include child_id in fan-out event payloads
@@ -811,7 +810,7 @@ steps:
              - Works for: normal tasks, fan-out children, script tasks, recovery retries
              - Has attempt_num (int, ordering within a task)
              - Has attempt_id (UUID str, globally unique, for Temporal Activity ID mapping)
-             - Alembic migration: add attempt_id (UUID/TEXT) column to attempts table
+             - Add attempt_id (UUID/TEXT) to the current attempts ORM schema
           4. Enforce attempt immutability:
              - Completed attempts must NOT be updated in place
              - Corrections use a new correction event (append-only) rather than modifying existing
@@ -822,7 +821,7 @@ steps:
              - Assert correct children are reconstructed as done vs pending
         requirements:
           - id: "R1"
-            desc: "task_states table has child_id UUID column and Alembic migration exists"
+            desc: "Current task_states ORM schema has a child_id UUID/TEXT column"
             priority: critical
           - id: "R2"
             desc: "Fan-out events (FAN_OUT_SPAWNED, CHILD_SPAWNED, CHILD_COMPLETED, FAN_OUT_COMPLETED) carry child_id and exist in event definitions"
@@ -831,7 +830,7 @@ steps:
             desc: "AttemptRecord has both attempt_num (int) and attempt_id (UUID str) fields"
             priority: critical
           - id: "R4"
-            desc: "Alembic migration adds attempt_id UUID column to attempts table"
+            desc: "Current attempts ORM schema has an attempt_id UUID/TEXT column"
             priority: critical
           - id: "R5"
             desc: "Fan-out partial-completion replay test exists and passes"
@@ -841,11 +840,8 @@ steps:
             priority: expected
         auto_verify:
           items:
-            - id: "child_id_migration"
-              cmd: "uv run python -c \"import glob; content = ' '.join(open(f).read() for f in glob.glob('src/orchestrator/db/migrations/versions/*.py')); assert 'child_id' in content, 'No child_id column in any migration'; print('OK')\""
-              must: true
-            - id: "attempt_id_migration"
-              cmd: "uv run python -c \"import glob; content = ' '.join(open(f).read() for f in glob.glob('src/orchestrator/db/migrations/versions/*.py')); assert 'attempt_id' in content, 'No attempt_id column in any migration'; print('OK')\""
+            - id: "identity_fresh_schema"
+              cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        child_columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"task_states\\\")})\\n        attempt_columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"attempts\\\")})\\n    assert \\\"child_id\\\" in child_columns and \\\"attempt_id\\\" in attempt_columns\\n    await engine.dispose()'); asyncio.run(check())\""
               must: true
             - id: "attempt_record_import"
               cmd: "uv run python -c \"from orchestrator.db.models import AttemptRecord; import inspect; src = inspect.getsource(AttemptRecord); assert 'attempt_id' in src; assert 'attempt_num' in src; print('OK')\""
@@ -863,9 +859,9 @@ steps:
           rubric:
             - id: "R1"
               text: |
-                R1 — A: Alembic migration adds nullable child_id UUID to task_states; fan-out
+                R1 — A: current ORM metadata adds nullable child_id UUID/TEXT to task_states; fan-out
                 children receive UUID at creation and retain it across restarts.
-                B: column added but not consistently assigned. F: migration missing.
+                B: column added but not consistently assigned. F: current schema field missing.
             - id: "R2"
               text: |
                 R2 — A: FAN_OUT_SPAWNED, CHILD_SPAWNED/COMPLETED/FAILED, FAN_OUT_COMPLETED all
@@ -878,8 +874,9 @@ steps:
                 B: fields present for only some task types. F: either field missing.
             - id: "R4"
               text: |
-                R4 — A: Alembic migration adds attempt_id UUID/TEXT column to attempts table.
-                B: column added but without proper index. F: migration missing.
+                R4 — A: current ORM metadata adds attempt_id UUID/TEXT to attempts and
+                fresh-schema inspection confirms it. B: column added but without proper index.
+                F: current schema field missing.
             - id: "R5"
               text: |
                 R5 — A: fan-out replay test simulates partial completion + restart and verifies

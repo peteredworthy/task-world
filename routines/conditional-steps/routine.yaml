@@ -205,7 +205,7 @@ routine:
       title: "Data Model Extensions"
       step_context: |
         Extend all data models (config, state, DB, events) to represent conditional
-        steps. All model changes are grouped into one step to avoid multiple migrations.
+        steps. All model changes are grouped into one coherent schema step.
       tasks:
         - id: "T-01"
           title: "Add StepCondition Model and StepConfig.condition Field"
@@ -242,7 +242,7 @@ routine:
             max_attempts: 2
 
         - id: "T-02"
-          title: "Add Skip Fields to StepState and StepModel with Migration"
+          title: "Add Skip Fields to StepState and Current StepModel Schema"
           task_context: |
             Add skipped and skip_reason fields to runtime state and DB models.
 
@@ -250,8 +250,8 @@ routine:
               StepState in src/orchestrator/state/models.py
             - Add skipped and skip_reason columns to StepModel in
               src/orchestrator/db/models.py
-            - Create Alembic migration with safe defaults (skipped=False,
-              skip_reason=None for existing rows)
+            - Verify init_db creates skipped and skip_reason in a fresh temporary
+              database with ORM defaults skipped=False and skip_reason=None
           requirements:
             - id: "R1"
               desc: "StepState has skipped (bool, default False) and skip_reason (str | None) fields"
@@ -260,7 +260,7 @@ routine:
               desc: "StepModel has skipped and skip_reason DB columns"
               priority: critical
             - id: "R3"
-              desc: "Alembic migration applies cleanly with safe defaults for existing data"
+              desc: "init_db creates the current steps schema on a fresh database and SQLAlchemy inspection finds both columns"
               priority: critical
           auto_verify:
             items:
@@ -268,7 +268,7 @@ routine:
                 cmd: "uv run python -c \"from orchestrator.state.models import StepState; s = StepState(step_id='S-01', title='T'); assert s.skipped is False; assert s.skip_reason is None; print('OK')\""
                 must: true
               - id: "step_model_columns"
-                cmd: "uv run python -c \"from orchestrator.db.models import StepModel; assert hasattr(StepModel, 'skipped'); assert hasattr(StepModel, 'skip_reason'); print('OK')\""
+                cmd: "uv run python -c \"import asyncio, tempfile; from sqlalchemy import inspect; from orchestrator.db import create_engine, init_db; engine = create_engine(tempfile.mktemp(suffix='.db')); exec('async def check():\\n    await init_db(engine)\\n    async with engine.connect() as conn:\\n        columns = await conn.run_sync(lambda c: {x[\\\"name\\\"] for x in inspect(c).get_columns(\\\"steps\\\")})\\n    assert {\\\"skipped\\\", \\\"skip_reason\\\"} <= columns\\n    await engine.dispose()'); asyncio.run(check())\""
                 must: true
               - id: "pyright_state"
                 cmd: "uv run pyright src/orchestrator/state/models.py src/orchestrator/db/models.py --outputjson 2>&1 && echo 'OK' || echo 'FAIL'"

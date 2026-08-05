@@ -12,16 +12,20 @@ from httpx import AsyncClient
 from sqlalchemy import delete, event, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from orchestrator.api import build_expired_lease_rows
+from orchestrator.api import advance_graph_archival_maintenance_once, build_expired_lease_rows
 from orchestrator.config import RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import (
     EventV2Model,
+    GraphArchivalViewCheckpointModel,
     GraphEventSummaryModel,
+    GraphFinalBlockerViewEntryModel,
     GraphNodeDetailSummaryCheckpointModel,
     GraphNodeDetailSummaryModel,
     GraphOutboxModel,
     GraphProjectionSnapshotModel,
+    GraphRegionViewEntryModel,
+    GraphTopologyViewEntryModel,
     RunModel,
 )
 from orchestrator.graph import (
@@ -1196,6 +1200,23 @@ async def test_graph_projection_reflects_seeded_events(
     assert not_found.status_code == 404
 
 
+async def _finish_archival_maintenance(app: Any, run_id: str, *, batch_size: int = 37) -> int:
+    """Resume archival work across fresh sessions, as an external maintainer does."""
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    attempts = 0
+    complete = False
+    while not complete:
+        async with session_factory() as session:
+            complete = await GraphEventStore(session).advance_archival_view_maintenance(
+                run_id,
+                batch_size=batch_size,
+            )
+            await session.commit()
+        attempts += 1
+        assert attempts < 100
+    return attempts
+
+
 async def test_archival_graph_views_page_over_cap_through_http(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
@@ -1220,6 +1241,47 @@ async def test_archival_graph_views_page_over_cap_through_http(
     async with session_factory() as session:
         await GraphEventStore(session).append_events(run_id, 0, events)
         await session.commit()
+
+        checkpoint = await session.get(GraphArchivalViewCheckpointModel, run_id)
+        assert checkpoint is not None
+        assert checkpoint.target_position == 101
+
+    stale = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert stale.status_code == 503
+    assert stale.json()["detail"]["retryable"] is True
+    insert_batch_sizes: list[int] = []
+
+    def record_archival_insert_batch(
+        _conn: Any,
+        _cursor: Any,
+        statement: str,
+        parameters: Any,
+        _context: Any,
+        executemany: bool,
+    ) -> None:
+        if not statement.lstrip().startswith(
+            (
+                "INSERT INTO graph_topology_view_entries",
+                "INSERT INTO graph_final_blocker_view_entries",
+                "INSERT INTO graph_region_view_entries",
+            )
+        ):
+            return
+        insert_batch_sizes.append(len(parameters) if executemany else 1)
+
+    event.listen(
+        app.state.engine.sync_engine, "before_cursor_execute", record_archival_insert_batch
+    )
+    try:
+        assert await _finish_archival_maintenance(app, run_id, batch_size=37) == 1
+    finally:
+        event.remove(
+            app.state.engine.sync_engine,
+            "before_cursor_execute",
+            record_archival_insert_batch,
+        )
+    assert len(insert_batch_sizes) > 3
+    assert max(insert_batch_sizes) <= 37
 
     for path, collection in (
         ("topology", "nodes"),
@@ -1247,6 +1309,606 @@ async def test_archival_graph_views_page_over_cap_through_http(
             received += len(next_body[collection])
             cursor = next_body["next_cursor"]
         assert received == first_body["total_known"]
+
+
+async def test_product_worker_publishes_coupled_archival_views(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """The production lifespan worker, not a GET, finishes staged view work."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-worker-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "node_created",
+                    {
+                        "node_id": f"worker-check-{index:03d}",
+                        "kind": "check",
+                        "role": "check",
+                        "state": "planned",
+                        "task_region_id": f"region-{index:03d}",
+                    },
+                )
+                for index in range(101)
+            ],
+        )
+        await session.commit()
+
+    slices = 0
+    while await advance_graph_archival_maintenance_once(app):
+        slices += 1
+        assert slices < 10
+
+    response = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert response.status_code == 200
+    anchor = response.json()["event_count"]
+    for path in ("final-blockers", "regions"):
+        sibling = await client.get(f"/api/runs/{run_id}/graph/{path}?expected_position={anchor}")
+        assert sibling.status_code == 200
+        assert sibling.json()["event_count"] == anchor
+
+
+async def test_archival_append_keeps_published_rows_while_dirty(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """An append marks stale without destroying the last complete generation."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-preserve-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        await store.append_events(
+            run_id,
+            0,
+            [_event("node_created", {"node_id": "node-1", "kind": "worker"})],
+        )
+        await session.commit()
+    await _finish_archival_maintenance(app, run_id)
+
+    async with session_factory() as session:
+        before = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(GraphTopologyViewEntryModel)
+                .where(GraphTopologyViewEntryModel.run_id == run_id)
+            )
+            or 0
+        )
+        await GraphEventStore(session).append_events(
+            run_id,
+            1,
+            [_event("node_created", {"node_id": "node-2", "kind": "worker"})],
+        )
+        await session.commit()
+        checkpoint = await session.get(GraphArchivalViewCheckpointModel, run_id)
+        after = int(
+            await session.scalar(
+                select(func.count())
+                .select_from(GraphTopologyViewEntryModel)
+                .where(GraphTopologyViewEntryModel.run_id == run_id)
+            )
+            or 0
+        )
+    assert checkpoint is not None
+    assert checkpoint.position == 1
+    assert checkpoint.target_position == 2
+    assert after == before
+    unavailable = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert unavailable.status_code == 503
+
+    await _finish_archival_maintenance(app, run_id)
+    current = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert current.status_code == 200
+    assert current.json()["event_count"] == 2
+
+
+async def test_node_collection_prefix_publishes_without_worker_state(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """Large node owners publish directly from bounded normalized facts."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-node-maintenance-{uuid4().hex[:8]}"
+    node_id = "worker-1"
+    await _save_manual_graph_run(app, run_id)
+    events = [
+        _event(
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+        ),
+        *[
+            _event(
+                "node_state_changed",
+                {"node_id": node_id, "new_state": "planned"},
+            )
+            for _ in range(600)
+        ],
+    ]
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+    current = await client.get(f"/api/runs/{run_id}/graph/nodes/{node_id}")
+    assert current.status_code == 200
+    body = current.json()
+    event_meta = body["collection_meta"]["events"]
+    assert event_meta["total_known"] == 601
+    assert event_meta["truncated"] is True
+    assert event_meta["original_bytes"] is None
+    assert event_meta["sha256"] is None
+
+
+async def test_archival_graph_views_honor_expected_position_through_http(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """A client can reject a mixed multi-view assembly after the graph advances."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-expected-position-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "node_created",
+                    {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "check",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                    },
+                )
+            ],
+        )
+        await session.commit()
+
+    await _finish_archival_maintenance(app, run_id)
+
+    for path in ("topology", "final-blockers", "regions"):
+        response = await client.get(f"/api/runs/{run_id}/graph/{path}?expected_position=1")
+        assert response.status_code == 200
+        assert response.json()["event_count"] == 1
+
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            1,
+            [_event("node_state_changed", {"node_id": "check-1", "new_state": "completed"})],
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/topology?expected_position=1")
+    assert response.status_code == 409
+    assert response.json()["detail"] == {
+        "code": "expected_position_mismatch",
+        "run_id": run_id,
+        "expected_position": 1,
+        "current_position": 2,
+        "retryable": True,
+    }
+
+
+async def test_archival_graph_views_byte_pack_oversized_entries_through_http(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """A page chooses rows before decoding payloads and surfaces nested truncation."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-byte-pack-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": f"check-{index:03d}-" + ("x" * 4_000),
+                "kind": "check",
+                "role": "check",
+                "state": "planned",
+                "task_region_id": "one-region",
+            },
+        )
+        for index in range(101)
+    ]
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+    stale = await client.get(f"/api/runs/{run_id}/graph/regions")
+    assert stale.status_code == 503
+    await _finish_archival_maintenance(app, run_id)
+
+    topology = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert topology.status_code == 200
+    assert len(topology.content) <= 262_144
+    topology_body = topology.json()
+    assert topology_body["partial"] is False
+    assert topology_body["collection_meta"] == {}
+    assert 0 < len(topology_body["nodes"]) < 100
+    assert topology_body["truncated"] is True
+
+    regions = await client.get(f"/api/runs/{run_id}/graph/regions")
+    assert regions.status_code == 200
+    assert len(regions.content) <= 262_144
+    region_body = regions.json()
+    assert len(region_body["regions"]) == 1
+    assert len(region_body["regions"][0]["blockers"]) <= 100
+
+
+async def test_archival_nested_collections_are_truthfully_bounded_through_http(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """Topology bindings, blocker support, and region prefixes expose exact caps."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-nested-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    record_ids = [f"candidate-{index:04d}" for index in range(251)]
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": "producer",
+                "kind": "worker",
+                "state": "completed",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "consumer",
+                "kind": "verifier",
+                "state": "completed",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "large-binding",
+                "from_node_id": "producer",
+                "from_port": "candidate",
+                "to_node_id": "consumer",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "dependency_type": "input_binding",
+                "binding_policy": "bind_all",
+            },
+        ),
+        *[
+            _event(
+                "output_record_accepted",
+                {
+                    "record_id": record_id,
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "producer",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": record_id,
+                    "value": {"summary": record_id},
+                },
+            )
+            for record_id in record_ids
+        ],
+        _event(
+            "input_bound",
+            {
+                "edge_id": "large-binding",
+                "to_node_id": "consumer",
+                "to_port": "candidate_under_test",
+                "record_ids": record_ids,
+                "bound_at_position": 0,
+                "binding_policy": "bind_all",
+            },
+        ),
+        *[
+            _event(
+                "node_created",
+                {
+                    "node_id": f"check-{index:03d}",
+                    "kind": "check",
+                    "role": "check",
+                    "state": "planned",
+                    "task_region_id": "one-region",
+                },
+            )
+            for index in range(101)
+        ],
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-large",
+                "version_id": "R-large.v1",
+                "classification": "initial",
+            },
+        ),
+        *[
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": f"support-{index:04d}",
+                    "evidence_id": f"evidence-{index:04d}",
+                    "requirement_id": "R-large",
+                    "requirement_version_id": "R-large.v1",
+                    "status": "active",
+                },
+            )
+            for index in range(251)
+        ],
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-large",
+                "version_id": "R-large.v2",
+                "classification": "semantic",
+                "previous_version_id": "R-large.v1",
+            },
+        ),
+    ]
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+    await _finish_archival_maintenance(app, run_id, batch_size=17)
+
+    async def all_pages(path: str, collection: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        metadata: dict[str, Any] = {}
+        cursor: str | int | None = 0
+        while cursor is not None:
+            response = await client.get(f"/api/runs/{run_id}/graph/{path}?limit=23&cursor={cursor}")
+            assert response.status_code == 200
+            assert len(response.content) <= 262_144
+            body = response.json()
+            items.extend(body[collection])
+            metadata.update(body["collection_meta"])
+            cursor = body["next_cursor"]
+        return items, metadata
+
+    topology_items, topology_meta = await all_pages("topology", "edges")
+    edge_payload = next(item for item in topology_items if item["edge_id"] == "large-binding")
+    assert len(edge_payload["binding"]["record_ids"]) == 50
+    assert len(edge_payload["bound_records"]) == 50
+    record_ids_meta = topology_meta["large-binding:$.binding.record_ids"]
+    bound_records_meta = topology_meta["large-binding:$.bound_records"]
+    assert record_ids_meta["total_known"] == 251
+    assert record_ids_meta["next_cursor"] == "candidate-0049"
+    assert record_ids_meta["original_bytes"] is None
+    assert record_ids_meta["sha256"] is None
+    assert bound_records_meta["total_known"] == 251
+    assert bound_records_meta["next_cursor"] == "candidate-0049"
+    assert bound_records_meta["original_bytes"] is None
+    assert bound_records_meta["sha256"] is None
+
+    blockers, blocker_meta = await all_pages("final-blockers", "blockers")
+    stale = next(item for item in blockers if item["kind"] == "stale_support_evidence")
+    assert len(stale["support_ids"]) == 50
+    support_meta = blocker_meta["R-large:$.support_ids"]
+    assert support_meta["total_known"] == 251
+    assert support_meta["next_cursor"] == "support-0049"
+    assert support_meta["original_bytes"] is None
+    assert support_meta["sha256"] is None
+
+    regions = await client.get(f"/api/runs/{run_id}/graph/regions")
+    assert regions.status_code == 200
+    region_body = regions.json()
+    region = next(item for item in region_body["regions"] if item["task_region_id"] == "one-region")
+    assert len(region["blockers"]) == 50
+    region_meta = region_body["collection_meta"]["one-region:$.blockers"]
+    assert region_meta["total_known"] == 102
+    assert region_meta["next_cursor"] == 50
+
+    first_generation = {
+        "topology": (topology_items, topology_meta),
+        "final-blockers": (blockers, blocker_meta),
+        "regions": region_body,
+    }
+    async with session_factory() as session:
+        await GraphEventStore(session).rebuild_read_models(run_id, batch_size=31)
+        await session.commit()
+    stale = await client.get(f"/api/runs/{run_id}/graph/final-blockers")
+    assert stale.status_code == 503
+    await _finish_archival_maintenance(app, run_id, batch_size=29)
+    rebuilt_topology = await all_pages("topology", "edges")
+    rebuilt_blockers = await all_pages("final-blockers", "blockers")
+    rebuilt_regions_response = await client.get(f"/api/runs/{run_id}/graph/regions")
+    assert rebuilt_regions_response.status_code == 200
+    assert {
+        "topology": rebuilt_topology,
+        "final-blockers": rebuilt_blockers,
+        "regions": rebuilt_regions_response.json(),
+    } == first_generation
+
+
+async def test_archival_read_rejects_falsified_oversized_json_before_decode(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-corrupt-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [_event("node_created", {"node_id": "node-1", "kind": "worker"})],
+        )
+        await session.commit()
+    await _finish_archival_maintenance(app, run_id)
+
+    async with session_factory() as session:
+        await session.execute(
+            update(GraphTopologyViewEntryModel)
+            .where(GraphTopologyViewEntryModel.run_id == run_id)
+            .values(payload={"node_id": "x" * 300_000}, payload_bytes=1)
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert response.status_code == 503
+    assert response.json()["detail"]["reason"] == "entry_exceeds_byte_cap"
+
+
+async def test_archival_generation_failure_rolls_back_all_three_owners(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """A failed replacement preserves old rows and leaves every route retryable."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-rollback-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "node_created",
+                    {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                    },
+                )
+            ],
+        )
+        await session.commit()
+    await _finish_archival_maintenance(app, run_id)
+
+    async with session_factory() as session:
+        old_count_values: list[int] = []
+        for model in (
+            GraphTopologyViewEntryModel,
+            GraphFinalBlockerViewEntryModel,
+            GraphRegionViewEntryModel,
+        ):
+            old_count_values.append(
+                int(
+                    await session.scalar(
+                        select(func.count()).select_from(model).where(model.run_id == run_id)
+                    )
+                    or 0
+                )
+            )
+        old_counts = tuple(old_count_values)
+        await GraphEventStore(session).append_events(
+            run_id,
+            1,
+            [_event("node_created", {"node_id": "node-2", "kind": "worker"})],
+        )
+        await session.commit()
+
+    def fail_replacement_insert(
+        _conn: Any,
+        _cursor: Any,
+        statement: str,
+        _parameters: Any,
+        _context: Any,
+        _executemany: bool,
+    ) -> None:
+        if statement.lstrip().startswith("INSERT INTO graph_topology_view_entries"):
+            raise RuntimeError("injected archival replacement failure")
+
+    event.listen(app.state.engine.sync_engine, "before_cursor_execute", fail_replacement_insert)
+    try:
+        async with session_factory() as session:
+            with pytest.raises(RuntimeError, match="injected archival replacement failure"):
+                await GraphEventStore(session).rebuild_archival_views(run_id, batch_size=1)
+            await session.commit()
+    finally:
+        event.remove(
+            app.state.engine.sync_engine,
+            "before_cursor_execute",
+            fail_replacement_insert,
+        )
+
+    async with session_factory() as session:
+        count_values: list[int] = []
+        for model in (
+            GraphTopologyViewEntryModel,
+            GraphFinalBlockerViewEntryModel,
+            GraphRegionViewEntryModel,
+        ):
+            count_values.append(
+                int(
+                    await session.scalar(
+                        select(func.count()).select_from(model).where(model.run_id == run_id)
+                    )
+                    or 0
+                )
+            )
+        counts = tuple(count_values)
+        checkpoint = await session.get(GraphArchivalViewCheckpointModel, run_id)
+    assert counts == old_counts
+    assert checkpoint is not None
+    assert checkpoint.position == 1
+    assert checkpoint.target_position == 2
+    for path in ("topology", "final-blockers", "regions"):
+        response = await client.get(f"/api/runs/{run_id}/graph/{path}")
+        assert response.status_code == 503
+        assert response.json()["detail"]["retryable"] is True
+
+
+async def test_archival_all_page_http_bodies_match_delete_and_rebuild(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """Every public archival page is identical after explicit maintenance rebuild."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-rebuild-parity-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "node_created",
+                    {
+                        "node_id": f"check-{index:03d}",
+                        "kind": "check",
+                        "role": "check",
+                        "state": "planned",
+                        "task_region_id": "one-region",
+                    },
+                )
+                for index in range(151)
+            ],
+        )
+        await session.commit()
+    await _finish_archival_maintenance(app, run_id, batch_size=19)
+
+    async def all_pages(path: str) -> list[dict[str, Any]]:
+        pages: list[dict[str, Any]] = []
+        cursor: str | int | None = 0
+        while cursor is not None:
+            response = await client.get(f"/api/runs/{run_id}/graph/{path}?limit=23&cursor={cursor}")
+            assert response.status_code == 200
+            assert len(response.content) <= 262_144
+            body = response.json()
+            pages.append(body)
+            cursor = body["next_cursor"]
+        return pages
+
+    live = {path: await all_pages(path) for path in ("topology", "final-blockers", "regions")}
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        await store.rebuild_read_models(run_id, batch_size=17)
+        await session.commit()
+    stale = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert stale.status_code == 503
+    await _finish_archival_maintenance(app, run_id, batch_size=19)
+    rebuilt = {path: await all_pages(path) for path in ("topology", "final-blockers", "regions")}
+    assert rebuilt == live
 
 
 async def test_graph_final_blockers_surface_failed_outbox_rows(
@@ -1359,6 +2021,130 @@ async def test_graph_final_blocker_outbox_cursor_keeps_the_boundary_row(
         "failed-outbox-100"
     ]
     assert second_body["next_cursor"] is None
+
+
+async def test_graph_final_blockers_all_pages_do_not_repeat_outbox_overlay(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """The archival and failed-outbox cursor namespaces join exactly once."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-final-blocker-all-pages-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event(
+                    "node_created",
+                    {
+                        "node_id": f"check-{index:03d}",
+                        "kind": "check",
+                        "role": "check",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                    },
+                )
+                for index in range(101)
+            ],
+        )
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        session.add_all(
+            [
+                GraphOutboxModel(
+                    event_id=f"failed-overlay-{index:03d}",
+                    run_id=run_id,
+                    kind="agent_dispatch",
+                    payload={"event_id": f"failed-overlay-{index:03d}"},
+                    status="failed",
+                    attempts=1,
+                    created_at=now,
+                    updated_at=now,
+                    next_attempt_at=None,
+                    last_error="failed",
+                )
+                for index in range(101)
+            ]
+        )
+        await session.commit()
+    await _finish_archival_maintenance(app, run_id)
+
+    cursor: str | int | None = 0
+    identities: list[tuple[str, str | int]] = []
+    total_known: int | None = None
+    while cursor is not None:
+        response = await client.get(
+            f"/api/runs/{run_id}/graph/final-blockers?cursor={cursor}&limit=37"
+        )
+        assert response.status_code == 200
+        assert len(response.content) <= 262_144
+        body = response.json()
+        total_known = body["total_known"] if total_known is None else total_known
+        assert body["total_known"] == total_known
+        for blocker in body["blockers"]:
+            if blocker["kind"] == "failed_outbox_row":
+                identities.append(("outbox", blocker["outbox_id"]))
+            else:
+                identities.append(("archival", json.dumps(blocker, sort_keys=True)))
+        cursor = body["next_cursor"]
+
+    assert len(identities) == total_known
+    assert len(identities) == len(set(identities))
+    assert sum(kind == "outbox" for kind, _ in identities) == 101
+
+
+async def test_graph_final_blockers_bound_failed_outbox_overlay_through_http(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """A failed side effect cannot bypass final-blocker byte/partial contracts."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-failed-outbox-bounded-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        async with session.begin():
+            session.add_all(
+                [
+                    GraphOutboxModel(
+                        event_id=f"failed-outbox-bounded-{index:03d}",
+                        run_id=run_id,
+                        kind="agent_dispatch",
+                        # This opaque JSON must not be selected by the route.
+                        payload={"opaque": "z" * 80_000},
+                        status="failed",
+                        attempts=1,
+                        created_at=now,
+                        updated_at=now,
+                        next_attempt_at=None,
+                        last_error="x" * 16_000,
+                    )
+                    for index in range(101)
+                ]
+            )
+
+    first = await client.get(f"/api/runs/{run_id}/graph/final-blockers")
+    assert first.status_code == 200
+    assert len(first.content) <= 262_144
+    body = first.json()
+    assert body["partial"] is True
+    assert len(body["blockers"]) == 100
+    assert body["next_cursor"].startswith("outbox:")
+    first_blocker = body["blockers"][0]
+    assert first_blocker["outbox_last_error"].startswith("sha256:")
+    meta = body["collection_meta"][f"outbox:{first_blocker['outbox_id']}:$.outbox_last_error"]
+    assert meta["truncated"] is True
+    assert meta["original_bytes"] == 16_000
+    assert len(meta["sha256"]) == 64
+
+    second = await client.get(
+        f"/api/runs/{run_id}/graph/final-blockers?cursor={body['next_cursor']}"
+    )
+    assert second.status_code == 200
+    assert len(second.content) <= 262_144
+    assert len(second.json()["blockers"]) == 1
+    assert second.json()["next_cursor"] is None
 
 
 async def test_operator_graph_patch_endpoint_accepts_human_patch(
@@ -2045,12 +2831,12 @@ async def test_full_node_detail_uses_summary_owner_contract_for_nested_collectio
     assert "__truncated_fields" not in summary_value
     assert len(summary_value["grades"]["value"]) == 50
     assert summary["truncated"] is True
-    assert summary["next_cursor"].startswith("sha256:")
+    assert "sha256:" in summary["next_cursor"]
     value_meta = summary["collection_meta"]["output_records"]["fields"][
         "verification-shared-owner.value"
     ]
     assert value_meta["truncated"] is True
-    assert value_meta["next_cursor"] == summary["next_cursor"]
+    assert value_meta["next_cursor"].startswith("sha256:")
     assert value_meta["original_bytes"] > 0
     assert len(value_meta["sha256"]) == 64
     assert len(full_resp.content) <= 262_144
@@ -2062,6 +2848,7 @@ async def test_fresh_control_and_topology_readbacks_preserve_runtime_controls(
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-control-topology-{uuid4().hex[:8]}"
     await _seed_control_topology_graph_run(app, run_id)
+    await _finish_archival_maintenance(app, run_id)
 
     node_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/worker-control")
     full_node_resp = await client.get(

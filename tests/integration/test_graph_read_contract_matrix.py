@@ -348,15 +348,6 @@ async def test_node_detail_packs_the_entire_owner_row_deterministically(
     async with session_factory() as session:
         graph_store = GraphEventStore(session)
         await graph_store.append_events(run_id, 0, events)
-        stored_events = await graph_store.read_run(run_id)
-        unbounded = store._node_detail_summaries_from_events(
-            run_id,
-            stored_events,
-            position=max(event.position for event in stored_events),
-        )[node_id]
-        output_record_bytes = _json_bytes(
-            sorted(unbounded.output_records, key=lambda record: str(record.get("record_id", "")))
-        )
         row = await session.get(
             GraphNodeDetailSummaryModel,
             {"run_id": run_id, "node_id": node_id},
@@ -374,8 +365,8 @@ async def test_node_detail_packs_the_entire_owner_row_deterministically(
         assert metadata["truncated"] is True
         assert metadata["total_known"] == 3
         assert metadata["next_cursor"] == retained_record_ids[-1]
-        assert metadata["original_bytes"] == len(output_record_bytes)
-        assert metadata["sha256"] == sha256(output_record_bytes).hexdigest()
+        assert metadata["original_bytes"] is None
+        assert metadata["sha256"] is None
 
         await graph_store.delete_read_models(run_id)
         await graph_store.rebuild_read_models(run_id)

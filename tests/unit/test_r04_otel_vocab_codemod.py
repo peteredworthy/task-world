@@ -298,19 +298,7 @@ def test_codemod_fixture_literals_are_an_explicit_clean_boundary() -> None:
     assert diagnose_source(source, path="tests/unit/test_r04_otel_vocab_codemod.py") == ()
 
 
-def test_task_four_migration_history_is_an_explicit_clean_boundary() -> None:
-    source = 'table = sa.Column("tokens_read", sa.Integer())\n'
-
-    assert (
-        diagnose_source(
-            source,
-            path="src/orchestrator/db/migrations/versions/5a37eef8e789_initial_schema.py",
-        )
-        == ()
-    )
-
-
-def test_task_four_migration_fixture_requires_historical_wrappers() -> None:
+def test_task_four_historical_fixture_requires_explicit_wrappers() -> None:
     historical_source = """\
 def _legacy_usage_snapshot(value):
     return value
@@ -324,8 +312,9 @@ def _legacy_usage_snapshot(value):
 live = {"input_tokens": 1}
 """
 
-    assert diagnose_source(historical_source, path="tests/integration/test_migrations.py") == ()
-    assert diagnose_source(live_source, path="tests/integration/test_migrations.py")
+    path = "tests/integration/test_cost_records.py"
+    assert diagnose_source(historical_source, path=path) == ()
+    assert diagnose_source(live_source, path=path)
 
 
 def test_explicit_workflow_event_contract_is_renamed() -> None:

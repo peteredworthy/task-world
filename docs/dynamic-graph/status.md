@@ -26,7 +26,7 @@ As of 2026-07-18, the implementation review follow-up has moved past the old
 "W6/W7/W8 not started" state:
 
 - W6 outbox hardening is closed for retry backoff, failed-row surfacing, operator
-  requeue, and migration coverage. Batch/parallel outbox claiming remains a separate
+  requeue, and fresh-schema coverage. Batch/parallel outbox claiming remains a separate
   performance improvement.
 - W7 glob overlap is closed: scheduler path claims now use segment-wise wildcard
   comparison instead of synthetic suffix probes.
@@ -80,9 +80,6 @@ git diff --check
 uv run python scripts/export_enums.py --check
 # generated-enums.ts is up to date
 
-uv run alembic -c alembic.ini heads
-# zg1h2i3j4k5l (head)
-
 uv run pytest tests/ --collect-only -q
 # 4794 tests collected in 4.28s
 
@@ -102,7 +99,7 @@ The prior closeout source lineage remains explicit: W8 baseline
 `2ccd20bce78c8cb5620813c840bcff8b9d2bf304`, W8 implementation
 `8ad825cf259f2fc7f42ec886616085cab08703ce`, W8 verifier source
 `2aa951c5c8217866afff8171668835f7c5334b9e`, retired-history representation
-`fbf7c72fa9d6762e8d4bdc9a36bec31d8881cf6a`, migration
+`fbf7c72fa9d6762e8d4bdc9a36bec31d8881cf6a`, compatibility normalization
 `3a741da27a4638fba7ec80268a69efe7c4fccdff`, Claude SDK implementation removal
 `528b46baeab013cd7655bf3d29ab25645503a81e`, and the prior Claude removal
 verifier source `200102e0e4f9ab3d0b727faabe9f032f125894df`. The final evidence
@@ -123,7 +120,7 @@ At that source, the full suite reported **4792 passed, 3 skipped, and 3
 deprecation warnings**; Ruff was clean; Pyright reported **0 errors, 0
 warnings, and 0 informations** plus the advisory `v1.1.408 -> v1.1.411` update
 notice; and `git diff --check` was clean. Generated enums were current,
-Alembic reported the single head `zg1h2i3j4k5l`, **4795 tests** collected, the
+**4795 tests** collected, the
 targeted backend checks reported **20 passed**, and the UI GraphPanel decisions
 suite reported **7 passed**. The three warnings were the Python 3.12
 `aiosqlite/core.py:63` default-datetime-adapter deprecations named in the
@@ -156,14 +153,12 @@ git diff --check
 uv run python scripts/export_enums.py --check
 # OK: /Users/peter/code/task-world/worktrees/backlog-closeout/ui/src/types/generated-enums.ts is up to date.
 
-uv run alembic -c alembic.ini heads
-# zg1h2i3j4k5l (head)
 ```
 
 The three warnings were Python 3.12 default-datetime-adapter
 `DeprecationWarning`s from `aiosqlite/core.py:63`. The Pyright update notice was
 advisory; the check reported zero errors, warnings, and informations. Generated
-enums were current, and Alembic reported the single head `zg1h2i3j4k5l`. The
+enums were current. The
 verifier status showed modified `.superpowers/sdd/progress.md` and unrelated
 untracked
 `docs/superpowers/plans/2026-07-18-migrate-claude-sdk-history.md`; neither was

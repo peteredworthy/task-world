@@ -793,6 +793,8 @@ def check_projection_boundaries(
         )
     parsed_sources: list[tuple[str, str, ast.Module, bool]] = []
     for path in sorted(selected):
+        if not path.is_file():
+            continue
         relative_path = path.relative_to(root).as_posix()
         source = path.read_text()
         try:

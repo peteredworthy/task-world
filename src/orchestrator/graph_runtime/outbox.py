@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-from uuid import uuid4
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Protocol, TypeVar, cast
+from uuid import uuid4
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -26,6 +26,7 @@ OUTBOX_PENDING = "pending"
 OUTBOX_DISPATCHING = "dispatching"
 OUTBOX_COMPLETED = "completed"
 OUTBOX_FAILED = "failed"
+OUTBOX_MAINTENANCE_BATCH_LIMIT = 100
 
 _T = TypeVar("_T")
 
@@ -212,10 +213,17 @@ class OutboxDispatcher:
         run_id: str | None = None,
         allowed_kinds: frozenset[str] | None = None,
     ) -> list[OutboxItem]:
-        """Dispatch pending rows in outbox order and return completed items."""
+        """Dispatch one bounded batch in outbox order and return completed items.
+
+        Omitting ``limit`` uses :data:`OUTBOX_MAINTENANCE_BATCH_LIMIT`.  An
+        explicit limit may make the batch smaller, but cannot exceed that cap.
+        Callers that own a long-running drain loop invoke this method again on
+        their next tick; one call never accumulates the complete outbox.
+        """
+        batch_limit = _bounded_batch_limit(limit)
         await self.reset_dispatching_to_pending(run_id=run_id)
         completed: list[OutboxItem] = []
-        remaining = limit
+        remaining = batch_limit
         while True:
             item = await self._claim_next(remaining, run_id=run_id, allowed_kinds=allowed_kinds)
             if item is None:
@@ -226,10 +234,9 @@ class OutboxDispatcher:
                 await self._mark_failed_attempt(item, exc)
             else:
                 completed.append(await self._mark_completed(item))
-            if remaining is not None:
-                remaining -= 1
-                if remaining <= 0:
-                    return completed
+            remaining -= 1
+            if remaining <= 0:
+                return completed
 
     async def reset_dispatching_to_pending(self, *, run_id: str | None = None) -> int:
         """Treat startup ``dispatching`` rows as pending for at-least-once retry."""
@@ -237,7 +244,12 @@ class OutboxDispatcher:
         async def _op() -> int:
             async with self._session_factory() as session:
                 async with session.begin():
-                    stmt = (
+                    count_stmt = (
+                        select(func.count())
+                        .select_from(GraphOutboxModel)
+                        .where(GraphOutboxModel.status == OUTBOX_DISPATCHING)
+                    )
+                    update_stmt = (
                         update(GraphOutboxModel)
                         .where(GraphOutboxModel.status == OUTBOX_DISPATCHING)
                         .values(
@@ -245,17 +257,24 @@ class OutboxDispatcher:
                             updated_at=self._clock.now(),
                             next_attempt_at=None,
                         )
-                        .returning(GraphOutboxModel.outbox_id)
                     )
                     if run_id is not None:
-                        stmt = stmt.where(GraphOutboxModel.run_id == run_id)
-                    result = await session.execute(stmt)
-                    return len(result.scalars().all())
+                        count_stmt = count_stmt.where(GraphOutboxModel.run_id == run_id)
+                        update_stmt = update_stmt.where(GraphOutboxModel.run_id == run_id)
+                    count = int((await session.execute(count_stmt)).scalar_one())
+                    if count:
+                        await session.execute(update_stmt)
+                    return count
 
         return await self._retry_locked(_op)
 
     async def requeue_failed_snapshot_cleanups_for_startup(
-        self, *, run_id: str | None = None, immediate: bool = False
+        self,
+        *,
+        run_id: str | None = None,
+        immediate: bool = False,
+        after_outbox_id: int | None = None,
+        limit: int = OUTBOX_MAINTENANCE_BATCH_LIMIT,
     ) -> list[OutboxItem]:
         """Requeue one bounded, audited restart epoch for managed cleanup only.
 
@@ -263,7 +282,12 @@ class OutboxDispatcher:
         failed.  A snapshot cleanup is idempotent and is the sole operation
         safe to retry automatically after process restart.  The retained error
         and append-only audit fact preserve the previous delivery epoch.
+
+        One call processes at most ``limit`` rows after ``after_outbox_id``.
+        Startup recovery advances that keyset cursor until the fixed-size
+        batches converge; this method never materializes every failed cleanup.
         """
+        batch_limit = _bounded_batch_limit(limit)
         requeued: list[OutboxItem] = []
         async with self._session_factory() as session:
             async with session.begin():
@@ -272,9 +296,12 @@ class OutboxDispatcher:
                     .where(GraphOutboxModel.status == OUTBOX_FAILED)
                     .where(GraphOutboxModel.kind == "snapshot_cleanup")
                     .order_by(GraphOutboxModel.outbox_id)
+                    .limit(batch_limit)
                 )
                 if run_id is not None:
                     stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+                if after_outbox_id is not None:
+                    stmt = stmt.where(GraphOutboxModel.outbox_id > after_outbox_id)
                 rows = list((await session.execute(stmt)).scalars())
                 store = GraphEventStore(session)
                 for row in rows:
@@ -322,17 +349,47 @@ class OutboxDispatcher:
                     requeued.append(_to_item(row))
         return requeued
 
-    async def pending_items(self, *, run_id: str | None = None) -> list[OutboxItem]:
+    async def pending_items(
+        self,
+        *,
+        run_id: str | None = None,
+        after_outbox_id: int | None = None,
+        limit: int = OUTBOX_MAINTENANCE_BATCH_LIMIT,
+    ) -> list[OutboxItem]:
+        """Return one bounded keyset page of pending or dispatching rows."""
+        batch_limit = _bounded_batch_limit(limit)
         async with self._session_factory() as session:
             stmt = (
                 select(GraphOutboxModel)
                 .where(GraphOutboxModel.status.in_([OUTBOX_PENDING, OUTBOX_DISPATCHING]))
                 .order_by(GraphOutboxModel.outbox_id)
+                .limit(batch_limit)
             )
             if run_id is not None:
                 stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+            if after_outbox_id is not None:
+                stmt = stmt.where(GraphOutboxModel.outbox_id > after_outbox_id)
             result = await session.execute(stmt)
             return [_to_item(row) for row in result.scalars()]
+
+    async def has_pending_items_after(
+        self,
+        outbox_id: int,
+        *,
+        run_id: str | None = None,
+    ) -> bool:
+        """Probe for a later pending row without decoding another payload."""
+        async with self._session_factory() as session:
+            stmt = (
+                select(GraphOutboxModel.outbox_id)
+                .where(GraphOutboxModel.status.in_([OUTBOX_PENDING, OUTBOX_DISPATCHING]))
+                .where(GraphOutboxModel.outbox_id > outbox_id)
+                .order_by(GraphOutboxModel.outbox_id)
+                .limit(1)
+            )
+            if run_id is not None:
+                stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+            return (await session.execute(stmt)).scalar_one_or_none() is not None
 
     async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None:
         """Return the earliest deferred pending retry time after ``clock.now()``."""
@@ -493,3 +550,12 @@ def _stable_jitter_seconds(event_id: str, attempts: int, *, max_seconds: float) 
     digest = hashlib.sha256(f"{event_id}:{attempts}".encode("utf-8")).digest()
     fraction = int.from_bytes(digest[:8], "big") / float(2**64 - 1)
     return fraction * max_seconds
+
+
+def _bounded_batch_limit(limit: int | None) -> int:
+    batch_limit = OUTBOX_MAINTENANCE_BATCH_LIMIT if limit is None else limit
+    if not 1 <= batch_limit <= OUTBOX_MAINTENANCE_BATCH_LIMIT:
+        raise ValueError(
+            f"outbox batch limit must be between 1 and {OUTBOX_MAINTENANCE_BATCH_LIMIT}"
+        )
+    return batch_limit

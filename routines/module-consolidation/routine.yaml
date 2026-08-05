@@ -695,8 +695,8 @@ steps:
       Runners cannot import from api/. Fix BEFORE moving any files.
       Decision: Replace ApiModel with pydantic.BaseModel in agents/schemas.py (Option A).
 
-      CRITICAL: db/migrations/env.py imports from agents.models for Alembic table discovery.
-      Must update this file to runners.profiles.models after the move.
+      Ensure current ORM model registration and init_db imports follow the moved
+      runners.profiles.models path after the move.
 
       See docs/module-consolidation/steps/step-06-plan.md for guidance.
 
@@ -724,8 +724,8 @@ steps:
                 resolution.py ← from agents/resolution.py (if exists)
                 errors.py    ← from agents/errors.py (if exists)
 
-          CRITICAL CONSUMER: db/migrations/env.py imports from agents.models for Alembic.
-          Add it explicitly to your consumer update list.
+          CRITICAL CONSUMERS: current ORM registration and init_db startup imports.
+          Add them explicitly to your consumer update list.
 
           STEPS:
           1. Fix ApiModel: replace with pydantic.BaseModel in agents/schemas.py
@@ -735,8 +735,8 @@ steps:
           5. Update runners/__init__.py with re-exports for new sub-packages
           6. Find ALL consumers:
              grep -rn "from orchestrator.scaffolding\|from orchestrator.agents" src/ tests/
-             SPECIAL: check db/migrations/env.py and alembic/versions/*.py
-          7. Update all consumers including db/migrations/env.py
+             SPECIAL: check ORM metadata registration and init_db startup wiring
+          7. Update all consumers including ORM/bootstrap imports
           8. Delete scaffolding/ and agents/ directories
           9. Run full test suite
         requirements:
@@ -750,7 +750,7 @@ steps:
             desc: "runners/profiles/ sub-package exists with agent profile models, schemas, and registry"
             priority: critical
           - id: "R4"
-            desc: "scaffolding/ and agents/ directories deleted; db/migrations/env.py updated to runners.profiles.models"
+            desc: "scaffolding/ and agents/ directories deleted; ORM/bootstrap consumers updated to runners.profiles.models"
             priority: critical
           - id: "R5"
             desc: "All tests pass after absorption"
@@ -790,7 +790,7 @@ steps:
             - id: "R3"
               text: "R3 — A: runners/profiles/ with models, schemas, and other agent profile files; all importable. B: sub-package exists but some files missing."
             - id: "R4"
-              text: "R4 — A: Both original dirs deleted; db/migrations/env.py updated to point to runners.profiles.models (read migrations/env.py to confirm). B: dirs deleted but migrations/env.py still references orchestrator.agents."
+              text: "R4 — A: Both original dirs deleted; ORM registration and bootstrap consumers point to runners.profiles.models. B: dirs deleted but an active schema/bootstrap consumer still references orchestrator.agents."
             - id: "R5"
               text: "R5 — A: Full test suite passes. B: ≤2 non-critical failures."
           submission_template:
@@ -956,8 +956,8 @@ steps:
           8. Write db/__init__.py with public re-exports (hide ORM models)
           9. Run full test suite
 
-          Also update db/migrations/env.py if it references old db paths or agents.models
-          (Phase 6 should have handled agents.models but verify).
+          Also update current ORM registration or init_db startup code if it references
+          old db paths or agents.models (Phase 6 should have handled agents.models but verify).
         requirements:
           - id: "R1"
             desc: "db/orm/, db/access/, db/recovery/ sub-packages exist with correct content"

@@ -64,7 +64,8 @@ Key fields on `Attempt`:
 - `tokens_read`, `tokens_write`, `tokens_cache`
 - `duration_ms`
 
-**Note:** Defer Alembic until schema stabilizes.
+**Schema policy:** Register the current schema in SQLAlchemy ORM metadata and
+prove it through `init_db()` on a fresh temporary database.
 
 ---
 
