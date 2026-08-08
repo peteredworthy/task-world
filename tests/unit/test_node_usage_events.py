@@ -3,12 +3,7 @@
 from datetime import UTC, datetime
 
 from orchestrator.graph import (
-    action_count_by_node_kind_view,
-    execution_count_by_node_kind_view,
-    latency_ms_by_node_kind_view,
     recorded_node_usage_keys_view,
-    tokens_by_node_kind_view,
-    tokens_by_node_view,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -153,16 +148,16 @@ def test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once
         "execution-1:0": True,
         "execution-1:1": True,
     }
-    assert tokens_by_node_view(projection) == {"worker-1": 370}
-    assert tokens_by_node_kind_view(projection) == {"worker": 370}
-    assert latency_ms_by_node_kind_view(projection) == {"worker": 900}
-    assert execution_count_by_node_kind_view(projection) == {"worker": 1}
-    assert action_count_by_node_kind_view(projection) == {"worker": 4}
+    assert projection.usage.tokens_by_node == {"worker-1": 370}
+    assert projection.usage.tokens_by_node_kind == {"worker": 370}
+    assert projection.usage.latency_ms_by_node_kind == {"worker": 900}
+    assert projection.usage.execution_count_by_node_kind == {"worker": 1}
+    assert projection.usage.action_count_by_node_kind == {"worker": 4}
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
-    assert tokens_by_node_view(restored) == {"worker-1": 370}
+    assert restored.usage.tokens_by_node == {"worker-1": 370}
     assert recorded_node_usage_keys_view(restored) == {
         "execution-1:0": True,
         "execution-1:1": True,
     }
-    assert action_count_by_node_kind_view(restored) == {"worker": 4}
+    assert restored.usage.action_count_by_node_kind == {"worker": 4}

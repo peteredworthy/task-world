@@ -3,17 +3,16 @@
 from typing import Any
 
 from orchestrator.graph import (
+    input_bindings_view,
+    node_states_view,
+    planner_sessions_view,
     Actor,
     ActorKind,
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    bound_record_ids,
     initial_projection,
-    input_binding_for_port,
     lease_by_id,
-    node_state,
-    planner_session,
     projection_from_checkpoint,
     projection_to_checkpoint,
     project_planner_session,
@@ -43,7 +42,7 @@ def test_successor_inherits_session_id() -> None:
     )
 
     projection = _project(events)
-    assert planner_session(projection, "planner-1") == "session-1"
+    assert planner_sessions_view(projection).get("planner-1") == "session-1"
     assert lease.payload["session_id"] == "session-1"
     assert lease.payload["generation"] == 2
 
@@ -93,7 +92,7 @@ def test_session_does_not_grant_authority() -> None:
     projection = _project([*events, *_append(events, callback)])
     assert callback[0].event_type == "command_rejected"
     assert "payload [extra_forbidden]" in str(callback[0].payload["reason"])
-    assert node_state(projection, "planner-0") == "running"
+    assert node_states_view(projection).get("planner-0") == "running"
 
 
 def test_carryover_binds_as_optional_input() -> None:
@@ -110,9 +109,9 @@ def test_carryover_binds_as_optional_input() -> None:
     projection = _project([*events, *_append(events, patch)])
 
     assert projection_from_checkpoint(projection_to_checkpoint(projection)) == projection
-    assert bound_record_ids(projection, "planner-1", "session_carryover") == (
-        "summary-carryover-1",
-    )
+    assert tuple(
+        input_bindings_view(projection).get("planner-1", {}).get("session_carryover").record_ids
+    ) == ("summary-carryover-1",)
     created = _only(patch, "node_created", "planner-1")
     carryover_port = next(
         raw_port
@@ -128,7 +127,10 @@ def test_carryover_binds_as_optional_input() -> None:
         patch_command_context(events, proposed_by_node_id="planner-0", actor_role="planner"),
     )
     without_projection = _project([*events, *_append(events, without_carryover)])
-    assert input_binding_for_port(without_projection, "planner-2", "session_carryover") is None
+    assert (
+        input_bindings_view(without_projection).get("planner-2", {}).get("session_carryover")
+        is None
+    )
     scheduled = _apply(
         [*events, *_append(events, without_carryover)],
         "schedule_tick",

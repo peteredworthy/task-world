@@ -24,13 +24,11 @@ from orchestrator.graph import (
     GraphProjection,
     SequentialIdGenerator,
     compile_routine,
-    configured_gates,
     edges_view,
     initial_projection,
     input_bindings_view,
-    node_attempt,
-    node_candidate_id,
     node_command_definitions_view,
+    node_attempts_view,
     node_kinds_view,
     node_task_regions_view,
     planner_generation_budget,
@@ -112,8 +110,8 @@ def test_task_maps_to_task_region_projection_and_worker_node() -> None:
 
     assert node_kinds_view(projection)["worker-s-01-t-01"] == "worker"
     assert node_task_regions_view(projection)["worker-s-01-t-01"] == "S-01/T-01"
-    assert node_attempt(projection, "worker-s-01-t-01") == 1
-    assert node_candidate_id(projection, "worker-s-01-t-01") == "candidate-s-01-t-01-1"
+    assert node_attempts_view(projection)["worker-s-01-t-01"] == 1
+    assert projection.nodes["worker-s-01-t-01"].runtime.candidate_id == "candidate-s-01-t-01-1"
 
 
 def test_worker_write_claims_are_scoped_to_declared_artifacts() -> None:
@@ -410,7 +408,9 @@ def test_human_approval_gate_maps_to_gate_node_only_when_configured() -> None:
     projection = _project(events)
 
     assert node_kinds_view(projection)["gate-s-01"] == "gate"
-    assert configured_gates(projection, "S-01/T-01") == ("gate-s-01",)
+    assert tuple(sorted(projection.governance.configured_gates_by_task.get("S-01/T-01", ()))) == (
+        "gate-s-01",
+    )
     gate_edges = [
         edge for edge in edges_view(projection).values() if edge.from_node_id == "gate-s-01"
     ]

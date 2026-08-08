@@ -25,32 +25,22 @@ from orchestrator.graph import (
     EventEnvelope,
     accepted_output_records_by_node_port_view,
     active_requirement_versions_view,
-    approval_decisions_view,
-    authority_decisions_view,
-    authority_revision_blocker,
     build_projection,
     edges_view,
-    file_state_record,
     initial_projection,
     insert_projected_record,
-    node_creation_position,
-    node_allowed_actions,
-    node_preconditions,
+    file_state_records_view,
+    node_creation_positions_view,
+    node_roles_view,
+    node_states_view,
+    node_task_regions_view,
     node_resource_claims_view,
-    node_role,
-    node_state,
-    node_task_region,
-    output_record_ids_for_node_port,
-    output_record_payload,
-    oversight_decision,
-    planner_session_state,
+    output_record_payloads_view,
     project_node_max_attempts,
     projection_from_checkpoint,
     projection_to_checkpoint,
-    requirement_revision,
     reduce_event,
     ready_nodes_view,
-    support_evidence,
     task_candidates_view,
 )
 
@@ -280,13 +270,18 @@ def _cleanup_requested(*, position: int) -> EventEnvelope:
 
 def _governance_decision_values(state: Any, event_type: str) -> dict[str, Any]:
     if event_type == "approval_decision_recorded":
-        return approval_decisions_view(state)
+        return {
+            node_id: state.governance.approval_decisions_by_id[decision_id]
+            for node_id, decision_id in state.governance.approval_decision_id_by_node.items()
+        }
     if event_type == "authority_decision_recorded":
-        return authority_decisions_view(state)
+        return {
+            node_id: state.governance.authority_decisions_by_id[decision_id]
+            for node_id, decision_id in state.governance.authority_decision_id_by_node.items()
+        }
     return {
-        node_id: decision
-        for node_id in ("oversight-1", "appeal-1")
-        if (decision := oversight_decision(state, node_id)) is not None
+        node_id: state.governance.oversight_decisions_by_id[decision_id]
+        for node_id, decision_id in state.governance.oversight_decision_id_by_node.items()
     }
 
 
@@ -297,8 +292,14 @@ def test_identical_record_id_replay_is_idempotent_at_a_later_position() -> None:
     twice = reduce_event(once, first.model_copy(update={"position": 4, "event_id": "retry"}))
 
     assert twice == once
-    assert output_record_payload(twice, "record-1") == output_record_payload(once, "record-1")
-    assert output_record_ids_for_node_port(twice, "worker-1", "candidate") == ("record-1",)
+    assert (
+        output_record_payloads_view(twice)["record-1"]
+        == output_record_payloads_view(once)["record-1"]
+    )
+    assert tuple(
+        item["record_id"]
+        for item in accepted_output_records_by_node_port_view(twice)["worker-1"]["candidate"]
+    ) == ("record-1",)
 
 
 def test_identical_requirement_revision_id_replay_preserves_first_write_and_indexes() -> None:
@@ -308,9 +309,11 @@ def test_identical_requirement_revision_id_replay_preserves_first_write_and_inde
     twice = reduce_event(once, first.model_copy(update={"position": 4, "event_id": "retry"}))
 
     assert twice is once
-    revision = requirement_revision(twice, "requirement-1.v1")
+    revision = projection_to_checkpoint(twice)["requirements"]["revisions_by_id"][
+        "requirement-1.v1"
+    ]
     assert revision is not None
-    assert revision.position == 3
+    assert revision["position"] == 3
     assert active_requirement_versions_view(twice) == {"requirement-1": "requirement-1.v1"}
 
 
@@ -349,15 +352,19 @@ def test_conflicting_requirement_revision_id_replay_preserves_requirements_index
     ):
         reduce_event(state, conflicting)
 
-    revision = requirement_revision(state, "requirement-1.v1")
+    checkpoint = projection_to_checkpoint(state)
+    revision = checkpoint["requirements"]["revisions_by_id"]["requirement-1.v1"]
     assert revision is not None
-    assert revision.change_classification == "documentation"
-    assert revision.position == 2
+    assert revision["change_classification"] == "documentation"
+    assert revision["position"] == 2
     assert active_requirement_versions_view(state) == {"requirement-1": "requirement-1.v1"}
-    old_support = support_evidence(state, "support-old")
+    old_support = checkpoint["requirements"]["support_by_id"]["support-old"]
     assert old_support is not None
-    assert old_support.status == "active"
-    assert authority_revision_blocker(state, "requirement-1.v1") is None
+    assert old_support["status"] == "active"
+    assert (
+        checkpoint["governance"].get("authority_revision_blockers", {}).get("requirement-1.v1")
+        is None
+    )
 
 
 def test_identical_support_evidence_id_replay_preserves_first_write_and_indexes() -> None:
@@ -367,10 +374,10 @@ def test_identical_support_evidence_id_replay_preserves_first_write_and_indexes(
     twice = reduce_event(once, first.model_copy(update={"position": 4, "event_id": "retry"}))
 
     assert twice is once
-    support = support_evidence(twice, "support-1")
+    support = projection_to_checkpoint(twice)["requirements"]["support_by_id"]["support-1"]
     assert support is not None
-    assert support.position == 3
-    assert support.status == "active"
+    assert support["position"] == 3
+    assert support["status"] == "active"
 
 
 def test_conflicting_support_evidence_id_replay_preserves_canonical_evidence_and_indexes() -> None:
@@ -392,16 +399,19 @@ def test_conflicting_support_evidence_id_replay_preserves_canonical_evidence_and
     with pytest.raises(ProjectionReplayConflictError, match=r"support evidence.*support-1.*event"):
         reduce_event(state, conflicting)
 
-    support = support_evidence(state, "support-1")
+    checkpoint = projection_to_checkpoint(state)
+    support = checkpoint["requirements"]["support_by_id"]["support-1"]
     assert support is not None
-    assert support.evidence_id == "evidence-1"
-    assert support.requirement_id == "requirement-1"
-    assert support.requirement_version_id == "requirement-1.v1"
-    assert support.status == "active"
-    assert support.confidence == "high"
-    assert support.position == 1
+    assert support["evidence_id"] == "evidence-1"
+    assert support["requirement_id"] == "requirement-1"
+    assert support["requirement_version_id"] == "requirement-1.v1"
+    assert support["status"] == "active"
+    assert support["confidence"] == "high"
+    assert support["position"] == 1
     assert active_requirement_versions_view(state) == {"requirement-1": "requirement-1.v1"}
-    assert authority_revision_blocker(state, "requirement-1.v1") is not None
+    assert (
+        checkpoint["governance"]["authority_revision_blockers"].get("requirement-1.v1") is not None
+    )
 
 
 @pytest.mark.parametrize(
@@ -467,7 +477,9 @@ def test_file_state_duplicate_compares_nested_values() -> None:
     duplicate = _file_state(position=9)
     projection = build_projection([first, duplicate])
 
-    assert file_state_record(projection, "file-state-1").model_dump(mode="json")["position"] == 8
+    assert (
+        file_state_records_view(projection)["file-state-1"].model_dump(mode="json")["position"] == 8
+    )
 
     conflicting = _file_state(
         position=9,
@@ -520,7 +532,7 @@ def test_paired_file_state_events_ignore_delivery_timestamps_for_replay_identity
 
     state = build_projection([output_accepted, file_state_accepted])
 
-    record = file_state_record(state, "file-state-1")
+    record = file_state_records_view(state)["file-state-1"]
     assert record is not None
     assert record.created_at == "2026-01-01T00:00:00+00:00"
     assert record.graph_position == 48
@@ -608,8 +620,8 @@ def test_repeated_node_creation_preserves_runtime_state_and_first_position() -> 
         ]
     )
 
-    assert node_state(projection, "worker-1") == "running"
-    assert node_creation_position(projection, "worker-1") == 5
+    assert node_states_view(projection)["worker-1"] == "running"
+    assert node_creation_positions_view(projection)["worker-1"] == 5
 
 
 def test_absent_stable_node_fields_may_be_filled_by_replay() -> None:
@@ -620,8 +632,8 @@ def test_absent_stable_node_fields_may_be_filled_by_replay() -> None:
         ]
     )
 
-    assert node_role(projection, "worker-1") == "builder"
-    assert node_task_region(projection, "worker-1") == "task-1"
+    assert node_roles_view(projection)["worker-1"] == "builder"
+    assert node_task_regions_view(projection)["worker-1"] == "task-1"
 
 
 @pytest.mark.parametrize(
@@ -638,9 +650,9 @@ def test_omitted_node_collections_may_be_filled_by_replay(
     projection = build_projection([_node(position=1), _node(position=2, **{field: later_value})])
 
     if field == "allowed_actions":
-        assert node_allowed_actions(projection, "worker-1") == ("submit_callback",)
+        assert projection.nodes["worker-1"].spec.allowed_actions == ("submit_callback",)
     elif field == "preconditions":
-        assert node_preconditions(projection, "worker-1") == ("inputs_bound",)
+        assert projection.nodes["worker-1"].spec.preconditions == ("inputs_bound",)
     else:
         claims = node_resource_claims_view(projection)["worker-1"]
         assert [claim.model_dump(exclude_none=True) for claim in claims] == later_value
@@ -661,7 +673,7 @@ def test_planner_node_creation_installs_a_checkpoint_valid_detached_session() ->
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
 
-    assert planner_session_state(restored, "session-1") == "detached"
+    assert restored.planning.sessions["session-1"].state == "detached"
 
 
 @pytest.mark.parametrize(
@@ -730,7 +742,10 @@ def test_record_id_cannot_move_node_or_port_and_original_index_remains_single(
     with pytest.raises(ProjectionReplayConflictError, match=r"record.*record-1"):
         reduce_event(projection, moved)
 
-    assert output_record_ids_for_node_port(projection, "worker-1", "candidate") == ("record-1",)
+    assert tuple(
+        item["record_id"]
+        for item in accepted_output_records_by_node_port_view(projection)["worker-1"]["candidate"]
+    ) == ("record-1",)
 
 
 def test_identical_duplicates_do_not_duplicate_topology_task_ready_or_decision_indexes() -> None:
@@ -777,7 +792,7 @@ def test_identical_duplicates_do_not_duplicate_topology_task_ready_or_decision_i
         "candidate-1"
     ]
     assert ready_nodes_view(projection) == ["source"]
-    assert list(approval_decisions_view(projection)) == ["gate-1"]
+    assert list(projection.governance.approval_decision_id_by_node) == ["gate-1"]
     assert [
         item["record_id"]
         for item in accepted_output_records_by_node_port_view(projection)["worker-1"]["candidate"]
@@ -789,7 +804,7 @@ def test_node_ready_does_not_replace_authoritative_runtime_state() -> None:
         [_node(position=1), _event("node_ready", {"node_id": "worker-1"}, position=2)]
     )
 
-    assert node_state(projection, "worker-1") == "planned"
+    assert node_states_view(projection)["worker-1"] == "planned"
     assert ready_nodes_view(projection) == []
 
 

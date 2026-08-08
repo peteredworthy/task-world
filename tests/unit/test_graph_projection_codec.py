@@ -18,9 +18,6 @@ from orchestrator.graph import (
     GraphProjection,
     FrozenMap,
     ProjectionCheckpointCodecError,
-    accepted_graph_patch_ids,
-    accepted_no_successor_patch_id,
-    accepted_no_successor_patch_ids,
     build_projection,
     projection_from_checkpoint,
     projection_to_checkpoint,
@@ -236,16 +233,16 @@ def test_checkpoint_round_trip_preserves_planner_patch_insertion_order() -> None
     checkpoint = projection_to_checkpoint(projection)
     restored = projection_from_checkpoint(checkpoint)
 
-    assert accepted_graph_patch_ids(restored, "planner-1") == (
+    assert restored.planning.accepted_patch_ids_by_node["planner-1"] == (
         "patch-1",
         "patch-2",
         "patch-3",
     )
-    assert accepted_no_successor_patch_ids(restored, "planner-1") == (
+    assert restored.planning.no_successor_patch_ids_by_node["planner-1"] == (
         "no-successor-1",
         "no-successor-2",
     )
-    assert accepted_no_successor_patch_id(restored, "planner-1") == "no-successor-2"
+    assert restored.planning.latest_no_successor_patch_id_by_node["planner-1"] == "no-successor-2"
 
 
 def test_checkpoint_round_trip_freezes_nested_oversight_scope_arrays() -> None:

@@ -192,6 +192,19 @@ def test_typed_roots_are_shallow_kind_bound_and_exactly_derived() -> None:
     assert validate_authorized_cache_roots(roots, policy, status=status) == roots
 
 
+def test_derived_roots_deduplicate_files_under_the_same_cache() -> None:
+    status = WorktreeStatus(
+        ignored=(
+            FileStatePath(".pytest_cache/CACHEDIR.TAG", "ignored"),
+            FileStatePath(".pytest_cache/v/cache/nodeids", "ignored"),
+        )
+    )
+
+    assert derive_cache_roots(status, CacheAuthorityPolicy()) == (
+        RunnerCacheRoot(path=".pytest_cache", kind="ignored"),
+    )
+
+
 @pytest.mark.parametrize(
     "roots",
     [

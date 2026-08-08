@@ -135,7 +135,24 @@ async def apply_graph_cancel_until_terminal(
     delay_seconds = 0.05
 
     for attempt in range(4):
-        projection = await controller.read_projection(run_id)
+        try:
+            projection = await controller.read_projection(run_id)
+        except GraphReadModelUnavailable as exc:
+            # Every graph callback and command crosses the same bounded
+            # projection boundary.  When that boundary is unavailable, no
+            # callback can win a race with cancellation because graph writes
+            # are already fenced by the unavailable read model.  Let the
+            # signal consumer finish cancelling the workflow row instead of
+            # retrying the same permanently unreadable cancel forever.  A
+            # later projection repair still sees the cancelled workflow row
+            # and no managed executor remains attached to the run.
+            logger.warning(
+                "Graph cancel for %s could not append kernel cancellation facts; "
+                "bounded read model already fences graph writes: %s",
+                run_id,
+                exc,
+            )
+            return
         run_state = query_run_state(projection)
         if run_state is None or run_state in {"cancelled", "completed", "failed"}:
             return

@@ -18,7 +18,6 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    tokens_by_node_view,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
@@ -133,7 +132,7 @@ async def test_controller_persists_usage_event_and_replays_run_usage_read_model(
             await session.execute(select(RunModel).where(RunModel.id == context.run_id))
         ).scalar_one()
 
-    assert tokens_by_node_view(projection) == {"worker-1": 370}
+    assert projection.usage.tokens_by_node == {"worker-1": 370}
     assert run.total_duration_ms == 900
     assert run.total_num_actions == 4
     assert len(run.token_usage_by_model or []) == 2

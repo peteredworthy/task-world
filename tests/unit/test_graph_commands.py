@@ -14,21 +14,40 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command as apply_graph_command,
     completion_decision_passed,
-    input_binding_for_port,
-    input_bindings_for_node,
+    edges_view,
     initial_projection,
-    iter_edges,
+    input_bindings_view,
     leases_view,
-    node_retry_not_before,
-    node_state,
+    node_states_view,
     project_requirement_freshness_facts,
     project_task_states,
     projection_from_checkpoint,
     projection_to_checkpoint,
     ready_nodes_view,
     reduce_event,
+    retry_not_before_by_node_view,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
+
+
+def node_state(projection: Any, node_id: str) -> str | None:
+    return node_states_view(projection).get(node_id)
+
+
+def node_retry_not_before(projection: Any, node_id: str) -> str | None:
+    return retry_not_before_by_node_view(projection).get(node_id)
+
+
+def input_binding_for_port(projection: Any, node_id: str, port: str) -> Any:
+    return input_bindings_view(projection).get(node_id, {}).get(port)
+
+
+def input_bindings_for_node(projection: Any, node_id: str) -> tuple[Any, ...]:
+    return tuple(input_bindings_view(projection).get(node_id, {}).values())
+
+
+def iter_edges(projection: Any) -> tuple[Any, ...]:
+    return tuple(edges_view(projection).values())
 
 
 def _event(

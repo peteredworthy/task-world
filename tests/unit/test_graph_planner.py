@@ -3,17 +3,15 @@
 from typing import Any
 
 from orchestrator.graph import (
+    input_bindings_view,
+    node_kinds_view,
+    node_states_view,
     Actor,
     ActorKind,
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    bound_record_ids,
     initial_projection,
-    input_binding_for_port,
-    node_exists,
-    node_kind,
-    node_state,
     project_planner_chain,
     project_run_state,
     reduce_event,
@@ -32,7 +30,9 @@ def test_planner_lifecycle_states() -> None:
 
     assert accepted[0].event_type == "graph_patch_accepted"
     assert rejected[0].event_type == "graph_patch_rejected"
-    assert node_state(_project([*events, *accepted, *rejected]), "planner-0") == "completed"
+    assert (
+        node_states_view(_project([*events, *accepted, *rejected])).get("planner-0") == "completed"
+    )
 
 
 def test_horizon_patch_creates_region_and_successor() -> None:
@@ -40,10 +40,10 @@ def test_horizon_patch_creates_region_and_successor() -> None:
     accepted = _append(events, _submit_patch(events, "patch-1", _region_ops("planner-1")))
     projection = _project([*events, *accepted])
 
-    assert node_kind(projection, "worker-1") == "worker"
-    assert node_kind(projection, "verifier-1") == "verifier"
-    assert node_kind(projection, "planner-1") == "planner"
-    assert input_binding_for_port(projection, "planner-1", "region_summary") is None
+    assert node_kinds_view(projection).get("worker-1") == "worker"
+    assert node_kinds_view(projection).get("verifier-1") == "verifier"
+    assert node_kinds_view(projection).get("planner-1") == "planner"
+    assert input_bindings_view(projection).get("planner-1", {}).get("region_summary") is None
 
     scheduled = _apply([*events, *accepted], "schedule_tick", {})
     planner_deferrals = [
@@ -382,8 +382,12 @@ def test_successor_readiness_via_milestone_records() -> None:
     events = _drive_region_to_accepted(events)
 
     projection = _project(events)
-    assert bound_record_ids(projection, "planner-1", "region_summary") == ("summary-1",)
-    assert bound_record_ids(projection, "planner-1", "accepted_file_state") == ("file-state-1",)
+    assert tuple(
+        input_bindings_view(projection).get("planner-1", {}).get("region_summary").record_ids
+    ) == ("summary-1",)
+    assert tuple(
+        input_bindings_view(projection).get("planner-1", {}).get("accepted_file_state").record_ids
+    ) == ("file-state-1",)
 
     scheduled = _apply(
         events,
@@ -447,8 +451,8 @@ def test_parallel_successor_planners_rejected() -> None:
 
     assert [event.event_type for event in rejected] == ["graph_patch_rejected"]
     assert rejected[0].payload["reason"] == "multiple_successor_planners_not_allowed"
-    assert not node_exists(projection, "planner-a")
-    assert not node_exists(projection, "planner-b")
+    assert "planner-a" not in projection.nodes
+    assert "planner-b" not in projection.nodes
     assert project_planner_chain([*events, *_append(events, rejected)]) == [
         {
             "node_id": "planner-0",
@@ -495,8 +499,8 @@ def test_patch_acceptance_separate_from_planner_completion() -> None:
     projection = _project([*events, *_append(events, rejected)])
 
     assert rejected[0].event_type == "graph_patch_rejected"
-    assert node_state(projection, "planner-0") == "completed"
-    assert not node_exists(projection, "worker-1")
+    assert node_states_view(projection).get("planner-0") == "completed"
+    assert "worker-1" not in projection.nodes
 
 
 def _planner_events(

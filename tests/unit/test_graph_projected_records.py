@@ -11,6 +11,7 @@ import pytest
 from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from orchestrator.graph import (
+    output_record_payloads_view,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -70,7 +71,6 @@ from orchestrator.graph import (
     OutputRecord,
     OutputRecordAcceptedPayload,
     initial_projection,
-    output_record_payload,
     project_record,
     projection_to_checkpoint,
     reduce_event,
@@ -604,7 +604,7 @@ def test_reducer_fan_out_preserves_public_explicit_empty_field_serialization() -
         _accepted_record_event(source.model_dump(by_alias=True, exclude_unset=True)),
     )
     expected_serialized = expected.model_dump(mode="json", by_alias=True, exclude_unset=True)
-    projected = output_record_payload(projection, source.record_id)
+    projected = output_record_payloads_view(projection).get(source.record_id)
 
     assert projected is not None
     assert (

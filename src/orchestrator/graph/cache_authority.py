@@ -195,7 +195,17 @@ def latest_cache_root_union(
     """Select the latest source kind for each path across validated phases."""
     selected: dict[str, RunnerCacheRoot] = {}
     for observation in observations:
-        for root in canonicalize_cache_roots(observation):
+        # Projection/checkpoint histories may retain the same phase root in
+        # both the legacy aggregate carrier and its phase-specific carrier.
+        # Repeating an identical (path, kind) fact does not widen authority,
+        # so collapse it at this internal aggregation boundary.  Keep
+        # canonicalize_cache_roots strict for external/event inputs: distinct
+        # kinds for one path and ancestor/descendant roots still fail closed.
+        phase_roots: dict[tuple[str, str], RunnerCacheRoot] = {}
+        for value in observation:
+            root = RunnerCacheRoot.model_validate(value)
+            phase_roots[(root.path, root.kind)] = root
+        for root in canonicalize_cache_roots(phase_roots.values()):
             selected[root.path] = root
     return canonicalize_cache_roots(selected.values())
 
@@ -261,11 +271,12 @@ def derive_cache_roots(
 ) -> tuple[RunnerCacheRoot, ...]:
     """Derive all concrete roots from actual non-tracked worktree status."""
     evidence = _cache_status_evidence(status)
-    return canonicalize_cache_roots(
-        root
-        for item in evidence
-        if (root := first_authorized_cache_root(_as_file_state_path(item), policy)) is not None
-    )
+    roots_by_identity: dict[tuple[str, str], RunnerCacheRoot] = {}
+    for item in evidence:
+        root = first_authorized_cache_root(_as_file_state_path(item), policy)
+        if root is not None:
+            roots_by_identity[(root.path, root.kind)] = root
+    return canonicalize_cache_roots(roots_by_identity.values())
 
 
 def validate_authorized_cache_roots(

@@ -9,11 +9,11 @@ from typing import Any
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from orchestrator.db import Base
-from orchestrator.db import EventV2Model
+from orchestrator.db import EventV2Model, GraphProjectionSnapshotModel
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphEventStore
@@ -538,6 +538,66 @@ async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
     assert events[-1].payload["to_state"] == "cancelled"
     processed = await _get_processed_positions(session_factory, run_id)
     assert pos in processed
+
+
+@pytest.mark.asyncio
+async def test_cancel_graph_run_drains_signal_when_projection_checkpoint_is_unavailable(
+    session_factory,
+) -> None:
+    run_id = "graph-cancel-unavailable-projection"
+    service = RecordingWorkflowService()
+    service.run.execution_mode = "graph"
+    consumer = _consumer(session_factory, service)
+    events = [
+        _graph_event(
+            run_id,
+            "run_lifecycle_changed",
+            {
+                "command_type": "start",
+                "from_state": "queued",
+                "to_state": "active",
+                "trigger": "start_command_accepted",
+            },
+            position=0,
+        )
+    ]
+    events.extend(
+        _graph_event(
+            run_id,
+            "node_created",
+            {
+                "node_id": f"completed-artifact-{index}",
+                "kind": "artifact",
+                "role": "evidence",
+                "state": "completed",
+            },
+            position=index,
+        )
+        for index in range(1, 130)
+    )
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.execute(
+            delete(GraphProjectionSnapshotModel).where(
+                GraphProjectionSnapshotModel.run_id == run_id
+            )
+        )
+        await session.commit()
+    pos = await _insert_signal_event(
+        session_factory,
+        run_id,
+        WorkflowSignal.CANCEL,
+        {"reason": "user_cancel"},
+    )
+
+    await consumer._process_run(run_id)
+
+    assert _calls(service, "apply_cancel_run") == [((run_id,), {"reason": "user_cancel"})]
+    processed = await _get_processed_positions(session_factory, run_id)
+    assert pos in processed
+    async with session_factory() as session:
+        graph_events = await GraphEventStore(session).read_run(run_id)
+    assert graph_events[-1].event_type == "node_created"
 
 
 @pytest.mark.asyncio

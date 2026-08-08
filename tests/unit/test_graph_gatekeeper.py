@@ -5,12 +5,12 @@ from typing import Any
 import pytest
 
 from orchestrator.graph import (
+    file_state_records_view,
     Actor,
     ActorKind,
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    file_state_record,
     initial_projection,
     project_gatekeeper_report,
     project_pattern_library,
@@ -37,7 +37,6 @@ def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
         FakeClock(),
         SequentialIdGenerator(),
     )
-
     assert [event.event_type for event in emitted] == [
         "gatekeeper_verdict_recorded",
         "gatekeeper_cost_recorded",
@@ -393,7 +392,7 @@ def test_record_gatekeeper_verdicts_secret_requests_cleanup_and_marks_projection
     assert cleanup.payload["authority"] == "gatekeeper"
 
     projection = _project([*events, *emitted])
-    record = file_state_record(projection, "file-state-1")
+    record = file_state_records_view(projection).get("file-state-1")
     assert record is not None
     assert record.compromised is True
     assert record.superseded_pending is True

@@ -10,9 +10,9 @@ from orchestrator.graph import (
     ProjectionCheckpointCodecError,
     ProjectionIntegrityDiagnostic,
     accepted_output_records_by_node_port_view,
-    node_state,
+    node_states_view,
     run_state,
-    task_state,
+    task_states_view,
     validate_projection_integrity,
 )
 
@@ -101,11 +101,11 @@ import orchestrator.graph as graph_alias
 from orchestrator import graph as package_graph
 
 orchestrator.graph.run_state(projection)
-graph_alias.task_state(projection, task_id)
-package_graph.node_state(projection, node_id)
+graph_alias.task_states_view(projection)
+package_graph.node_states_view(projection)
 """
 
-    assert _graph_consumers(source) == {"node_state", "run_state", "task_state"}
+    assert _graph_consumers(source) == {"node_states_view", "run_state", "task_states_view"}
 
 
 def test_temporary_checkpoint_integrity_api_is_public() -> None:
@@ -119,13 +119,13 @@ def test_projection_queries_are_available_only_from_the_graph_public_api() -> No
 
     assert {
         "accepted_output_records_by_node_port_view",
-        "node_state",
+        "node_states_view",
         "run_state",
-        "task_state",
+        "task_states_view",
     } <= set(graph.__all__)
     assert (
         graph.accepted_output_records_by_node_port_view is accepted_output_records_by_node_port_view
     )
-    assert graph.node_state is node_state
+    assert graph.node_states_view is node_states_view
     assert graph.run_state is run_state
-    assert graph.task_state is task_state
+    assert graph.task_states_view is task_states_view

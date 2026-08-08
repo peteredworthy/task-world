@@ -33,6 +33,7 @@ from orchestrator.db import (
 )
 from orchestrator.git import GitError, SelectiveRestoreResult, WorktreeError, snapshot
 from orchestrator.graph import (
+    node_states_view,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -40,7 +41,6 @@ from orchestrator.graph import (
     boundary_manifest_hash,
     cache_authority_binding,
     execution_attempts_view,
-    node_state,
     recovery_proof_hash,
 )
 from orchestrator.graph_runtime import (
@@ -230,7 +230,6 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
             "boundary_entries": baseline_entries,
         },
     )
-
     (repo / "README.md").write_text("changed by execution\n")
     (repo / "execution-created.txt").write_text("must be removed\n")
     final = snapshot(repo, "runner recovery mismatched final boundary")
@@ -380,7 +379,10 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
         and event.payload.get("trigger") == "runner_recovery_completed_retry_scheduled"
     )
     assert completion.position < lease_revoked.position < retry_scheduled.position < ready.position
-    assert node_state(await controller.read_projection("runner-recovery"), node_id) == "ready"
+    assert (
+        node_states_view(await controller.read_projection("runner-recovery")).get(node_id)
+        == "ready"
+    )
 
     filesystem_after_completion = (
         (repo / "README.md").read_bytes(),

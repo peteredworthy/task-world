@@ -4,6 +4,7 @@ import pytest
 from copy import deepcopy
 
 from orchestrator.graph import (
+    node_states_view,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -15,7 +16,6 @@ from orchestrator.graph import (
     boundary_manifest_hash,
     derive_recovery_paths,
     initial_projection,
-    node_state,
     ProjectionReplayConflictError,
     recovery_proof_hash,
     reduce_event,
@@ -330,6 +330,42 @@ def test_recovery_authority_still_rejects_conflicts_within_one_phase() -> None:
     assert [event.event_type for event in events] == ["command_rejected"]
 
 
+def test_recovery_authority_collapses_identical_roots_retained_in_phase_history() -> None:
+    projection = _staged_cache_transition("ignored", "ignored")
+    checkpoint = projection_to_checkpoint(projection)
+    attempt = checkpoint["execution"]["attempts_by_execution_id"]["exec"]
+    attempt["baseline_cache_roots"] = [
+        _cache_root(".pytest_cache", "ignored"),
+        _cache_root(".pytest_cache", "ignored"),
+    ]
+    replayed = projection_from_checkpoint(checkpoint)
+
+    events = _apply(
+        replayed,
+        "finalize_runner_execution",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "final_snapshot_id": "final",
+            "final_tree_sha": OID,
+            "boundary_entries": [_entry("changed.py", kind="untracked", status="created")],
+            "cache_roots": [_cache_root(".pytest_cache", "ignored")],
+            "cache_status_evidence": [_cache_root(".pytest_cache/entry", "ignored")],
+        },
+    )
+
+    assert [event.event_type for event in events] == [
+        "runner_boundary_mismatch",
+        "runner_recovery_requested",
+    ]
+    assert all(
+        event.payload["authorized_cache_roots"] == [_cache_root(".pytest_cache", "ignored")]
+        for event in events
+    )
+
+
 def test_finalization_requests_exact_cleanup_for_every_owned_snapshot_ref() -> None:
     projection = _projection()
     baseline = _apply(
@@ -475,7 +511,7 @@ def test_boundary_mismatch_recovery_retries_when_attempts_remain() -> None:
         "trigger": "runner_recovery_completed_retry_scheduled",
         "attempt_number": 2,
     }
-    assert node_state(projection, "node") == "ready"
+    assert node_states_view(projection).get("node") == "ready"
 
 
 def test_boundary_mismatch_recovery_fails_when_attempts_are_exhausted() -> None:
@@ -495,7 +531,7 @@ def test_boundary_mismatch_recovery_fails_when_attempts_are_exhausted() -> None:
         "max_attempts": 3,
     }
     assert not any(event.event_type == "runtime_retry_scheduled" for event in completion_events)
-    assert node_state(projection, "node") == "failed"
+    assert node_states_view(projection).get("node") == "failed"
 
 
 def test_runner_boundary_commands_stage_without_publication_then_request_proven_recovery() -> None:

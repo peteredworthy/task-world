@@ -12,10 +12,9 @@ from orchestrator.config import RoutineConfig, load_routine_from_path
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     input_bindings_view,
-    node_attempt,
-    node_candidate_id,
+    node_attempts_view,
     node_kinds_view,
-    node_task_region,
+    node_task_regions_view,
     output_record_payloads_view,
     EventEnvelope,
     FakeClock,
@@ -506,9 +505,9 @@ async def _schedule_ack_and_complete_next(
     }
     kind = _lease_kind(lease)
     projection = await controller.read_projection(run_id)
-    candidate_id = node_candidate_id(projection, node_id)
-    task_region_id = node_task_region(projection, node_id)
-    attempt_number = node_attempt(projection, node_id)
+    candidate_id = projection.nodes[node_id].runtime.candidate_id
+    task_region_id = node_task_regions_view(projection).get(node_id)
+    attempt_number = node_attempts_view(projection).get(node_id)
     assert candidate_id is not None
     assert task_region_id is not None
     output_records: list[dict[str, object]] = []

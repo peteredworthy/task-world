@@ -15,12 +15,12 @@ from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
-    accepted_output_records_for_node_port,
-    active_leases,
+    accepted_output_records_by_node_port_view,
+    leases_view,
+    node_states_view,
     execution_attempts_view,
     projection_from_checkpoint,
     projection_to_checkpoint,
-    node_state,
     project_residue_report,
     project_task_states,
 )
@@ -1028,7 +1028,9 @@ async def test_reconcile_runtime_skips_lease_already_recovered_by_another_driver
         {"lease_seconds": 60, "max_grants": 1},
     )
     projection = await controller.read_projection(run_id)
-    active_lease = next(iter(active_leases(projection)))
+    active_lease = next(
+        iter((lease for lease in leases_view(projection).values() if lease.state == "active"))
+    )
     stale_lease = {
         "run_id": run_id,
         "lease_id": active_lease.lease_id,
@@ -1122,9 +1124,12 @@ async def test_graph_runner_exception_requests_recovery_before_retry(
     projection_after_failure = await controller.read_projection(run_id)
     node_id = str(recovery_request.payload["node_id"])
     assert (
-        accepted_output_records_for_node_port(projection_after_failure, node_id, "candidate") == ()
+        accepted_output_records_by_node_port_view(projection_after_failure)
+        .get(node_id, {})
+        .get("candidate", [])
+        == []
     )
-    assert node_state(projection_after_failure, node_id) != "ready"
+    assert node_states_view(projection_after_failure).get(node_id) != "ready"
 
     recovery_rows = [
         row
@@ -1177,9 +1182,14 @@ async def test_graph_runner_exception_requests_recovery_before_retry(
     assert (repo / "unrelated-dirt.txt").read_text() == "preserve me\n"
     projection_after_recovery = await controller.read_projection(run_id)
     assert not any(
-        lease.execution_id == execution_id for lease in active_leases(projection_after_recovery)
+        lease.execution_id == execution_id
+        for lease in (
+            lease
+            for lease in leases_view(projection_after_recovery).values()
+            if lease.state == "active"
+        )
     )
-    assert node_state(projection_after_recovery, node_id) == "ready"
+    assert node_states_view(projection_after_recovery).get(node_id) == "ready"
 
 
 @pytest.mark.asyncio
@@ -1236,10 +1246,10 @@ async def test_cache_budget_exhaustion_rejects_submission_and_recovers_after_res
     )
     projection_before_restart = await controller.read_projection(run_id)
     assert (
-        accepted_output_records_for_node_port(
-            projection_before_restart, str(recovery.payload["node_id"]), "candidate"
-        )
-        == ()
+        accepted_output_records_by_node_port_view(projection_before_restart)
+        .get(str(recovery.payload["node_id"]), {})
+        .get("candidate", [])
+        == []
     )
     assert (repo / "node_modules" / "dependency" / "id_rsa").exists()
 
@@ -1456,7 +1466,7 @@ async def test_graph_runner_unsuccessful_result_recovers_staged_submission_befor
         event.event_type == "runtime_retry_scheduled" and event.payload.get("node_id") == node_id
         for event in events_before_recovery
     )
-    assert node_state(await controller.read_projection(run_id), node_id) != "ready"
+    assert node_states_view(await controller.read_projection(run_id)).get(node_id) != "ready"
     assert (repo / "README.md").read_text() == "changed before failed result\n"
     assert (repo / "unrelated-dirt.txt").read_text() == "preserve me\n"
 
@@ -1519,7 +1529,12 @@ async def test_graph_runner_unsuccessful_result_recovers_staged_submission_befor
     assert (repo / "unrelated-dirt.txt").read_text() == "preserve me\n"
     projection_after_recovery = await controller.read_projection(run_id)
     assert not any(
-        lease.execution_id == execution_id for lease in active_leases(projection_after_recovery)
+        lease.execution_id == execution_id
+        for lease in (
+            lease
+            for lease in leases_view(projection_after_recovery).values()
+            if lease.state == "active"
+        )
     )
 
 
@@ -1583,10 +1598,12 @@ async def test_graph_runner_success_without_submit_requests_managed_recovery_bef
     )
     projection_before_recovery = await controller.read_projection(run_id)
     assert (
-        accepted_output_records_for_node_port(projection_before_recovery, node_id, "candidate")
-        == ()
+        accepted_output_records_by_node_port_view(projection_before_recovery)
+        .get(node_id, {})
+        .get("candidate", [])
+        == []
     )
-    assert node_state(projection_before_recovery, node_id) != "ready"
+    assert node_states_view(projection_before_recovery).get(node_id) != "ready"
     assert not any(
         event.event_type == "runtime_retry_scheduled" and event.payload.get("node_id") == node_id
         for event in events_before_recovery
@@ -1621,10 +1638,10 @@ async def test_graph_runner_success_without_submit_requests_managed_recovery_bef
         for event in events
     )
     assert (
-        accepted_output_records_for_node_port(
-            await controller.read_projection(run_id), node_id, "candidate"
-        )
-        == ()
+        accepted_output_records_by_node_port_view(await controller.read_projection(run_id))
+        .get(node_id, {})
+        .get("candidate", [])
+        == []
     )
     lease_revoked = next(
         event
@@ -1654,7 +1671,12 @@ async def test_graph_runner_success_without_submit_requests_managed_recovery_bef
     assert (repo / "unrelated-dirt.txt").read_text() == "preserve me\n"
     projection_after_recovery = await controller.read_projection(run_id)
     assert not any(
-        lease.execution_id == execution_id for lease in active_leases(projection_after_recovery)
+        lease.execution_id == execution_id
+        for lease in (
+            lease
+            for lease in leases_view(projection_after_recovery).values()
+            if lease.state == "active"
+        )
     )
 
 
@@ -1735,7 +1757,7 @@ async def test_graph_runner_boundary_mismatch_recovers_without_publishing_staged
         event.event_type == "runtime_retry_scheduled" and event.payload.get("node_id") == node_id
         for event in events_before_recovery
     )
-    assert node_state(await controller.read_projection(run_id), node_id) != "ready"
+    assert node_states_view(await controller.read_projection(run_id)).get(node_id) != "ready"
     recovery_rows = [
         row
         for row in await _read_outbox_rows(session_factory)
@@ -1786,7 +1808,10 @@ async def test_graph_runner_boundary_mismatch_recovers_without_publishing_staged
     assert (repo / "README.md").read_text() == "# tmp repo\n"
     assert (repo / "unrelated-dirt.txt").read_text() == "preserve me\n"
     projection = await controller.read_projection(run_id)
-    assert accepted_output_records_for_node_port(projection, node_id, "candidate") == ()
+    assert (
+        accepted_output_records_by_node_port_view(projection).get(node_id, {}).get("candidate", [])
+        == []
+    )
     assert not any(
         event.event_type in {"output_record_accepted", "file_state_accepted"}
         and event.payload.get("record_id") in staged_record_ids
@@ -1948,7 +1973,7 @@ async def test_restart_recovers_cache_root_whose_ignore_kind_changed(
             and event.payload.get("node_id") == attempt.node_id
         ]
         assert bool(retries) is expect_retry
-        assert node_state(projection, attempt.node_id) == expected_state
+        assert node_states_view(projection).get(attempt.node_id) == expected_state
     finally:
         agent.finish.set()
         for task in abandoned_tasks:
@@ -2048,10 +2073,12 @@ async def test_graph_runner_restart_recovers_orphaned_staged_submission_before_u
             for event in events
         )
         assert (
-            accepted_output_records_for_node_port(
-                await restarted_controller.read_projection(run_id), node_id, "candidate"
+            accepted_output_records_by_node_port_view(
+                await restarted_controller.read_projection(run_id)
             )
-            == ()
+            .get(node_id, {})
+            .get("candidate", [])
+            == []
         )
         assert (repo / "README.md").read_text() == "# tmp repo\n"
         assert (repo / "unrelated-dirt.txt").read_text() == "preserve me\n"
@@ -2076,7 +2103,10 @@ async def test_graph_runner_restart_recovers_orphaned_staged_submission_before_u
             and event.payload.get("node_id") == node_id
         )
         assert completions[0].position < lease_revoked.position < retry_scheduled.position
-        assert node_state(await restarted_controller.read_projection(run_id), node_id) == "ready"
+        assert (
+            node_states_view(await restarted_controller.read_projection(run_id)).get(node_id)
+            == "ready"
+        )
 
         await _schedule_dispatch_and_wait(
             restarted_controller, restarted_dispatcher, restarted_executor, run_id

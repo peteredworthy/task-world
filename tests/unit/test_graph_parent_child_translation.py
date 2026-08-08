@@ -4,6 +4,7 @@ from typing import Any
 
 from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.graph import (
+    node_kinds_view,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -11,7 +12,6 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     compile_routine,
     initial_projection,
-    node_kind,
     project_planner_chain,
     reduce_event,
 )
@@ -23,7 +23,7 @@ def test_parent_child_routine_compiles_to_planner_chain() -> None:
     projection = _project(events)
     planner = _node_event(events, "planner-parent")
 
-    assert node_kind(projection, "planner-parent") == "planner"
+    assert node_kinds_view(projection).get("planner-parent") == "planner"
     assert planner.payload["planner_chain"] == {
         "source": "legacy_parent_child",
         "regions": [
@@ -55,7 +55,6 @@ def test_child_order_is_chain_order() -> None:
             ),
         ),
     ]
-
     blocked = _apply(
         events,
         "schedule_tick",

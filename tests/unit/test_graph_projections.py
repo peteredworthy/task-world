@@ -15,9 +15,9 @@ from orchestrator.graph import (
     file_state_records_view,
     initial_projection,
     latest_routine_snapshot_record,
+    node_command_definitions_view,
     node_states_view,
-    node_command_definition,
-    output_record_payload,
+    output_record_payloads_view,
     output_records_by_node_port_view,
     project_decision_view,
     project_graph_topology,
@@ -113,12 +113,12 @@ def test_authority_request_record_is_owned_only_by_canonical_record_store() -> N
     assert "authority_request_record" not in checkpoint["nodes"]["gate-1"]["spec"]
     assert "authority_request" not in checkpoint["nodes"]["gate-1"]["spec"]
     assert checkpoint["nodes"]["gate-1"]["spec"].get("authority_request_record_id") == record_id
-    public_record = output_record_payload(projection, record_id)
+    public_record = output_record_payloads_view(projection)[record_id]
     assert isinstance(public_record, AuthorityRequestRecord)
     assert public_record.record_id == record_id
     assert public_record.value.requested_authority == ["graph_write"]
     public_record.value.requested_authority.append("admin")
-    fresh_public_record = output_record_payload(projection, record_id)
+    fresh_public_record = output_record_payloads_view(projection)[record_id]
     assert isinstance(fresh_public_record, AuthorityRequestRecord)
     assert fresh_public_record.value.requested_authority == ["graph_write"]
     assert project_decision_view([], projection=projection)["pending_gates"] == [
@@ -160,7 +160,7 @@ def test_authority_request_record_is_not_fabricated_before_acceptance() -> None:
         ]
     )
 
-    assert output_record_payload(projection, "authority-request-gate-1") is None
+    assert output_record_payloads_view(projection).get("authority-request-gate-1") is None
 
 
 def test_node_created_rejects_mismatched_authority_request_record_identity() -> None:
@@ -342,7 +342,7 @@ def test_check_command_binding_projects_command_definition() -> None:
         ]
     )
 
-    command_definition = node_command_definition(projection, "check-1")
+    command_definition = node_command_definitions_view(projection).get("check-1")
     assert command_definition is not None
     assert dict(command_definition) == {
         "id": "check-1",

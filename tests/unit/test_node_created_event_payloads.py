@@ -4,10 +4,7 @@ from pydantic import ValidationError
 from orchestrator.config import RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
-    node_allowed_actions,
-    node_allowed_actions_view,
     node_attempts_view,
-    node_preconditions,
     node_preconditions_view,
     resource_claims_for_node,
     node_resource_claims_view,
@@ -114,8 +111,8 @@ def test_direct_authority_controls_take_precedence_over_nested_authority() -> No
     assert [claim.paths for claim in resource_claims_for_node(projection, "worker-1")] == [
         ["direct"]
     ]
-    assert node_allowed_actions(projection, "worker-1") == ("direct_action",)
-    assert node_preconditions(projection, "worker-1") == ("direct_precondition",)
+    assert projection.nodes["worker-1"].spec.allowed_actions == ("direct_action",)
+    assert projection.nodes["worker-1"].spec.preconditions == ("direct_precondition",)
 
 
 def test_explicit_empty_direct_controls_take_precedence_on_node_created() -> None:
@@ -141,8 +138,8 @@ def test_explicit_empty_direct_controls_take_precedence_on_node_created() -> Non
         ]
     )
     assert resource_claims_for_node(projection, "worker-1") == ()
-    assert node_allowed_actions(projection, "worker-1") == ()
-    assert node_preconditions(projection, "worker-1") == ()
+    assert projection.nodes["worker-1"].spec.allowed_actions == ()
+    assert projection.nodes["worker-1"].spec.preconditions == ()
 
 
 def test_explicit_empty_authority_change_controls_override_nested_authority() -> None:
@@ -182,7 +179,9 @@ def test_explicit_empty_authority_change_controls_override_nested_authority() ->
     )
 
     assert node_resource_claims_view(projection)["worker-1"] == []
-    assert node_allowed_actions_view(projection)["worker-1"] == []
+    assert {node_id: list(node.spec.allowed_actions) for node_id, node in projection.nodes.items()}[
+        "worker-1"
+    ] == []
     assert node_preconditions_view(projection)["worker-1"] == []
 
 
