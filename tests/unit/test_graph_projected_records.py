@@ -614,7 +614,9 @@ def test_reducer_fan_out_preserves_public_explicit_empty_field_serialization() -
     assert {"candidate_id", "task_region_id", "attempt_number", "file_state_record_id"}.isdisjoint(
         expected_serialized
     )
-    checkpoint_record = projection_to_checkpoint(projection)["records"]["by_id"][source.record_id]
+    checkpoint_record = projection_to_checkpoint(projection)["state"]["records"]["by_id"][
+        source.record_id
+    ]
     expected_checkpoint = dict(expected_serialized)
     expected_checkpoint["schema_"] = expected_checkpoint.pop("schema")
     assert checkpoint_record == expected_checkpoint

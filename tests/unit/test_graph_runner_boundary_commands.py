@@ -16,6 +16,7 @@ from orchestrator.graph import (
     boundary_manifest_hash,
     derive_recovery_paths,
     initial_projection,
+    map_set,
     ProjectionReplayConflictError,
     recovery_proof_hash,
     reduce_event,
@@ -332,12 +333,22 @@ def test_recovery_authority_still_rejects_conflicts_within_one_phase() -> None:
 
 def test_recovery_authority_collapses_identical_roots_retained_in_phase_history() -> None:
     projection = _staged_cache_transition("ignored", "ignored")
-    checkpoint = projection_to_checkpoint(projection)
-    attempt = checkpoint["execution"]["attempts_by_execution_id"]["exec"]
-    attempt["baseline_cache_roots"] = [
-        _cache_root(".pytest_cache", "ignored"),
-        _cache_root(".pytest_cache", "ignored"),
-    ]
+    attempt = projection.execution.attempts_by_execution_id["exec"].model_copy(
+        update={
+            "baseline_cache_roots": (
+                _cache_root(".pytest_cache", "ignored"),
+                _cache_root(".pytest_cache", "ignored"),
+            )
+        }
+    )
+    execution = projection.execution.model_copy(
+        update={
+            "attempts_by_execution_id": map_set(
+                projection.execution.attempts_by_execution_id, "exec", attempt
+            )
+        }
+    )
+    checkpoint = projection_to_checkpoint(projection.model_copy(update={"execution": execution}))
     replayed = projection_from_checkpoint(checkpoint)
 
     events = _apply(

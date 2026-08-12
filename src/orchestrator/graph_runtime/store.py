@@ -58,6 +58,7 @@ from orchestrator.graph import (
     NODE_DETAIL_PAYLOAD_FIELDS,
     PROJECTION_SCHEMA_VERSION,
     ProjectionCheckpointCodecError,
+    ProjectionCheckpointEnvelope,
     ProjectionCheckpointIntegrityError,
     RetentionMode,
     NodeUsageRecordedPayload,
@@ -66,7 +67,6 @@ from orchestrator.graph import (
     initial_projection,
     iter_archival_final_invariant_blockers,
     iter_archival_graph_topology_entries,
-    build_projection,
     merge_bound_record_ids,
     project_decision_view,
     project_decision_view_from_projection,
@@ -2205,6 +2205,22 @@ class GraphEventStore:
                 )
             )
 
+        # Validate relationships against the authoritative prefix before any
+        # event row is staged.  The checkpoint remains a disposable cache, so
+        # this reducer pass is the acceptance boundary for relationships.
+        projection, position = await self._projection_for_append(run_id, current_position)
+        if position != expected_position:
+            raise StaleProjectionError(
+                f"stale graph projection for run {run_id}: "
+                f"expected {expected_position}, found {position}"
+            )
+        for event in stored_events:
+            projection = reduce_event(
+                projection,
+                _projection_event(event),
+                enforce_relationships=True,
+            )
+
         self._session.add_all(rows)
         try:
             await self._session.flush()
@@ -2246,6 +2262,43 @@ class GraphEventStore:
         if usage_events:
             await self.apply_run_usage_events(run_id, usage_events)
         return stored_events
+
+    async def _projection_for_append(
+        self,
+        run_id: str,
+        current_position: int,
+    ) -> tuple[GraphProjection, int]:
+        """Load the authoritative prefix without committing cache repairs."""
+        if current_position == 0:
+            return initial_projection(), 0
+
+        checkpoint = await self.read_projection_checkpoint(run_id)
+        if checkpoint is not None and checkpoint.position <= current_position:
+            tail = await self._read_runtime_event_window(
+                run_id,
+                from_position=checkpoint.position + 1,
+            )
+            projection = checkpoint.projection
+            for event in tail:
+                projection = reduce_event(
+                    projection,
+                    _projection_event(event),
+                    enforce_relationships=True,
+                )
+            position = max(checkpoint.position, _events_position(tail))
+            if position == current_position:
+                return projection, position
+
+        events = await self._read_runtime_event_window(run_id, from_position=0)
+        position = _events_position(events)
+        if position != current_position:
+            raise GraphReadModelUnavailable(
+                run_id,
+                "graph_projection_snapshot",
+                "authoritative_prefix_unavailable",
+                current_position=current_position,
+            )
+        return _projection_from_events(events), position
 
     async def read_run(
         self,
@@ -4316,6 +4369,7 @@ class GraphEventStore:
             projection = _projection_from_snapshot_row(row)
         except (
             ValidationError,
+            ValueError,
             ProjectionCheckpointCodecError,
             ProjectionCheckpointIntegrityError,
         ):
@@ -4537,7 +4591,9 @@ class GraphEventStore:
         tail = await self._read_runtime_event_window(run_id, from_position=checkpoint.position + 1)
         projection = checkpoint.projection
         for event in tail:
-            projection = reduce_event(projection, _projection_event(event))
+            projection = reduce_event(
+                projection, _projection_event(event), enforce_relationships=True
+            )
         position = max(checkpoint.position, _events_position(tail))
         if position != checkpoint.position:
             await self.persist_projection_snapshot(run_id, projection, position)
@@ -4693,6 +4749,7 @@ class GraphEventStore:
                 rebuild_required = _projection_from_snapshot_row(snapshot) is None
             except (
                 ValidationError,
+                ValueError,
                 ProjectionCheckpointCodecError,
                 ProjectionCheckpointIntegrityError,
             ):
@@ -4848,6 +4905,7 @@ class GraphEventStore:
                     projection = _projection_from_snapshot_row(row)
                 except (
                     ValidationError,
+                    ValueError,
                     ProjectionCheckpointCodecError,
                     ProjectionCheckpointIntegrityError,
                 ):
@@ -4865,7 +4923,7 @@ class GraphEventStore:
                 await self._session.flush()
                 return
         for event in events:
-            projection = reduce_event(projection, event)
+            projection = reduce_event(projection, event, enforce_relationships=True)
         await self.persist_projection_snapshot(
             run_id,
             projection,
@@ -4956,7 +5014,7 @@ class GraphEventStore:
             for event in events:
                 if event.position > target_position:
                     break
-                projection = reduce_event(projection, event)
+                projection = reduce_event(projection, event, enforce_relationships=True)
                 reduced_position = event.position
             from_position = reduced_position + 1
         if reduced_position != target_position:
@@ -5337,7 +5395,7 @@ class GraphEventStore:
                 expected_position=position,
             )
             for event in projection_events:
-                projection = reduce_event(projection, event)
+                projection = reduce_event(projection, event, enforce_relationships=True)
             await self.apply_run_usage_events(run_id, summary_events)
             position = batch_end
             from_position = batch_end + 1
@@ -6164,8 +6222,16 @@ def _assign_projection_snapshot(
         cast(dict[str, Any], bounded["decisions"]),
         projection,
         metadata,
+        position=position,
     )
+    # Pack the public owner with the checkpoint present so oversized responses
+    # remain bounded, then restore the intact envelope when it fits.  The
+    # checkpoint is opaque cache state and must not be recursively reshaped by
+    # the read-model serializer.
+    checkpoint = row.decisions.get(_CHECKPOINT_PROJECTION_KEY)
     _pack_projection_snapshot_row(row)
+    if isinstance(checkpoint, dict):
+        row.decisions[_CHECKPOINT_PROJECTION_KEY] = checkpoint
 
 
 def _projection_from_events(events: list[EventEnvelope]) -> GraphProjection:
@@ -6175,7 +6241,14 @@ def _projection_from_events(events: list[EventEnvelope]) -> GraphProjection:
     durable projection must not depend on fields excluded from its bounded
     rebuild reader.
     """
-    return build_projection([_projection_event(event) for event in events])
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(
+            projection,
+            _projection_event(event),
+            enforce_relationships=True,
+        )
+    return projection
 
 
 def _projection_from_snapshot_row(
@@ -6186,6 +6259,9 @@ def _projection_from_snapshot_row(
     raw_projection = row.decisions.get(_CHECKPOINT_PROJECTION_KEY)
     if not isinstance(raw_projection, dict):
         return None
+    envelope = ProjectionCheckpointEnvelope.model_validate(raw_projection)
+    if envelope.position != row.position:
+        raise ValueError("projection checkpoint position does not match its snapshot row position")
     return projection_from_checkpoint(cast(dict[str, Any], raw_projection))
 
 
@@ -6211,6 +6287,8 @@ def _decisions_with_projection_checkpoint(
     decisions: dict[str, Any],
     projection: GraphProjection,
     metadata: dict[str, Any],
+    *,
+    position: int,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
         **decisions,
@@ -6221,7 +6299,7 @@ def _decisions_with_projection_checkpoint(
             "collections": metadata,
         },
     }
-    checkpoint = projection_to_checkpoint(projection)
+    checkpoint = projection_to_checkpoint(projection, position=position)
     checkpoint_budget = replace(
         GRAPH_READ_CONTRACTS["runtime"].budget,
         object_entry_cap=GRAPH_FIXED_VIEW_ITEMS,

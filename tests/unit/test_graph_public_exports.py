@@ -13,7 +13,7 @@ from orchestrator.graph import (
     node_states_view,
     run_state,
     task_states_view,
-    validate_projection_integrity,
+    validate_projection_critical_invariants,
 )
 
 pytestmark = pytest.mark.slow
@@ -108,10 +108,10 @@ package_graph.node_states_view(projection)
     assert _graph_consumers(source) == {"node_states_view", "run_state", "task_states_view"}
 
 
-def test_temporary_checkpoint_integrity_api_is_public() -> None:
+def test_disposable_checkpoint_integrity_api_is_public() -> None:
     assert issubclass(ProjectionCheckpointCodecError, ValueError)
     assert ProjectionIntegrityDiagnostic(path="projection", reason="invalid").path == "projection"
-    assert callable(validate_projection_integrity)
+    assert callable(validate_projection_critical_invariants)
 
 
 def test_projection_queries_are_available_only_from_the_graph_public_api() -> None:

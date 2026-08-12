@@ -496,7 +496,7 @@ def test_prepare_snapshot_round_trips_surrogateescaped_untracked_path(tmp_path: 
     try:
         descriptor = os.open(raw_path, os.O_WRONLY | os.O_CREAT, 0o644)
     except OSError as exc:
-        if exc.errno == errno.EILSEQ:
+        if exc.errno in {errno.EILSEQ, errno.EPERM}:
             pytest.skip("filesystem rejects invalid UTF-8 filenames")
         raise
     os.close(descriptor)

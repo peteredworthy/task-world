@@ -79,6 +79,7 @@ from orchestrator.graph.payload_registry import (
     GRAPH_PROJECTION_PAYLOAD_FIELDS as _GENERATED_GRAPH_PROJECTION_PAYLOAD_FIELDS,
 )
 from orchestrator.graph.projection_collections import FrozenMap, freeze_json, map_set, thaw_json
+from orchestrator.graph.projection_codec import PROJECTION_CHECKPOINT_SCHEMA_VERSION
 from orchestrator.graph.projection_models import (
     ApprovalDecisionValue,
     AuthorityDecisionValue,
@@ -147,7 +148,8 @@ _NODE_STATE_VALUES = {state.value for state in NodeState}
 _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
 
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
-PROJECTION_SCHEMA_VERSION = 14
+# Schema 15 is the disposable envelope introduced for projection checkpoints.
+PROJECTION_SCHEMA_VERSION = PROJECTION_CHECKPOINT_SCHEMA_VERSION
 GRAPH_PROJECTION_PAYLOAD_FIELDS = _GENERATED_GRAPH_PROJECTION_PAYLOAD_FIELDS
 
 
@@ -487,6 +489,45 @@ def initial_projection() -> GraphProjection:
 
 class ProjectionReplayConflictError(ValueError):
     """A replay event attempts to redefine an immutable graph identity."""
+
+
+def _require_projection_reference(
+    values: FrozenMap[str, Any], value: str, *, relation: str, event_id: str
+) -> None:
+    """Reject a dangling graph relationship at the event/reducer boundary."""
+    if value not in values:
+        raise ProjectionReplayConflictError(
+            f"{relation} {value!r} is not represented before event {event_id!r}"
+        )
+
+
+def _validate_event_relationships(state: GraphProjection, event: EventEnvelope) -> None:
+    """Validate relationships while accepting authoritative events.
+
+    Pure fixture replay intentionally permits detached event fragments.  The
+    runtime event store opts into this strict boundary before it persists a
+    projection, so relationship failures are attributed to the event that
+    introduced them instead of to checkpoint loading.
+    """
+    if event.event_type == "input_bound":
+        payload = InputBoundPayload.model_validate(event.payload)
+        edge = state.topology.edges.get(payload.edge_id)
+        if edge is not None and (
+            edge.to_node_id != payload.to_node_id or edge.to_port != payload.to_port
+        ):
+            raise ProjectionReplayConflictError(
+                f"input binding edge {payload.edge_id!r} does not target "
+                f"{payload.to_node_id!r}:{payload.to_port!r}"
+            )
+    elif event.event_type == "gatekeeper_verdict_recorded":
+        record_id = event.payload.get("file_state_record_id")
+        if isinstance(record_id, str):
+            _require_projection_reference(
+                state.records.by_id,
+                record_id,
+                relation="gatekeeper file-state record",
+                event_id=event.event_id,
+            )
 
 
 def _replace_projection_groups(
@@ -1839,7 +1880,14 @@ def _reduce_support_evidence(state: GraphProjection, event: EventEnvelope) -> Gr
     return _replace_projection_groups(state, requirements=requirements)
 
 
-def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+def reduce_event(
+    state: GraphProjection,
+    event: EventEnvelope,
+    *,
+    enforce_relationships: bool = False,
+) -> GraphProjection:
+    if enforce_relationships:
+        _validate_event_relationships(state, event)
     slice_a_state = _reduce_slice_a(state, event)
     if slice_a_state is not None:
         return _finalize_projection(slice_a_state, event)

@@ -912,8 +912,8 @@ async def test_current_projection_snapshot_with_invalid_integrity_is_rebuilt(
         store = GraphEventStore(session)
         checkpoint = await store.read_projection_checkpoint(run_id)
     assert checkpoint is not None
-    malformed = projection_to_checkpoint(checkpoint.projection)
-    malformed["scheduling"]["ready_node_ids"] = ["missing-node"]
+    malformed = projection_to_checkpoint(checkpoint.projection, position=checkpoint.position)
+    malformed["checksum"] = "0" * 64
 
     async with session_factory() as session:
         async with session.begin():
@@ -945,7 +945,7 @@ async def test_current_partial_projection_checkpoint_is_rebuilt_and_rewritten(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-snapshot-partial-rebuild"
-    assert PROJECTION_SCHEMA_VERSION == 14
+    assert PROJECTION_SCHEMA_VERSION == 15
     clock = FakeClock()
     ids = SequentialIdGenerator()
     controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
@@ -958,7 +958,7 @@ async def test_current_partial_projection_checkpoint_is_rebuilt_and_rewritten(
         checkpoint = await store.read_projection_checkpoint(run_id)
     assert checkpoint is not None
     malformed = projection_to_checkpoint(checkpoint.projection)
-    malformed.pop("usage")
+    malformed["state"].pop("usage")
 
     async with session_factory() as session:
         async with session.begin():

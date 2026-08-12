@@ -824,8 +824,13 @@ def check_projection_boundaries(
         provenance = tuple(map(_collect_projection_provenance, provenance_inputs))
     else:
         worker_count = min(8, len(provenance_inputs), os.cpu_count() or 1)
-        with ProcessPoolExecutor(max_workers=worker_count) as executor:
-            provenance = tuple(executor.map(_collect_projection_provenance, provenance_inputs))
+        try:
+            with ProcessPoolExecutor(max_workers=worker_count) as executor:
+                provenance = tuple(executor.map(_collect_projection_provenance, provenance_inputs))
+        except PermissionError:
+            # Some constrained runners disallow semaphore creation.  The
+            # provenance walk is pure, so the sequential path is equivalent.
+            provenance = tuple(map(_collect_projection_provenance, provenance_inputs))
     provenance_by_path = {
         relative_path: facts
         for (_, relative_path), facts in zip(provenance_inputs, provenance, strict=True)

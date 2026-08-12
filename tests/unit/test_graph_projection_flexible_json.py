@@ -161,7 +161,7 @@ def _adapt(probe: object, container: Literal["direct", "map-value", "tuple-map-v
 
 
 def _checkpoint_path_present(checkpoint: dict[str, object], path: tuple[str, ...]) -> bool:
-    value: object = checkpoint
+    value: object = checkpoint.get("state")
     for item in path:
         if not isinstance(value, dict) or item not in value:
             return False
@@ -292,7 +292,7 @@ def _record_case(
         return value if field == "value" else getattr(value, field)
 
     def checkpoint(checkpoint: dict[str, object]) -> object:
-        record = checkpoint["records"]["by_id"][record_id]  # type: ignore[index]
+        record = checkpoint["state"]["records"]["by_id"][record_id]
         if envelope:
             return record.get(field)
         if field == "value":
@@ -300,7 +300,7 @@ def _record_case(
         return record["value"].get(field)
 
     def checkpoint_present(checkpoint: dict[str, object]) -> bool:
-        record = checkpoint["records"]["by_id"][record_id]  # type: ignore[index]
+        record = checkpoint["state"]["records"]["by_id"][record_id]
         if envelope:
             return field in record
         return "value" in record if field == "value" else field in record["value"]
@@ -337,7 +337,7 @@ def _direct_case(
         return value
 
     def checkpoint(checkpoint: dict[str, object]) -> object:
-        value: object = checkpoint
+        value: object = checkpoint["state"]
         for item in path:
             if value is None:
                 return None
@@ -366,7 +366,7 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         "value",
         lambda probe: (_node("command-node", command_definition=_adapt(probe, "map-value")),),
         lambda p: p.nodes["command-node"].spec.command_definition.value,  # type: ignore[union-attr]
-        lambda c: c["nodes"]["command-node"]["spec"]["command_definition"]["value"],  # type: ignore[index]
+        lambda c: c["state"]["nodes"]["command-node"]["spec"]["command_definition"]["value"],
         "map-value",
     )
     edge_fields = {
@@ -403,10 +403,10 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
                 ),
             ),
             lambda p, f=field: getattr(_required_edge(p, f"edge-{f}"), f),
-            lambda c, f=field: c["topology"]["edges"][f"edge-{f}"].get(f),
+            lambda c, f=field: c["state"]["topology"]["edges"][f"edge-{f}"].get(f),
             "direct" if container == "direct" else "map-value",
             (
-                lambda c, f=field, k=container: f in c["topology"]["edges"][f"edge-{f}"]
+                lambda c, f=field, k=container: f in c["state"]["topology"]["edges"][f"edge-{f}"]
                 if k == "direct"
                 else None
             ),
@@ -451,7 +451,9 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
             ),
         ),
         lambda p: getattr(_required_callback(p, "callback\x00callback"), "payload"),
-        lambda c: c["execution"]["callback_events_by_key"]["callback\x00callback"].get("payload"),
+        lambda c: c["state"]["execution"]["callback_events_by_key"]["callback\x00callback"].get(
+            "payload"
+        ),
         "map-value",
     )  # type: ignore[index]
     cases[("ExecutionAttemptValue", "payload")] = FlexibleJsonCase(
@@ -509,7 +511,7 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
             ),
         ),
         lambda p: p.execution.attempts_by_execution_id["execution"].payload,
-        lambda c: c["execution"]["attempts_by_execution_id"]["execution"].get("payload"),
+        lambda c: c["state"]["execution"]["attempts_by_execution_id"]["execution"].get("payload"),
         "map-value",
     )  # type: ignore[index]
     cases[("ProjectedFanOutInputsRecord", "value")] = _record_case(
@@ -638,12 +640,12 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         lambda p: getattr(
             _required_record(p, "record-ProjectedVerificationReportRecord-evidence"), "evidence"
         ),
-        lambda c: c["records"]["by_id"]["record-ProjectedVerificationReportRecord-evidence"].get(
-            "evidence"
-        ),
+        lambda c: c["state"]["records"]["by_id"][
+            "record-ProjectedVerificationReportRecord-evidence"
+        ].get("evidence"),
         "direct",
         lambda c: "evidence"
-        in c["records"]["by_id"]["record-ProjectedVerificationReportRecord-evidence"],
+        in c["state"]["records"]["by_id"]["record-ProjectedVerificationReportRecord-evidence"],
         omits_none=True,
     )  # type: ignore[index]
     for field in ("payload", "provenance"):
@@ -713,7 +715,7 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
             ),
         ),
         lambda p: getattr(getattr(_required_file_state(p, "file-state"), "git"), "diff_summary"),
-        lambda c: c["records"]["by_id"]["file-state"]["git"]["diff_summary"],
+        lambda c: c["state"]["records"]["by_id"]["file-state"]["git"]["diff_summary"],
         "map-value",
     )  # type: ignore[index]
     return cases
