@@ -512,7 +512,7 @@ def _validate_event_relationships(state: GraphProjection, event: EventEnvelope) 
     if event.event_type == "edge_created":
         from_node_id = event.payload.get("from_node_id")
         to_node_id = event.payload.get("to_node_id")
-        if isinstance(from_node_id, str):
+        if isinstance(from_node_id, str) and from_node_id != "*":
             _require_projection_reference(
                 state.nodes,
                 from_node_id,
