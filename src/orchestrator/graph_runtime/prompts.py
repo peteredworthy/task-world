@@ -259,6 +259,7 @@ def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
             "command_definition": resolve_check_command_definition(
                 context.node_payload,
                 context.graph_events,
+                projection=context.graph_projection,
             ),
             "bound_records": _planner_evidence(
                 context,

@@ -688,8 +688,24 @@ class _CountingRunnerFactory:
 
 
 async def _persist_events(session_factory: Any, run_id: str, events: list[EventEnvelope]) -> None:
+    existing_nodes = {
+        event.payload.get("node_id") for event in events if event.event_type == "node_created"
+    }
+    producer_nodes = {
+        event.payload.get("producer_node_id")
+        for event in events
+        if event.event_type in {"output_record_accepted", "file_state_accepted"}
+    }
+    setup_events = [
+        _event(
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+            position=index,
+        ).model_copy(update={"event_id": f"node-created-{node_id}"})
+        for index, node_id in enumerate(sorted(producer_nodes - existing_nodes - {None}))
+    ]
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(session).append_events(run_id, 0, [*setup_events, *events])
         await session.commit()
 
 

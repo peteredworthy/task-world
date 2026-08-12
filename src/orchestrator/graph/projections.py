@@ -509,15 +509,141 @@ def _validate_event_relationships(state: GraphProjection, event: EventEnvelope) 
     projection, so relationship failures are attributed to the event that
     introduced them instead of to checkpoint loading.
     """
-    if event.event_type == "input_bound":
+    if event.event_type == "edge_created":
+        from_node_id = event.payload.get("from_node_id")
+        to_node_id = event.payload.get("to_node_id")
+        if isinstance(from_node_id, str):
+            _require_projection_reference(
+                state.nodes,
+                from_node_id,
+                relation="edge source node",
+                event_id=event.event_id,
+            )
+        if isinstance(to_node_id, str):
+            _require_projection_reference(
+                state.nodes,
+                to_node_id,
+                relation="edge target node",
+                event_id=event.event_id,
+            )
+    elif event.event_type == "input_bound":
         payload = InputBoundPayload.model_validate(event.payload)
+        _require_projection_reference(
+            state.nodes,
+            payload.to_node_id,
+            relation="input binding target node",
+            event_id=event.event_id,
+        )
         edge = state.topology.edges.get(payload.edge_id)
-        if edge is not None and (
-            edge.to_node_id != payload.to_node_id or edge.to_port != payload.to_port
-        ):
+        if edge is None:
+            raise ProjectionReplayConflictError(
+                f"input binding edge {payload.edge_id!r} is not represented before "
+                f"event {event.event_id!r}"
+            )
+        if edge.to_node_id != payload.to_node_id or edge.to_port != payload.to_port:
             raise ProjectionReplayConflictError(
                 f"input binding edge {payload.edge_id!r} does not target "
                 f"{payload.to_node_id!r}:{payload.to_port!r}"
+            )
+        for record_id in (*payload.record_ids, payload.supersedes_record_id):
+            if record_id is not None:
+                _require_projection_reference(
+                    state.records.by_id,
+                    record_id,
+                    relation="input binding record",
+                    event_id=event.event_id,
+                )
+    elif event.event_type in {"output_record_accepted", "file_state_accepted"}:
+        producer_node_id = event.payload.get("producer_node_id")
+        if isinstance(producer_node_id, str):
+            _require_projection_reference(
+                state.nodes,
+                producer_node_id,
+                relation="accepted record producer node",
+                event_id=event.event_id,
+            )
+        reference_fields = (
+            "candidate_record_id",
+            "file_state_record_id",
+            "superseding_record_id",
+            "verification_report_record_id",
+        )
+        referenced_ids: list[str] = []
+        for field in reference_fields:
+            value = event.payload.get(field)
+            if isinstance(value, str):
+                referenced_ids.append(value)
+        for field in (
+            "candidate_record_ids",
+            "file_state_record_ids",
+            "verification_report_record_ids",
+            "evaluated_record_ids",
+            "source_record_ids",
+        ):
+            value = event.payload.get(field)
+            if isinstance(value, list):
+                referenced_ids.extend(
+                    record_id for record_id in cast(list[Any], value) if isinstance(record_id, str)
+                )
+        nested_value = event.payload.get("value")
+        if isinstance(nested_value, dict):
+            typed_nested_value = cast(dict[str, Any], nested_value)
+            for field in reference_fields + (
+                "candidate_record_ids",
+                "file_state_record_ids",
+                "verification_report_record_ids",
+                "evaluated_record_ids",
+                "source_record_ids",
+            ):
+                value = typed_nested_value.get(field)
+                if isinstance(value, str):
+                    referenced_ids.append(value)
+                elif isinstance(value, list):
+                    referenced_ids.extend(
+                        record_id
+                        for record_id in cast(list[Any], value)
+                        if isinstance(record_id, str)
+                    )
+        created_record_id = event.payload.get("record_id")
+        for record_id in referenced_ids:
+            # A typed record may repeat its own identifier in a canonical
+            # citation field; that is identity, not a dangling prior record.
+            if record_id == created_record_id:
+                continue
+            _require_projection_reference(
+                state.records.by_id,
+                record_id,
+                relation="accepted record reference",
+                event_id=event.event_id,
+            )
+    elif event.event_type == "node_created":
+        for relation, field in (
+            ("recovery source node", "recovery_of_node_id"),
+            ("recovery source record", "recovery_of_record_id"),
+            ("appealed node", "appealed_node_id"),
+            ("carryover record", "carryover_record_id"),
+        ):
+            value = event.payload.get(field)
+            if not isinstance(value, str):
+                continue
+            values = state.nodes if field.endswith("node_id") else state.records.by_id
+            _require_projection_reference(values, value, relation=relation, event_id=event.event_id)
+    elif event.event_type in {"verification_passed", "verification_failed"}:
+        verifier_node_id = event.payload.get("verifier_node_id")
+        record_id = event.payload.get("record_id")
+        if isinstance(verifier_node_id, str):
+            _require_projection_reference(
+                state.nodes,
+                verifier_node_id,
+                relation="verification node",
+                event_id=event.event_id,
+            )
+        if isinstance(record_id, str):
+            _require_projection_reference(
+                state.records.by_id,
+                record_id,
+                relation="verification record",
+                event_id=event.event_id,
             )
     elif event.event_type == "gatekeeper_verdict_recorded":
         record_id = event.payload.get("file_state_record_id")

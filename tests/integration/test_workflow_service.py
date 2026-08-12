@@ -1138,7 +1138,20 @@ async def test_delete_run_preserves_old_artifact_referenced_by_retained_run(
         timestamp=now,
         payload=canonical_event_payload("output_record_accepted", _check_result_payload(retained)),
     )
-    await GraphEventStore(session).append_events("run-2", 0, [event])
+    await GraphEventStore(session).append_events(
+        "run-2",
+        0,
+        [
+            event.model_copy(
+                update={
+                    "event_id": "check-node",
+                    "event_type": "node_created",
+                    "payload": {"node_id": "check-node", "kind": "check", "state": "planned"},
+                }
+            ),
+            event,
+        ],
+    )
     await session.commit()
 
     statements: list[str] = []

@@ -88,7 +88,23 @@ async def _seed_reference(app: object, run_id: str, ref: StoredArtifactRef) -> N
                     worktree_path=str(app.state.artifact_test_worktree),  # type: ignore[union-attr]
                 )
             )
-        await GraphEventStore(session).append_events(run_id, 0, [event])
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                EventEnvelope(
+                    event_id="check-node-1",
+                    run_id=run_id,
+                    position=0,
+                    event_type="node_created",
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                    payload={"node_id": "check-node", "kind": "check", "state": "planned"},
+                ),
+                event,
+            ],
+        )
         await session.commit()
 
 
@@ -160,7 +176,7 @@ async def test_artifact_endpoint_authorizes_from_durable_index_not_event_json(
     async with session_factory() as session:
         indexed = await session.get(GraphArtifactReferenceModel, ("indexed-run", ref.content_hash))
         assert indexed is not None
-        assert indexed.position == 1
+        assert indexed.position == 2
         # The API must use the indexed authorization fact, not a JSON predicate
         # over event history.  Remove the test source after projection to prove
         # the product path does not fall back to replay/scanning it.

@@ -791,7 +791,18 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
         ),
     ]
 
-    await store.append_events("run-patches", 0, events)
+    await store.append_events(
+        "run-patches",
+        0,
+        [
+            _event(
+                "node_created",
+                {"node_id": "planner-1", "kind": "planner", "state": "planned"},
+                position=0,
+            ),
+            *events,
+        ],
+    )
 
     response = build_graph_patch_attempts_response(
         "run-patches",
@@ -800,7 +811,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
     )
 
     assert response.run_id == "run-patches"
-    assert response.current_graph_position == 6
+    assert response.current_graph_position == 7
     assert [attempt.patch_id for attempt in response.attempts] == [
         "patch-accepted",
         "patch-rejected",
@@ -810,7 +821,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
     assert accepted.status == "accepted"
     assert accepted.proposed_by_node_id == "planner-1"
     assert accepted.base_graph_position == 2
-    assert accepted.accepted_position == 1
+    assert accepted.accepted_position == 2
     assert accepted.created_node_ids == ["worker-1"]
     assert accepted.created_edge_ids == ["edge-1"]
     assert accepted.diagnostics["actor_role"] == "planner"

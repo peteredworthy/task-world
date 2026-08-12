@@ -43,6 +43,7 @@ from orchestrator.graph import (
     input_bindings_view,
     leases_view,
     node_kinds_view,
+    node_payload_view,
     node_roles_view,
     project_node_max_attempts,
     CheckResultRecord,
@@ -575,7 +576,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         """Rebuild the durable identity needed to complete a surviving runner."""
         projection = await self._controller.read_projection(run_id)
         events = await self._events(run_id)
-        node_payload = _node_payload(events, attempt.node_id)
+        node_payload = _node_payload(events, attempt.node_id, projection=projection)
         lease = leases_view(projection).get(attempt.lease_id)
         return GraphDispatchContext(
             run_id=run_id,
@@ -881,7 +882,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             events = await store.read_bounded_runtime_events(item.run_id)
 
         _guard_no_pending_compromised_file_state_bindings(projection, node_id)
-        node_payload = _node_payload(events, node_id)
+        node_payload = _node_payload(events, node_id, projection=projection)
         binding = cache_authority_binding(projection)
         lease = leases_view(projection).get(str(payload["lease_id"]))
         dispatch_hash = payload.get("cache_authority_hash")
@@ -1895,12 +1896,18 @@ def build_graph_runtime(
     return controller, executor
 
 
-def _node_payload(events: list[EventEnvelope], node_id: str) -> dict[str, Any]:
+def _node_payload(
+    events: list[EventEnvelope], node_id: str, *, projection: GraphProjection | None = None
+) -> dict[str, Any]:
     for event in events:
         if event.event_type != "node_created":
             continue
         if event.payload.get("node_id") == node_id:
             return dict(event.payload)
+    if projection is not None:
+        payload = node_payload_view(projection, node_id)
+        if payload is not None:
+            return payload
     return {"node_id": node_id}
 
 
@@ -2197,7 +2204,11 @@ async def _execute_check_command(
     context: GraphDispatchContext,
     store: ArtifactStore,
 ) -> dict[str, Any]:
-    command_definition = _check_command_definition(context.node_payload, context.graph_events)
+    command_definition = _check_command_definition(
+        context.node_payload,
+        context.graph_events,
+        context.graph_projection,
+    )
     cited_record = _check_result_from_bound_verification_if_redundant(
         context,
         command_definition,
@@ -2333,7 +2344,11 @@ def _check_result_from_bound_verification_if_redundant(
 ) -> dict[str, Any] | None:
     if command_definition.get("source") != "dynamic_feature_hidden_oracle_binding":
         return None
-    if not check_command_uses_acceptance_fallback(context.node_payload, context.graph_events):
+    if not check_command_uses_acceptance_fallback(
+        context.node_payload,
+        context.graph_events,
+        projection=context.graph_projection,
+    ):
         return None
     citations = _evaluated_record_citations(context)
     verification_record = _latest_passed_verification_citation(
@@ -2650,8 +2665,9 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
 def _check_command_definition(
     node: dict[str, Any],
     events: list[EventEnvelope],
+    projection: GraphProjection | None = None,
 ) -> dict[str, Any]:
-    command_definition = resolve_check_command_definition(node, events)
+    command_definition = resolve_check_command_definition(node, events, projection=projection)
     if command_definition is None:
         msg = "check node missing command_definition"
         raise ValueError(msg)

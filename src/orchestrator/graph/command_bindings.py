@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, cast
 
 from orchestrator.graph.models import EventEnvelope
@@ -45,12 +46,18 @@ def check_command_reference(node_payload: dict[str, Any]) -> Any | None:
 def canonicalize_check_command_definition(
     node_payload: dict[str, Any],
     events: list[EventEnvelope],
+    *,
+    projection: Any | None = None,
 ) -> bool:
     """Resolve an executable check command into the node payload when possible."""
 
     if node_payload.get("kind") != "check" or "command_definition" in node_payload:
         return False
-    command_definition = resolve_check_command_definition(node_payload, events)
+    command_definition = resolve_check_command_definition(
+        node_payload,
+        events,
+        projection=projection,
+    )
     if command_definition is None:
         return False
     node_payload["command_definition"] = command_definition
@@ -60,6 +67,8 @@ def canonicalize_check_command_definition(
 def resolve_check_command_definition(
     node_payload: dict[str, Any],
     events: list[EventEnvelope],
+    *,
+    projection: Any | None = None,
 ) -> dict[str, Any] | None:
     """Resolve a check node's concrete executable command definition."""
 
@@ -77,7 +86,7 @@ def resolve_check_command_definition(
 
     command_binding = node_payload.get("command_binding")
     if command_binding == "dynamic_feature_hidden_oracle":
-        command = _dynamic_feature_hidden_oracle_command(events)
+        command = _dynamic_feature_hidden_oracle_command(events, projection=projection)
         if command is not None:
             return _shell_command_definition(
                 node_payload,
@@ -90,11 +99,17 @@ def resolve_check_command_definition(
 def check_command_uses_acceptance_fallback(
     node_payload: dict[str, Any],
     events: list[EventEnvelope],
+    *,
+    projection: Any | None = None,
 ) -> bool:
     """Return True when dynamic oracle binding resolves to acceptance_command."""
 
     if node_payload.get("command_binding") != "dynamic_feature_hidden_oracle":
         return False
+    dynamic_features = _projected_dynamic_features(projection)
+    for dynamic_feature in dynamic_features:
+        if _dynamic_feature_uses_acceptance_fallback(dynamic_feature):
+            return True
     for event in reversed(events):
         snapshot = event.payload.get("snapshot")
         if isinstance(snapshot, dict):
@@ -120,7 +135,13 @@ def _shell_command_definition(
     }
 
 
-def _dynamic_feature_hidden_oracle_command(events: list[EventEnvelope]) -> str | None:
+def _dynamic_feature_hidden_oracle_command(
+    events: list[EventEnvelope], *, projection: Any | None = None
+) -> str | None:
+    for dynamic_feature in _projected_dynamic_features(projection):
+        command = _hidden_oracle_from_dynamic_feature(dynamic_feature)
+        if command is not None:
+            return command
     for event in reversed(events):
         snapshot = event.payload.get("snapshot")
         if isinstance(snapshot, dict):
@@ -134,8 +155,37 @@ def _dynamic_feature_hidden_oracle_command(events: list[EventEnvelope]) -> str |
     return None
 
 
+def _projected_dynamic_features(projection: Any | None) -> tuple[object, ...]:
+    """Read dynamic-feature inputs from the durable immutable snapshot.
+
+    ``FrozenMap`` is a Mapping, not a dict.  Keep this boundary structural so
+    command resolution does not thaw or mutate checkpoint-owned values.
+    """
+    if projection is None:
+        return ()
+    records = getattr(getattr(projection, "records", None), "by_id", None)
+    if not isinstance(records, Mapping):
+        return ()
+    typed_records = cast(Mapping[str, Any], records)
+    latest = getattr(getattr(projection, "planning", None), "latest_routine_snapshot", None)
+    latest_record_id = getattr(latest, "record_id", None)
+    record_ids: tuple[str, ...] = (
+        (latest_record_id,) if isinstance(latest_record_id, str) else tuple(typed_records)
+    )
+    values: list[object] = []
+    for record_id in record_ids:
+        record = typed_records.get(record_id)
+        if record is None or getattr(record, "record_type", None) != "routine_snapshot":
+            continue
+        snapshot = getattr(record, "value", None)
+        dynamic_feature = getattr(snapshot, "dynamic_feature", None)
+        if dynamic_feature is not None:
+            values.append(dynamic_feature)
+    return tuple(values)
+
+
 def _hidden_oracle_from_dynamic_feature(dynamic_feature: Any) -> str | None:
-    if not isinstance(dynamic_feature, dict):
+    if not isinstance(dynamic_feature, Mapping):
         return None
     typed = cast(dict[str, Any], dynamic_feature)
     command = typed.get("hidden_oracle_command")
@@ -153,7 +203,7 @@ def _hidden_oracle_from_dynamic_feature(dynamic_feature: Any) -> str | None:
 
 
 def _dynamic_feature_uses_acceptance_fallback(dynamic_feature: Any) -> bool:
-    if not isinstance(dynamic_feature, dict):
+    if not isinstance(dynamic_feature, Mapping):
         return False
     typed = cast(dict[str, Any], dynamic_feature)
     hidden = typed.get("hidden_oracle_command")

@@ -1311,8 +1311,40 @@ def _accepted_output_record_events(
         typed_raw_records,
         expected_producer_node_id,
     )
+    # File-state records are prerequisites for candidate/output records that
+    # cite them.  Publish those accepted records first only when this callback
+    # actually creates such a relationship; preserve ordinary callback order.
+    cites_same_callback_file_state = any(
+        isinstance(raw_record, dict)
+        and _is_candidate_record_payload(cast(dict[str, Any], raw_record))
+        and bool(
+            _file_state_record_ids_for_candidate(
+                cast(dict[str, Any], raw_record), file_state_records
+            )
+        )
+        for raw_record in typed_raw_records
+    )
+    if cites_same_callback_file_state:
+        ordered_raw_records: list[Any] = [
+            *[
+                raw_record
+                for raw_record in typed_raw_records
+                if isinstance(raw_record, dict)
+                and cast(dict[str, Any], raw_record).get("record_kind") == "file_state"
+            ],
+            *[
+                raw_record
+                for raw_record in typed_raw_records
+                if not (
+                    isinstance(raw_record, dict)
+                    and cast(dict[str, Any], raw_record).get("record_kind") == "file_state"
+                )
+            ],
+        ]
+    else:
+        ordered_raw_records = typed_raw_records
     output: list[EventEnvelope] = []
-    for raw_record in typed_raw_records:
+    for raw_record in ordered_raw_records:
         if not isinstance(raw_record, dict):
             continue
         record_payload = dict(cast(dict[str, Any], raw_record))
@@ -5168,7 +5200,7 @@ def _patch_op_events(
         node_payload["patch_id"] = patch_id
         node_payload.setdefault("state", "planned")
         _ensure_default_node_authority(node_payload)
-        canonicalize_check_command_definition(node_payload, events)
+        canonicalize_check_command_definition(node_payload, events, projection=projection)
         if node_payload.get("kind") == "planner" and node_payload.get("role") == "planner":
             if inherited_session_id is not None:
                 node_payload.setdefault("session_id", inherited_session_id)

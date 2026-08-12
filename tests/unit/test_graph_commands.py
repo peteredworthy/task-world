@@ -829,12 +829,12 @@ def test_callback_accept_emits_boundary_events() -> None:
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
-    candidate_record = output[1].payload
+    candidate_record = output[3].payload
     assert candidate_record["file_state_record_id"] == "file-state-1"
     assert candidate_record["file_state_record_ids"] == ["file-state-1"]
     assert candidate_record["value"]["file_state_record_ids"] == ["file-state-1"]
@@ -1019,8 +1019,8 @@ def test_callback_accepts_analysis_summary_record() -> None:
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "output_record_accepted",
         "node_state_changed",
         "lease_released",
@@ -1318,8 +1318,8 @@ def test_callback_after_acknowledge_start_accepts_boundary() -> None:
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
@@ -1356,8 +1356,8 @@ def test_late_callback_after_uncontested_lease_expiry_is_accepted() -> None:
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
@@ -1435,13 +1435,13 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "input_bound",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
+        "input_bound",
         "node_state_changed",
         "lease_released",
     ]
-    assert output[2].payload == {
+    assert output[4].payload == {
         "edge_id": "edge-candidate",
         "to_node_id": "verifier-1",
         "to_port": "candidate_under_test",
@@ -1515,8 +1515,8 @@ def test_callback_accepts_artifact_reference_output_record() -> None:
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "output_record_accepted",
         "node_state_changed",
         "lease_released",
@@ -3486,8 +3486,8 @@ def test_callback_accepts_file_state_paths_within_lease_write_scope() -> None:
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
@@ -3543,8 +3543,8 @@ def test_callback_allows_tool_cache_file_state_outside_write_scope() -> None:
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
@@ -3676,8 +3676,8 @@ def test_callback_accepts_file_state_path_under_path_in_scope_write_claim() -> N
     assert [event.event_type for event in output] == [
         "callback_accepted",
         "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]

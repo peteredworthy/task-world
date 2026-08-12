@@ -1156,7 +1156,37 @@ async def test_append_events_stores_durable_input_binding_position(
 ) -> None:
     run_id = "store-input-bound-position"
     events = [
+        _event("evt-worker", run_id, "node_created", {"node_id": "worker-1", "kind": "worker"}),
         _event("evt-node", run_id, "node_created", {"node_id": "verifier-1", "kind": "verifier"}),
+        _event(
+            "evt-edge",
+            run_id,
+            "edge_created",
+            {
+                "edge_id": "edge-candidate",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+            },
+        ),
+        _event(
+            "evt-record",
+            run_id,
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+                "attempt_number": 1,
+                "value": {"summary": "candidate"},
+            },
+        ),
         _event(
             "evt-input",
             run_id,
@@ -1178,9 +1208,9 @@ async def test_append_events_stores_durable_input_binding_position(
     async with session_factory() as session:
         read_back = await GraphEventStore(session).read_run(run_id)
 
-    assert stored[1].position == 2
-    assert stored[1].payload["bound_at_position"] == 2
-    assert read_back[1].payload["bound_at_position"] == 2
+    assert stored[4].position == 5
+    assert stored[4].payload["bound_at_position"] == 5
+    assert read_back[4].payload["bound_at_position"] == 5
 
 
 @pytest.mark.asyncio
@@ -1389,10 +1419,32 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             },
         ),
     ]
+    producer_nodes = [
+        "worker-1",
+        "verifier-1",
+        "check-1",
+        "gate-1",
+        "authority-1",
+        "recovery-1",
+        "root",
+        "routine-snapshot",
+        "context-1",
+    ]
+    setup_events = [
+        _event(
+            f"evt-setup-{node_id}",
+            run_id,
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+        )
+        for node_id in producer_nodes
+    ]
 
     async with session_factory() as session:
         async with session.begin():
-            stored = await GraphEventStore(session).append_events(run_id, 0, events)
+            store = GraphEventStore(session)
+            await store.append_events(run_id, 0, setup_events)
+            stored = await store.append_events(run_id, len(setup_events), events)
 
     async with session_factory() as session:
         read_back = await GraphEventStore(session).read_run(run_id)
@@ -1403,7 +1455,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert candidate["producer_port"] == "candidate"
     assert candidate["run_id"] == run_id
     assert candidate["created_at"] == "2026-01-01T00:00:00+00:00"
-    assert candidate["graph_position"] == 1
+    assert candidate["graph_position"] == len(setup_events) + 1
     assert candidate["payload"] == {"summary": "done"}
 
     file_state = stored[1].payload
@@ -1412,7 +1464,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert file_state["producer_port"] == "file_state"
     assert file_state["run_id"] == run_id
     assert file_state["created_at"] == "2026-01-01T00:00:00+00:00"
-    assert file_state["graph_position"] == 2
+    assert file_state["graph_position"] == len(setup_events) + 2
     assert file_state["payload"] == {
         "snapshot_id": "snapshot-1",
         "base_snapshot_id": "S0",
@@ -1425,7 +1477,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert verification["producer_port"] == "verification_report"
     assert verification["run_id"] == run_id
     assert verification["created_at"] == "2026-01-01T00:00:00+00:00"
-    assert verification["graph_position"] == 3
+    assert verification["graph_position"] == len(setup_events) + 3
     assert verification["payload"] == {
         "outcome": "passed",
         "grades": [{"requirement_id": "R-1", "grade": "A", "reason": "satisfied"}],
@@ -1437,7 +1489,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert check_result["producer_port"] == "check_result"
     assert check_result["run_id"] == run_id
     assert check_result["created_at"] == "2026-01-01T00:00:00+00:00"
-    assert check_result["graph_position"] == 4
+    assert check_result["graph_position"] == len(setup_events) + 4
     assert check_result["payload"]["status"] == "passed"
     assert check_result["payload"]["classification"] == "passed"
     assert check_result["payload"]["command_id"] == "unit-check"
@@ -1447,7 +1499,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert decision_request["schema_version"] == 1
     assert decision_request["producer_port"] == "decision_request"
     assert decision_request["run_id"] == run_id
-    assert decision_request["graph_position"] == 5
+    assert decision_request["graph_position"] == len(setup_events) + 5
     assert decision_request["payload"] == {
         "decision_type": "approval",
         "options": ["approve", "reject"],
@@ -1460,7 +1512,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert authority_request["schema_version"] == 1
     assert authority_request["producer_port"] == "authority_request_record"
     assert authority_request["run_id"] == run_id
-    assert authority_request["graph_position"] == 6
+    assert authority_request["graph_position"] == len(setup_events) + 6
     assert authority_request["payload"] == {
         "requested_authority": ["repo:docs/**:write"],
         "target_node_id": "worker-docs",
@@ -1472,7 +1524,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert failure["schema_version"] == 1
     assert failure["producer_port"] == "failure_record"
     assert failure["run_id"] == run_id
-    assert failure["graph_position"] == 7
+    assert failure["graph_position"] == len(setup_events) + 7
     assert failure["payload"] == {
         "failed_node_id": "worker-1",
         "phase": "runtime",
@@ -1485,7 +1537,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert recovery_plan["schema_version"] == 1
     assert recovery_plan["producer_port"] == "recovery_plan"
     assert recovery_plan["run_id"] == run_id
-    assert recovery_plan["graph_position"] == 8
+    assert recovery_plan["graph_position"] == len(setup_events) + 8
     assert recovery_plan["payload"] == {
         "action": "retry",
         "responsible_actor": "controller",
@@ -1498,7 +1550,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert run_context["schema_version"] == 1
     assert run_context["producer_port"] == "run_context"
     assert run_context["run_id"] == run_id
-    assert run_context["graph_position"] == 9
+    assert run_context["graph_position"] == len(setup_events) + 9
     assert run_context["payload"] == {"routine_id": "routine-1", "routine_name": "Routine"}
 
     routine_snapshot = stored[9].payload
@@ -1506,7 +1558,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert routine_snapshot["schema_version"] == 1
     assert routine_snapshot["producer_port"] == "snapshot"
     assert routine_snapshot["run_id"] == run_id
-    assert routine_snapshot["graph_position"] == 10
+    assert routine_snapshot["graph_position"] == len(setup_events) + 10
     assert routine_snapshot["payload"] == {
         "routine_id": "routine-1",
         "name": "Routine",
@@ -1520,13 +1572,13 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert artifact_reference["schema_version"] == 1
     assert artifact_reference["producer_port"] == "artifact"
     assert artifact_reference["run_id"] == run_id
-    assert artifact_reference["graph_position"] == 11
+    assert artifact_reference["graph_position"] == len(setup_events) + 11
     assert artifact_reference["payload"] == {
         "artifact_id": "spec",
         "artifact_type": "context_source",
         "uri": "docs/spec.md",
     }
-    assert read_back == stored
+    assert read_back[len(setup_events) :] == stored
 
 
 @pytest.mark.asyncio
@@ -1863,6 +1915,16 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                         },
                     ),
                     _event(
+                        "evt-summary-verifier",
+                        run_id,
+                        "node_created",
+                        {
+                            "node_id": "verifier-1",
+                            "kind": "verifier",
+                            "state": "planned",
+                        },
+                    ),
+                    _event(
                         "evt-summary-3",
                         run_id,
                         "output_record_accepted",
@@ -1894,6 +1956,7 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
     assert [summary.event_id for summary in summaries] == [
         "evt-summary-1",
         "evt-summary-2",
+        "evt-summary-verifier",
         "evt-summary-3",
     ]
     summary_payloads: list[dict[str, Any]] = []
@@ -1916,6 +1979,11 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
         "state": "planned",
     }
     assert summary_payloads[2] == {
+        "kind": "verifier",
+        "node_id": "verifier-1",
+        "state": "planned",
+    }
+    assert summary_payloads[3] == {
         "outcome": "passed",
         "candidate_id": "candidate-1",
         "port": "verification_report",
@@ -1971,6 +2039,18 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                         },
                     ),
                     _event(
+                        "evt-light-verifier",
+                        run_id,
+                        "node_created",
+                        {"node_id": "verifier-1", "kind": "verifier", "state": "planned"},
+                    ),
+                    _event(
+                        "evt-light-check",
+                        run_id,
+                        "node_created",
+                        {"node_id": "check-1", "kind": "check", "state": "planned"},
+                    ),
+                    _event(
                         "evt-light-2",
                         run_id,
                         "output_record_accepted",
@@ -1999,18 +2079,6 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                         },
                     ),
                     _event(
-                        "evt-light-4",
-                        run_id,
-                        "input_bound",
-                        {
-                            "edge_id": "edge-candidate",
-                            "to_node_id": "verifier-1",
-                            "to_port": "candidate_under_test",
-                            "record_ids": ["candidate-1"],
-                            "bound_at_position": 2,
-                        },
-                    ),
-                    _event(
                         "evt-light-edge",
                         run_id,
                         "edge_created",
@@ -2024,6 +2092,18 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                             "freshness_policy": "latest_only",
                             "prompt_hydration_policy": "artifact_reference",
                             "metadata": {"purpose": "verify candidate"},
+                        },
+                    ),
+                    _event(
+                        "evt-light-4",
+                        run_id,
+                        "input_bound",
+                        {
+                            "edge_id": "edge-candidate",
+                            "to_node_id": "verifier-1",
+                            "to_port": "candidate_under_test",
+                            "record_ids": ["candidate-1"],
+                            "bound_at_position": 2,
                         },
                     ),
                     _event(
@@ -2054,10 +2134,12 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
 
     assert [event.event_id for event in events] == [
         "evt-light-1",
+        "evt-light-verifier",
+        "evt-light-check",
         "evt-light-2",
         "evt-light-3",
-        "evt-light-4",
         "evt-light-edge",
+        "evt-light-4",
         "evt-light-5",
     ]
     assert events[0].payload == {
@@ -2068,9 +2150,19 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "task_region_id": "step/task",
     }
     assert events[1].payload == {
+        "kind": "verifier",
+        "node_id": "verifier-1",
+        "state": "planned",
+    }
+    assert events[2].payload == {
+        "kind": "check",
+        "node_id": "check-1",
+        "state": "planned",
+    }
+    assert events[3].payload == {
         "candidate_id": "candidate-1",
         "attempt_number": 1,
-        "graph_position": 2,
+        "graph_position": 4,
         "port": "candidate",
         "producer_node_id": "worker-1",
         "record_id": "candidate-1",
@@ -2080,21 +2172,21 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "run_id": "store-light",
         "task_region_id": "step/task",
     }
-    assert events[2].payload == {
+    assert events[4].payload == {
         "execution_id": "execution-1",
         "lease_generation": 1,
         "lease_id": "lease-1",
         "node_id": "worker-1",
         "reason": "accepted",
     }
-    assert events[3].payload == {
+    assert events[6].payload == {
         "bound_at_position": 2,
         "edge_id": "edge-candidate",
         "record_ids": ["candidate-1"],
         "to_node_id": "verifier-1",
         "to_port": "candidate_under_test",
     }
-    assert events[4].payload == {
+    assert events[5].payload == {
         "binding_policy": "bind_latest",
         "edge_id": "edge-candidate",
         "freshness_policy": "latest_only",
@@ -2105,11 +2197,11 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "to_node_id": "verifier-1",
         "to_port": "candidate_under_test",
     }
-    assert events[5].payload == {
+    assert events[7].payload == {
         "attempt_number": 0,
         "candidate_id": "candidate-check-1",
         "classification": "passed",
-        "graph_position": 6,
+        "graph_position": 8,
         "port": "check_result",
         "producer_node_id": "check-1",
         "record_id": "check-result-1",
