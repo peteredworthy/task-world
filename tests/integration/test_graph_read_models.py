@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.db import (
     EventV2Model,
     GraphEventSummaryModel,
+    GraphProjectionCheckpointModel,
     GraphProjectionSnapshotModel,
     create_engine,
     create_session_factory,
@@ -750,10 +751,12 @@ async def test_graph_read_models_roll_back_with_event_append(
         )
         summary_count = await _count_model(session, GraphEventSummaryModel, run_id)
         snapshot_count = await _count_model(session, GraphProjectionSnapshotModel, run_id)
+        checkpoint_count = await _count_model(session, GraphProjectionCheckpointModel, run_id)
 
     assert event_count == 0
     assert summary_count == 0
     assert snapshot_count == 0
+    assert checkpoint_count == 0
 
 
 @pytest.mark.asyncio
@@ -781,6 +784,7 @@ async def test_graph_read_models_are_rebuildable_and_idempotent(
         assert event_count == 4
         assert await _count_model(session, GraphEventSummaryModel, run_id) == 0
         assert await _count_model(session, GraphProjectionSnapshotModel, run_id) == 0
+        assert await _count_model(session, GraphProjectionCheckpointModel, run_id) == 0
 
     async with session_factory() as session:
         store = GraphEventStore(session)
@@ -788,12 +792,15 @@ async def test_graph_read_models_are_rebuildable_and_idempotent(
         first_rebuild_summaries = await store.read_run_summaries(run_id)
         await store.rebuild_read_models(run_id)
         second_rebuild_summaries = await store.read_run_summaries(run_id)
+        rebuilt_checkpoint = await store.read_projection_checkpoint(run_id)
         await session.commit()
 
     assert before_snapshot is not None
     assert rebuilt_snapshot is not None
     assert rebuilt_snapshot.position == before_snapshot.position
     assert rebuilt_snapshot.node_states == before_snapshot.node_states
+    assert rebuilt_checkpoint is not None
+    assert rebuilt_checkpoint.position == rebuilt_snapshot.position
     assert [summary.payload for summary in first_rebuild_summaries] == [
         summary.payload for summary in before_summaries
     ]

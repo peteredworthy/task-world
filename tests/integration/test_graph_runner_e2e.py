@@ -1326,6 +1326,72 @@ async def test_cache_budget_exhaustion_rejects_submission_and_recovers_after_res
 
 
 @pytest.mark.asyncio
+async def test_prebaseline_cache_budget_failure_terminates_root_planner_without_retry(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-prebaseline-cache-budget"
+    _init_repo(repo)
+    exclude = repo / ".git" / "info" / "exclude"
+    exclude.write_text(
+        f"{exclude.read_text(encoding='utf-8')}ui/node_modules/\n",
+        encoding="utf-8",
+    )
+    cache = repo / "ui" / "node_modules" / "dependency"
+    cache.mkdir(parents=True)
+    for index in range(12):
+        (cache / f"entry-{index:02d}.js").write_text("module.exports = 1\n", encoding="utf-8")
+    routine = RoutineConfig.model_validate(
+        {
+            "id": "prebaseline-cache-budget",
+            "name": "Prebaseline Cache Budget",
+            "execution_mode": "graph",
+            "file_state_policy": {"scan_budget": {"max_entries": 10, "max_bytes": 1_073_741_824}},
+            "steps": [{"id": "plan", "kind": "planner", "title": "Plan", "tasks": []}],
+        }
+    )
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "graph-runner-prebaseline-cache-budget"
+    controller = await _seed_active_run(session_factory, run_id, clock, ids, routine)
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"planner": SubmitAgent()}),
+        worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+
+    await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "schedule_tick",
+        {"lease_seconds": 60, "max_grants": 1},
+    )
+    await dispatcher.dispatch_pending(run_id=run_id)
+    await executor.wait_for_all()
+
+    events = await _read_events(session_factory, run_id)
+    deaths = [event for event in events if event.event_type == "agent_died"]
+    assert len(deaths) == 1
+    assert str(deaths[0].payload["reason"]).startswith("cache scan entries budget exceeded at ")
+    assert not any(event.event_type == "runner_baseline_recorded" for event in events)
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in events)
+    failure = next(
+        event
+        for event in events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+    )
+    assert failure.payload["value"]["error_class"] == "runtime_configuration_error"
+    assert failure.payload["value"]["retryable"] is False
+    assert node_states_view(await controller.read_projection(run_id))["planner-plan"] == "failed"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("path_count", [10_000, 10_001])
 async def test_cache_budget_overflow_uses_durable_full_baseline_recovery_scope(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],

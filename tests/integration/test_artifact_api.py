@@ -18,6 +18,7 @@ from orchestrator.artifacts import (
     ArtifactIntegrityError,
     ArtifactNotFoundError,
     ArtifactRootLock,
+    ArtifactRootResolver,
     FilesystemArtifactStore,
     StoredArtifactRef,
 )
@@ -332,6 +333,28 @@ async def test_app_composes_artifacts_at_injected_main_project_root_from_non_pro
         assert not (launch_directory / ".orchestrator" / "artifacts").exists()
     finally:
         await app.state.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_run_artifacts_stay_outside_a_main_checkout_execution_boundary(
+    tmp_path: Path,
+) -> None:
+    main_project = tmp_path / "main-project-run"
+    main_project.mkdir()
+    _init_repo(main_project)
+    run = Run(
+        id="main-project-run",
+        repo_name=main_project.name,
+        worktree_path=str(main_project),
+    )
+
+    root = await ArtifactRootResolver().root_for(run)
+    store = FilesystemArtifactStore(root)
+    async with store.publication():
+        await store.put(b"callback-payload", media_type="application/json")
+
+    assert root == main_project / ".git" / ".orchestrator" / "artifacts"
+    assert not (main_project / ".orchestrator" / "artifacts").exists()
 
 
 @pytest.mark.asyncio

@@ -11,7 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
+    PatchCommandContext,
+    boundary_manifest_hash,
+    execution_attempts_view,
+)
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -74,6 +82,10 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
             actor_role="planner",
         ),
     )
+    assert any(event.event_type == "graph_patch_accepted" for event in accepted.events), [
+        (event.event_type, event.payload.get("reason"), event.payload.get("diagnostics"))
+        for event in accepted.events
+    ]
     assert [event.event_type for event in accepted.events].count("graph_patch_accepted") == 1
 
     scheduled = await controller.handle_command(
@@ -189,6 +201,11 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         "submit_graph_patch",
     ]
 
+    for graph_run_id in (run_id, gap_run_id):
+        async with session_factory() as session:
+            await GraphEventStore(session).rebuild_archival_views(graph_run_id)
+            await session.commit()
+
     events = await _get_json(client, f"/api/runs/{run_id}/graph/events?payload_mode=full")
     gap_events = await _get_json(
         client,
@@ -300,6 +317,147 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
     )
 
 
+async def test_dispatch_and_reattachment_use_projection_when_history_exceeds_runtime_tail(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    tmp_path: Path,
+) -> None:
+    """Old prompt facts remain available without a full runtime event read."""
+    _, _, _, _, app = _shared_app_fixture
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    run_id = f"graph-fr09-bounded-dispatch-{uuid4().hex[:8]}"
+    await _save_graph_run(session_factory, run_id)
+    await _seed_fr09_base_events(session_factory, run_id)
+    clock = FakeClock()
+    controller = GraphController(
+        session_factory,
+        clock,
+        _RunSeedIdGenerator(run_id),
+        auto_dispatch=False,
+    )
+    position = await controller.current_position(run_id)
+    accepted = await controller.handle_command(
+        run_id,
+        position,
+        "submit_patch",
+        {
+            "patch_id": "patch-fr09-bounded-dispatch",
+            "base_graph_position": position,
+            "ops": [
+                *_fr09_gap_planner_probe_ops(),
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-requirement-gap",
+                    "from_node_id": "requirement-fr09-verification",
+                    "from_port": "requirement",
+                    "to_node_id": "gap-planner-1",
+                    "to_port": "requirement_fr09",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "requirement_record",
+                    },
+                },
+            ],
+        },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=position,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
+    )
+    assert any(event.event_type == "graph_patch_accepted" for event in accepted.events), [
+        (event.event_type, event.payload.get("reason"), event.payload.get("diagnostics"))
+        for event in accepted.events
+    ]
+    scheduled = await controller.handle_command(
+        run_id,
+        accepted.projection_position,
+        "schedule_tick",
+        {
+            "lease_seconds": 60,
+            "max_grants": 1,
+            "base_snapshot_id": BASE_SNAPSHOT_ID,
+            "priorities": {"gap-planner-1": 10},
+        },
+    )
+    lease_events = [event for event in scheduled.events if event.event_type == "lease_granted"]
+    assert lease_events, [(event.event_type, event.payload) for event in scheduled.events]
+    lease_payload = lease_events[0].payload
+    tree_sha = "a" * 40
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        head = await store.current_position(run_id)
+        await store.append_events(
+            run_id,
+            head,
+            [
+                _event(
+                    run_id,
+                    "runner_baseline_recorded",
+                    {
+                        "execution_id": lease_payload["execution_id"],
+                        "node_id": "gap-planner-1",
+                        "lease_id": lease_payload["lease_id"],
+                        "lease_generation": lease_payload["generation"],
+                        "baseline_snapshot_id": BASE_SNAPSHOT_ID,
+                        "baseline_tree_sha": tree_sha,
+                        "entries": [],
+                        "boundary_hash": boundary_manifest_hash(tree_sha, []),
+                        "cache_roots": [],
+                    },
+                )
+            ],
+        )
+        await session.commit()
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        head = await store.current_position(run_id)
+        await store.append_events(
+            run_id,
+            head,
+            [
+                _event(
+                    run_id,
+                    "command_recorded",
+                    {"command_type": f"padding-{index}", "command_payload": {}},
+                )
+                for index in range(140)
+            ],
+        )
+        await session.commit()
+
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        _UnusedAgentFactory(),
+        worktree_path=tmp_path,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+    pending = [item for item in await dispatcher.pending_items() if item.run_id == run_id]
+    assert len(pending) == 1
+
+    context = await executor._build_dispatch_context(pending[0])
+    current_position = await controller.current_position(run_id)
+    assert context.graph_position == current_position
+    assert context.graph_events == []
+    assert context.requirements == [
+        "fr09-verification-requirement: FR-09 verification evidence is complete."
+    ]
+    execution_context = executor._execution_context(context)
+    assert "verification-source" in execution_context.prompt
+    assert "FR-09 verification evidence is complete" in execution_context.prompt
+
+    projection = await controller.read_projection(run_id)
+    attempt = execution_attempts_view(projection)[str(lease_payload["execution_id"])]
+    reattached = await executor._reattached_execution_context(run_id, attempt)
+    assert reattached.graph_position == current_position
+    assert reattached.graph_events == []
+    assert reattached.requirements == context.requirements
+    assert "verification-source" in executor._execution_context(reattached).prompt
+
+
 async def _capture_execution_context_from_pending_dispatch(
     executor: GraphDispatchExecutor,
     dispatcher: OutboxDispatcher,
@@ -409,6 +567,14 @@ async def _seed_fr09_base_events(
                         "node_id": "requirement-fr09-verification",
                         "kind": "requirement",
                         "state": "completed",
+                        "outputs": [
+                            {
+                                "port": "requirement",
+                                "direction": "output",
+                                "schema": "RequirementRecord",
+                                "record_layers": ["graph_record"],
+                            }
+                        ],
                     },
                 ),
                 _event(

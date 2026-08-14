@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import (
     EventV2Model,
+    GraphProjectionCheckpointModel,
     GraphProjectionSnapshotModel,
     SqliteEventStore,
     create_engine,
@@ -36,6 +37,7 @@ from orchestrator.graph import (
 from orchestrator.graph_runtime import (
     GraphController,
     GraphEventStore,
+    GraphReadModelUnavailable,
     StaleProjectionError,
     seed_run,
 )
@@ -752,7 +754,7 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
 
 
 @pytest.mark.asyncio
-async def test_projection_snapshot_schema_mismatch_is_rebuilt(
+async def test_projection_checkpoint_schema_mismatch_is_rebuilt(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-snapshot-version-rebuild"
@@ -766,15 +768,9 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
     async with session_factory() as session:
         async with session.begin():
             await session.execute(
-                update(GraphProjectionSnapshotModel)
-                .where(GraphProjectionSnapshotModel.run_id == run_id)
-                .values(
-                    decisions={
-                        "_projection_schema_version": PROJECTION_SCHEMA_VERSION - 1,
-                        "_projection_checkpoint": {"bad": "data"},
-                        "_projection_terminal": False,
-                    }
-                )
+                update(GraphProjectionCheckpointModel)
+                .where(GraphProjectionCheckpointModel.run_id == run_id)
+                .values(projection_schema_version=PROJECTION_SCHEMA_VERSION - 1)
             )
 
     await controller.handle_command(run_id, accepted.projection_position, "start")
@@ -789,8 +785,75 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
     assert checkpoint.projection == _rebuild_projection(events)
 
 
+@pytest.mark.parametrize("corruption", ("position", "checksum"))
 @pytest.mark.asyncio
-async def test_append_invalidates_legacy_v12_flat_projection_snapshot(
+async def test_corrupt_runtime_checkpoint_is_invalidated_without_deleting_public_snapshot(
+    session_factory: async_sessionmaker[AsyncSession],
+    corruption: str,
+) -> None:
+    run_id = f"store-checkpoint-corrupt-{corruption}"
+    events = [
+        _event("evt-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
+        _event("evt-worker", run_id, "node_created", {"node_id": "worker-1"}),
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+            owner = await session.get(GraphProjectionCheckpointModel, run_id)
+            snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
+            assert owner is not None
+            assert snapshot is not None
+            public_decisions = dict(snapshot.decisions)
+            if corruption == "position":
+                owner.position += 1
+            else:
+                owner.checksum = "0" * 64
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        assert await store.read_projection_checkpoint(run_id) is None
+        assert await session.get(GraphProjectionCheckpointModel, run_id) is None
+        snapshot = await store.read_current_projection_snapshot(run_id)
+        assert snapshot is not None
+        assert snapshot.decisions == public_decisions
+
+        projection, tail, position = await store.load_projection_with_tail(run_id)
+        repaired = await store.read_projection_checkpoint(run_id)
+        await session.commit()
+
+    assert repaired is not None
+    assert projection == repaired.projection
+    assert [event.event_id for event in tail] == ["evt-active", "evt-worker"]
+    assert position == 2
+
+
+@pytest.mark.asyncio
+async def test_public_projection_snapshot_validates_its_read_contract_not_runtime_codec(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-public-snapshot-contract"
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(
+                run_id,
+                0,
+                [_event("evt-worker", run_id, "node_created", {"node_id": "worker-1"})],
+            )
+            snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
+            assert snapshot is not None
+            contract = dict(snapshot.decisions["_graph_read_contract"])
+            contract["revision"] = 0
+            snapshot.decisions = {**snapshot.decisions, "_graph_read_contract": contract}
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        with pytest.raises(GraphReadModelUnavailable, match="schema_mismatch"):
+            await store.read_current_projection_snapshot(run_id)
+        assert await store.read_projection_checkpoint(run_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_append_repairs_legacy_v12_projection_checkpoint(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-append-legacy-v12-snapshot"
@@ -809,14 +872,11 @@ async def test_append_invalidates_legacy_v12_flat_projection_snapshot(
     async with session_factory() as session:
         async with session.begin():
             await session.execute(
-                update(GraphProjectionSnapshotModel)
-                .where(GraphProjectionSnapshotModel.run_id == run_id)
+                update(GraphProjectionCheckpointModel)
+                .where(GraphProjectionCheckpointModel.run_id == run_id)
                 .values(
-                    decisions={
-                        "_projection_schema_version": 12,
-                        "_projection_checkpoint": {"run_state": "active"},
-                        "_projection_terminal": False,
-                    }
+                    projection_schema_version=12,
+                    envelope={"run_state": "active"},
                 )
             )
 
@@ -825,7 +885,9 @@ async def test_append_invalidates_legacy_v12_flat_projection_snapshot(
             store = GraphEventStore(session)
             stored = await store.append_events(run_id, 1, [appended_event])
             assert [event.event_id for event in stored] == ["evt-appended"]
-            assert await session.get(GraphProjectionSnapshotModel, run_id) is None
+            repaired_owner = await session.get(GraphProjectionCheckpointModel, run_id)
+            assert repaired_owner is not None
+            assert repaired_owner.position == 2
             rebuilt_snapshot = await store.read_projection_snapshot(run_id)
             rebuilt = await store.read_projection_checkpoint(run_id)
 
@@ -844,7 +906,7 @@ async def test_append_invalidates_legacy_v12_flat_projection_snapshot(
 
 
 @pytest.mark.asyncio
-async def test_append_invalidates_current_malformed_projection_snapshot(
+async def test_append_repairs_current_malformed_projection_checkpoint(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-append-malformed-current-snapshot"
@@ -863,15 +925,9 @@ async def test_append_invalidates_current_malformed_projection_snapshot(
     async with session_factory() as session:
         async with session.begin():
             await session.execute(
-                update(GraphProjectionSnapshotModel)
-                .where(GraphProjectionSnapshotModel.run_id == run_id)
-                .values(
-                    decisions={
-                        "_projection_schema_version": PROJECTION_SCHEMA_VERSION,
-                        "_projection_checkpoint": {"not": "a canonical projection"},
-                        "_projection_terminal": False,
-                    }
-                )
+                update(GraphProjectionCheckpointModel)
+                .where(GraphProjectionCheckpointModel.run_id == run_id)
+                .values(envelope={"not": "a canonical projection"})
             )
 
     async with session_factory() as session:
@@ -879,7 +935,9 @@ async def test_append_invalidates_current_malformed_projection_snapshot(
             store = GraphEventStore(session)
             stored = await store.append_events(run_id, 1, [appended_event])
             assert [event.event_id for event in stored] == ["evt-appended"]
-            assert await session.get(GraphProjectionSnapshotModel, run_id) is None
+            repaired_owner = await session.get(GraphProjectionCheckpointModel, run_id)
+            assert repaired_owner is not None
+            assert repaired_owner.position == 2
             rebuilt_snapshot = await store.read_projection_snapshot(run_id)
             rebuilt = await store.read_projection_checkpoint(run_id)
 
@@ -918,15 +976,9 @@ async def test_current_projection_snapshot_with_invalid_integrity_is_rebuilt(
     async with session_factory() as session:
         async with session.begin():
             await session.execute(
-                update(GraphProjectionSnapshotModel)
-                .where(GraphProjectionSnapshotModel.run_id == run_id)
-                .values(
-                    decisions={
-                        "_projection_schema_version": PROJECTION_SCHEMA_VERSION,
-                        "_projection_checkpoint": malformed,
-                        "_projection_terminal": False,
-                    }
-                )
+                update(GraphProjectionCheckpointModel)
+                .where(GraphProjectionCheckpointModel.run_id == run_id)
+                .values(envelope=malformed)
             )
 
     await controller.handle_command(run_id, accepted.projection_position, "start")
@@ -963,21 +1015,16 @@ async def test_current_partial_projection_checkpoint_is_rebuilt_and_rewritten(
     async with session_factory() as session:
         async with session.begin():
             await session.execute(
-                update(GraphProjectionSnapshotModel)
-                .where(GraphProjectionSnapshotModel.run_id == run_id)
-                .values(
-                    decisions={
-                        "_projection_schema_version": PROJECTION_SCHEMA_VERSION,
-                        "_projection_checkpoint": malformed,
-                        "_projection_terminal": False,
-                    }
-                )
+                update(GraphProjectionCheckpointModel)
+                .where(GraphProjectionCheckpointModel.run_id == run_id)
+                .values(envelope=malformed)
             )
 
     async with session_factory() as session:
         store = GraphEventStore(session)
         snapshot = await store.read_projection_snapshot(run_id)
         events = await store.read_run_projection(run_id)
+        await store.load_projection_with_tail(run_id)
         rebuilt = await store.read_projection_checkpoint(run_id)
 
     assert snapshot is not None
@@ -1143,11 +1190,19 @@ async def test_projection_checkpoint_records_terminal_flag(
             )
             terminal_checkpoint = await store.read_projection_checkpoint(terminal_run_id)
             active_checkpoint = await store.read_projection_checkpoint(active_run_id)
+            terminal_owner = await session.get(GraphProjectionCheckpointModel, terminal_run_id)
+            active_owner = await session.get(GraphProjectionCheckpointModel, active_run_id)
 
     assert terminal_checkpoint is not None
     assert active_checkpoint is not None
     assert terminal_checkpoint.terminal is True
     assert active_checkpoint.terminal is False
+    assert terminal_owner is not None
+    assert active_owner is not None
+    assert terminal_owner.terminal is True
+    assert active_owner.terminal is False
+    assert terminal_owner.checksum == terminal_owner.envelope["checksum"]
+    assert active_owner.checksum == active_owner.envelope["checksum"]
 
 
 @pytest.mark.asyncio

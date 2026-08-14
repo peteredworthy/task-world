@@ -231,7 +231,6 @@ PROJECTION_NEUTRAL_EVENT_TYPES = frozenset(
         "dead_input_detected",
         "file_state_rejected",
         "gatekeeper_cost_recorded",
-        "graph_patch_rejected",
         "heartbeat_recorded",
         "outbox_requeued",
         "revision_created",

@@ -11,7 +11,11 @@ from orchestrator.graph import (
     reduce_event,
     validate_projection_critical_invariants,
 )
-from tests.unit.graph_projection_behavior_cases import behavior_cases, case_projection
+from tests.unit.graph_projection_behavior_cases import (
+    behavior_cases,
+    case_projection,
+    event,
+)
 
 
 CASES = behavior_cases()
@@ -64,6 +68,42 @@ def test_unsupported_event_name_still_fails_loudly() -> None:
     )
     with pytest.raises(ValueError, match="unsupported graph projection event type"):
         reduce_event(initial_projection(), unsupported)
+
+
+def test_node_dispatch_payload_omits_optional_null_fields() -> None:
+    created = event(
+        "node_created",
+        {
+            "node_id": "optional-null-dispatch",
+            "kind": "worker",
+            "state": "planned",
+            "available_tools": None,
+            "builder_agent": None,
+            "fan_out": None,
+            "profile": None,
+        },
+        1,
+    )
+
+    projection = reduce_event(initial_projection(), created)
+    checkpoint = projection_to_checkpoint(projection)
+    state = checkpoint["state"]
+    assert isinstance(state, dict)
+    nodes = state["nodes"]
+    assert isinstance(nodes, dict)
+    node = nodes["optional-null-dispatch"]
+    assert isinstance(node, dict)
+    spec = node["spec"]
+    assert isinstance(spec, dict)
+    dispatch_payload = spec["dispatch_payload"]
+    assert isinstance(dispatch_payload, dict)
+
+    assert not {
+        "available_tools",
+        "builder_agent",
+        "fan_out",
+        "profile",
+    }.intersection(dispatch_payload)
 
 
 @pytest.mark.parametrize(

@@ -45,6 +45,9 @@ from orchestrator.graph import (
     node_kinds_view,
     node_payload_view,
     node_roles_view,
+    record_payloads_view,
+    requirements_for_node_view,
+    routine_snapshot_dynamic_feature_view,
     project_node_max_attempts,
     CheckResultRecord,
     EventEnvelope,
@@ -168,7 +171,17 @@ class GraphDispatchContext:
     cache_authority_hash: str = ""
     graph_projection: GraphProjection = field(default_factory=initial_projection)
     graph_events: list[EventEnvelope] = field(default_factory=_empty_event_list)
+    graph_position: int = 0
     node_role: str = ""
+
+    def __post_init__(self) -> None:
+        """Keep direct legacy contexts truthful while production supplies the head."""
+        if self.graph_position == 0 and self.graph_events:
+            object.__setattr__(
+                self,
+                "graph_position",
+                max(event.position for event in self.graph_events),
+            )
 
 
 @dataclass(frozen=True)
@@ -355,8 +368,9 @@ def _authority_file_state_policy(context: GraphDispatchContext) -> FileStatePoli
     if context.cache_authority_hash and binding.hash != context.cache_authority_hash:
         raise ValueError("dispatch cache authority binding changed before worktree access")
     return policy_with_pattern_library(
-        context.graph_events,
+        [],
         file_state_policy_from_authority(binding.policy),
+        projection=context.graph_projection,
     )
 
 
@@ -511,7 +525,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
         the old ``agent_died`` fallback only for histories written before a
         baseline fact existed.
         """
-        projection = await self._controller.read_projection(run_id)
+        async with self._session_factory() as session:
+            projection, tail, graph_position = await GraphEventStore(
+                session
+            ).load_projection_with_tail(run_id)
         terminal = run_state(projection) in {"cancelled", "completed", "failed"}
         handled: set[str] = set()
         async with self._worktree_execution_lock:
@@ -559,6 +576,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     dispatch_event_id=f"reconcile:{attempt.execution_id}",
                     cache_authority_hash=cache_authority_binding(projection).hash,
                     graph_projection=projection,
+                    graph_events=list(tail),
+                    graph_position=graph_position,
                 )
                 # Staging proves only that on_submit ran.  It does not prove
                 # that runner.execute returned successfully, so an orphaned
@@ -577,8 +596,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self, run_id: str, attempt: Any
     ) -> GraphDispatchContext:
         """Rebuild the durable identity needed to complete a surviving runner."""
-        projection = await self._controller.read_projection(run_id)
-        events = await self._events(run_id)
+        async with self._session_factory() as session:
+            projection, events, graph_position = await GraphEventStore(
+                session
+            ).load_projection_with_tail(run_id)
         node_payload = _node_payload(events, attempt.node_id, projection=projection)
         lease = leases_view(projection).get(attempt.lease_id)
         return GraphDispatchContext(
@@ -587,7 +608,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             node_kind=str(node_payload.get("kind", "worker")),
             node_role=_node_role(str(node_payload.get("kind", "worker")), node_payload),
             node_payload=node_payload,
-            requirements=_requirements_for_node(events, attempt.node_id),
+            requirements=_requirements_for_node(projection, attempt.node_id, events),
             worktree_path=self._worktree_path,
             lease_id=attempt.lease_id,
             lease_generation=attempt.lease_generation,
@@ -598,7 +619,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
             dispatch_event_id=f"reconcile:{attempt.execution_id}",
             cache_authority_hash=cache_authority_binding(projection).hash,
             graph_projection=projection,
-            graph_events=events,
+            graph_events=list(events),
+            graph_position=graph_position,
         )
 
     async def _complete_reattached_submission(
@@ -881,8 +903,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         node_id = str(payload["node_id"])
         async with self._session_factory() as session:
             store = GraphEventStore(session)
-            projection, _, _ = await store.load_projection_with_tail(item.run_id)
-            events = await store.read_bounded_runtime_events(item.run_id)
+            projection, events, graph_position = await store.load_projection_with_tail(item.run_id)
 
         _guard_no_pending_compromised_file_state_bindings(projection, node_id)
         node_payload = _node_payload(events, node_id, projection=projection)
@@ -917,7 +938,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             node_kind=node_kind,
             node_role=_node_role(node_kind, node_payload),
             node_payload=node_payload,
-            requirements=_requirements_for_node(events, node_id),
+            requirements=_requirements_for_node(projection, node_id, events),
             worktree_path=self._worktree_path,
             lease_id=str(payload["lease_id"]),
             lease_generation=_payload_int(payload, "generation"),
@@ -927,6 +948,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             cache_authority_hash=binding.hash,
             graph_projection=projection,
             graph_events=list(events),
+            graph_position=graph_position,
         )
 
     def _execution_context(
@@ -1944,50 +1966,62 @@ def build_graph_runtime(
 def _node_payload(
     events: list[EventEnvelope], node_id: str, *, projection: GraphProjection | None = None
 ) -> dict[str, Any]:
+    payload = node_payload_view(projection, node_id) if projection is not None else None
+    result = payload if payload is not None else {"node_id": node_id}
     for event in events:
         if event.event_type != "node_created":
             continue
         if event.payload.get("node_id") == node_id:
-            return dict(event.payload)
-    if projection is not None:
-        payload = node_payload_view(projection, node_id)
-        if payload is not None:
-            return payload
-    return {"node_id": node_id}
+            for key, value in event.payload.items():
+                result.setdefault(key, value)
+            break
+    return result
 
 
-def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[str]:
-    projection = rebuild_projection(events)
+def _requirements_for_node(
+    projection: GraphProjection | list[EventEnvelope],
+    node_id: str,
+    events: list[EventEnvelope] | None = None,
+) -> list[str]:
+    if isinstance(projection, list):
+        events = projection
+        projection = rebuild_projection(events)
     _guard_no_pending_compromised_file_state_bindings(projection, node_id)
-    bound_record_ids: set[str] = set()
-    for port, binding in input_bindings_view(projection).get(node_id, {}).items():
-        if not port.startswith("requirement_"):
-            continue
-        bound_record_ids.update(binding.record_ids)
-
-    requirements: list[str] = []
-    for event in events:
-        if event.event_type != "node_created":
-            continue
-        requirement_node_id = event.payload.get("node_id")
-        if not isinstance(requirement_node_id, str) or requirement_node_id not in bound_record_ids:
-            continue
-        requirement_record = event.payload.get("requirement_record")
-        if isinstance(requirement_record, dict):
-            try:
-                record = RequirementRecord.model_validate(requirement_record)
-            except ValueError:
-                continue
-            requirements.append(f"{record.value.id}: {record.value.text}")
-            continue
-        requirement = event.payload.get("requirement")
-        if isinstance(requirement, dict):
-            req = cast(dict[str, Any], requirement)
-            requirements.append(f"{req.get('id', requirement_node_id)}: {req.get('desc', '')}")
+    requirements = requirements_for_node_view(projection, node_id)
     if requirements:
         return requirements
 
-    dynamic_feature = _dynamic_feature_from_events(events)
+    if events:
+        bound_record_ids = {
+            record_id
+            for port, binding in input_bindings_view(projection).get(node_id, {}).items()
+            if port.startswith("requirement_")
+            for record_id in binding.record_ids
+        }
+        for event in events:
+            if event.event_type != "node_created":
+                continue
+            requirement_node_id = event.payload.get("node_id")
+            if requirement_node_id not in bound_record_ids:
+                continue
+            requirement_record = event.payload.get("requirement_record")
+            if isinstance(requirement_record, dict):
+                try:
+                    record = RequirementRecord.model_validate(requirement_record)
+                except ValueError:
+                    continue
+                requirements.append(f"{record.value.id}: {record.value.text}")
+                continue
+            requirement = event.payload.get("requirement")
+            if isinstance(requirement, dict):
+                req = cast(dict[str, Any], requirement)
+                requirements.append(f"{req.get('id', requirement_node_id)}: {req.get('desc', '')}")
+        if requirements:
+            return requirements
+
+    dynamic_feature = routine_snapshot_dynamic_feature_view(projection)
+    if dynamic_feature is None and events:
+        dynamic_feature = _dynamic_feature_from_events(events)
     if dynamic_feature is not None:
         requirement = _dynamic_feature_acceptance_requirement(dynamic_feature)
         if requirement is not None:
@@ -2397,7 +2431,7 @@ def _check_result_from_bound_verification_if_redundant(
         return None
     citations = _evaluated_record_citations(context)
     verification_record = _latest_passed_verification_citation(
-        context.graph_events,
+        context.graph_projection,
         citations.get("verification_report_record_ids", []),
     )
     if verification_record is None:
@@ -2464,16 +2498,16 @@ async def _externalize_check_output(
 
 
 def _latest_passed_verification_citation(
-    events: list[EventEnvelope],
+    projection: GraphProjection,
     record_ids: list[str],
+    events: list[EventEnvelope] | None = None,
 ) -> dict[str, Any] | None:
     wanted = set(record_ids)
     latest: dict[str, Any] | None = None
-    for event in events:
-        if event.event_type != "output_record_accepted":
-            continue
-        payload = event.payload
-        if payload.get("record_id") not in wanted:
+    payloads = record_payloads_view(projection)
+    for record_id in record_ids:
+        payload = payloads.get(record_id)
+        if payload is None:
             continue
         if payload.get("record_type") != "verification_report":
             continue
@@ -2484,6 +2518,23 @@ def _latest_passed_verification_citation(
         if outcome != "passed":
             continue
         latest = dict(payload)
+    if latest is not None or not events:
+        return latest
+    for event in events:
+        if (
+            event.event_type != "output_record_accepted"
+            or event.payload.get("record_id") not in wanted
+        ):
+            continue
+        payload = event.payload
+        if payload.get("record_type") != "verification_report":
+            continue
+        outcome = payload.get("outcome")
+        value = payload.get("value")
+        if outcome is None and isinstance(value, dict):
+            outcome = cast(dict[str, Any], value).get("outcome")
+        if outcome == "passed":
+            latest = dict(payload)
     return latest
 
 
@@ -2692,16 +2743,13 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
     file_state_record_ids = citations.get("file_state_record_ids", [])
     if not file_state_record_ids:
         return None
-    wanted = set(file_state_record_ids)
-    for event in context.graph_events:
-        if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
+    records = file_state_records_view(context.graph_projection)
+    for record_id in file_state_record_ids:
+        record = records.get(record_id)
+        if record is None:
             continue
-        record_id = event.payload.get("record_id")
-        if not isinstance(record_id, str) or record_id not in wanted:
-            continue
-        snapshot_id = event.payload.get("snapshot_id")
-        git = event.payload.get("git")
-        snapshot_ref = cast(dict[str, Any], git).get("ref") if isinstance(git, dict) else None
+        snapshot_id = record.snapshot_id
+        snapshot_ref = record.git.ref if record.git is not None else None
         if isinstance(snapshot_id, str) and isinstance(snapshot_ref, str):
             return snapshot_id, snapshot_ref
     return None

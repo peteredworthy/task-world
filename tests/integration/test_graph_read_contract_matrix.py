@@ -15,6 +15,7 @@ from orchestrator.db import (
     EventV2Model,
     GraphEventSummaryModel,
     GraphNodeDetailSummaryModel,
+    GraphProjectionCheckpointModel,
     GraphProjectionSnapshotModel,
     create_engine,
     create_session_factory,
@@ -265,10 +266,19 @@ async def test_projection_snapshot_packs_the_entire_owner_row_deterministically(
         assert len(checkpoint_bytes) > store.GRAPH_RESPONSE_BYTES
         snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
         assert snapshot is not None
+        runtime_checkpoint = await session.get(GraphProjectionCheckpointModel, run_id)
+        assert runtime_checkpoint is not None
         live = (await _compact_bytes(session, run_id))["graph"][0]
         metadata = snapshot.decisions["_graph_read_contract"]
 
         assert len(live) <= store.GRAPH_RESPONSE_BYTES
+        assert len(_json_bytes(runtime_checkpoint.envelope)) == len(checkpoint_bytes)
+        assert len(_json_bytes(runtime_checkpoint.envelope)) > store.GRAPH_RESPONSE_BYTES
+        assert runtime_checkpoint.envelope == projection_to_checkpoint(
+            build_projection(stored_events),
+            position=max(event.position for event in stored_events),
+        )
+        assert not any(key.startswith("_projection_") for key in snapshot.decisions)
         assert list(snapshot.node_states) == [f"node-{index:03d}" for index in range(100)]
         assert metadata["collections"]["node_states"] == {
             "revision": 1,
@@ -283,11 +293,7 @@ async def test_projection_snapshot_packs_the_entire_owner_row_deterministically(
                 _json_bytes({f"node-{index:03d}": "planned" for index in range(101)})
             ).hexdigest(),
         }
-        assert metadata["checkpoint"] == {
-            "truncated": True,
-            "original_bytes": len(checkpoint_bytes),
-            "sha256": sha256(checkpoint_bytes).hexdigest(),
-        }
+        assert "checkpoint" not in metadata
         retained_lease_ids = list(snapshot.leases)
         assert retained_lease_ids
         assert retained_lease_ids == [
@@ -607,9 +613,9 @@ async def test_runtime_checkpoint_and_event_window_have_distinct_over_cap_behavi
     """Runtime state can use a current checkpoint; history-dependent work cannot.
 
     This is the execution boundary used by bootstrap, resume, dispatch, and
-    recovery.  A caller that still requests event facts, or whose durable
-    checkpoint cannot represent the oversized graph, receives a truthful
-    unavailable read model instead of an authority-history replay.
+    recovery.  A caller that still requests event facts receives a truthful
+    unavailable read model, while the complete dedicated checkpoint continues
+    to support checkpoint-plus-tail execution without an authority replay.
     """
     run_id = "graph-runtime-window-over-cap"
     cap = store.GRAPH_READ_CONTRACTS["runtime"].budget.decode_cap
@@ -629,8 +635,28 @@ async def test_runtime_checkpoint_and_event_window_have_distinct_over_cap_behavi
         with pytest.raises(GraphReadModelUnavailable, match="recovery_tail_exceeds_bounded_cap"):
             await graph_store.read_bounded_runtime_events(run_id)
 
-        # Lifecycle bootstrap/resume use the same bounded checkpoint contract.
-        # A too-large graph is paused for a durable-model repair; it never
-        # falls back to a full event log just to inspect run state.
+        projection, tail, position = await graph_store.load_projection_with_tail(run_id)
+        checkpoint = await graph_store.read_projection_checkpoint(run_id)
+
+        assert checkpoint is not None
+        assert checkpoint.position == cap + 1
+        assert projection == checkpoint.projection
+        assert tail == []
+        assert position == cap + 1
+
+        owner = await session.get(GraphProjectionCheckpointModel, run_id)
+        assert owner is not None
+        await session.delete(owner)
+        await session.flush()
         with pytest.raises(GraphReadModelUnavailable, match="recovery_tail_exceeds_bounded_cap"):
             await graph_store.load_projection_with_tail(run_id)
+
+        await graph_store.ensure_runtime_projection_checkpoint(run_id)
+        (
+            rebuilt_projection,
+            rebuilt_tail,
+            rebuilt_position,
+        ) = await graph_store.load_projection_with_tail(run_id)
+        assert rebuilt_projection == projection
+        assert rebuilt_tail == []
+        assert rebuilt_position == cap + 1

@@ -4,6 +4,8 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -8032,6 +8034,52 @@ def test_agent_died_check_missing_command_fails_without_retry() -> None:
     }
     assert leases_view(projection)["lease-1"].state == "revoked"
     assert node_state(projection, "check-1") == "failed"
+
+
+@pytest.mark.parametrize("metric", ["entries", "bytes"])
+def test_agent_died_cache_scan_budget_failure_is_terminal(metric: str) -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "planner-1", "kind": "planner", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "planner-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+    reason = (
+        f"cache scan {metric} budget exceeded at "
+        "'/repo/ui/node_modules/pkg': limit=10000, observed=10001"
+    )
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": reason,
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "output_record_accepted",
+        "node_state_changed",
+    ]
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in output)
+    assert output[2].payload["value"]["error_class"] == "runtime_configuration_error"
+    assert output[2].payload["value"]["retryable"] is False
+    assert output[3].payload["new_state"] == "failed"
+    assert output[3].payload["trigger"] == "non_retryable_runtime_error"
+    assert node_state(projection, "planner-1") == "failed"
 
 
 def test_agent_died_retry_backoff_blocks_until_not_before() -> None:

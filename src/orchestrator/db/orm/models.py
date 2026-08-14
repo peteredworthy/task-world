@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -393,6 +394,25 @@ class GraphProjectionSnapshotModel(Base):
     scheduler: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     lease_view: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     decisions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class GraphProjectionCheckpointModel(Base):
+    """Disposable complete runtime projection checkpoint derived from events_v2.
+
+    This owner is intentionally separate from the bounded public projection
+    snapshot and from the generic projector registry checkpoint.  The complete
+    codec envelope is never response-packed; duplicated metadata lets readers
+    reject stale or internally inconsistent cache rows before using them.
+    """
+
+    __tablename__ = "graph_projection_checkpoints"
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    projection_schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    terminal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False)
+    envelope: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 
 
 class GraphArchivalViewCheckpointModel(Base):

@@ -347,7 +347,9 @@ async def test_secret_suspects_are_not_sent_to_gatekeeper(
     assert fake.calls == []
     events = await _read_events(session_factory, run_id)
     rejection = next(event for event in events if event.event_type == "file_state_rejected")
-    rejected_paths = {entry["path"] for entry in rejection.payload["rejected_paths"]}
+    rejected_paths = {
+        entry["path"] for entry in rejection.payload["paths"] if entry.get("rejected") is True
+    }
     assert rejected_paths == {"fake_key.pem"}
 
 

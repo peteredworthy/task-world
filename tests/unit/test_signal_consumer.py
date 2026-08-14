@@ -13,7 +13,11 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from orchestrator.db import Base
-from orchestrator.db import EventV2Model, GraphProjectionSnapshotModel
+from orchestrator.db import (
+    EventV2Model,
+    GraphProjectionCheckpointModel,
+    GraphProjectionSnapshotModel,
+)
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphEventStore
@@ -582,6 +586,11 @@ async def test_cancel_graph_run_drains_signal_when_projection_checkpoint_is_unav
                 GraphProjectionSnapshotModel.run_id == run_id
             )
         )
+        await session.execute(
+            delete(GraphProjectionCheckpointModel).where(
+                GraphProjectionCheckpointModel.run_id == run_id
+            )
+        )
         await session.commit()
     pos = await _insert_signal_event(
         session_factory,
@@ -598,6 +607,90 @@ async def test_cancel_graph_run_drains_signal_when_projection_checkpoint_is_unav
     async with session_factory() as session:
         graph_events = await GraphEventStore(session).read_run(run_id)
     assert graph_events[-1].event_type == "node_created"
+
+
+@pytest.mark.parametrize("checkpoint_state", ["missing", "stale"])
+@pytest.mark.asyncio
+async def test_resume_graph_run_rebuilds_runtime_checkpoint_independently_of_public_snapshot(
+    session_factory,
+    checkpoint_state: str,
+) -> None:
+    run_id = "graph-resume-missing-runtime-checkpoint"
+    service = RecordingWorkflowService()
+    service.run.execution_mode = "graph"
+    service.run.status = "paused"
+    consumer = _consumer(session_factory, service)
+    events = [
+        _graph_event(
+            run_id,
+            "run_lifecycle_changed",
+            {
+                "command_type": "start",
+                "from_state": "queued",
+                "to_state": "active",
+                "trigger": "start_command_accepted",
+            },
+            position=0,
+        )
+    ]
+    events.extend(
+        _graph_event(
+            run_id,
+            "node_created",
+            {
+                "node_id": f"completed-artifact-{index}",
+                "kind": "artifact",
+                "role": "evidence",
+                "state": "completed",
+            },
+            position=index,
+        )
+        for index in range(1, 130)
+    )
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        public_snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
+        assert public_snapshot is not None
+        public_position = public_snapshot.position
+        runtime_checkpoint = await session.get(GraphProjectionCheckpointModel, run_id)
+        assert runtime_checkpoint is not None
+        if checkpoint_state == "missing":
+            await session.execute(
+                delete(GraphProjectionCheckpointModel).where(
+                    GraphProjectionCheckpointModel.run_id == run_id
+                )
+            )
+        else:
+            runtime_checkpoint.position -= 1
+        await session.commit()
+
+    pos = await _insert_signal_event(
+        session_factory,
+        run_id,
+        WorkflowSignal.RESUME,
+        {"resume_strategy": "continue"},
+    )
+
+    await consumer._process_run(run_id)
+
+    assert _calls(service, "apply_resume_run") == [
+        (
+            (run_id,),
+            {
+                "agent_runner_type": None,
+                "agent_runner_config": None,
+                "resume_strategy": "continue",
+            },
+        )
+    ]
+    assert pos in await _get_processed_positions(session_factory, run_id)
+    async with session_factory() as session:
+        runtime_checkpoint = await session.get(GraphProjectionCheckpointModel, run_id)
+        public_snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
+    assert runtime_checkpoint is not None
+    assert runtime_checkpoint.position == len(events)
+    assert public_snapshot is not None
+    assert public_snapshot.position == public_position
 
 
 @pytest.mark.asyncio

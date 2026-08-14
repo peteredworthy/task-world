@@ -43,6 +43,9 @@ from orchestrator.graph.projection_models import ExecutionAttemptValue
 from orchestrator.graph.projection_models import (
     GraphRecordSummaryProjection,
     ProjectedFanOutInputsRecord,
+    ProjectedGraphPatchProposalRecord,
+    ProjectedRequirementRecord,
+    ProjectedRoutineSnapshotRecord,
     ProjectionModel,
 )
 from orchestrator.graph.projections import (
@@ -51,8 +54,8 @@ from orchestrator.graph.projections import (
     GraphRecordSummary,
     LatestRoutineSnapshotRecord,
     RecoveryNodeIndexEntry,
+    requirement_freshness_facts_from_projection,
 )
-from orchestrator.graph.projection_models import ProjectedRoutineSnapshotRecord
 
 
 def non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str) -> bool:
@@ -76,6 +79,37 @@ def output_record_payloads_view(
         for record_id, record in projection.records.by_id.items()
         if record.record_type != "file_state"
     }
+
+
+def record_payloads_view(projection: GraphProjection) -> dict[str, dict[str, Any]]:
+    """Return independent canonical payloads for all accepted graph records."""
+    payloads: dict[str, dict[str, Any]] = {}
+    for record_id in projection.records.by_id:
+        record = _accepted_output_record(projection, record_id)
+        payload = record.model_dump(
+            mode="json", by_alias=True, exclude_defaults=True, exclude_none=True
+        )
+        # Literal envelope fields remain part of a canonical record even when
+        # their value equals the concrete model's default.  Prompt hydration
+        # and citations use these fields to describe a projected record without
+        # reaching back into the event history.
+        payload.update(
+            record.model_dump(
+                mode="json",
+                by_alias=True,
+                include={
+                    "record_id",
+                    "record_type",
+                    "record_kind",
+                    "producer_node_id",
+                    "port",
+                    "schema_",
+                },
+                exclude_none=True,
+            )
+        )
+        payloads[record_id] = payload
+    return payloads
 
 
 def accepted_no_successor_patches_by_node_view(
@@ -255,13 +289,156 @@ def node_payload_view(projection: GraphProjection, node_id: str) -> dict[str, An
     node = projection.nodes.get(node_id)
     if node is None:
         return None
-    payload = node.spec.model_dump(mode="json", exclude_none=True)
+    payload = thaw_json(node.spec.dispatch_payload)
+    if not isinstance(payload, dict):
+        payload = {}
+    stable = node.spec.model_dump(mode="json", exclude_none=True)
+    stable.pop("dispatch_payload", None)
+    stable.pop("creation_position", None)
+    payload.update(stable)
     runtime = node.runtime.model_dump(mode="json", exclude_none=True)
     payload.update(runtime)
     command_definition = payload.get("command_definition")
     if isinstance(command_definition, dict) and "value" in command_definition:
         payload["command_definition"] = command_definition["value"]
     return payload
+
+
+def requirements_for_node_view(projection: GraphProjection, node_id: str) -> list[str]:
+    """Return current bound requirement text without replaying creation events."""
+    record_ids: list[str] = []
+    bindings = projection.topology.input_bindings.get(node_id, FrozenMap())
+    for port in projection.topology.input_binding_port_order.get(node_id, ()):
+        if not port.startswith("requirement_"):
+            continue
+        binding = bindings.get(port)
+        if binding is not None:
+            record_ids.extend(binding.record_ids)
+    requirements: list[str] = []
+    for record_id in record_ids:
+        record = projection.records.by_id.get(record_id)
+        if not isinstance(record, ProjectedRequirementRecord):
+            continue
+        requirements.append(f"{record.value.id}: {record.value.text}")
+    return requirements
+
+
+def routine_snapshot_dynamic_feature_view(
+    projection: GraphProjection,
+) -> dict[str, Any] | None:
+    """Return a thawed copy of the latest routine's dynamic feature inputs."""
+    latest = projection.planning.latest_routine_snapshot
+    record = projection.records.by_id.get(latest.record_id) if latest is not None else None
+    if not isinstance(record, ProjectedRoutineSnapshotRecord):
+        return None
+    dynamic_feature = record.value.dynamic_feature
+    if dynamic_feature is None:
+        return None
+    thawed = thaw_json(dynamic_feature)
+    return cast(dict[str, Any], thawed) if isinstance(thawed, dict) else None
+
+
+def planner_freshness_packet_view(projection: GraphProjection) -> dict[str, Any]:
+    """Return planner requirement freshness directly from the runtime projection."""
+    facts = requirement_freshness_facts_from_projection(projection)
+    return {
+        "requirement_freshness": facts,
+        "unsupported_requirement_ids": [
+            fact["requirement_id"] for fact in facts if fact["unsupported"]
+        ],
+        "stale_support_ids": [
+            support_id for fact in facts for support_id in fact["stale_support_ids"]
+        ],
+        "authority_required_requirement_ids": [
+            fact["requirement_id"] for fact in facts if fact["requires_authority"]
+        ],
+    }
+
+
+def planner_patch_facts_view(
+    projection: GraphProjection, node_id: str
+) -> dict[str, list[dict[str, Any]]]:
+    """Return open proposals and durable patch decisions for one planner."""
+    accepted: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for decision in projection.planning.patch_decisions_by_id.values():
+        if decision.proposed_by_node_id != node_id:
+            continue
+        entry = {
+            "patch_id": decision.patch_id,
+            "base_graph_position": decision.base_graph_position,
+            "position": decision.position,
+        }
+        if decision.status == "accepted":
+            accepted.append(entry)
+        else:
+            if decision.reason is not None:
+                entry["reason"] = decision.reason
+            if decision.base_graph_position is None:
+                entry.pop("base_graph_position")
+            rejected.append(entry)
+
+    open_proposals: list[dict[str, Any]] = []
+    for record in projection.records.by_id.values():
+        if not isinstance(record, ProjectedGraphPatchProposalRecord):
+            continue
+        proposal = record.value
+        if proposal.proposed_by_node_id != node_id:
+            continue
+        if proposal.patch_id in projection.governance.resolved_patch_ids:
+            continue
+        open_proposals.append(
+            {
+                "patch_id": proposal.patch_id,
+                "base_graph_position": proposal.base_graph_position,
+                "rationale": proposal.rationale,
+            }
+        )
+
+    def patch_key(item: dict[str, Any]) -> str:
+        return str(item.get("patch_id", ""))
+
+    return {
+        "open_proposals": sorted(open_proposals, key=patch_key),
+        "accepted_patches": sorted(accepted, key=patch_key),
+        "patch_rejections": sorted(rejected, key=patch_key),
+    }
+
+
+def pattern_library_view(projection: GraphProjection) -> dict[str, dict[str, dict[str, Any]]]:
+    """Derive learned path classifications from projected file-state records."""
+    paths: dict[str, dict[str, Any]] = {}
+    patterns: dict[str, dict[str, Any]] = {}
+    for record_id, record in file_state_records_view(projection).items():
+        for entry in record.paths:
+            if (
+                entry.source not in {"untracked", "ignored"}
+                or entry.classification in {None, "secret"}
+                or not (entry.matched_rule or "").startswith("gatekeeper:")
+            ):
+                continue
+            path = entry.path
+            pattern = _derived_gatekeeper_pattern(path)
+            value = {
+                "classification": entry.classification,
+                "source_record_ids": [record_id],
+                "source_kinds": ["untracked", "ignored"],
+            }
+            paths[path] = {"path": path, **value}
+            patterns[pattern] = {"pattern": pattern, **value}
+    return {
+        "patterns": {key: patterns[key] for key in sorted(patterns)},
+        "paths": {key: paths[key] for key in sorted(paths)},
+    }
+
+
+def _derived_gatekeeper_pattern(path: str) -> str:
+    name = path.rsplit("/", 1)[-1]
+    if "/" not in path or "." not in name or name.startswith("."):
+        return path
+    directory = path.rsplit("/", 1)[0]
+    extension = name.rsplit(".", 1)[-1]
+    return f"{directory}/*.{extension}"
 
 
 def node_creation_positions_view(projection: GraphProjection) -> dict[str, int]:

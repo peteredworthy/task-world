@@ -12,7 +12,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from orchestrator.db import Base, create_engine, create_session_factory, init_db
-from orchestrator.db import AttemptModel, EventV2Model, RunModel, StepModel, TaskModel
+from orchestrator.db import (
+    AttemptModel,
+    EventV2Model,
+    GraphProjectionCheckpointModel,
+    RunModel,
+    StepModel,
+    TaskModel,
+)
+from orchestrator.db.models import (
+    GraphProjectionCheckpointModel as CompatibilityGraphProjectionCheckpointModel,
+)
 
 
 @pytest.fixture
@@ -295,6 +305,10 @@ async def test_file_database_is_created_directly_from_current_metadata(tmp_path:
                         "graph_node_detail_collection_facts"
                     )
                 },
+                "graph_checkpoint_columns": {
+                    column["name"]
+                    for column in inspect(sync_conn).get_columns("graph_projection_checkpoints")
+                },
                 "blocker_indexes": {
                     index["name"]
                     for index in inspect(sync_conn).get_indexes("graph_final_blocker_view_entries")
@@ -314,6 +328,16 @@ async def test_file_database_is_created_directly_from_current_metadata(tmp_path:
         "payload_json",
         "payload_bytes",
     }
+    assert schema["graph_checkpoint_columns"] == {
+        "run_id",
+        "position",
+        "projection_schema_version",
+        "terminal",
+        "checksum",
+        "envelope",
+    }
+    assert GraphProjectionCheckpointModel.__tablename__ == "graph_projection_checkpoints"
+    assert CompatibilityGraphProjectionCheckpointModel is GraphProjectionCheckpointModel
     assert "idx_graph_final_blocker_view_entries_run_region_sequence" in schema["blocker_indexes"]
 
     factory = create_session_factory(engine)

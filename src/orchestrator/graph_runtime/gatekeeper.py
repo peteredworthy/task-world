@@ -16,7 +16,9 @@ from orchestrator.graph import (
     FileStateDeclaration,
     FileStatePolicy,
     FileStateTaxonomy,
+    GraphProjection,
     GatekeeperTaxonomy,
+    pattern_library_view,
     project_pattern_library,
 )
 
@@ -86,10 +88,16 @@ class ClaudeGatekeeperClassifier:
 def classification_policy_with_pattern_library(
     events: list[EventEnvelope],
     base_policy: FileStatePolicy | None = None,
+    *,
+    projection: GraphProjection | None = None,
 ) -> FileStatePolicy:
     """Return classification hints; this never changes compiled cache authority."""
     active = base_policy or FileStatePolicy()
-    library = project_pattern_library(events)
+    library = (
+        pattern_library_view(projection)
+        if projection is not None
+        else project_pattern_library(events)
+    )
     declarations: list[FileStateDeclaration] = []
     for path, entry in library["paths"].items():
         declarations.append(

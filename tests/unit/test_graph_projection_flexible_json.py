@@ -40,6 +40,7 @@ EXPECTED_FLEXIBLE_JSON_FIELDS = frozenset(
         ("EdgeValue", "purpose"),
         ("EdgeValue", "selection"),
         ("ExecutionAttemptValue", "payload"),
+        ("NodeSpecProjection", "dispatch_payload"),
         ("OversightDecisionValue", "decider"),
         ("OversightDecisionValue", "scope"),
         ("ProjectedAuthorityDecisionRecordValue", "scope"),
@@ -361,6 +362,14 @@ def _direct_case(
 
 def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
     cases: dict[tuple[str, str], FlexibleJsonCase] = {}
+    cases[("NodeSpecProjection", "dispatch_payload")] = FlexibleJsonCase(
+        "NodeSpecProjection",
+        "dispatch_payload",
+        lambda probe: (_node("dispatch-node", membership=_adapt(probe, "map-value")),),
+        lambda p: p.nodes["dispatch-node"].spec.dispatch_payload["membership"],
+        lambda c: c["state"]["nodes"]["dispatch-node"]["spec"]["dispatch_payload"]["membership"],
+        "map-value",
+    )
     cases[("CommandDefinitionValue", "value")] = FlexibleJsonCase(
         "CommandDefinitionValue",
         "value",

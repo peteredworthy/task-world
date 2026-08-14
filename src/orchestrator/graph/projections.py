@@ -102,6 +102,7 @@ from orchestrator.graph.projection_models import (
     NodeSpecProjection,
     OversightDecisionValue,
     PlannerSessionProjection,
+    PlannerPatchDecisionValue,
     ProjectedAuthorityRequestRecord,
     ProjectedCandidateRecord,
     ProjectedCheckResultRecord,
@@ -793,7 +794,21 @@ def _node_spec_from_created(payload: NodeCreatedPayload, position: int) -> NodeS
         "cache_authority_hash",
     )
     data = payload.model_dump(mode="json", include=fields.intersection(spec_fields))
-    spec: dict[str, object] = {"node_id": payload.node_id, "creation_position": position}
+    dispatch_payload = payload.model_dump(mode="json", exclude_none=True)
+    for embedded_record_field in (
+        "artifact_reference_record",
+        "authority_request_record",
+        "candidate_record",
+        "requirement_record",
+        "routine_snapshot_record",
+        "run_context_record",
+    ):
+        dispatch_payload.pop(embedded_record_field, None)
+    spec: dict[str, object] = {
+        "node_id": payload.node_id,
+        "creation_position": position,
+        "dispatch_payload": dispatch_payload,
+    }
     for name in spec_fields:
         if name in fields:
             spec[name] = data[name]
@@ -1514,6 +1529,8 @@ def _reduce_slice_b2(state: GraphProjection, event: EventEnvelope) -> GraphProje
         return _reduce_planner_session_state(state, event)
     if event.event_type == "graph_patch_accepted":
         return _reduce_accepted_graph_patch(state, event)
+    if event.event_type == "graph_patch_rejected":
+        return _reduce_rejected_graph_patch(state, event)
     if event.event_type in {"verification_passed", "verification_failed"}:
         return _reduce_verification_outcome(state, event)
     if event.event_type == "appeal_opened":
@@ -1579,6 +1596,17 @@ def _reduce_accepted_graph_patch(state: GraphProjection, event: EventEnvelope) -
         "accepted_patch_ids_by_node": map_set(
             planning.accepted_patch_ids_by_node, node_id, accepted
         ),
+        "patch_decisions_by_id": map_set(
+            planning.patch_decisions_by_id,
+            payload.patch_id,
+            PlannerPatchDecisionValue(
+                patch_id=payload.patch_id,
+                status="accepted",
+                position=event.position,
+                proposed_by_node_id=payload.proposed_by_node_id,
+                base_graph_position=payload.base_graph_position,
+            ),
+        ),
     }
     if successors:
         updates["successor_by_node"] = map_set(planning.successor_by_node, node_id, successors[0])
@@ -1608,6 +1636,33 @@ def _reduce_accepted_graph_patch(state: GraphProjection, event: EventEnvelope) -
     return _replace_projection_groups(
         state, planning=planning.model_copy(update=updates), governance=governance
     )
+
+
+def _reduce_rejected_graph_patch(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+    payload = GraphPatchRejectedPayload.model_validate(event.payload)
+    decision = PlannerPatchDecisionValue(
+        patch_id=payload.patch_id,
+        status="rejected",
+        position=event.position,
+        proposed_by_node_id=payload.proposed_by_node_id,
+        base_graph_position=payload.base_graph_position,
+        reason=payload.reason or payload.rejection_reason,
+    )
+    planning = state.planning.model_copy(
+        update={
+            "patch_decisions_by_id": map_set(
+                state.planning.patch_decisions_by_id, payload.patch_id, decision
+            )
+        }
+    )
+    governance = state.governance.model_copy(
+        update={
+            "resolved_patch_ids": map_set(
+                state.governance.resolved_patch_ids, payload.patch_id, True
+            )
+        }
+    )
+    return _replace_projection_groups(state, planning=planning, governance=governance)
 
 
 def _reduce_verification_outcome(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
@@ -4654,7 +4709,9 @@ def project_gatekeeper_report(events: list[EventEnvelope]) -> dict[str, dict[str
         run = reports.setdefault(event.run_id, _empty_gatekeeper_report(event.run_id))
         prefixes.setdefault(event.run_id, []).append(event)
         if event.event_type == "file_state_accepted":
-            classifications = _payload_entries(event.payload, "classifications")
+            classifications = _payload_entries(
+                event.payload, "classifications"
+            ) or _payload_entries(event.payload, "paths")
             deterministic = sum(
                 1 for entry in classifications if entry.get("needs_gatekeeper") is not True
             )

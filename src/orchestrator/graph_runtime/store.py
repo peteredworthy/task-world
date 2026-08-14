@@ -34,6 +34,7 @@ from orchestrator.db import (
     GraphNodeDetailCollectionFactModel,
     GraphNodeDetailSummaryCheckpointModel,
     GraphNodeDetailSummaryModel,
+    GraphProjectionCheckpointModel,
     GraphProjectionSnapshotModel,
     GraphRegionViewEntryModel,
     GraphTopologyViewEntryModel,
@@ -106,9 +107,6 @@ GRAPH_EVENT_PAYLOAD_BYTES = 16_384
 GRAPH_RUNTIME_TAIL_EVENTS = 128
 GRAPH_READ_MODEL_REBUILD_BATCH_EVENTS = 100
 _READ_CONTRACT_KEY = "_graph_read_contract"
-_CHECKPOINT_PROJECTION_KEY = "_projection_checkpoint"
-_CHECKPOINT_SCHEMA_VERSION_KEY = "_projection_schema_version"
-_CHECKPOINT_TERMINAL_KEY = "_projection_terminal"
 # Compatibility-only location used by snapshots written before the dedicated
 # archival view tables.  No public route reads this adjunct.
 _MATERIALIZED_VIEWS_KEY = "_materialized_views"
@@ -1533,14 +1531,6 @@ def _owner_collection_value(payload: dict[str, Any], owner: str) -> Any:
     if not isinstance(value, dict):
         return value
     reserved_keys = {_READ_CONTRACT_KEY}
-    if owner == "decisions":
-        reserved_keys.update(
-            {
-                _CHECKPOINT_PROJECTION_KEY,
-                _CHECKPOINT_SCHEMA_VERSION_KEY,
-                _CHECKPOINT_TERMINAL_KEY,
-            }
-        )
     return {
         key: item
         for key, item in sorted(cast(dict[str, Any], value).items())
@@ -2266,6 +2256,7 @@ class GraphEventStore:
             run_id,
             [_projection_event(event) for event in stored_events],
             expected_position=expected_position,
+            projection=projection,
         )
         usage_events = [
             event for event in stored_events if event.event_type == "node_usage_recorded"
@@ -4337,19 +4328,13 @@ class GraphEventStore:
                 "missing_or_stale",
                 current_position=current,
             )
-        if not checkpoint_schema_is_current(_projection_schema_version_from_snapshot_row(snapshot)):
+        if not _projection_snapshot_revision_is_current(snapshot):
             raise GraphReadModelUnavailable(
                 run_id,
                 GRAPH_READ_CONTRACTS["graph"].owner_read_model_name,
                 "schema_mismatch",
                 current_position=current,
             )
-        # The API snapshot is intentionally whole-owner packed and therefore
-        # need not remain decodable as a *full* execution checkpoint once a
-        # collection has been capped.  Decoding it here would falsely classify
-        # a healthy bounded response as corrupt and, historically, trigger a
-        # request-time full replay.  Runtime checkpoint consumers retain their
-        # stricter integrity decoder in ``read_projection_checkpoint``.
         return snapshot
 
     async def read_node_detail_summary(
@@ -4384,27 +4369,35 @@ class GraphEventStore:
         run_id: str,
     ) -> GraphProjectionCheckpoint | None:
         """Read a valid full-projection checkpoint without forcing a rebuild."""
-        row = await self._session.get(GraphProjectionSnapshotModel, run_id)
-        schema_version = _projection_schema_version_from_snapshot_row(row)
-        if row is None or not checkpoint_schema_is_current(schema_version):
+        row = await self._session.get(GraphProjectionCheckpointModel, run_id)
+        schema_version = row.projection_schema_version if row is not None else None
+        if row is None:
+            return None
+        if not checkpoint_schema_is_current(schema_version):
+            await self._session.delete(row)
+            await self._session.flush()
             return None
         try:
-            projection = _projection_from_snapshot_row(row)
+            projection = _projection_from_checkpoint_row(row)
         except (
             ValidationError,
             ValueError,
             ProjectionCheckpointCodecError,
             ProjectionCheckpointIntegrityError,
         ):
-            return None
-        if projection is None:
+            await self._session.execute(
+                delete(GraphProjectionCheckpointModel).where(
+                    GraphProjectionCheckpointModel.run_id == run_id
+                )
+            )
+            await self._session.flush()
             return None
         return GraphProjectionCheckpoint(
             run_id=run_id,
             position=row.position,
             projection=projection,
             schema_version=schema_version,
-            terminal=_projection_terminal_from_snapshot_row(row),
+            terminal=row.terminal,
         )
 
     async def read_current_projection_view(self, run_id: str) -> GraphProjectionCheckpoint | None:
@@ -4736,6 +4729,30 @@ class GraphEventStore:
         await self.ensure_projection_snapshot(run_id)
         await self.ensure_node_detail_summaries(run_id)
 
+    async def ensure_runtime_projection_checkpoint(self, run_id: str) -> None:
+        """Ensure a current complete checkpoint through batched maintenance replay.
+
+        This is the upgrade/recovery path for databases created before runtime
+        checkpoints had a dedicated owner.  It is deliberately a maintenance
+        operation rather than a request-time fallback: command handling stays
+        bounded to checkpoint plus tail, while startup can rebuild any missing,
+        corrupt, or stale disposable owner in fixed event batches.
+        """
+        current = await self.current_position(run_id)
+        checkpoint = await self.read_projection_checkpoint(run_id)
+        if current == 0:
+            if checkpoint is not None:
+                await self._session.execute(
+                    delete(GraphProjectionCheckpointModel).where(
+                        GraphProjectionCheckpointModel.run_id == run_id
+                    )
+                )
+                await self._session.flush()
+            return
+        if checkpoint is not None and checkpoint.position == current:
+            return
+        await self.rebuild_read_models(run_id)
+
     async def ensure_event_summaries(self, run_id: str) -> None:
         """Rebuild compact event summaries if missing or behind events_v2."""
         current = await self.current_position(run_id)
@@ -4763,20 +4780,8 @@ class GraphEventStore:
         rebuild_required = (
             snapshot is None
             or snapshot.position != current
-            or not checkpoint_schema_is_current(
-                _projection_schema_version_from_snapshot_row(snapshot)
-            )
+            or not _projection_snapshot_revision_is_current(snapshot)
         )
-        if not rebuild_required:
-            try:
-                rebuild_required = _projection_from_snapshot_row(snapshot) is None
-            except (
-                ValidationError,
-                ValueError,
-                ProjectionCheckpointCodecError,
-                ProjectionCheckpointIntegrityError,
-            ):
-                rebuild_required = True
         if rebuild_required:
             await self.rebuild_read_models(run_id)
 
@@ -4907,25 +4912,30 @@ class GraphEventStore:
         events: list[EventEnvelope],
         *,
         expected_position: int,
+        projection: GraphProjection | None = None,
     ) -> None:
         """Incrementally maintain the full projection checkpoint for appends."""
         if not events:
             return
-        row = await self._session.get(GraphProjectionSnapshotModel, run_id)
-        projection: GraphProjection | None = (
-            initial_projection() if row is None and expected_position == 0 else None
-        )
+        row = await self._session.get(GraphProjectionCheckpointModel, run_id)
+        if projection is not None:
+            await self.persist_projection_snapshot(
+                run_id,
+                projection,
+                expected_position + len(events),
+            )
+            return
+        projection = initial_projection() if row is None and expected_position == 0 else None
         if projection is None:
             invalid_cache = (
                 row is None
                 or row.position != expected_position
-                or not checkpoint_schema_is_current(
-                    _projection_schema_version_from_snapshot_row(row)
-                )
+                or not checkpoint_schema_is_current(row.projection_schema_version)
             )
             if not invalid_cache:
+                assert row is not None
                 try:
-                    projection = _projection_from_snapshot_row(row)
+                    projection = _projection_from_checkpoint_row(row)
                 except (
                     ValidationError,
                     ValueError,
@@ -4934,13 +4944,11 @@ class GraphEventStore:
                 ):
                     invalid_cache = True
             if not invalid_cache:
-                invalid_cache = projection is None
-            if not invalid_cache:
                 assert projection is not None
             else:
                 await self._session.execute(
-                    delete(GraphProjectionSnapshotModel).where(
-                        GraphProjectionSnapshotModel.run_id == run_id
+                    delete(GraphProjectionCheckpointModel).where(
+                        GraphProjectionCheckpointModel.run_id == run_id
                     )
                 )
                 await self._session.flush()
@@ -4965,6 +4973,11 @@ class GraphEventStore:
             row = GraphProjectionSnapshotModel(run_id=run_id)
             self._session.add(row)
         _assign_projection_snapshot(row, run_id, projection, position)
+        checkpoint_row = await self._session.get(GraphProjectionCheckpointModel, run_id)
+        if checkpoint_row is None:
+            checkpoint_row = GraphProjectionCheckpointModel(run_id=run_id)
+            self._session.add(checkpoint_row)
+        _assign_projection_checkpoint(checkpoint_row, run_id, projection, position)
         await self._mark_archival_views_dirty(run_id, position)
         await self._session.flush()
         return row
@@ -5317,6 +5330,11 @@ class GraphEventStore:
         await self._session.execute(
             delete(GraphProjectionSnapshotModel).where(
                 GraphProjectionSnapshotModel.run_id == run_id
+            )
+        )
+        await self._session.execute(
+            delete(GraphProjectionCheckpointModel).where(
+                GraphProjectionCheckpointModel.run_id == run_id
             )
         )
         await self._session.execute(
@@ -6241,20 +6259,30 @@ def _assign_projection_snapshot(
     row.ready_nodes = cast(list[str], bounded["ready_nodes"])
     row.scheduler = cast(dict[str, Any], bounded["scheduler"])
     row.lease_view = cast(dict[str, Any], bounded["lease_view"])
-    row.decisions = _decisions_with_projection_checkpoint(
-        cast(dict[str, Any], bounded["decisions"]),
-        projection,
-        metadata,
-        position=position,
-    )
-    # Pack the public owner with the checkpoint present so oversized responses
-    # remain bounded, then restore the intact envelope when it fits.  The
-    # checkpoint is opaque cache state and must not be recursively reshaped by
-    # the read-model serializer.
-    checkpoint = row.decisions.get(_CHECKPOINT_PROJECTION_KEY)
+    row.decisions = {
+        **cast(dict[str, Any], bounded["decisions"]),
+        _READ_CONTRACT_KEY: {
+            "revision": GRAPH_READ_CONTRACT_REVISION,
+            "collections": metadata,
+        },
+    }
     _pack_projection_snapshot_row(row)
-    if isinstance(checkpoint, dict):
-        row.decisions[_CHECKPOINT_PROJECTION_KEY] = checkpoint
+
+
+def _assign_projection_checkpoint(
+    row: GraphProjectionCheckpointModel,
+    run_id: str,
+    projection: GraphProjection,
+    position: int,
+) -> None:
+    checkpoint = projection_to_checkpoint(projection, position=position)
+    envelope = ProjectionCheckpointEnvelope.model_validate(checkpoint)
+    row.run_id = run_id
+    row.position = position
+    row.projection_schema_version = PROJECTION_SCHEMA_VERSION
+    row.terminal = _is_terminal_run_state(query_run_state(projection))
+    row.checksum = envelope.checksum
+    row.envelope = checkpoint
 
 
 def _projection_from_events(events: list[EventEnvelope]) -> GraphProjection:
@@ -6274,78 +6302,29 @@ def _projection_from_events(events: list[EventEnvelope]) -> GraphProjection:
     return projection
 
 
-def _projection_from_snapshot_row(
-    row: GraphProjectionSnapshotModel | None,
-) -> GraphProjection | None:
-    if row is None:
-        return None
-    raw_projection = row.decisions.get(_CHECKPOINT_PROJECTION_KEY)
-    if not isinstance(raw_projection, dict):
-        return None
+def _projection_from_checkpoint_row(row: GraphProjectionCheckpointModel) -> GraphProjection:
+    raw_projection = row.envelope
     envelope = ProjectionCheckpointEnvelope.model_validate(raw_projection)
     if envelope.position != row.position:
-        raise ValueError("projection checkpoint position does not match its snapshot row position")
-    return projection_from_checkpoint(cast(dict[str, Any], raw_projection))
+        raise ValueError("projection checkpoint position does not match its owner row position")
+    if envelope.checksum != row.checksum:
+        raise ValueError("projection checkpoint checksum does not match its owner row checksum")
+    projection = projection_from_checkpoint(raw_projection)
+    if row.terminal != _is_terminal_run_state(query_run_state(projection)):
+        raise ValueError("projection checkpoint terminal metadata does not match its state")
+    return projection
 
 
-def _projection_schema_version_from_snapshot_row(
+def _projection_snapshot_revision_is_current(
     row: GraphProjectionSnapshotModel | None,
-) -> int | None:
-    if row is None:
-        return None
-    schema_version = row.decisions.get(_CHECKPOINT_SCHEMA_VERSION_KEY)
-    if isinstance(schema_version, int) and not isinstance(schema_version, bool):
-        return schema_version
-    return None
-
-
-def _projection_terminal_from_snapshot_row(row: GraphProjectionSnapshotModel | None) -> bool:
+) -> bool:
     if row is None:
         return False
-    terminal = row.decisions.get(_CHECKPOINT_TERMINAL_KEY)
-    return bool(terminal) if isinstance(terminal, bool) else False
-
-
-def _decisions_with_projection_checkpoint(
-    decisions: dict[str, Any],
-    projection: GraphProjection,
-    metadata: dict[str, Any],
-    *,
-    position: int,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {
-        **decisions,
-        _CHECKPOINT_SCHEMA_VERSION_KEY: PROJECTION_SCHEMA_VERSION,
-        _CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(query_run_state(projection)),
-        _READ_CONTRACT_KEY: {
-            "revision": GRAPH_READ_CONTRACT_REVISION,
-            "collections": metadata,
-        },
-    }
-    checkpoint = projection_to_checkpoint(projection, position=position)
-    checkpoint_budget = replace(
-        GRAPH_READ_CONTRACTS["runtime"].budget,
-        object_entry_cap=GRAPH_FIXED_VIEW_ITEMS,
-        array_item_cap=GRAPH_FIXED_VIEW_ITEMS,
-        depth_cap=64,
-    )
-    bounded_checkpoint = bound_graph_json(checkpoint, checkpoint_budget)
-    if not bounded_checkpoint["truncated"]:
-        result[_CHECKPOINT_PROJECTION_KEY] = bounded_checkpoint["value"]
-    else:
-        result[_READ_CONTRACT_KEY]["checkpoint"] = {
-            "truncated": True,
-            "original_bytes": bounded_checkpoint["original_bytes"],
-            "sha256": bounded_checkpoint["sha256"],
-        }
-    if len(_canonical_json_bytes(result)) > GRAPH_RESPONSE_BYTES:
-        result.pop(_CHECKPOINT_PROJECTION_KEY, None)
-        result[_READ_CONTRACT_KEY]["checkpoint"] = {
-            "truncated": True,
-            "original_bytes": len(_canonical_json_bytes(checkpoint)),
-            "sha256": sha256(_canonical_json_bytes(checkpoint)).hexdigest(),
-        }
-    return result
+    raw_contract = row.decisions.get(_READ_CONTRACT_KEY)
+    if not isinstance(raw_contract, dict):
+        return False
+    revision = cast(dict[str, Any], raw_contract).get("revision")
+    return type(revision) is int and revision == GRAPH_READ_CONTRACT_REVISION
 
 
 def _events_position(events: list[EventEnvelope]) -> int:

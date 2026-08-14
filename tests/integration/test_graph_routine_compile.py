@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 from orchestrator.config import RoutineConfig, load_routine_from_path
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    cache_authority_binding,
     input_bindings_view,
     node_attempts_view,
     node_kinds_view,
@@ -64,6 +65,9 @@ def test_dynamic_graph_feature_routine_loads_with_graph_head_config() -> None:
     assert routine.id == "dynamic-graph-feature"
     assert routine.execution_mode == "graph"
     assert routine.planner_generation_budget == 10
+    assert routine.file_state_policy is not None
+    assert routine.file_state_policy.scan_budget.max_entries == 50_000
+    assert routine.file_state_policy.scan_budget.max_bytes == 1_073_741_824
     assert routine.steps
     first_step = routine.steps[0]
     assert first_step.kind == "planner"
@@ -145,6 +149,10 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
     )
     projection = _project(events)
 
+    authority = cache_authority_binding(projection)
+    assert authority.policy.scan_budget.max_entries == 50_000
+    assert authority.policy.scan_budget.max_bytes == 1_073_741_824
+
     assert node_kinds_view(projection)["root"] == "root"
     assert node_kinds_view(projection)["routine-snapshot"] == "artifact"
     planner_ids = [
@@ -159,8 +167,9 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
 
     planner = _node_event(events, planner_ids[0])
     assert planner.payload["generation_index"] == 0
-    authority = planner.payload["authority"]
-    assert authority["resource_claims"] == [{"mode": "graph_write", "scope": "graph"}]
+    planner_authority = planner.payload["authority"]
+    assert planner_authority["resource_claims"] == [{"mode": "graph_write", "scope": "graph"}]
+    assert planner.payload["cache_authority_hash"] == authority.hash
     output_ports = {output["port"] for output in planner.payload["outputs"]}
     assert output_ports == {"graph_patch", "completion"}
     assert planner.payload["state"] == "planned"
@@ -170,6 +179,8 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
     snapshot_record = _accepted_record(events, "routine-snapshot-record")
     assert snapshot_record.payload["record_type"] == "routine_snapshot"
     assert snapshot_record.payload["producer_node_id"] == "routine-snapshot"
+    assert snapshot_record.payload["value"]["cache_authority_hash"] == authority.hash
+    assert snapshot_record.payload["value"]["cache_authority_preimage"] == authority.preimage
 
     root_node = _node_event(events, "root")
     assert root_node.payload["planner_generation_budget"] == 10
@@ -210,6 +221,11 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
         assert "hidden_oracle_binding: dynamic_feature_hidden_oracle" in planner["task_context"]
         snapshot = _node_event(stored_events, "routine-snapshot").payload["snapshot"]
         assert snapshot["dynamic_feature"] == run_config
+        seeded_authority = cache_authority_binding(_project(stored_events))
+        assert seeded_authority.policy.scan_budget.max_entries == 50_000
+        assert seeded_authority.policy.scan_budget.max_bytes == 1_073_741_824
+        assert snapshot["cache_authority_hash"] == seeded_authority.hash
+        assert snapshot["cache_authority_preimage"] == seeded_authority.preimage
     finally:
         await engine.dispose()
 

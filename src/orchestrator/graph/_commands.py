@@ -4386,8 +4386,11 @@ def _is_rate_limit_death(reason: str) -> bool:
 
 
 def _is_non_retryable_runtime_death(reason: str) -> bool:
-    return reason.startswith("check node missing command_definition") or reason.startswith(
-        "check command_definition requires "
+    return (
+        reason.startswith("cache scan entries budget exceeded at ")
+        or reason.startswith("cache scan bytes budget exceeded at ")
+        or reason.startswith("check node missing command_definition")
+        or reason.startswith("check command_definition requires ")
     )
 
 

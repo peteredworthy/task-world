@@ -31,6 +31,7 @@ from orchestrator.graph import (
     node_states_view,
     output_records_by_node_port_view,
     output_record_payloads_view,
+    planner_patch_facts_view,
     projection_to_checkpoint,
     ready_nodes_view,
     retry_not_before_by_node_view,
@@ -252,6 +253,15 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
             projection_to_checkpoint(after)["state"]["governance"]["resolved_patch_ids"]["patch-1"]
             is True
         )
+    elif event_type == "graph_patch_rejected":
+        facts = planner_patch_facts_view(after, "planner-1")
+        assert facts["patch_rejections"] == [
+            {"patch_id": "patch-1", "position": 3, "reason": "invalid"}
+        ]
+        assert (
+            projection_to_checkpoint(after)["state"]["governance"]["resolved_patch_ids"]["patch-1"]
+            is True
+        )
     elif event_type == "verification_passed":
         assert verifier_verdicts_view(after)["candidate-1"].verdict == "passed"
         assert passed_verification_results_by_record_id_view(after)["verification-1"] is not None
@@ -407,7 +417,6 @@ _NEUTRAL_QUERIES: dict[str, QueryProbe] = {
     "dead_input_detected": lambda state: input_bindings_view(state),
     "file_state_rejected": lambda state: file_state_records_view(state),
     "gatekeeper_cost_recorded": lambda state: file_state_records_view(state),
-    "graph_patch_rejected": lambda state: projection_to_checkpoint(state)["state"]["planning"],
     "heartbeat_recorded": lambda state: lease_by_id(state, "lease-1"),
     "runner_boundary_mismatch": lambda state: projection_to_checkpoint(state)["state"]["execution"],
     "outbox_requeued": lambda state: run_state(state),
@@ -434,6 +443,7 @@ _CHANGING_QUERIES: dict[str, QueryProbe] = {
     "gatekeeper_verdict_recorded": lambda state: file_state_records_view(state),
     "session_state_changed": lambda state: state.planning.sessions,
     "graph_patch_accepted": lambda state: projection_to_checkpoint(state)["state"]["planning"],
+    "graph_patch_rejected": lambda state: projection_to_checkpoint(state)["state"]["planning"],
     "verification_passed": lambda state: verifier_verdicts_view(state),
     "verification_failed": lambda state: verifier_verdicts_view(state),
     "appeal_opened": lambda state: node_pending_appeals_view(state),
@@ -517,6 +527,7 @@ _SHARED_PATHS: dict[str, tuple[ProjectionPath, ...]] = {
     "file_state_accepted": (("nodes", "worker-1"),),
     "gatekeeper_verdict_recorded": (("nodes", "worker-1"),),
     "graph_patch_accepted": (("nodes", "planner-1"),),
+    "graph_patch_rejected": (("nodes", "planner-1"),),
     "verification_passed": (("nodes", "worker-1"),),
     "verification_failed": (("nodes", "worker-1"),),
     "appeal_opened": (("nodes", "worker-1"),),
@@ -598,7 +609,6 @@ NEUTRAL_PAYLOADS: dict[str, dict[str, object]] = {
         "file_state_record_id": "file-state-1",
         "consult_id": "consult-1",
     },
-    "graph_patch_rejected": {"patch_id": "patch-1", "reason": "invalid"},
     "heartbeat_recorded": {
         "lease_id": "lease-1",
         "node_id": "worker-1",
@@ -1035,6 +1045,16 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             "graph_patch_accepted",
             (planner, patch_proposal),
             {"patch_id": "patch-1", "proposed_by_node_id": "planner-1"},
+            frozenset({"planning", "governance"}),
+        ),
+        (
+            "graph_patch_rejected",
+            (planner, patch_proposal),
+            {
+                "patch_id": "patch-1",
+                "proposed_by_node_id": "planner-1",
+                "reason": "invalid",
+            },
             frozenset({"planning", "governance"}),
         ),
         (

@@ -189,6 +189,7 @@ class NodeSpecProjection(ProjectionModel):
     command_binding: StrictStr | None = None
     max_attempts: StrictInt | None = None
     cache_authority_hash: StrictStr | None = None
+    dispatch_payload: FrozenMap[StrictStr, FrozenJsonValue] = Field(default_factory=FrozenMap)
 
     @field_validator("resource_claims", "allowed_actions", "preconditions", mode="before")
     @classmethod
@@ -205,6 +206,14 @@ class NodeSpecProjection(ProjectionModel):
         if isinstance(value, FrozenMap) or isinstance(value, dict):
             return {"value": cast(object, value)}
         raise ValueError("command_definition must be a JSON object")
+
+    @field_validator("dispatch_payload", mode="before")
+    @classmethod
+    def freeze_dispatch_payload(cls, value: object) -> FrozenMap[str, FrozenJsonValue]:
+        frozen = _freeze_json_input(value)
+        if not isinstance(frozen, FrozenMap):
+            raise ValueError("dispatch_payload must be a JSON object")
+        return frozen
 
 
 class NodeRuntimeProjection(ProjectionModel):
@@ -394,6 +403,15 @@ class PlannerSessionProjection(ProjectionModel):
     carryover_record_id: StrictStr | None = None
 
 
+class PlannerPatchDecisionValue(ProjectionModel):
+    patch_id: StrictStr
+    status: Literal["accepted", "rejected"]
+    position: StrictInt
+    proposed_by_node_id: StrictStr | None = None
+    base_graph_position: StrictInt | None = None
+    reason: StrictStr | None = None
+
+
 class LatestRoutineSnapshotProjection(ProjectionModel):
     record_id: StrictStr
     producer_node_id: StrictStr
@@ -417,6 +435,9 @@ class PlanningProjection(ProjectionModel):
     session_id_by_node: FrozenMap[StrictStr, StrictStr] = Field(default_factory=FrozenMap)
     sessions: FrozenMap[StrictStr, PlannerSessionProjection] = Field(default_factory=FrozenMap)
     region_label_by_node: FrozenMap[StrictStr, StrictStr] = Field(default_factory=FrozenMap)
+    patch_decisions_by_id: FrozenMap[StrictStr, PlannerPatchDecisionValue] = Field(
+        default_factory=FrozenMap
+    )
 
     @field_validator("accepted_patch_ids_by_node", "no_successor_patch_ids_by_node", mode="before")
     @classmethod

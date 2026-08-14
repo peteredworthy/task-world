@@ -57,6 +57,12 @@ only custom declarations and scan budgets. Runtime materializes boundary
 policy from the verified snapshot, never from mutable defaults. Older facts
 with all three fields absent resolve to `LEGACY_CACHE_AUTHORITY_V1`.
 
+The production `dynamic-graph-feature` routine compiles a 50,000-entry,
+1-GiB scan budget so normal ignored frontend dependency trees fit within its
+immutable authority. A deterministic cache scan-budget failure before runner
+baseline capture is a terminal runtime-configuration failure: the lease is
+revoked and the node fails without scheduling a runtime retry.
+
 Runner snapshot boundaries persist `RunnerCacheRoot` objects (`path` plus
 `untracked` or `ignored` source kind), not bare path strings. Roots are sorted,
 non-overlapping concrete first ancestors derived from actual worktree status;
@@ -431,10 +437,16 @@ physical grouped storage. Modules outside the graph package import query
 functions and types from `orchestrator.graph`, never a graph submodule. Query functions own storage
 access and return immutable values or fresh public copies.
 
-Checkpoints are disposable accelerators. A checkpoint is read only when its
-stored `_projection_schema_version` is exactly 13 and strict codec/integrity
-validation succeeds; missing, malformed, or version-mismatched checkpoints are
-rebuilt from the durable event stream. The permanent
+Checkpoints are disposable accelerators. Complete runtime state lives in the
+dedicated `graph_projection_checkpoints` owner with position, projection schema
+version, terminal metadata, checksum, and the unbounded codec envelope. It is
+read only when its metadata and strict codec/integrity validation agree. The
+separate `graph_projection_snapshots` owner contains only response-bounded
+public fields and is validated by position plus graph read-contract revision;
+public packing therefore cannot disable checkpoint-plus-tail execution.
+Missing, malformed, stale, or version-mismatched runtime checkpoints are
+rebuilt by fixed-batch startup/maintenance replay from the durable event stream,
+while request-time recovery remains bounded. The permanent
 `graph-projection-boundaries` pre-commit hook rejects storage-boundary and
 public-import violations. Executable closure evidence is the canonical event
 behavior matrix, every-split incremental and checkpoint-tail replay,

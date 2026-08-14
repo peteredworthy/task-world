@@ -13,12 +13,17 @@ from orchestrator.graph import (
     environment_failures_view,
     file_state_records_view,
     input_bindings_view,
+    last_deferred_reasons_view,
     node_kinds_view,
     node_states_view,
     node_task_regions_view,
     planner_session_carryovers_view,
     planner_sessions_view,
+    planner_freshness_packet_view,
+    planner_patch_facts_view,
+    record_payloads_view,
     ready_nodes_view,
+    routine_snapshot_dynamic_feature_view,
     DEFAULT_NODE_CONTRACTS,
     EventEnvelope,
     GraphProjection,
@@ -30,7 +35,6 @@ from orchestrator.graph import (
     InputBindingProjection,
 )
 from orchestrator.graph import PLANNER_OPS
-from orchestrator.graph import project_planner_freshness_packet
 from orchestrator.graph_runtime.horizon_templates import horizon_region_templates
 
 if TYPE_CHECKING:
@@ -98,7 +102,6 @@ def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
         "bound_records": _planner_evidence(
             context,
             context.graph_projection,
-            context.graph_events,
         )["bound_records"],
         "evaluated_record_citations": _evaluated_record_citations(context),
         "required_report_schema": {
@@ -125,7 +128,6 @@ def _summarizer_packet(context: GraphDispatchContext) -> dict[str, Any]:
         "source_records": _planner_evidence(
             context,
             context.graph_projection,
-            context.graph_events,
         )["bound_records"].get("source_records", []),
         "required_summary_schema": {
             "record_kind": "output",
@@ -258,13 +260,12 @@ def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
             "task_region_id": context.node_payload.get("task_region_id", context.node_id),
             "command_definition": resolve_check_command_definition(
                 context.node_payload,
-                context.graph_events,
+                [],
                 projection=context.graph_projection,
             ),
             "bound_records": _planner_evidence(
                 context,
                 context.graph_projection,
-                context.graph_events,
             )["bound_records"],
         }
     return {
@@ -310,7 +311,7 @@ def _prompt_summary_input_ports(context: GraphDispatchContext) -> dict[str, list
 
 
 def _prompt_summary_bound_records(context: GraphDispatchContext) -> dict[str, list[dict[str, Any]]]:
-    evidence = _planner_evidence(context, context.graph_projection, context.graph_events)
+    evidence = _planner_evidence(context, context.graph_projection)
     compact: dict[str, list[dict[str, Any]]] = {}
     for port, records in evidence["bound_records"].items():
         compact[port] = [_compact_prompt_bound_record(record) for record in records[:10]]
@@ -423,18 +424,20 @@ def _dynamic_feature_from_context(context: GraphDispatchContext) -> dict[str, An
     if isinstance(node_feature, dict):
         return cast(dict[str, Any], node_feature)
 
+    dynamic_feature = routine_snapshot_dynamic_feature_view(context.graph_projection)
+    if dynamic_feature is not None:
+        return dynamic_feature
     for event in reversed(context.graph_events):
         if event.event_type != "node_created":
             continue
         snapshot = event.payload.get("snapshot")
         if isinstance(snapshot, dict):
-            typed_snapshot = cast(dict[str, Any], snapshot)
-            snapshot_feature = typed_snapshot.get("dynamic_feature")
-            if isinstance(snapshot_feature, dict):
-                return cast(dict[str, Any], snapshot_feature)
-        payload_feature = event.payload.get("dynamic_feature")
-        if isinstance(payload_feature, dict):
-            return cast(dict[str, Any], payload_feature)
+            value = cast(dict[str, Any], snapshot).get("dynamic_feature")
+            if isinstance(value, dict):
+                return cast(dict[str, Any], value)
+        value = event.payload.get("dynamic_feature")
+        if isinstance(value, dict):
+            return cast(dict[str, Any], value)
     return None
 
 
@@ -475,14 +478,13 @@ def _dynamic_feature_prompt_lines(
 
 def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
     projection = context.graph_projection
-    events = sorted(context.graph_events, key=lambda event: event.position)
     node = context.node_payload
-    current_position = max((event.position for event in events), default=0)
+    current_position = context.graph_position
     generation_index = planner_generations_view(projection).get(context.node_id)
 
-    frontier = _planner_frontier(projection, events, context)
-    evidence = _planner_evidence(context, projection, events)
-    proposals = _planner_proposals(context, events)
+    frontier = _planner_frontier(projection, context)
+    evidence = _planner_evidence(context, projection)
+    proposals = _planner_proposals(context, projection)
 
     packet = {
         "run_id": context.run_id,
@@ -502,7 +504,7 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
         "bound_requirements": list(context.requirements),
         "frontier": frontier,
         "evidence": evidence,
-        "freshness": project_planner_freshness_packet(events),
+        "freshness": planner_freshness_packet_view(projection),
         "open_planner_proposals": proposals["open_proposals"],
         "accepted_planner_patches": proposals["accepted_patches"],
         "patch_rejections": proposals["patch_rejections"],
@@ -546,7 +548,6 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
         packet["gap_analysis_obligations"] = _gap_analysis_obligations(
             context,
             projection,
-            events,
         )
     packet["patch_examples"] = _planner_patch_examples(packet, context)
     return packet
@@ -563,11 +564,10 @@ def _planner_visible_dynamic_feature(dynamic_feature: dict[str, Any]) -> dict[st
 
 def _planner_frontier(
     projection: GraphProjection,
-    events: list[EventEnvelope],
     context: GraphDispatchContext,
 ) -> dict[str, list[dict[str, Any]] | list[str]]:
     ready_nodes = sorted(ready_nodes_view(projection))
-    deferred_reasons = _planner_deferred_reasons(events)
+    deferred_reasons = last_deferred_reasons_view(projection)
 
     blocked_nodes: list[dict[str, Any]] = []
     for node_id in sorted(node_states_view(projection)):
@@ -599,22 +599,9 @@ def _planner_frontier(
     }
 
 
-def _planner_deferred_reasons(events: list[EventEnvelope]) -> dict[str, str]:
-    reasons: dict[str, str] = {}
-    for event in events:
-        if event.event_type != "node_deferred":
-            continue
-        node_id = event.payload.get("node_id")
-        reason = event.payload.get("reason")
-        if isinstance(node_id, str) and isinstance(reason, str):
-            reasons[node_id] = reason
-    return reasons
-
-
 def _gap_analysis_obligations(
     context: GraphDispatchContext,
     projection: GraphProjection,
-    events: list[EventEnvelope],
 ) -> list[dict[str, Any]]:
     obligations: list[dict[str, Any]] = []
     terminal_states = {"completed", "failed", "cancelled", "retired"}
@@ -646,7 +633,7 @@ def _gap_analysis_obligations(
             }
         )
 
-    deferred_reasons = _planner_deferred_reasons(events)
+    deferred_reasons = last_deferred_reasons_view(projection)
     for node_id, reason in sorted(deferred_reasons.items()):
         if reason != "missing_required_input:verification_evidence":
             continue
@@ -671,18 +658,10 @@ def _gap_analysis_obligations(
 def _planner_evidence(
     context: GraphDispatchContext,
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    _events: list[EventEnvelope] | None = None,
 ) -> dict[str, Any]:
     bindings = input_bindings_view(projection).get(context.node_id, {})
-    output_records: dict[str, dict[str, Any]] = {}
-    for event in events:
-        if event.event_type != "output_record_accepted":
-            continue
-        payload = event.payload
-        record_id = payload.get("record_id")
-        if not isinstance(record_id, str):
-            continue
-        output_records[record_id] = dict(payload)
+    output_records = record_payloads_view(projection)
 
     bound_records: dict[str, list[dict[str, Any]]] = {}
     for port in sorted(bindings):
@@ -947,46 +926,9 @@ def _planner_session_carryover_record(
 
 def _planner_proposals(
     context: GraphDispatchContext,
-    events: list[EventEnvelope],
+    projection: GraphProjection,
 ) -> dict[str, list[dict[str, Any]]]:
-    open_proposals: list[dict[str, Any]] = []
-    accepted_patches: list[dict[str, Any]] = []
-    patch_rejections: list[dict[str, Any]] = []
-
-    for event in events:
-        payload = event.payload
-        if event.event_type == "graph_patch_accepted":
-            if payload.get("proposed_by_node_id") != context.node_id:
-                continue
-            accepted_patches.append(
-                {
-                    "patch_id": payload.get("patch_id"),
-                    "base_graph_position": payload.get("base_graph_position"),
-                    "position": event.position,
-                }
-            )
-            continue
-
-        if event.event_type != "graph_patch_rejected":
-            continue
-        if payload.get("proposed_by_node_id") != context.node_id:
-            continue
-        patch_rejections.append(
-            {
-                "patch_id": payload.get("patch_id"),
-                "reason": payload.get("reason"),
-                "position": event.position,
-            }
-        )
-
-    open_proposals.sort(key=lambda item: str(item.get("patch_id", "")))
-    accepted_patches.sort(key=lambda item: str(item.get("patch_id", "")))
-    patch_rejections.sort(key=lambda item: str(item.get("patch_id", "")))
-    return {
-        "open_proposals": open_proposals,
-        "accepted_patches": accepted_patches,
-        "patch_rejections": patch_rejections,
-    }
+    return planner_patch_facts_view(projection, context.node_id)
 
 
 def _planner_allowed_ops_packet() -> dict[str, list[str]]:
@@ -1278,9 +1220,9 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
         context,
         ("verification_evidence", "verification_report", "verifier_check_results"),
     )
-    for record in _record_payloads_for_ids(context.graph_events, candidate_record_ids):
+    for record in _record_payloads_for_ids(context.graph_projection, candidate_record_ids):
         file_state_record_ids.extend(_citation_record_ids(record, "file_state_record_ids"))
-    for record in _record_payloads_for_ids(context.graph_events, evidence_record_ids):
+    for record in _record_payloads_for_ids(context.graph_projection, evidence_record_ids):
         candidate_record_ids.extend(_citation_record_ids(record, "candidate_record_ids"))
         file_state_record_ids.extend(_citation_record_ids(record, "file_state_record_ids"))
     if not file_state_record_ids:
@@ -1304,18 +1246,15 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
 
 
 def _record_payloads_for_ids(
-    events: list[EventEnvelope],
+    projection: GraphProjection,
     record_ids: list[str],
 ) -> list[dict[str, Any]]:
     wanted = set(record_ids)
-    records: list[dict[str, Any]] = []
-    for event in events:
-        if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
-            continue
-        record_id = event.payload.get("record_id")
-        if isinstance(record_id, str) and record_id in wanted:
-            records.append(dict(event.payload))
-    return records
+    return [
+        payload
+        for record_id, payload in record_payloads_view(projection).items()
+        if record_id in wanted
+    ]
 
 
 def _citation_record_ids(record: dict[str, Any], field: str) -> list[str]:

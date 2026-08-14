@@ -479,9 +479,15 @@ class SignalConsumer:
         # Import only when the graph resume path needs the typed boundary
         # failure.  Importing graph_runtime while workflow is initializing
         # creates a runner/workflow cycle during application startup.
-        from orchestrator.graph_runtime import GraphReadModelUnavailable
+        from orchestrator.graph_runtime import GraphEventStore, GraphReadModelUnavailable
 
         try:
+            if getattr(current_run, "execution_mode", "legacy") == "graph":
+                # Explicit operator resume is also the supported upgrade path
+                # for graph runs that predate the dedicated runtime checkpoint.
+                # The maintenance replay is keyset-batched; ordinary runtime
+                # reads remain bounded to the checkpoint plus its small tail.
+                await GraphEventStore(session).ensure_runtime_projection_checkpoint(run_id)
             run = await service.apply_resume_run(
                 run_id,
                 agent_runner_type=agent_runner_type,

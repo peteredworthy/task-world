@@ -4,6 +4,10 @@ routine:
   description: "Graph-mode starter for feature work driven by a dynamic planner and graph patches only."
   execution_mode: "graph"
   planner_generation_budget: 10
+  file_state_policy:
+    scan_budget:
+      max_entries: 50000
+      max_bytes: 1073741824
   inputs:
     - name: feature_spec_path
       required: true

@@ -304,6 +304,9 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
             )
 
         for run in _topological_sort_children_first(to_rearm):
+            async with session_factory() as session:
+                await GraphEventStore(session).ensure_runtime_projection_checkpoint(run.id)
+                await session.commit()
             if consumer.arm_graph_run(run.id):
                 logger.info("Graph startup recovery: re-armed graph run %s", run.id)
                 await _asyncio.sleep(_STARTUP_RECOVERY_RUN_STAGGER_SECONDS)

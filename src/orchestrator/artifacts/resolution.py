@@ -23,16 +23,24 @@ class ArtifactRootResolver:
 
     async def root_for(self, run: Run) -> Path:
         main_worktree = None
+        run_worktree: Path | None = None
         if run.worktree_path is not None:
-            worktree_path = Path(run.worktree_path)
-            if worktree_path.exists():
-                main_worktree = await asyncio.to_thread(resolve_main_worktree, worktree_path)
+            run_worktree = Path(run.worktree_path)
+            if run_worktree.exists():
+                main_worktree = await asyncio.to_thread(resolve_main_worktree, run_worktree)
         if main_worktree is None:
             main_worktree = await asyncio.to_thread(resolve_main_worktree, self._repo_path_for(run))
         if main_worktree is None:
             raise ArtifactRootResolutionError(
                 f"cannot resolve artifact project root for run {run.id}"
             )
+        if run_worktree is not None and run_worktree.resolve() == main_worktree.resolve():
+            # A normal graph run uses a linked worktree, so the project CAS in
+            # the main checkout is outside the runner boundary.  Local/operator
+            # and test runs may execute in the main checkout itself.  Keep the
+            # same project-owned CAS semantics there without letting controller
+            # callback artifacts appear as runner-authored untracked files.
+            return main_worktree / ".git" / ".orchestrator" / "artifacts"
         return main_worktree / ".orchestrator" / "artifacts"
 
     def _repo_path_for(self, run: Run) -> Path:
