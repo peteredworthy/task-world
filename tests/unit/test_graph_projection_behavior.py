@@ -9,7 +9,7 @@ from orchestrator.graph import (
     initial_projection,
     projection_to_checkpoint,
     reduce_event,
-    validate_projection_integrity,
+    validate_projection_critical_invariants,
 )
 from tests.unit.graph_projection_behavior_cases import behavior_cases, case_projection
 
@@ -29,10 +29,10 @@ def test_behavior_matrix_exactly_covers_every_canonical_event_once() -> None:
 @pytest.mark.parametrize("case", CASES, ids=lambda case: case.event_type)
 def test_each_canonical_event_owns_its_declared_behavior(case) -> None:
     before, after = case_projection(case)
-    validate_projection_integrity(before)
+    validate_projection_critical_invariants(before)
     projection_to_checkpoint(before)
     case.assert_outcome(before, after)
-    validate_projection_integrity(after)
+    validate_projection_critical_invariants(after)
     projection_to_checkpoint(after)
     before_query = case.query(before)
     after_query = case.query(after)

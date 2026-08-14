@@ -11,6 +11,7 @@ from orchestrator.graph import (
     FakeClock,
     GraphProjection,
     build_projection,
+    callback_payload_identity,
     reduce_event,
     run_state,
     validate_callback,
@@ -137,7 +138,10 @@ def test_duplicate_same_payload_returns_prior() -> None:
     assert result.outcome == CallbackOutcome.DUPLICATE_IDEMPOTENT
     assert result.prior_result == {
         "outcome": "callback_accepted",
-        "payload": event.payload,
+        "node_id": "worker-1",
+        "idempotency_key": "key-1",
+        "payload_hash": callback_payload_identity({"payload_hash": "hash-a"})[0],
+        "record_ids": [],
     }
 
 

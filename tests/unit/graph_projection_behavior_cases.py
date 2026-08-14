@@ -206,7 +206,10 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
         assert retry_not_before_by_node_view(after)["worker-1"] == "2026-01-01T00:01:00+00:00"
     elif event_type == "plan_region_marked_suspect":
         checkpoint = projection_to_checkpoint(after)
-        assert checkpoint["nodes"]["worker-1"]["runtime"]["suspect_reason"] == "requirement_changed"
+        assert (
+            checkpoint["state"]["nodes"]["worker-1"]["runtime"]["suspect_reason"]
+            == "requirement_changed"
+        )
     elif event_type == "node_authority_changed":
         assert after.nodes["worker-1"].spec.allowed_actions == ("write",)
         assert node_resource_claims_view(after)["worker-1"] == []
@@ -246,7 +249,8 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
     elif event_type == "graph_patch_accepted":
         assert after.planning.accepted_patch_ids_by_node["planner-1"] == ("patch-1",)
         assert (
-            projection_to_checkpoint(after)["governance"]["resolved_patch_ids"]["patch-1"] is True
+            projection_to_checkpoint(after)["state"]["governance"]["resolved_patch_ids"]["patch-1"]
+            is True
         )
     elif event_type == "verification_passed":
         assert verifier_verdicts_view(after)["candidate-1"].verdict == "passed"
@@ -261,26 +265,28 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
     elif event_type == "appeal_opened":
         assert node_pending_appeals_view(after)["worker-1"] is True
     elif event_type == "approval_decision_recorded":
-        governance = projection_to_checkpoint(after)["governance"]
+        governance = projection_to_checkpoint(after)["state"]["governance"]
         decision_id = governance["approval_decision_id_by_node"]["gate-1"]
         assert governance["approval_decisions_by_id"][decision_id]["decision"] == "approved"
         assert governance["node_gate_decisions"]["gate-1"] is True
     elif event_type == "authority_decision_recorded":
-        governance = projection_to_checkpoint(after)["governance"]
+        governance = projection_to_checkpoint(after)["state"]["governance"]
         decision_id = governance["authority_decision_id_by_node"]["authority-1"]
         assert governance["authority_decisions_by_id"][decision_id]["decision"] == "granted"
     elif event_type == "oversight_decision_recorded":
-        governance = projection_to_checkpoint(after)["governance"]
+        governance = projection_to_checkpoint(after)["state"]["governance"]
         decision_id = governance["oversight_decision_id_by_node"]["oversight-1"]
         decision = governance["oversight_decisions_by_id"][decision_id]
         assert decision is not None
         assert (decision["decision"], decision["position"]) == ("accepted", 2)
     elif event_type == "requirement_revision_recorded":
-        requirements = projection_to_checkpoint(after)["requirements"]
+        requirements = projection_to_checkpoint(after)["state"]["requirements"]
         assert requirements["revisions_by_id"]["version-1"] is not None
         assert active_requirement_versions_view(after)["requirement-1"] == "version-1"
     elif event_type == "support_evidence_recorded":
-        support = projection_to_checkpoint(after)["requirements"]["support_by_id"]["support-1"]
+        support = projection_to_checkpoint(after)["state"]["requirements"]["support_by_id"][
+            "support-1"
+        ]
         assert support is not None
         assert (
             support["evidence_id"],
@@ -325,7 +331,7 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
         assert callback is not None
         assert (callback.outcome, callback.payload) == ("callback_accepted", {"result": "ok"})
     elif event_type.startswith("runner_"):
-        attempts = projection_to_checkpoint(after)["execution"]["attempts_by_execution_id"]
+        attempts = projection_to_checkpoint(after)["state"]["execution"]["attempts_by_execution_id"]
         assert (
             attempts["execution-1"]["state"]
             == {
@@ -401,9 +407,9 @@ _NEUTRAL_QUERIES: dict[str, QueryProbe] = {
     "dead_input_detected": lambda state: input_bindings_view(state),
     "file_state_rejected": lambda state: file_state_records_view(state),
     "gatekeeper_cost_recorded": lambda state: file_state_records_view(state),
-    "graph_patch_rejected": lambda state: projection_to_checkpoint(state)["planning"],
+    "graph_patch_rejected": lambda state: projection_to_checkpoint(state)["state"]["planning"],
     "heartbeat_recorded": lambda state: lease_by_id(state, "lease-1"),
-    "runner_boundary_mismatch": lambda state: projection_to_checkpoint(state)["execution"],
+    "runner_boundary_mismatch": lambda state: projection_to_checkpoint(state)["state"]["execution"],
     "outbox_requeued": lambda state: run_state(state),
     "revision_created": lambda state: state.nodes,
 }
@@ -414,20 +420,20 @@ _CHANGING_QUERIES: dict[str, QueryProbe] = {
     "node_created": lambda state: node_states_view(state),
     "node_state_changed": lambda state: node_states_view(state),
     "node_retired": lambda state: node_states_view(state),
-    "node_deferred": lambda state: projection_to_checkpoint(state)["nodes"],
-    "node_ready": lambda state: projection_to_checkpoint(state)["nodes"],
+    "node_deferred": lambda state: projection_to_checkpoint(state)["state"]["nodes"],
+    "node_ready": lambda state: projection_to_checkpoint(state)["state"]["nodes"],
     "runtime_retry_scheduled": lambda state: retry_not_before_by_node_view(state),
-    "plan_region_marked_suspect": lambda state: projection_to_checkpoint(state)["nodes"][
+    "plan_region_marked_suspect": lambda state: projection_to_checkpoint(state)["state"]["nodes"][
         "worker-1"
     ]["runtime"].get("suspect_reason"),
-    "node_authority_changed": lambda state: projection_to_checkpoint(state)["nodes"],
+    "node_authority_changed": lambda state: projection_to_checkpoint(state)["state"]["nodes"],
     "edge_created": lambda state: edges_view(state),
     "input_bound": lambda state: input_bindings_view(state),
     "output_record_accepted": lambda state: output_records_by_node_port_view(state),
     "file_state_accepted": lambda state: file_state_records_view(state),
     "gatekeeper_verdict_recorded": lambda state: file_state_records_view(state),
     "session_state_changed": lambda state: state.planning.sessions,
-    "graph_patch_accepted": lambda state: projection_to_checkpoint(state)["planning"],
+    "graph_patch_accepted": lambda state: projection_to_checkpoint(state)["state"]["planning"],
     "verification_passed": lambda state: verifier_verdicts_view(state),
     "verification_failed": lambda state: verifier_verdicts_view(state),
     "appeal_opened": lambda state: node_pending_appeals_view(state),
@@ -1220,7 +1226,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
     )
     _CHANGING_QUERIES.update(
         {
-            name: lambda projection: projection_to_checkpoint(projection)["execution"].get(
+            name: lambda projection: projection_to_checkpoint(projection)["state"]["execution"].get(
                 "attempts_by_execution_id", {}
             )
             for name in runner_names

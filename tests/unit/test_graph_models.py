@@ -1677,31 +1677,46 @@ def test_recovery_plan_record_rejects_invalid_action() -> None:
 
 
 def test_file_state_record_round_trips() -> None:
-    assert_round_trips(
-        FileStateRecord,
-        {
-            "record_id": "rec-file-S1",
-            "record_kind": "file_state",
-            "record_type": "file_state",
-            "snapshot_id": "S1",
-            "base_snapshot_id": "S0",
-            "producer_node_id": "build-A-1",
-            "git": {
-                "commit_sha": "abc123",
-                "tree_sha": "def456",
-                "no_commit_reason": None,
-            },
-            "tracked": [{"path": "src/foo.py", "status": "modified"}],
-            "untracked": [],
-            "ignored": [
-                {
-                    "path": ".pytest_cache",
-                    "classification": "tool_cache",
-                    "policy": "ephemeral_allowed",
-                }
-            ],
-            "external": [],
+    historical = {
+        "record_id": "rec-file-S1",
+        "record_kind": "file_state",
+        "record_type": "file_state",
+        "snapshot_id": "S1",
+        "base_snapshot_id": "S0",
+        "producer_node_id": "build-A-1",
+        "git": {
+            "commit_sha": "abc123",
+            "tree_sha": "def456",
+            "no_commit_reason": None,
         },
+        "tracked": [{"path": "src/foo.py", "status": "modified"}],
+        "untracked": [],
+        "ignored": [
+            {
+                "path": ".pytest_cache",
+                "classification": "tool_cache",
+                "policy": "ephemeral_allowed",
+            }
+        ],
+        "external": [],
+    }
+    record = FileStateRecord.model_validate(historical)
+    canonical = record.model_dump(mode="json", by_alias=True)
+
+    assert "tracked" not in canonical
+    assert "ignored" not in canonical
+    assert canonical["paths"] == [
+        {"path": "src/foo.py", "source": "tracked", "status": "modified"},
+        {
+            "path": ".pytest_cache",
+            "source": "ignored",
+            "classification": "tool_cache",
+            "policy": "ephemeral_allowed",
+        },
+    ]
+    assert (
+        FileStateRecord.model_validate(canonical).model_dump(mode="json", by_alias=True)
+        == canonical
     )
 
 

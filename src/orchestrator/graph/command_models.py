@@ -16,7 +16,13 @@ from pydantic import (
 )
 
 from orchestrator.graph.macros import MacroInvocation
-from orchestrator.graph.models import Actor, EventEnvelope, FileStateRecord, RunnerBoundaryEntry
+from orchestrator.graph.models import (
+    Actor,
+    EventEnvelope,
+    FileStateRecord,
+    RunnerBoundaryEntry,
+    StoredArtifactRef,
+)
 from orchestrator.graph.boundary_types import (
     BoundaryValidationError,
     validate_callback_json,
@@ -261,6 +267,7 @@ class RecordRunnerBaselineCommand(StrictCommandPayload):
 
 
 class StageRunnerSubmissionCommand(SubmitCallbackCommand):
+    payload_ref: StoredArtifactRef | None = None
     staged_snapshot_id: CommandIdentifier
     staged_snapshot_ref: CommandIdentifier
     staged_commit_sha: CommandIdentifier
@@ -332,6 +339,9 @@ class FinalizeRunnerExecutionCommand(StrictCommandPayload):
     cache_status_evidence: list[CacheStatusEvidence] = Field(
         default_factory=_empty_cache_status_evidence
     )
+    # Effectful runtime resolution supplies this transient body. It is used by
+    # the pure command kernel but removed from the finalized event payload.
+    callback_payload: dict[str, Any] | None = None
 
     @field_validator("boundary_hash")
     @classmethod

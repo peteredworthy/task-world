@@ -337,7 +337,7 @@ def test_file_state_snapshot_excludes_ignored_tool_cache(tmp_path: Path) -> None
         execution_id="exec-1",
         base_snapshot_id="base-snapshot",
     )
-    raw_classifications = record["classifications"]
+    raw_classifications = record["paths"]
     assert isinstance(raw_classifications, list)
     classifications = {
         entry["path"]: entry["classification"]
@@ -1195,6 +1195,31 @@ async def test_compromised_file_state_binding_is_refused_before_cleanup_complete
     }
     events = [
         _event(
+            "producer-event",
+            run_id,
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "completed"},
+        ),
+        _event(
+            "worker-event",
+            run_id,
+            "node_created",
+            {"node_id": "consumer-1", "kind": "worker", "state": "ready"},
+        ),
+        _event(
+            "edge-event",
+            run_id,
+            "edge_created",
+            {
+                "edge_id": "edge-1",
+                "from_node_id": "worker-1",
+                "from_port": "file_state",
+                "to_node_id": "consumer-1",
+                "to_port": "file_state",
+                "required": True,
+            },
+        ),
+        _event(
             "file-state-event",
             run_id,
             "file_state_accepted",
@@ -1210,12 +1235,6 @@ async def test_compromised_file_state_binding_is_refused_before_cleanup_complete
                 "snapshot_id": "snapshot-1",
                 "paths": ["residue.txt"],
             },
-        ),
-        _event(
-            "worker-event",
-            run_id,
-            "node_created",
-            {"node_id": "consumer-1", "kind": "worker", "state": "ready"},
         ),
         _event(
             "bound-event",

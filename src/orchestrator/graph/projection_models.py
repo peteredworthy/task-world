@@ -603,6 +603,9 @@ class CallbackEventValue(ProjectionModel):
     idempotency_key: StrictStr
     outcome: StrictStr
     payload: FrozenJsonValue | None = None
+    payload_hash: StrictStr | None = None
+    payload_size_bytes: StrictInt | None = None
+    record_ids: tuple[StrictStr, ...] = ()
 
     @field_validator("payload", mode="before")
     @classmethod
@@ -610,6 +613,28 @@ class CallbackEventValue(ProjectionModel):
         if value is None:
             return None
         return _freeze_json_input(value)
+
+    @field_validator("record_ids", mode="before")
+    @classmethod
+    def freeze_callback_record_ids(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "callback record_ids must be a sequence")
+
+
+class ProjectedStoredArtifactRef(ProjectionModel):
+    artifact_id: StrictStr
+    content_hash: StrictStr = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    size_bytes: StrictInt = Field(ge=0)
+    media_type: StrictStr
+    encoding: StrictStr | None = None
+    storage_uri: StrictStr = Field(pattern=r"^artifact://sha256/[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def storage_uri_matches_content_hash(self) -> "ProjectedStoredArtifactRef":
+        if self.storage_uri.removeprefix("artifact://sha256/") != self.content_hash.removeprefix(
+            "sha256:"
+        ):
+            raise ValueError("storage_uri digest must match content_hash digest")
+        return self
 
 
 class ExecutionAttemptValue(ProjectionModel):
@@ -635,7 +660,10 @@ class ExecutionAttemptValue(ProjectionModel):
     baseline_cache_roots: tuple[RunnerCacheRoot | StrictStr, ...] = ()
     baseline_cache_status_evidence: tuple[CacheStatusEvidence, ...] = ()
     idempotency_key: StrictStr | None = None
+    # ``payload`` is legacy replay state only. New staged attempts retain the
+    # content-addressed reference and resolve it at the runtime boundary.
     payload: FrozenJsonValue | None = None
+    payload_ref: ProjectedStoredArtifactRef | None = None
     payload_hash: StrictStr | None = None
     payload_size_bytes: StrictInt | None = None
     staged_snapshot_id: StrictStr | None = None
@@ -896,23 +924,6 @@ class ProjectedArtifactReferenceValue(ProjectionModel):
     max_tokens: StrictInt | None = None
     summarize: StrictBool | None = None
     summarize_model: StrictStr | None = None
-
-
-class ProjectedStoredArtifactRef(ProjectionModel):
-    artifact_id: StrictStr
-    content_hash: StrictStr = Field(pattern=r"^sha256:[0-9a-f]{64}$")
-    size_bytes: StrictInt = Field(ge=0)
-    media_type: StrictStr
-    encoding: StrictStr | None = None
-    storage_uri: StrictStr = Field(pattern=r"^artifact://sha256/[0-9a-f]{64}$")
-
-    @model_validator(mode="after")
-    def storage_uri_matches_content_hash(self) -> "ProjectedStoredArtifactRef":
-        if self.storage_uri.removeprefix("artifact://sha256/") != self.content_hash.removeprefix(
-            "sha256:"
-        ):
-            raise ValueError("storage_uri digest must match content_hash digest")
-        return self
 
 
 class ProjectedGradeRow(ProjectionModel):
@@ -1349,13 +1360,7 @@ class ProjectedFileStateRecord(ProjectedRecordBase):
     port: Literal["file_state", "accepted_file_state"] = "file_state"
     schema_: Literal["FileStateRecord"] = Field(default="FileStateRecord", alias="schema")
     git: ProjectedGitRef | None = None
-    tracked: tuple[ProjectedFileEntry, ...] = ()
-    untracked: tuple[ProjectedFileEntry, ...] = ()
-    ignored: tuple[ProjectedFileEntry, ...] = ()
-    external: tuple[ProjectedExternalFileEntry, ...] = ()
-    classifications: tuple[ProjectedFileEntry, ...] = ()
-    residue: tuple[ProjectedFileEntry, ...] = ()
-    rejected_paths: tuple[ProjectedFileEntry, ...] = ()
+    paths: tuple[ProjectedFileEntry, ...] = ()
     verdict: Literal["captured", "rejected"] = "captured"
     patch_bundle_id: StrictStr | None = None
     tree_snapshot_id: StrictStr | None = None
@@ -1373,6 +1378,92 @@ class ProjectedFileStateRecord(ProjectedRecordBase):
     compromised_snapshot_deleted: StrictBool | None = None
     compromised_paths: tuple[StrictStr, ...] | None = None
     acceptance_identity: StrictStr | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_historical_paths(cls, value: object) -> object:
+        if type(value) is not dict:
+            return value
+        payload = dict(cast(dict[str, object], value))
+        inventory: dict[str, dict[str, object]] = {}
+        saw_inventory_field = False
+        for group in (
+            "paths",
+            "classifications",
+            "tracked",
+            "untracked",
+            "ignored",
+            "external",
+            "residue",
+            "rejected_paths",
+        ):
+            saw_inventory_field = saw_inventory_field or group in payload
+            raw_entries = payload.pop(group, ())
+            if not isinstance(raw_entries, (list, tuple)):
+                continue
+            for raw_entry in cast(list[object] | tuple[object, ...], raw_entries):
+                if not isinstance(raw_entry, (dict, ProjectionModel)):
+                    continue
+                if isinstance(raw_entry, ProjectionModel):
+                    raw = cast(dict[str, object], raw_entry.model_dump(mode="python"))
+                else:
+                    raw = cast(dict[str, object], raw_entry)
+                entry = dict(raw)
+                path = entry.get("path")
+                if not isinstance(path, str):
+                    continue
+                if group in {"tracked", "untracked", "ignored"}:
+                    entry.setdefault("source", group)
+                if group == "external":
+                    entry.setdefault("classification", "external_artifact")
+                if group == "rejected_paths":
+                    entry.setdefault("rejected", True)
+                inventory[path] = {**inventory.get(path, {}), **entry}
+        if saw_inventory_field:
+            payload["paths"] = tuple(inventory.values())
+        return payload
+
+    @field_validator("paths", mode="before")
+    @classmethod
+    def freeze_paths(cls, value: object) -> tuple[object, ...]:
+        return _freeze_sequence(value, "file-state paths must be a sequence")
+
+    @property
+    def classifications(self) -> tuple[ProjectedFileEntry, ...]:
+        return self.paths
+
+    @property
+    def tracked(self) -> tuple[ProjectedFileEntry, ...]:
+        return tuple(entry for entry in self.paths if entry.source == "tracked")
+
+    @property
+    def untracked(self) -> tuple[ProjectedFileEntry, ...]:
+        return tuple(entry for entry in self.paths if entry.source == "untracked")
+
+    @property
+    def ignored(self) -> tuple[ProjectedFileEntry, ...]:
+        return tuple(entry for entry in self.paths if entry.source == "ignored")
+
+    @property
+    def external(self) -> tuple[ProjectedExternalFileEntry, ...]:
+        return tuple(
+            ProjectedExternalFileEntry.model_validate(entry.model_dump(mode="python"))
+            for entry in self.paths
+            if entry.manifest is not None
+        )
+
+    @property
+    def residue(self) -> tuple[ProjectedFileEntry, ...]:
+        return tuple(
+            entry
+            for entry in self.paths
+            if entry.source in {"untracked", "ignored"}
+            or entry.classification == "external_artifact"
+        )
+
+    @property
+    def rejected_paths(self) -> tuple[ProjectedFileEntry, ...]:
+        return tuple(entry for entry in self.paths if entry.rejected is True)
 
 
 class ProjectedGapClassificationRecord(ProjectedRecordBase):

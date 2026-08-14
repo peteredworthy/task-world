@@ -537,6 +537,7 @@ async def test_file_state_report_large_boundary_retains_only_capped_path_output(
             run_id,
             0,
             [
+                _event("node_created", {"node_id": "worker", "kind": "worker", "state": "planned"}),
                 _event(
                     "file_state_accepted",
                     {
@@ -548,7 +549,7 @@ async def test_file_state_report_large_boundary_retains_only_capped_path_output(
                         "verdict": "captured",
                         "classifications": source_entries,
                     },
-                )
+                ),
             ],
         )
         await session.commit()
@@ -632,6 +633,7 @@ async def test_file_state_report_associates_same_execution_facts_by_record_id(
             run_id,
             0,
             [
+                _event("node_created", {"node_id": "worker", "kind": "worker", "state": "planned"}),
                 boundary("first"),
                 boundary("second"),
                 verdict("first", "first.out"),

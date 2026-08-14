@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Graph Projection Simplification Review — 5 August 2026</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f1ea;
+      --paper: #fffdf8;
+      --ink: #18211d;
+      --muted: #5f6c65;
+      --line: #d8d7cf;
+      --soft: #ebe8df;
+      --accent: #176b55;
+      --accent-soft: #dceee7;
+      --warn: #9a5a12;
+      --warn-soft: #f8ead5;
+      --danger: #9a3d3d;
+      --danger-soft: #f6dfdd;
+      --blue: #35658a;
+      --blue-soft: #e0eaf1;
+      --shadow: 0 18px 50px rgba(30, 41, 35, .09);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #101713;
+        --paper: #17201b;
+        --ink: #edf2ee;
+        --muted: #aab8af;
+        --line: #344039;
+        --soft: #202b25;
+        --accent: #70c7aa;
+        --accent-soft: #173b30;
+        --warn: #e6b16e;
+        --warn-soft: #3a2a18;
+        --danger: #e28f89;
+        --danger-soft: #3e2322;
+        --blue: #85b8dc;
+        --blue-soft: #1c3445;
+        --shadow: 0 18px 50px rgba(0, 0, 0, .24);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--accent) 10%, transparent), transparent 30rem),
+        var(--bg);
+      color: var(--ink);
+      font: 15px/1.58 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 48px 28px 80px; }
+    h1, h2, h3 { line-height: 1.16; letter-spacing: -.02em; }
+    h1 { margin: 0; max-width: 850px; font-size: clamp(2.25rem, 5vw, 4.6rem); font-weight: 650; }
+    h2 { margin: 0 0 18px; font-size: clamp(1.55rem, 2.7vw, 2.35rem); }
+    h3 { margin: 0 0 10px; font-size: 1.05rem; }
+    p { margin: 0 0 12px; }
+    a { color: var(--accent); }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .88em;
+      overflow-wrap: anywhere;
+    }
+    .eyebrow {
+      margin-bottom: 14px;
+      color: var(--accent);
+      font-size: .76rem;
+      font-weight: 700;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    .lede { max-width: 860px; margin-top: 22px; color: var(--muted); font-size: 1.12rem; }
+    .date { margin-top: 16px; color: var(--muted); font-size: .85rem; }
+    .hero { padding: 22px 0 42px; }
+    .verdict {
+      display: grid;
+      grid-template-columns: minmax(0, 1.65fr) minmax(250px, .75fr);
+      gap: 24px;
+      margin-top: 28px;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--accent);
+      border-radius: 18px;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+    }
+    .verdict strong { font-size: 1.08rem; }
+    .verdict .number { font-size: 2.4rem; font-weight: 700; line-height: 1; }
+    .verdict .number + span { display: block; margin-top: 8px; color: var(--muted); }
+    section { margin-top: 54px; }
+    .section-note { max-width: 850px; margin: -8px 0 24px; color: var(--muted); }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+    .stat {
+      min-height: 142px;
+      padding: 19px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--paper);
+    }
+    .stat b { display: block; margin-bottom: 10px; font-size: 2rem; line-height: 1; }
+    .stat span { color: var(--muted); }
+    .surface {
+      display: grid;
+      grid-template-columns: 1.9fr .59fr .59fr .32fr;
+      min-height: 78px;
+      margin-top: 18px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+    }
+    .surface > div { display: flex; flex-direction: column; justify-content: center; padding: 13px; }
+    .surface b { font-size: 1.1rem; }
+    .surface span { font-size: .76rem; }
+    .surface .core { background: var(--accent-soft); }
+    .surface .tests { background: var(--blue-soft); }
+    .surface .policy { background: var(--warn-soft); }
+    .surface .tooling { background: var(--danger-soft); }
+    .findings { display: grid; gap: 18px; }
+    .finding {
+      display: grid;
+      grid-template-columns: 52px minmax(0, 1fr) 230px;
+      gap: 18px;
+      padding: 22px;
+      border-top: 1px solid var(--line);
+      background: linear-gradient(90deg, color-mix(in srgb, var(--paper) 82%, transparent), transparent);
+    }
+    .rank {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 750;
+    }
+    .finding p:last-child { margin-bottom: 0; }
+    .evidence { color: var(--muted); font-size: .86rem; }
+    .impact {
+      align-self: start;
+      padding: 14px;
+      border-radius: 12px;
+      background: var(--soft);
+      font-size: .85rem;
+    }
+    .impact dl { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; margin: 0; }
+    .impact dt { color: var(--muted); }
+    .impact dd { margin: 0; font-weight: 650; text-align: right; }
+    .badge {
+      display: inline-block;
+      margin: 0 6px 6px 0;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    .badge.recommend { background: var(--accent-soft); color: var(--accent); }
+    .badge.decision { background: var(--warn-soft); color: var(--warn); }
+    .badge.risk { background: var(--danger-soft); color: var(--danger); }
+    table { width: 100%; border-collapse: collapse; background: var(--paper); }
+    th, td { padding: 13px 14px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: .74rem; letter-spacing: .06em; text-transform: uppercase; }
+    td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 14px; }
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 34px 1.25fr 34px 1fr;
+      align-items: stretch;
+      gap: 10px;
+    }
+    .node { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
+    .node small { display: block; margin-top: 8px; color: var(--muted); }
+    .arrow { display: grid; place-items: center; color: var(--accent); font-size: 1.6rem; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .split .node { background: var(--soft); }
+    .scenarios { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .scenario { padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
+    .scenario.recommended { border: 2px solid var(--accent); }
+    .scenario .save { margin: 16px 0 5px; color: var(--accent); font-size: 1.85rem; font-weight: 700; }
+    .scenario ul, .guardrails ul { margin: 10px 0 0; padding-left: 20px; }
+    .scenario li, .guardrails li { margin-bottom: 7px; }
+    .guardrails { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    .guardrails > div { padding: 20px; border-radius: 14px; }
+    .keep { background: var(--accent-soft); }
+    .remove { background: var(--warn-soft); }
+    .method { color: var(--muted); font-size: .86rem; }
+    .method-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    footer { margin-top: 62px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: .82rem; }
+
+    @media (max-width: 860px) {
+      .verdict, .finding, .guardrails, .method-grid { grid-template-columns: 1fr; }
+      .stats, .scenarios { grid-template-columns: repeat(2, 1fr); }
+      .finding { padding-left: 0; padding-right: 0; }
+      .architecture { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); }
+      .surface { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 560px) {
+      main { padding: 28px 17px 56px; }
+      .stats, .scenarios, .split { grid-template-columns: 1fr; }
+      .surface { grid-template-columns: 1fr; }
+      .verdict { padding: 18px; }
+    }
+    @media print {
+      body { background: #fff; color: #111; }
+      main { max-width: none; padding: 0; }
+      .verdict, .stat, .node, .scenario, table { box-shadow: none; break-inside: avoid; }
+      section { break-inside: auto; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header class="hero">
+    <div class="eyebrow">Architecture review · read-only analysis</div>
+    <h1>The projection is over-protected, not merely over-grouped.</h1>
+    <p class="lede">The twelve lifecycle groups are defensible. Most of the new complexity comes from enforcing deep immutability at every reachable value, duplicating already-typed records, validating a disposable checkpoint like an authoritative database, and maintaining broad compatibility/readback surfaces around the projection.</p>
+    <p class="date">Current checkout reviewed 5 August 2026 · No production code or behavior changed</p>
+
+    <div class="verdict">
+      <div>
+        <strong>Recommended direction</strong>
+        <p>Keep events immutable and keep one grouped projection as the read source. Make the projection an owned, private accumulator; reuse canonical record models; store a dedicated checkpoint with schema, position, and checksum; and expose only the read queries the application actually uses.</p>
+        <p>This preserves replay, snapshot+tail performance, optimistic concurrency, and final-invariant behavior while removing much of the machinery whose only job is defending the projection from its own code.</p>
+      </div>
+      <div>
+        <div class="number">21–33%</div>
+        <span>credible reduction in the directly identified 24.2k-line projection surface, without removing user-facing graph capabilities. Ranges overlap and are not simple sums.</span>
+      </div>
+    </div>
+  </header>
+
+  <section id="baseline">
+    <h2>What exists today</h2>
+    <p class="section-note">These counts are deliberately narrow: the five projection implementation files, their export/policy/enforcement perimeter, and the direct projection test closure. They exclude the much larger graph runtime, API, and general graph-model surface.</p>
+    <div class="stats">
+      <div class="stat"><b>24,210</b><span>directly identifiable lines of implementation, policy, enforcement, and tests</span></div>
+      <div class="stat"><b>91</b><span>classes in <code>projection_models.py</code>, including 46 <code>Projected*</code> classes</span></div>
+      <div class="stat"><b>146</b><span>query functions; 88 are not reachable from an application production import root</span></div>
+      <div class="stat"><b>1,452</b><span>AST branch nodes across the five core files—a rough maintenance-complexity signal</span></div>
+    </div>
+
+    <div class="surface" aria-label="Direct surface by category">
+      <div class="core"><b>10,868</b><span>projection core</span></div>
+      <div class="tests"><b>9,970</b><span>direct tests</span></div>
+      <div class="policy"><b>1,405</b><span>relation policy YAML</span></div>
+      <div class="tooling"><b>1,967</b><span>exports + boundary checker</span></div>
+    </div>
+  </section>
+
+  <section id="findings">
+    <h2>Findings, ordered by value</h2>
+    <p class="section-note">“Removal” below means removing a mechanism or duplicated representation, not removing the underlying event semantics. Estimated line reductions are gross ranges before overlap.</p>
+
+    <div class="findings">
+      <article class="finding">
+        <div class="rank">1</div>
+        <div>
+          <span class="badge recommend">Do first</span><span class="badge">Low–medium risk</span>
+          <h3>Collapse the query/export compatibility surface</h3>
+          <p><code>projection_queries.py</code> contains 146 functions and <code>orchestrator.graph.__init__</code> re-exports almost the whole projection vocabulary. A static import-and-call-graph scan found only 54 query roots used by production code after excluding the re-export file; 88 functions (552 definition lines) were unreachable from any production root. Tests import 136 functions, so the test suite is preserving much of this API by itself.</p>
+          <p><strong>Remove:</strong> unconsumed convenience getters, redundant “single item” and “whole map view” pairs, unused public projectors, and corresponding re-exports/tests. Keep one query per real consumer shape rather than a generic library API.</p>
+          <p class="evidence"><code>src/orchestrator/graph/projection_queries.py</code> (1,324 lines, 146 functions); <code>src/orchestrator/graph/__init__.py</code> (1,103 lines); <code>tests/unit/test_graph_projection_queries.py</code> (1,110 lines).</p>
+        </div>
+        <aside class="impact">
+          <dl>
+            <dt>Gross reduction</dt><dd>0.8–1.4k prod/tool</dd>
+            <dt>Test reduction</dt><dd>1.0–1.8k</dd>
+            <dt>Delivery</dt><dd>2–4 days</dd>
+            <dt>User impact</dt><dd>None expected</dd>
+          </dl>
+        </aside>
+      </article>
+
+      <article class="finding">
+        <div class="rank">2</div>
+        <div>
+          <span class="badge recommend">Recommended</span><span class="badge">Medium risk</span>
+          <h3>Treat the checkpoint as a disposable cache, not a second authority</h3>
+          <p>The checkpoint codec is 1,811 lines, backed by a 1,405-line relationship-policy artifact and roughly 2,540 lines of codec/integrity tests. It performs canonical JSON scanning, model reconstruction, identifier-path discovery, policy compilation, and cross-group referential validation. That is disproportionate for state that is explicitly disposable and rebuildable from authoritative events.</p>
+          <p><strong>Replace with:</strong> schema version + event position + serialized grouped state + checksum; validate with Pydantic on load; if decoding, checksum, or a small set of critical invariants fails, discard and rebuild. Enforce relationship correctness when events are accepted and when reducer code writes indexes, where the fault originates.</p>
+          <p class="evidence"><code>projection_codec.py:87–198</code> and <code>:737–1811</code>; <code>_projection_relation_policy.yaml</code>; <code>test_graph_projection_integrity.py</code> (2,047 lines).</p>
+        </div>
+        <aside class="impact">
+          <dl>
+            <dt>Gross reduction</dt><dd>2.2–3.0k prod/config</dd>
+            <dt>Test reduction</dt><dd>2.5–4.0k</dd>
+            <dt>Delivery</dt><dd>5–8 days</dd>
+            <dt>Behavior impact</dt><dd>Corrupt cache rebuilds</dd>
+          </dl>
+        </aside>
+      </article>
+
+      <article class="finding">
+        <div class="rank">3</div>
+        <div>
+          <span class="badge recommend">Recommended</span><span class="badge">Medium risk</span>
+          <h3>Stop maintaining a shadow type system for projected records</h3>
+          <p>The graph already defines 22 canonical output-record types in <code>models.py</code>. The immutable projection adds 20 projected record types and 46 <code>Projected*</code> classes; a name/shape comparison found 56 projection classes paired with an existing canonical model. The shadow hierarchy exists mainly to convert nested lists/dictionaries into tuples/<code>FrozenMap</code>.</p>
+          <p><strong>Remove:</strong> projected record/value duplicates and conversion dispatch. Make canonical accepted records safe to retain (or store their validated JSON envelope) and keep indexes as IDs. This leaves one schema to evolve, one validator set, and one serialization story.</p>
+          <p class="evidence"><code>projection_models.py:857–1695</code>; <code>models.py:485–2599</code>; <code>project_record</code> / <code>project_validated_record_for_reducer</code>.</p>
+        </div>
+        <aside class="impact">
+          <dl>
+            <dt>Gross reduction</dt><dd>0.6–1.0k prod</dd>
+            <dt>Test reduction</dt><dd>0.8–1.5k</dd>
+            <dt>Delivery</dt><dd>5–8 days</dd>
+            <dt>Behavior impact</dt><dd>None intended</dd>
+          </dl>
+        </aside>
+      </article>
+
+      <article class="finding">
+        <div class="rank">4</div>
+        <div>
+          <span class="badge recommend">Strategic</span><span class="badge risk">Higher migration risk</span>
+          <h3>Move immutability to the ownership boundary</h3>
+          <p>The current reducer pays for persistent data structures on every event: custom <code>FrozenMap</code>, recursive JSON freeze/thaw, strict frozen models, 57 <code>model_copy</code> calls and 65 <code>map_set</code> calls in <code>projections.py</code>. The controller, however, loads a projection for a command, uses it locally, and commits new events; it does not require arbitrary consumers to retain and mutate the same object graph.</p>
+          <p><strong>Replace with:</strong> an owned mutable builder used only while folding a command/replay, then a validated snapshot at the checkpoint/query boundary. Keep the reducer deterministic and side-effect-free from the caller’s perspective by never sharing the builder. Immutable event envelopes remain unchanged.</p>
+          <p class="evidence"><code>projection_collections.py</code> (249 lines); <code>projections.py:492–578</code> and reducer update sites; <code>test_graph_projection_immutability.py</code> plus collection/model tests.</p>
+        </div>
+        <aside class="impact">
+          <dl>
+            <dt>Gross reduction</dt><dd>0.9–1.7k prod</dd>
+            <dt>Test reduction</dt><dd>1.0–1.8k</dd>
+            <dt>Delivery</dt><dd>8–12 days</dd>
+            <dt>Main risk</dt><dd>Alias leakage</dd>
+          </dl>
+        </aside>
+      </article>
+
+      <article class="finding">
+        <div class="rank">5</div>
+        <div>
+          <span class="badge recommend">Correctness + simplicity</span><span class="badge">Medium risk</span>
+          <h3>Separate the runtime checkpoint from the bounded API snapshot</h3>
+          <p><code>GraphProjectionSnapshotModel</code> stores compact public fields and embeds the full runtime checkpoint inside its <code>decisions</code> JSON. The same write path then byte-bounds the owner and may drop that checkpoint when it exceeds 262 KiB. Public reads accept the packed form, while runtime reads require a full integrity-decodable form. One row is serving two incompatible lifecycles.</p>
+          <p><strong>Change:</strong> store the internal checkpoint in a dedicated table/column without response-size packing. Keep the compact <code>/graph</code> read model separate. This removes conditional “packed but healthy for API / invalid for runtime” logic and prevents graph size from disabling snapshot+tail command handling.</p>
+          <p class="evidence"><code>db/orm/models.py:378–396</code>; <code>graph_runtime/store.py:6135–6250</code>; <code>read_current_projection_snapshot</code> versus <code>read_projection_checkpoint</code>.</p>
+        </div>
+        <aside class="impact">
+          <dl>
+            <dt>Gross reduction</dt><dd>0.4–0.9k prod</dd>
+            <dt>Operational gain</dt><dd>High</dd>
+            <dt>Delivery</dt><dd>5–8 days</dd>
+            <dt>DB impact</dt><dd>New disposable table</dd>
+          </dl>
+        </aside>
+      </article>
+
+      <article class="finding">
+        <div class="rank">6</div>
+        <div>
+          <span class="badge decision">Product decision</span><span class="badge risk">API compatibility</span>
+          <h3>Retire the coupled archival-view feature unless external clients truly need it</h3>
+          <p>Opening the graph panel launches an extra anchor request plus three archival requests for topology, final blockers, and regions. The product UI renders only their position, <code>total_known</code> counts, and a partial-data note—it does not render the returned topology, blocker rows, or regions. Supporting those counts currently requires three entry tables, a checkpoint table, a background maintenance worker, coupled publication/rollback logic, pagination/byte-packing, three endpoints, and extensive integration tests.</p>
+          <p><strong>Remove or narrow:</strong> delete topology/region archival materialization and show counts already available from the compact health/projection view. Preserve final-invariant computation and failed-outbox blocking in completion/health. If the detailed endpoints are a public contract, deprecate them first or move them behind an explicit diagnostics export.</p>
+          <p class="evidence"><code>ui/src/hooks/useApi.ts:99–119</code>; <code>GraphPanel.tsx:667–678</code>; <code>graph_runtime/store.py:4388–5225</code>; routes at <code>graph.py:3310</code>, <code>:3459</code>, <code>:3658</code>.</p>
+        </div>
+        <aside class="impact">
+          <dl>
+            <dt>Gross reduction</dt><dd>1.2–2.0k prod</dd>
+            <dt>Test reduction</dt><dd>1.0–2.0k</dd>
+            <dt>Per panel open</dt><dd>−4 requests</dd>
+            <dt>Delivery</dt><dd>5–10 days</dd>
+          </dl>
+        </aside>
+      </article>
+
+      <article class="finding">
+        <div class="rank">7</div>
+        <div>
+          <span class="badge">Hygiene</span><span class="badge">Low risk</span>
+          <h3>Delete bespoke boundary enforcement after the boundary becomes small</h3>
+          <p>An 864-line AST checker and a 2,227-line test file enforce that exactly five files may touch grouped storage. That enforcement was a rational response to a very broad public projection API; it should not become permanent architecture. Once the projection is private and consumers use a small query module, ordinary module visibility, top-level import checks, and focused architectural tests are enough.</p>
+          <p><strong>Remove:</strong> five-file allowlist machinery, provenance code, and exhaustive checker self-tests. Retain one short rule that production modules outside <code>graph</code> import through the public package.</p>
+          <p class="evidence"><code>scripts/check_graph_projection_boundaries.py</code>; <code>tests/unit/test_graph_projection_boundaries.py</code>.</p>
+        </div>
+        <aside class="impact">
+          <dl>
+            <dt>Gross reduction</dt><dd>0.7–0.9k tooling</dd>
+            <dt>Test reduction</dt><dd>1.8–2.1k</dd>
+            <dt>Delivery</dt><dd>2–4 days</dd>
+            <dt>Dependency</dt><dd>After 1–4</dd>
+          </dl>
+        </aside>
+      </article>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <h2>A smaller target architecture</h2>
+    <p class="section-note">The key change is ownership, not a return to raw-event scans. One fold still answers all state questions.</p>
+    <div class="architecture" role="img" aria-label="Durable events flow to a private projection builder, then to separate runtime checkpoint and public read model outputs">
+      <div class="node">
+        <h3>Durable typed events</h3>
+        <p>Authoritative, immutable, append-only.</p>
+        <small>Producer validation catches invalid IDs and relationships.</small>
+      </div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node">
+        <h3>Private grouped projection builder</h3>
+        <p>One owned accumulator; canonical record models; plain dictionaries/lists internally; deterministic fold.</p>
+        <small>The twelve lifecycle groups can remain. No persistent-map or public-storage contract.</small>
+      </div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="split">
+        <div class="node">
+          <h3>Runtime checkpoint</h3>
+          <p>Schema + position + checksum + state.</p>
+        </div>
+        <div class="node">
+          <h3>Public read models</h3>
+          <p>Only consumer-shaped, bounded responses.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="plan">
+    <h2>Suggested removal sequence</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Stage</th><th>Work</th><th>Why this order</th><th>Exit evidence</th><th>Scale</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">0</td><td>Capture behavior/performance baseline and identify external consumers of graph diagnostic endpoints.</td><td>Turns API retirement and cache fallback into explicit decisions.</td><td>Event-matrix parity; 10k-event timing; endpoint consumer inventory.</td><td class="num">1–2 days</td></tr>
+          <tr><td class="num">1</td><td>Prune unused queries, projectors, exports, and tests; correct schema-13 documentation drift to schema 14 or stop hard-coding it in prose.</td><td>Low-risk reduction and a smaller migration surface.</td><td>No production import of removed names; focused + full suite.</td><td class="num">2–4 days</td></tr>
+          <tr><td class="num">2</td><td>Separate runtime checkpoint storage from the bounded API snapshot.</td><td>Removes the most consequential lifecycle coupling before changing representation.</td><td>Large projection still loads snapshot+tail; corrupt checkpoint rebuilds.</td><td class="num">5–8 days</td></tr>
+          <tr><td class="num">3</td><td>Reuse canonical record models; simplify checkpoint decoding and retire relation-policy discovery.</td><td>Eliminates the shadow schema before changing reducer mechanics.</td><td>Every-split replay/checkpoint parity; invalid producer events still rejected.</td><td class="num">7–12 days</td></tr>
+          <tr><td class="num">4</td><td>Introduce owned mutable builder; remove <code>FrozenMap</code>, freeze/thaw, persistent update boilerplate, and boundary checker.</td><td>Largest semantic change happens after type and storage surfaces are smaller.</td><td>No alias escapes; deterministic replay; concurrency/stale-position tests pass.</td><td class="num">8–12 days</td></tr>
+          <tr><td class="num">5</td><td>Optionally retire archival diagnostics/materialization.</td><td>Independent product choice; can be done earlier if no external contract exists.</td><td>Graph panel retains actionable health, node detail, events, and decisions.</td><td class="num">5–10 days</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="scenarios">
+    <h2>Decision scenarios</h2>
+    <p class="section-note">Savings are relative to the 24,210-line direct surface and include tests/config/tooling. They are directional, not a commitment estimate.</p>
+    <div class="scenarios">
+      <article class="scenario">
+        <h3>Conservative cleanup</h3>
+        <div class="save">3–5k lines</div>
+        <p>About 12–21% of the direct surface.</p>
+        <ul>
+          <li>Prune queries/exports.</li>
+          <li>Remove unused projectors.</li>
+          <li>Shrink boundary tests.</li>
+          <li>Keep deep immutability and codec.</li>
+        </ul>
+        <p><strong>Scale:</strong> roughly 1–2 engineer weeks.</p>
+      </article>
+      <article class="scenario recommended">
+        <span class="badge recommend">Recommended</span>
+        <h3>Balanced simplification</h3>
+        <div class="save">5–8k lines</div>
+        <p>About 21–33% of the direct surface.</p>
+        <ul>
+          <li>All conservative work.</li>
+          <li>Dedicated runtime checkpoint.</li>
+          <li>Canonical record reuse.</li>
+          <li>Simpler cache validation.</li>
+          <li>Owned builder or staged move toward it.</li>
+        </ul>
+        <p><strong>Scale:</strong> roughly 3–5 engineer weeks.</p>
+      </article>
+      <article class="scenario">
+        <h3>Aggressive product trim</h3>
+        <div class="save">8–12k lines</div>
+        <p>About 33–50% of the direct surface plus adjacent API/runtime code.</p>
+        <ul>
+          <li>All balanced work.</li>
+          <li>Retire archival materialization.</li>
+          <li>Narrow diagnostic endpoints.</li>
+          <li>Remove coupled UI fetches.</li>
+        </ul>
+        <p><strong>Scale:</strong> roughly 4–7 engineer weeks plus API deprecation.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="guardrails">
+    <h2>What should and should not disappear</h2>
+    <div class="guardrails">
+      <div class="keep">
+        <h3>Keep these invariants</h3>
+        <ul>
+          <li>Events remain the durable authority.</li>
+          <li>Commands read one folded projection, never ad-hoc raw-event scans.</li>
+          <li>Snapshot+tail remains the runtime path.</li>
+          <li>Position checks preserve optimistic concurrency.</li>
+          <li>Canonical event and record payloads remain Pydantic-validated.</li>
+          <li>Final-invariant and failed-outbox blocking remain authoritative.</li>
+          <li>Replay parity and a realistic performance gate remain.</li>
+        </ul>
+      </div>
+      <div class="remove">
+        <h3>Remove these implementation obligations</h3>
+        <ul>
+          <li>Deep immutability for every internal nested value.</li>
+          <li>Persistent-map identity preservation across reducer updates.</li>
+          <li>A second projected record type hierarchy.</li>
+          <li>Relationship-policy discovery for a disposable cache.</li>
+          <li>A broad public query API with no application consumer.</li>
+          <li>One storage row serving runtime checkpoint and bounded API response lifecycles.</li>
+          <li>Materialized diagnostics whose data the product does not display.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="method">
+    <h2>Method and confidence</h2>
+    <div class="method-grid method">
+      <div>
+        <h3>Evidence reviewed</h3>
+        <p>Projection models, collections, queries, codec, reducer, public exports, boundary checker, relation-policy artifact, runtime checkpoint/store paths, graph API routes, ORM read models, GraphPanel hooks/rendering, architecture documentation, and the direct projection test closure.</p>
+        <p>Static metrics used Python AST parsing and text counts. Query reachability started from production imports (excluding the package re-export file) and followed direct same-module function calls.</p>
+      </div>
+      <div>
+        <h3>Limits</h3>
+        <p>This is a current-checkout review, not a history/diff attribution exercise. It did not use production telemetry or inventory clients outside this repository. The archival endpoint recommendation is therefore conditional on confirming there are no relied-upon external consumers.</p>
+        <p>Line-reduction ranges overlap—especially codec, duplicate records, immutability, and boundary tests. They should be re-estimated after each stage rather than summed.</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    Prepared from a read-only architecture pass. The only repository change made for this review is this report.
+  </footer>
+</main>
+</body>
+</html>

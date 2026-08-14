@@ -198,8 +198,13 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
 
     events = await _read_events(session_factory, run_id)
     accepted = next(event for event in events if event.event_type == "file_state_accepted")
+    assert not any(
+        event.event_type == "output_record_accepted"
+        and event.payload.get("record_kind") == "file_state"
+        for event in events
+    )
     classifications = {
-        entry["path"]: entry["classification"] for entry in accepted.payload["classifications"]
+        entry["path"]: entry["classification"] for entry in accepted.payload["paths"]
     }
     assert classifications["README.md"] == "tracked_change"
     assert classifications["residue.txt"] == "unknown_untracked"
@@ -334,7 +339,9 @@ async def test_secret_file_state_rejection_releases_lease_and_retries_clean_atte
     events = await _read_events(session_factory, run_id)
     rejection = next(event for event in events if event.event_type == "file_state_rejected")
     rejected_paths = {
-        entry["path"]: entry["classification"] for entry in rejection.payload["rejected_paths"]
+        entry["path"]: entry["classification"]
+        for entry in rejection.payload["paths"]
+        if entry.get("rejected") is True
     }
     assert rejected_paths == {"fake_key.pem": "secret"}
     assert not any(event.event_type == "file_state_accepted" for event in events)
@@ -387,10 +394,12 @@ async def test_nested_secret_inside_ignored_directory_is_classified_and_not_snap
     events = await _read_events(session_factory, run_id)
     rejection = next(event for event in events if event.event_type == "file_state_rejected")
     classifications = {
-        entry["path"]: entry["classification"] for entry in rejection.payload["classifications"]
+        entry["path"]: entry["classification"] for entry in rejection.payload["paths"]
     }
     rejected_paths = {
-        entry["path"]: entry["classification"] for entry in rejection.payload["rejected_paths"]
+        entry["path"]: entry["classification"]
+        for entry in rejection.payload["paths"]
+        if entry.get("rejected") is True
     }
     assert classifications["secrets/cache.txt"] == "unknown_ignored"
     assert classifications["secrets/key.pem"] == "secret"

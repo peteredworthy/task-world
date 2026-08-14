@@ -930,6 +930,72 @@ async def test_driver_recovers_orphaned_lease_and_reschedules_node() -> None:
 
 
 @pytest.mark.asyncio
+async def test_driver_recovers_resumed_leases_despite_ready_node_deferral_progress() -> None:
+    """A ready node's resource-conflict deferral must not mask orphaned leases.
+
+    On resume, consume-once outbox rows can leave leases behind without a live
+    execution.  A different ready node then advances the graph position on each
+    tick by being deferred on those resources, so stable-head recovery never
+    runs unless orphan detection happens directly after dispatch and wait.
+    """
+    controller = AgentDiedRecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+    orphaned_with_ready_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=["worker-final"],
+        active_leases={
+            "lease-1": {
+                "lease_id": "lease-1",
+                "state": "active",
+                "node_id": "worker-implementation",
+                "execution_id": "exec-1",
+                "generation": 1,
+            }
+        },
+        schedulable_nodes=["worker-final"],
+        task_states={"s/t": "in_progress"},
+        node_states={
+            "worker-implementation": "leased",
+            "worker-final": "ready",
+        },
+    )
+    completed_snapshot = GraphProjectionSnapshot(
+        run_state="completed",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"s/t": "accepted"},
+    )
+    reader = ScriptedProjectionReader(
+        [
+            orphaned_with_ready_snapshot,
+            orphaned_with_ready_snapshot,
+            completed_snapshot,
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.commands.count("agent_died") == 1
+    assert controller.agent_died_payloads == [
+        {
+            "lease_id": "lease-1",
+            "reason": "runtime_execution_missing_no_callback",
+            "execution_id": "exec-1",
+        }
+    ]
+    assert outcome.completed is True
+
+
+@pytest.mark.asyncio
 async def test_driver_waits_for_future_outbox_backoff_before_declaring_blocked() -> None:
     controller = StablePositionAgentDiedRecordingController()
     clock = FakeClock()

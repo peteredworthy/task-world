@@ -306,23 +306,7 @@ def _file_state_output_record(
             "ref": snapshot_result.ref,
             "no_commit_reason": None,
         },
-        "tracked": [
-            entry.to_record() for entry in classification.paths if entry.source == "tracked"
-        ],
-        "untracked": [
-            entry.to_record() for entry in classification.paths if entry.source == "untracked"
-        ],
-        "ignored": [
-            entry.to_record() for entry in classification.paths if entry.source == "ignored"
-        ],
-        "external": [
-            entry.to_record()
-            for entry in classification.paths
-            if entry.classification == "external_artifact"
-        ],
-        "classifications": entries,
-        "residue": [entry.to_record() for entry in classification.residue],
-        "rejected_paths": [],
+        "paths": entries,
     }
 
 
@@ -360,7 +344,10 @@ def _cleanup_superseding_record(
     record["cleanup_excluded_paths"] = list(excluded_paths)
     record["compromised"] = False
     record["superseded_pending"] = False
+    # New canonical records contain one inventory. Historical records are
+    # normalized by FileStateRecord before reaching this path.
     for key in (
+        "paths",
         "tracked",
         "untracked",
         "ignored",
@@ -531,10 +518,10 @@ def _paths_with_metadata(
     # Treat it exactly like a nested cache root: keep the bounded root evidence
     # and perform the one security traversal under the same shared budget.
     if _is_declared_tool_cache(normalized, kind, policy):
-        return [
-            _path_with_metadata(worktree_path, normalized, kind, policy),
-            *_cache_security_paths(worktree_path, full_path, kind, policy, cache_scan),
-        ]
+        paths = [_path_with_metadata(worktree_path, normalized, kind, policy)]
+        if _cache_root_requires_security_scan(normalized):
+            paths.extend(_cache_security_paths(worktree_path, full_path, kind, policy, cache_scan))
+        return paths
 
     # Git may report an untracked or ignored directory as one status entry. The
     # boundary must classify every file so nested secret-like paths cannot be
@@ -552,7 +539,10 @@ def _paths_with_metadata(
             # normal boundary manifest.  Still inspect every descendant that
             # could be security-relevant: tool-cache precedence must never hide
             # a secret-like file or an escaping symlink.
-            paths.extend(_cache_security_paths(worktree_path, dir_path, kind, policy, cache_scan))
+            if _cache_root_requires_security_scan(relative):
+                paths.extend(
+                    _cache_security_paths(worktree_path, dir_path, kind, policy, cache_scan)
+                )
             dirs.remove(dirname)
         # Symlinked directories appear in `dirs` but are never descended
         # (followlinks=False). Classify the symlink entry itself so a
@@ -595,6 +585,20 @@ def _is_declared_tool_cache(path: str, kind: FileStatePathKind, policy: FileStat
     return declaration is not None or any(
         _pattern_matches(path, pattern) for pattern in policy.tool_cache_patterns
     )
+
+
+def _cache_root_requires_security_scan(path: str) -> bool:
+    """Return whether an ignored cache may contain run-owned output.
+
+    Worktree setup creates ``.venv`` before a runner lease begins. Its package
+    tree contains ordinary credential-named modules, CA certificates, and
+    interpreter symlinks outside the worktree, all of which intentionally trip
+    the stricter scan used for agent-owned caches. The environment is excluded
+    from snapshots and cannot be accepted as output, so retain only its bounded
+    root evidence. Other cache roots still receive the full secret/symlink scan.
+    """
+    normalized = path.replace("\\", "/").strip("/")
+    return normalized != ".venv" and not normalized.endswith("/.venv")
 
 
 def _cache_security_paths(

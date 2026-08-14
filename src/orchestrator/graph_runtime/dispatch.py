@@ -43,6 +43,7 @@ from orchestrator.graph import (
     input_bindings_view,
     leases_view,
     node_kinds_view,
+    node_payload_view,
     node_roles_view,
     project_node_max_attempts,
     CheckResultRecord,
@@ -66,8 +67,11 @@ from orchestrator.graph import (
     derive_cache_roots,
     first_authorized_cache_root,
     cache_authority_hash,
+    callback_payload_identity,
+    canonical_callback_payload_bytes,
     classify_file_state,
     run_state,
+    thaw_json,
 )
 from orchestrator.graph_runtime import prompts as _prompts
 from orchestrator.graph_runtime.controller import (
@@ -575,7 +579,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         """Rebuild the durable identity needed to complete a surviving runner."""
         projection = await self._controller.read_projection(run_id)
         events = await self._events(run_id)
-        node_payload = _node_payload(events, attempt.node_id)
+        node_payload = _node_payload(events, attempt.node_id, projection=projection)
         lease = leases_view(projection).get(attempt.lease_id)
         return GraphDispatchContext(
             run_id=run_id,
@@ -881,7 +885,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             events = await store.read_bounded_runtime_events(item.run_id)
 
         _guard_no_pending_compromised_file_state_bindings(projection, node_id)
-        node_payload = _node_payload(events, node_id)
+        node_payload = _node_payload(events, node_id, projection=projection)
         binding = cache_authority_binding(projection)
         lease = leases_view(projection).get(str(payload["lease_id"]))
         dispatch_hash = payload.get("cache_authority_hash")
@@ -1080,32 +1084,43 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 base_snapshot_id=context.base_snapshot_id,
             )
         )
-        payload_data: dict[str, object] = {
-            "node_id": context.node_id,
-            "execution_id": context.execution_id,
-            "lease_id": context.lease_id,
-            "lease_generation": context.lease_generation,
-            "base_snapshot_id": context.base_snapshot_id,
-            "observed_graph_position": observed_position,
-            "idempotency_key": f"{context.dispatch_event_id}:{context.execution_id}:submit",
-            "payload_hash": _payload_hash(payload),
-            "payload": payload,
-            "staged_snapshot_id": staged.snapshot.id,
-            "staged_snapshot_ref": staged.snapshot.ref,
-            "staged_commit_sha": staged.snapshot.commit_sha,
-            "staged_tree_sha": staged.snapshot.tree_sha,
-            "boundary_hash": staged.boundary_hash,
-            "boundary_entries": staged.entries,
-            "cache_authority_hash": context.cache_authority_hash,
-            "cache_roots": staged.cache_roots,
-            "cache_status_evidence": staged.cache_status_evidence,
-        }
-        result = await self._handle_command_retry_stale(
-            context.run_id,
-            observed_position,
-            "stage_runner_submission",
-            payload_data,
-        )
+        payload_bytes = canonical_callback_payload_bytes(payload)
+        payload_hash, payload_size_bytes = callback_payload_identity(payload)
+        async with self._artifact_store.publication():
+            payload_ref = await self._artifact_store.put(
+                payload_bytes,
+                media_type="application/json",
+                encoding="utf-8",
+            )
+            payload_data: dict[str, object] = {
+                "node_id": context.node_id,
+                "execution_id": context.execution_id,
+                "lease_id": context.lease_id,
+                "lease_generation": context.lease_generation,
+                "base_snapshot_id": context.base_snapshot_id,
+                "observed_graph_position": observed_position,
+                "idempotency_key": f"{context.dispatch_event_id}:{context.execution_id}:submit",
+                "payload_hash": payload_hash,
+                "payload": payload,
+                "payload_ref": payload_ref.model_dump(mode="json"),
+                "staged_snapshot_id": staged.snapshot.id,
+                "staged_snapshot_ref": staged.snapshot.ref,
+                "staged_commit_sha": staged.snapshot.commit_sha,
+                "staged_tree_sha": staged.snapshot.tree_sha,
+                "boundary_hash": staged.boundary_hash,
+                "boundary_entries": staged.entries,
+                "cache_authority_hash": context.cache_authority_hash,
+                "cache_roots": staged.cache_roots,
+                "cache_status_evidence": staged.cache_status_evidence,
+            }
+            if payload_ref.size_bytes != payload_size_bytes:
+                raise ValueError("artifact store returned a noncanonical callback size")
+            result = await self._handle_command_retry_stale(
+                context.run_id,
+                observed_position,
+                "stage_runner_submission",
+                payload_data,
+            )
         conflict_reason = _callback_conflict_reason(result.events)
         if conflict_reason is not None:
             raise ValueError(f"submit callback rejected: {conflict_reason}")
@@ -1142,6 +1157,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
             raise ValueError(f"runner baseline rejected: {reason}")
 
     async def _finalize_runner_execution(self, context: GraphDispatchContext) -> None:
+        callback_payload = await self._resolve_staged_callback_payload(
+            context.run_id, context.execution_id
+        )
         file_state = capture_file_state_boundary(
             worktree_path=context.worktree_path,
             run_id=context.run_id,
@@ -1177,6 +1195,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "cache_authority_hash": context.cache_authority_hash,
                 "cache_roots": capture.cache_roots,
                 "cache_status_evidence": capture.cache_status_evidence,
+                "callback_payload": callback_payload,
             },
         )
         reason = _callback_conflict_reason(result.events)
@@ -1184,6 +1203,33 @@ class GraphDispatchExecutor(SideEffectExecutor):
             raise ValueError(f"runner finalization rejected: {reason}")
         publish_snapshot(context.worktree_path, capture.snapshot)
         await self._record_gatekeeper_verdicts(context, result.projection_position, result.events)
+
+    async def _resolve_staged_callback_payload(
+        self, run_id: str, execution_id: str
+    ) -> dict[str, Any]:
+        """Resolve and integrity-check the callback body needed for finalization."""
+        projection = await self._controller.read_projection(run_id)
+        attempt = execution_attempts_view(projection).get(execution_id)
+        if attempt is None or attempt.state != "submission_staged":
+            raise ValueError("runner execution has no staged callback")
+        if attempt.payload_ref is None:
+            legacy = thaw_json(attempt.payload)
+            if not isinstance(legacy, dict):
+                raise ValueError("legacy staged callback payload is unavailable")
+            return cast(dict[str, Any], legacy)
+        ref = StoredArtifactRef.model_validate(attempt.payload_ref.model_dump(mode="json"))
+        content = await self._artifact_store.read(ref)
+        try:
+            decoded = json.loads(content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("staged callback artifact is not canonical JSON") from exc
+        if not isinstance(decoded, dict):
+            raise ValueError("staged callback artifact must contain an object")
+        payload = cast(dict[str, Any], decoded)
+        payload_hash, payload_size = callback_payload_identity(payload)
+        if payload_hash != attempt.payload_hash or payload_size != attempt.payload_size_bytes:
+            raise ValueError("staged callback artifact does not match durable identity")
+        return payload
 
     async def _request_runner_recovery(
         self,
@@ -1895,12 +1941,18 @@ def build_graph_runtime(
     return controller, executor
 
 
-def _node_payload(events: list[EventEnvelope], node_id: str) -> dict[str, Any]:
+def _node_payload(
+    events: list[EventEnvelope], node_id: str, *, projection: GraphProjection | None = None
+) -> dict[str, Any]:
     for event in events:
         if event.event_type != "node_created":
             continue
         if event.payload.get("node_id") == node_id:
             return dict(event.payload)
+    if projection is not None:
+        payload = node_payload_view(projection, node_id)
+        if payload is not None:
+            return payload
     return {"node_id": node_id}
 
 
@@ -2197,7 +2249,11 @@ async def _execute_check_command(
     context: GraphDispatchContext,
     store: ArtifactStore,
 ) -> dict[str, Any]:
-    command_definition = _check_command_definition(context.node_payload, context.graph_events)
+    command_definition = _check_command_definition(
+        context.node_payload,
+        context.graph_events,
+        context.graph_projection,
+    )
     cited_record = _check_result_from_bound_verification_if_redundant(
         context,
         command_definition,
@@ -2333,7 +2389,11 @@ def _check_result_from_bound_verification_if_redundant(
 ) -> dict[str, Any] | None:
     if command_definition.get("source") != "dynamic_feature_hidden_oracle_binding":
         return None
-    if not check_command_uses_acceptance_fallback(context.node_payload, context.graph_events):
+    if not check_command_uses_acceptance_fallback(
+        context.node_payload,
+        context.graph_events,
+        projection=context.graph_projection,
+    ):
         return None
     citations = _evaluated_record_citations(context)
     verification_record = _latest_passed_verification_citation(
@@ -2650,8 +2710,9 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
 def _check_command_definition(
     node: dict[str, Any],
     events: list[EventEnvelope],
+    projection: GraphProjection | None = None,
 ) -> dict[str, Any]:
-    command_definition = resolve_check_command_definition(node, events)
+    command_definition = resolve_check_command_definition(node, events, projection=projection)
     if command_definition is None:
         msg = "check node missing command_definition"
         raise ValueError(msg)

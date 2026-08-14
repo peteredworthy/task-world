@@ -26,6 +26,7 @@ _ARCHIVE_NAME = re.compile(
     r"(?:\.(?P<content_hash>[0-9a-f]{16})(?:\.(?P<collision>\d+))?)?\.jsonl$"
 )
 _TAIL_SCAN_CHUNK_SIZE = 64 * 1024
+_CHECKPOINT_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,22 @@ class JournalSegment:
     path: Path
     first_position: int
     last_position: int
+
+
+@dataclass(frozen=True)
+class JournalDeliveryCheckpoint:
+    """Truthful journal delivery state across legacy adoption and new writes.
+
+    ``verified_through_position`` is the contiguous prefix whose journal
+    coverage has been established.  ``tail_through_position`` is the SQL
+    frontier already handled by normal startup delivery.  The frontiers may
+    differ only while ``unverified_legacy_through_position`` preserves the
+    bounded legacy range that still requires an explicit audit.
+    """
+
+    verified_through_position: int
+    tail_through_position: int
+    unverified_legacy_through_position: int | None
 
 
 class JournalFileOperations(Protocol):
@@ -201,8 +218,10 @@ class JsonlOutboxObserver:
         store: "SqliteEventStore",
         *,
         batch_size: int,
+        after_position: int = 0,
+        through_position: int | None = None,
     ) -> int:
-        """Reconcile DB pages with one exact-position set per journal segment.
+        """Reconcile DB pages against exact coverage across every journal segment.
 
         The advisory lock spans this startup-only operation so a concurrent
         writer cannot invalidate a segment set between its scan and append.
@@ -211,41 +230,24 @@ class JsonlOutboxObserver:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             with _advisory_lock(self._path):
                 _recover_linked_rotation(self._path, self._rotation_operations)
-                cursor = 0
+                cursor = after_position
                 observed = 0
-                # The active file can contain positions which belong to sparse
-                # archive ranges. Retain its one bounded set throughout this
-                # pass so those positions never get appended as archive gaps.
-                initial_active_positions = self._segment_reader(self._path)
+                # A segment's advertised range is only a candidate index.  Old
+                # journals may contain sparse and overlapping ranges, so only
+                # the union of exact positions is authoritative.  Build that
+                # union before asking SQL for any gap and extend it after each
+                # append.  Tail reconciliation skips archives wholly below the
+                # durable checkpoint and therefore remains bounded on restart.
+                existing_positions = set(self._segment_reader(self._path))
                 for segment in discover_journal_segments(self._path):
-                    observed += await self._reconcile_page_range(
-                        store,
-                        cursor,
-                        segment.first_position - 1,
-                        batch_size,
-                        initial_active_positions,
-                    )
-                    cursor = max(cursor, segment.first_position - 1)
-                    segment_positions = self._segment_reader(segment.path)
-                    existing_positions = initial_active_positions | segment_positions
-                    observed += await self._reconcile_page_range(
-                        store,
-                        cursor,
-                        segment.last_position,
-                        batch_size,
-                        existing_positions,
-                    )
-                    cursor = max(cursor, segment.last_position)
-
-                # Archives are chronological journal prefixes. Only the
-                # initial active positions filter the whole pass; DB cursor
-                # advancement makes newly appended positions irrelevant.
+                    if segment.last_position > after_position:
+                        existing_positions.update(self._segment_reader(segment.path))
                 observed += await self._reconcile_page_range(
                     store,
                     cursor,
-                    None,
+                    through_position,
                     batch_size,
-                    initial_active_positions,
+                    existing_positions,
                 )
                 self._written = self._segment_reader(self._path)
                 return observed
@@ -276,6 +278,7 @@ class JsonlOutboxObserver:
                 self._rotation_operations,
                 self._file_operations,
             )
+            existing_positions.update(event.position for event in new_events)
             cursor = page[-1].position
 
 
@@ -286,6 +289,8 @@ async def drain_committed_events_to_journal(
     batch_size: int = 200,
     max_bytes: int = 64 * 1024 * 1024,
     observer: EventOutboxObserver | None = None,
+    use_checkpoint: bool = False,
+    defer_untrusted_legacy_audit: bool = False,
 ) -> int:
     """Write committed DB events absent from the journal in bounded batches.
 
@@ -297,21 +302,184 @@ async def drain_committed_events_to_journal(
         raise ValueError("batch_size must be positive")
     from orchestrator.db.access.event_store_v2 import SqliteEventStore
 
-    journal_observer = observer or JsonlOutboxObserver(path, max_bytes=max_bytes)
     store = SqliteEventStore(session)
+    journal_observer = observer or JsonlOutboxObserver(path, max_bytes=max_bytes)
+    after_position = 0
+    through_position: int | None = None
+    checkpoint: JournalDeliveryCheckpoint | None = None
+    checkpoint_after_success: JournalDeliveryCheckpoint | None = None
+    checkpoint_path = _journal_checkpoint_path(path)
+    if use_checkpoint:
+        through_position = await _current_sql_head(session)
+        checkpoint = await asyncio.to_thread(_read_journal_checkpoint, checkpoint_path)
+        if checkpoint is not None:
+            checkpoint = _clamp_journal_checkpoint(checkpoint, through_position)
+            if (
+                not defer_untrusted_legacy_audit
+                and checkpoint.unverified_legacy_through_position is not None
+            ):
+                # The audit is intentionally bounded by the head captured when
+                # legacy history was adopted.  New SQL tail delivery remains
+                # independent and can continue on normal startup.
+                after_position = checkpoint.verified_through_position
+                through_position = checkpoint.unverified_legacy_through_position
+                checkpoint_after_success = JournalDeliveryCheckpoint(
+                    verified_through_position=checkpoint.tail_through_position,
+                    tail_through_position=checkpoint.tail_through_position,
+                    unverified_legacy_through_position=None,
+                )
+            else:
+                after_position = checkpoint.tail_through_position
+                checkpoint_after_success = JournalDeliveryCheckpoint(
+                    verified_through_position=(
+                        through_position
+                        if checkpoint.unverified_legacy_through_position is None
+                        else checkpoint.verified_through_position
+                    ),
+                    tail_through_position=through_position,
+                    unverified_legacy_through_position=(
+                        checkpoint.unverified_legacy_through_position
+                    ),
+                )
+        elif defer_untrusted_legacy_audit and _has_existing_journal_history(path):
+            # Adopting a pre-checkpoint journal must not make readiness depend
+            # on a full legacy audit.  The skipped range remains explicit debt;
+            # unlike the v1 checkpoint, it is never described as verified.
+            adopted = JournalDeliveryCheckpoint(
+                verified_through_position=0,
+                tail_through_position=through_position,
+                unverified_legacy_through_position=(through_position or None),
+            )
+            await asyncio.to_thread(_write_journal_checkpoint, checkpoint_path, adopted)
+            return 0
+        else:
+            checkpoint_after_success = JournalDeliveryCheckpoint(
+                verified_through_position=through_position,
+                tail_through_position=through_position,
+                unverified_legacy_through_position=None,
+            )
     if isinstance(journal_observer, JsonlOutboxObserver):
-        return await journal_observer.reconcile(store, batch_size=batch_size)
-    cursor = 0
+        observed = await journal_observer.reconcile(
+            store,
+            batch_size=batch_size,
+            after_position=after_position,
+            through_position=through_position,
+        )
+        if use_checkpoint and checkpoint_after_success is not None:
+            await asyncio.to_thread(
+                _write_journal_checkpoint, checkpoint_path, checkpoint_after_success
+            )
+        return observed
+    cursor = after_position
     observed = 0
     while True:
-        page = await store.get_page_after_position(cursor, limit=batch_size)
+        page = await store.get_page_after_position(
+            cursor, limit=batch_size, through_position=through_position
+        )
         if not page:
+            if use_checkpoint and checkpoint_after_success is not None:
+                await asyncio.to_thread(
+                    _write_journal_checkpoint, checkpoint_path, checkpoint_after_success
+                )
             return observed
         # The observer checks active and archive candidates exactly under the
         # journal lock, so no journal-position set is retained in memory.
         await journal_observer(page)
         observed += len(page)
         cursor = page[-1].position
+
+
+async def _current_sql_head(session: "AsyncSession") -> int:
+    from sqlalchemy import func, select
+
+    from orchestrator.db.orm.models import EventV2Model
+
+    value = await session.scalar(select(func.max(EventV2Model.position)))
+    return int(value or 0)
+
+
+def _journal_checkpoint_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.checkpoint")
+
+
+def _has_existing_journal_history(path: Path) -> bool:
+    try:
+        if path.stat().st_size:
+            return True
+    except FileNotFoundError:
+        pass
+    return bool(discover_journal_segments(path))
+
+
+def _read_journal_checkpoint(path: Path) -> JournalDeliveryCheckpoint | None:
+    try:
+        raw = json.loads(path.read_text())
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    payload = cast(dict[str, object], raw)
+    if payload.get("version") != _CHECKPOINT_VERSION:
+        return None
+    verified = payload.get("verified_through_position")
+    tail = payload.get("tail_through_position")
+    legacy = payload.get("unverified_legacy_through_position")
+    if type(verified) is not int or verified < 0:
+        return None
+    if type(tail) is not int or tail < verified:
+        return None
+    if legacy is not None and (type(legacy) is not int or legacy <= verified or legacy > tail):
+        return None
+    return JournalDeliveryCheckpoint(
+        verified_through_position=verified,
+        tail_through_position=tail,
+        unverified_legacy_through_position=legacy,
+    )
+
+
+def _clamp_journal_checkpoint(
+    checkpoint: JournalDeliveryCheckpoint,
+    sql_head: int,
+) -> JournalDeliveryCheckpoint:
+    """Clamp valid persisted frontiers to the current authoritative SQL head."""
+    tail = min(checkpoint.tail_through_position, sql_head)
+    verified = min(checkpoint.verified_through_position, tail)
+    legacy = checkpoint.unverified_legacy_through_position
+    if legacy is not None:
+        legacy = min(legacy, tail)
+        if legacy <= verified:
+            legacy = None
+    return JournalDeliveryCheckpoint(
+        verified_through_position=verified,
+        tail_through_position=tail,
+        unverified_legacy_through_position=legacy,
+    )
+
+
+def _write_journal_checkpoint(path: Path, checkpoint: JournalDeliveryCheckpoint) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    payload = json.dumps(
+        {
+            "version": _CHECKPOINT_VERSION,
+            "verified_through_position": checkpoint.verified_through_position,
+            "tail_through_position": checkpoint.tail_through_position,
+            "unverified_legacy_through_position": (checkpoint.unverified_legacy_through_position),
+        },
+        sort_keys=True,
+    )
+    try:
+        with open(temporary, "w") as file:
+            file.write(payload + "\n")
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _to_record(e: StoredEvent) -> dict[str, object]:
@@ -520,7 +688,7 @@ def _link_unique_archive(
     Position ranges are not unique: recovery, retries, and manually repaired
     journals can all rotate a second active file covering an earlier range.
     Include a content-derived identity in every new archive name and reserve a
-    numeric ordinal for the (still possible) same-content repeat. ``link`` is
+    numeric ordinal only for distinct/invalid occupied candidates. ``link`` is
     the no-clobber reservation, so a racing writer cannot overwrite an archive
     between selecting a candidate and installing it.
     """
@@ -533,9 +701,28 @@ def _link_unique_archive(
         try:
             operations.link(path, archive)
         except FileExistsError:
+            if archive.is_file() and _files_equal(path, archive):
+                return archive
             ordinal += 1
             continue
         return archive
+
+
+def _files_equal(left: Path, right: Path) -> bool:
+    """Compare candidate archives without loading either file into memory."""
+    try:
+        if left.stat().st_size != right.stat().st_size:
+            return False
+        with open(left, "rb") as left_file, open(right, "rb") as right_file:
+            while True:
+                left_chunk = left_file.read(64 * 1024)
+                right_chunk = right_file.read(64 * 1024)
+                if left_chunk != right_chunk:
+                    return False
+                if not left_chunk:
+                    return True
+    except (FileNotFoundError, IsADirectoryError, OSError):
+        return False
 
 
 def _archive_content_hash(path: Path) -> str:

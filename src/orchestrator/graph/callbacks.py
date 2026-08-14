@@ -1,6 +1,8 @@
 """Pure callback validation for execution graph leases."""
 
 from dataclasses import dataclass
+import hashlib
+import json
 from typing import Any, cast
 
 from orchestrator.graph.models import EventEnvelope, LeaseProjection
@@ -206,16 +208,22 @@ def _validate_idempotency(
             _callback_idempotency_projection_key(request.node_id, request.idempotency_key)
         )
         if projected is not None and projected.event_type == "callback_accepted":
-            if projected.payload == request.payload:
+            request_hash, _ = callback_payload_identity(request.payload)
+            projected_matches = (
+                projected.payload_hash == request_hash
+                if projected.payload_hash is not None
+                else projected.payload == request.payload
+            )
+            if projected_matches:
                 return CallbackValidationResult(
                     outcome=CallbackOutcome.DUPLICATE_IDEMPOTENT,
                     reason="duplicate idempotency key",
                     prior_result={
                         "outcome": projected.outcome,
-                        "payload": projected.model_dump(
-                            mode="json",
-                            exclude={"event_type", "outcome"},
-                        ),
+                        "node_id": projected.node_id,
+                        "idempotency_key": projected.idempotency_key,
+                        "payload_hash": request_hash,
+                        "record_ids": list(projected.record_ids),
                     },
                 )
             return CallbackValidationResult(
@@ -230,11 +238,24 @@ def _validate_idempotency(
         if event.payload.get("node_id") != request.node_id:
             continue
 
-        if _stored_callback_payload(event.payload) == request.payload:
+        request_hash, _ = callback_payload_identity(request.payload)
+        stored_hash = event.payload.get("payload_hash")
+        matches = (
+            stored_hash == request_hash
+            if isinstance(stored_hash, str)
+            else _stored_callback_payload(event.payload) == request.payload
+        )
+        if matches:
             return CallbackValidationResult(
                 outcome=CallbackOutcome.DUPLICATE_IDEMPOTENT,
                 reason="duplicate idempotency key",
-                prior_result={"outcome": event.event_type, "payload": event.payload},
+                prior_result={
+                    "outcome": event.event_type,
+                    "node_id": event.payload.get("node_id"),
+                    "idempotency_key": event.payload.get("idempotency_key"),
+                    "payload_hash": request_hash,
+                    "record_ids": event.payload.get("record_ids", []),
+                },
             )
         return CallbackValidationResult(
             outcome=CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT,
@@ -258,6 +279,22 @@ def _stored_callback_payload(event_payload: dict[str, Any]) -> dict[str, Any] | 
     if isinstance(payload, dict):
         return cast(dict[str, Any], payload)
     return {"payload": payload}
+
+
+def callback_payload_identity(payload: dict[str, Any] | None) -> tuple[str, int]:
+    """Return the stable identity used by compact callback audit events."""
+    encoded = canonical_callback_payload_bytes(payload)
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}", len(encoded)
+
+
+def canonical_callback_payload_bytes(payload: dict[str, Any] | None) -> bytes:
+    """Serialize a callback once for hashing and content-addressed storage."""
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    ).encode("utf-8")
 
 
 def _rejected_stale(reason: str) -> CallbackValidationResult:

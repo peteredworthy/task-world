@@ -259,6 +259,7 @@ def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
             "command_definition": resolve_check_command_definition(
                 context.node_payload,
                 context.graph_events,
+                projection=context.graph_projection,
             ),
             "bound_records": _planner_evidence(
                 context,
@@ -836,10 +837,27 @@ def _compact_file_state_record(record: dict[str, Any] | FileStateRecord) -> dict
     record_payload = (
         record.model_dump(mode="json") if isinstance(record, FileStateRecord) else record
     )
-    tracked = _path_entries(record_payload.get("tracked"))
-    untracked = _path_entries(record_payload.get("untracked"))
-    ignored = _path_entries(record_payload.get("ignored"))
-    rejected_paths = record_payload.get("rejected_paths")
+    canonical_paths = _path_entries(record_payload.get("paths"))
+    tracked = (
+        canonical_paths
+        and [entry for entry in canonical_paths if entry.get("source") == "tracked"]
+        or _path_entries(record_payload.get("tracked"))
+    )
+    untracked = (
+        canonical_paths
+        and [entry for entry in canonical_paths if entry.get("source") == "untracked"]
+        or _path_entries(record_payload.get("untracked"))
+    )
+    ignored = (
+        canonical_paths
+        and [entry for entry in canonical_paths if entry.get("source") == "ignored"]
+        or _path_entries(record_payload.get("ignored"))
+    )
+    rejected_paths = (
+        [entry for entry in canonical_paths if entry.get("rejected") is True]
+        if canonical_paths
+        else record_payload.get("rejected_paths")
+    )
     rejected_path_count = (
         len(cast(list[object], rejected_paths)) if isinstance(rejected_paths, list) else 0
     )

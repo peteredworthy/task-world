@@ -17,7 +17,7 @@ from orchestrator.artifacts.gc import (
     collect_artifact_refs,
     sweep_artifacts,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, boundary_manifest_hash
 from tests.unit.graph_test_utils import canonical_event_payload
 
 
@@ -80,6 +80,46 @@ async def test_collects_only_typed_stored_artifact_references(tmp_path: Path) ->
     )
 
     assert refs == frozenset({retained.content_hash})
+
+
+@pytest.mark.asyncio
+async def test_staged_callback_artifact_is_a_typed_gc_root(tmp_path: Path) -> None:
+    store = FilesystemArtifactStore(tmp_path / "artifacts")
+    callback_ref = await store.put(b"{}", media_type="application/json", encoding="utf-8")
+    tree_sha = "a" * 40
+    staged = EventEnvelope(
+        event_id="staged-1",
+        run_id="run-1",
+        position=1,
+        event_type="runner_submission_staged",
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        payload={
+            "execution_id": "execution-1",
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "idempotency_key": "callback-1",
+            "payload_ref": callback_ref.model_dump(mode="json"),
+            "payload_hash": callback_ref.content_hash,
+            "payload_size_bytes": callback_ref.size_bytes,
+            "staged_snapshot_id": "snapshot-1",
+            "staged_snapshot_ref": "refs/orchestrator/snapshots/snapshot-1",
+            "staged_commit_sha": "b" * 40,
+            "staged_tree_sha": tree_sha,
+            "boundary_hash": boundary_manifest_hash(tree_sha, []),
+            "boundary_entries": [],
+            "base_snapshot_id": "base-1",
+            "observed_graph_position": 1,
+            "is_mutating": True,
+            "complete_node": True,
+            "new_state": "completed",
+            "owns_file_state_snapshot": True,
+        },
+    )
+
+    assert collect_artifact_refs([staged]) == frozenset({callback_ref.content_hash})
 
 
 @pytest.mark.asyncio

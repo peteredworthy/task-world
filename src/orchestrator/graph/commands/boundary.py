@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-from hashlib import sha256
-from json import dumps
-from typing import Any
+from typing import Any, cast
 
 from orchestrator.graph._commands import (
     apply_callback_command,
@@ -40,6 +38,7 @@ from orchestrator.graph.boundary_types import (
     recovery_proof_hash,
     validate_callback_json,
 )
+from orchestrator.graph.callbacks import callback_payload_identity
 
 
 def _conflict(make_event: Any, command: str, reason: str) -> list[EventEnvelope]:
@@ -78,11 +77,6 @@ def _authority_reason(projection: GraphProjection, payload: Any) -> str | None:
     except ValueError as exc:
         return str(exc)
     return None
-
-
-def _payload_hash(payload: dict[str, Any] | None) -> str:
-    encoded = dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
-    return f"sha256:{sha256(encoded).hexdigest()}"
 
 
 def _authorized_roots(attempt: Any, roots: Any) -> list[RunnerCacheRoot]:
@@ -172,10 +166,20 @@ def handle_stage_runner_submission(
             make_event, "stage_runner_submission", "unknown or incompatible execution baseline"
         )
     _, payload_size_bytes = validate_callback_json(payload.payload)
-    digest = _payload_hash(payload.payload)
+    digest, canonical_size_bytes = callback_payload_identity(payload.payload)
+    if payload_size_bytes != canonical_size_bytes:
+        return _conflict(make_event, "stage_runner_submission", "payload size is not canonical")
     if payload.payload_hash is not None and payload.payload_hash != digest:
         return _conflict(
             make_event, "stage_runner_submission", "payload_hash does not match payload"
+        )
+    if payload.payload_ref is not None and (
+        payload.payload_ref.content_hash != digest
+        or payload.payload_ref.artifact_id != digest
+        or payload.payload_ref.size_bytes != payload_size_bytes
+    ):
+        return _conflict(
+            make_event, "stage_runner_submission", "payload_ref does not match payload"
         )
     if attempt.state != "baseline_captured":
         same = (
@@ -220,13 +224,20 @@ def handle_stage_runner_submission(
         # publishing a synthetic staged submission that finalization cannot
         # validate.
         return [make_event(item.event_type, item.payload) for item in validation]
+    owns_file_state_snapshot = _accepted_file_state_owns_staged_snapshot(validation, payload)
     staged = {
         "execution_id": payload.execution_id,
         "node_id": payload.node_id,
         "lease_id": payload.lease_id,
         "lease_generation": payload.lease_generation,
         "idempotency_key": payload.idempotency_key,
-        "payload": payload.payload,
+        # Inline bodies are retained only for legacy command callers. Runtime
+        # staging always supplies a CAS ref and therefore emits no body.
+        **(
+            {"payload_ref": payload.payload_ref.model_dump(mode="json")}
+            if payload.payload_ref is not None
+            else {"payload": payload.payload}
+        ),
         "payload_hash": digest,
         "payload_size_bytes": payload_size_bytes,
         "staged_snapshot_id": payload.staged_snapshot_id,
@@ -240,6 +251,7 @@ def handle_stage_runner_submission(
         "is_mutating": payload.is_mutating,
         "complete_node": payload.complete_node,
         "new_state": payload.new_state,
+        "owns_file_state_snapshot": owns_file_state_snapshot,
         "cache_authority_hash": payload.cache_authority_hash,
         "cache_roots": payload.cache_roots,
         "cache_status_evidence": payload.cache_status_evidence,
@@ -349,6 +361,30 @@ def handle_finalize_runner_execution(
                 },
             ),
         ]
+    resolved_callback_payload = (
+        payload.callback_payload
+        if payload.callback_payload is not None
+        else thaw_json(attempt.payload)
+    )
+    if not isinstance(resolved_callback_payload, dict):
+        return _conflict(
+            make_event,
+            "finalize_runner_execution",
+            "staged callback artifact was not resolved",
+        )
+    resolved_callback_payload = cast(dict[str, Any], resolved_callback_payload)
+    _, resolved_size = validate_callback_json(resolved_callback_payload)
+    resolved_hash, canonical_size = callback_payload_identity(resolved_callback_payload)
+    if (
+        resolved_size != canonical_size
+        or resolved_hash != attempt.payload_hash
+        or resolved_size != attempt.payload_size_bytes
+    ):
+        return _conflict(
+            make_event,
+            "finalize_runner_execution",
+            "resolved callback payload does not match staged identity",
+        )
     callback = {
         "node_id": attempt.node_id,
         "execution_id": attempt.execution_id,
@@ -357,7 +393,7 @@ def handle_finalize_runner_execution(
         "base_snapshot_id": attempt.callback_base_snapshot_id or attempt.baseline_snapshot_id,
         "observed_graph_position": attempt.observed_graph_position,
         "idempotency_key": attempt.idempotency_key,
-        "payload": thaw_json(attempt.payload),
+        "payload": resolved_callback_payload,
         "is_mutating": attempt.is_mutating,
         "complete_node": attempt.complete_node,
         "new_state": attempt.new_state,
@@ -397,7 +433,7 @@ def handle_finalize_runner_execution(
     if not callback_plan or callback_plan[0].event_type != "callback_accepted":
         return [make_event(item.event_type, item.payload) for item in callback_plan]
     # Finalization precedes every externally visible callback effect atomically.
-    final_payload = payload.model_dump(mode="json")
+    final_payload = payload.model_dump(mode="json", exclude={"callback_payload"})
     staged_snapshot_transferred = _accepted_file_state_owns_staged_snapshot(callback_plan, attempt)
     return [
         make_event("runner_execution_finalized", final_payload),

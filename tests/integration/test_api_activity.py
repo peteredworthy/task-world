@@ -103,8 +103,47 @@ async def _append_graph_events(
     run_id: str,
     events: list[EventEnvelope],
 ) -> list[int]:
+    existing_nodes = {
+        event.payload.get("node_id") for event in events if event.event_type == "node_created"
+    }
+    referenced_nodes = {
+        event.payload.get("verifier_node_id")
+        for event in events
+        if event.event_type in {"verification_passed", "verification_failed"}
+    }
+    setup = [
+        _graph_event(
+            run_id,
+            f"fixture-node-{node_id}",
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+        )
+        for node_id in sorted(referenced_nodes - existing_nodes - {None})
+    ]
+    verification_records = [
+        _graph_event(
+            run_id,
+            f"fixture-record-{event.payload['record_id']}",
+            "output_record_accepted",
+            {
+                "record_id": event.payload["record_id"],
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": event.payload["verifier_node_id"],
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": event.payload.get("candidate_id", "candidate-1"),
+                "outcome": event.payload["outcome"],
+                "value": {"outcome": event.payload["outcome"], "grades": []},
+            },
+        )
+        for event in events
+        if event.event_type in {"verification_passed", "verification_failed"}
+    ]
     async with app.state.session_factory() as session:
-        stored = await GraphEventStore(session).append_events(run_id, 0, events)
+        stored = await GraphEventStore(session).append_events(
+            run_id, 0, [*setup, *verification_records, *events]
+        )
         await session.commit()
     return [event.position for event in stored]
 

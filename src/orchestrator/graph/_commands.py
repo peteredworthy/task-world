@@ -10,6 +10,7 @@ from orchestrator.graph.callbacks import (
     CallbackOutcome,
     CallbackRequest,
     validate_callback,
+    callback_payload_identity,
 )
 from orchestrator.graph.command_bindings import canonicalize_check_command_definition
 from orchestrator.graph.command_models import (
@@ -269,6 +270,7 @@ _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES = frozenset(
         "node_state_changed",
         "plan_region_marked_suspect",
         "run_lifecycle_changed",
+        "runner_submission_staged",
         "runtime_retry_scheduled",
     }
 )
@@ -815,13 +817,18 @@ def _apply_callback_command(
     )
     result = validate_callback(request, projection, events)
 
+    payload_hash, payload_size_bytes = callback_payload_identity(request.payload)
+    record_ids = _callback_record_ids(request.payload)
+
     event_payload = {
         "node_id": request.node_id,
         "lease_id": request.lease_id,
         "lease_generation": request.lease_generation,
         "execution_id": request.execution_id,
         "idempotency_key": request.idempotency_key,
-        "payload": request.payload,
+        "payload_hash": payload_hash,
+        "payload_size_bytes": payload_size_bytes,
+        "record_ids": record_ids,
         "reason": result.reason,
     }
     if result.outcome == CallbackOutcome.REJECTED_STALE:
@@ -989,6 +996,22 @@ def _lease_node_id(projection: GraphProjection, lease_id: str) -> str | None:
     return node_id if isinstance(node_id, str) else None
 
 
+def _callback_record_ids(payload: dict[str, Any] | None) -> list[str]:
+    if payload is None:
+        return []
+    output = payload.get("output_records")
+    if not isinstance(output, list):
+        return []
+    record_ids: list[str] = []
+    for raw_item in cast(list[Any], output):
+        if not isinstance(raw_item, dict):
+            continue
+        record_id = cast(dict[str, Any], raw_item).get("record_id")
+        if isinstance(record_id, str):
+            record_ids.append(record_id)
+    return record_ids
+
+
 def _output_record_provenance_conflict(
     request: CallbackRequest,
     expected_producer_node_id: str,
@@ -1077,6 +1100,7 @@ def _file_state_authority_conflict(
 def _file_state_changed_paths(record_payload: dict[str, Any]) -> list[str]:
     paths: list[str] = []
     for field in (
+        "paths",
         "tracked",
         "untracked",
         "ignored",
@@ -1141,6 +1165,7 @@ def _file_state_rejected_events(
     payload["port"] = "file_state"
     payload["schema"] = "FileStateRecord"
     payload.setdefault("base_snapshot_id", request.base_snapshot_id)
+    payload.setdefault("paths", [])
     for key in ("node_id", "execution_id", "lease_id", "lease_generation"):
         payload.pop(key, None)
     return [make_event("file_state_rejected", payload)]
@@ -1311,8 +1336,40 @@ def _accepted_output_record_events(
         typed_raw_records,
         expected_producer_node_id,
     )
+    # File-state records are prerequisites for candidate/output records that
+    # cite them.  Publish those accepted records first only when this callback
+    # actually creates such a relationship; preserve ordinary callback order.
+    cites_same_callback_file_state = any(
+        isinstance(raw_record, dict)
+        and _is_candidate_record_payload(cast(dict[str, Any], raw_record))
+        and bool(
+            _file_state_record_ids_for_candidate(
+                cast(dict[str, Any], raw_record), file_state_records
+            )
+        )
+        for raw_record in typed_raw_records
+    )
+    if cites_same_callback_file_state:
+        ordered_raw_records: list[Any] = [
+            *[
+                raw_record
+                for raw_record in typed_raw_records
+                if isinstance(raw_record, dict)
+                and cast(dict[str, Any], raw_record).get("record_kind") == "file_state"
+            ],
+            *[
+                raw_record
+                for raw_record in typed_raw_records
+                if not (
+                    isinstance(raw_record, dict)
+                    and cast(dict[str, Any], raw_record).get("record_kind") == "file_state"
+                )
+            ],
+        ]
+    else:
+        ordered_raw_records = typed_raw_records
     output: list[EventEnvelope] = []
-    for raw_record in typed_raw_records:
+    for raw_record in ordered_raw_records:
         if not isinstance(raw_record, dict):
             continue
         record_payload = dict(cast(dict[str, Any], raw_record))
@@ -1503,15 +1560,16 @@ def _accepted_file_state_record_events(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     record_payload.setdefault("producer_node_id", expected_producer_node_id)
+    record_payload.setdefault("paths", [])
     try:
         record = FileStateRecord.model_validate(record_payload)
     except ValueError:
         return []
     payload = record.model_dump(mode="json")
-    output = [
-        make_event("output_record_accepted", payload),
-        make_event("file_state_accepted", payload),
-    ]
+    # ``file_state_accepted`` is the sole durable owner. Historical streams
+    # containing the old full/full pair remain replayable and deduplicate by
+    # record identity in the projection.
+    output = [make_event("file_state_accepted", payload)]
     output.extend(
         _input_bound_events_for_record(
             projection,
@@ -1556,14 +1614,18 @@ def _verification_record_conflict(
                 f"verification record candidate_id at index {index} is not bound "
                 f"to verifier input: {candidate_id}"
             )
-        if not record.value.grades:
-            return f"verification record at index {index} missing grades"
         represented_requirement_ids = set(active_requirement_versions_view(projection))
         represented_requirement_ids.update(
             item.value.id
             for item in output_record_payloads_view(projection).values()
             if isinstance(item, RequirementRecord) and item.value.source == "routine"
         )
+        # An empty rubric has no grades to report. Treat an empty list as the
+        # complete evaluation of that rubric; once requirements exist, a
+        # verifier must still provide grades and the coverage checks below
+        # remain authoritative.
+        if not record.value.grades and represented_requirement_ids:
+            return f"verification record at index {index} missing grades"
         for grade in record.value.grades:
             if grade.requirement_id not in represented_requirement_ids:
                 return (
@@ -4870,6 +4932,7 @@ def _record_contains_any_path(
     if not paths:
         return None
     for key in (
+        "paths",
         "tracked",
         "untracked",
         "ignored",
@@ -4896,7 +4959,19 @@ def _record_residue(record: dict[str, Any] | FileStateRecord) -> list[dict[str, 
         return [entry.model_dump(mode="json") for entry in record.residue]
     residue = record.get("residue")
     if not isinstance(residue, list):
-        return []
+        raw_paths = record.get("paths")
+        derived_residue: list[dict[str, Any]] = []
+        if isinstance(raw_paths, list):
+            for raw_entry in cast(list[Any], raw_paths):
+                if not isinstance(raw_entry, dict):
+                    continue
+                entry = cast(dict[str, Any], raw_entry)
+                if (
+                    entry.get("source") in {"untracked", "ignored"}
+                    or entry.get("classification") == "external_artifact"
+                ):
+                    derived_residue.append(entry)
+        residue = derived_residue
     typed_residue = cast(list[Any], residue)
     return [dict(cast(dict[str, Any], entry)) for entry in typed_residue if isinstance(entry, dict)]
 
@@ -5168,7 +5243,7 @@ def _patch_op_events(
         node_payload["patch_id"] = patch_id
         node_payload.setdefault("state", "planned")
         _ensure_default_node_authority(node_payload)
-        canonicalize_check_command_definition(node_payload, events)
+        canonicalize_check_command_definition(node_payload, events, projection=projection)
         if node_payload.get("kind") == "planner" and node_payload.get("role") == "planner":
             if inherited_session_id is not None:
                 node_payload.setdefault("session_id", inherited_session_id)

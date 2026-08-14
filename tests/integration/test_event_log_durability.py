@@ -29,10 +29,12 @@ from orchestrator.db import (
     EventV2Model,
     JsonlOutboxObserver,
     ProjectionRegistry,
+    RotationOperations,
     RunModel,
     RunStateProjector,
     SqliteEventStore,
     StepModel,
+    SystemRotationOperations,
     TaskModel,
     TaskStateProjector,
     commit_with_event_outbox,
@@ -84,6 +86,29 @@ class TrackingPositions(set[int]):
     def update(self, *others: object) -> None:
         super().update(*others)
         self.max_size = max(self.max_size, len(self))
+
+
+class FailFirstCheckpointTailSyncOperations:
+    """Use real file operations but fail the first newly appended tail sync."""
+
+    def __init__(self, delegate: RotationOperations) -> None:
+        self._delegate = delegate
+        self._fail_next_active_sync = True
+
+    def link(self, active: Path, archive: Path) -> None:
+        self._delegate.link(active, archive)
+
+    def fsync_parent(self, path: Path) -> None:
+        self._delegate.fsync_parent(path)
+
+    def fsync_active(self, path: Path) -> None:
+        if self._fail_next_active_sync:
+            self._fail_next_active_sync = False
+            raise OSError("injected checkpoint tail sync failure")
+        self._delegate.fsync_active(path)
+
+    def unlink(self, active: Path) -> None:
+        self._delegate.unlink(active)
 
 
 # Helper contract: no deterministic run/step/task/attempt read-model columns are
@@ -1249,6 +1274,356 @@ async def test_journal_drain_reconciles_sparse_archives_without_duplicate_second
     assert max(active.max_size for active in retained_active_sets) <= 1
     assert journal_path.read_bytes() == first_active_bytes
     assert sorted(archive_positions + active_positions) == list(range(1, 10))
+    await engine.dispose()
+
+
+async def test_journal_drain_uses_union_of_overlapping_sparse_archives(tmp_path: Path) -> None:
+    db_path = tmp_path / "overlap" / "orchestrator.db"
+    db_path.parent.mkdir()
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    journal_path = db_path.parent / "history.jsonl"
+    (db_path.parent / "history.1-5.jsonl").write_text(
+        "\n".join(json.dumps({"position": value}) for value in (1, 4, 5)) + "\n"
+    )
+    (db_path.parent / "history.2-6.jsonl").write_text(
+        "\n".join(json.dumps({"position": value}) for value in (2, 3, 6)) + "\n"
+    )
+
+    async with factory() as session:
+        for position in range(1, 8):
+            session.add(
+                EventV2Model(
+                    aggregate_id=f"run-{position}",
+                    version=1,
+                    event_type="run_created",
+                    payload="{}",
+                    timestamp="2026-07-20T00:00:00+00:00",
+                )
+            )
+        await session.commit()
+        assert await drain_committed_events_to_journal(session, journal_path) == 7
+        first_bytes = journal_path.read_bytes()
+        first_segments = sorted(path.name for path in db_path.parent.glob("history.*-*.jsonl"))
+        assert await drain_committed_events_to_journal(session, journal_path) == 7
+
+    assert [json.loads(line)["position"] for line in journal_path.read_text().splitlines()] == [7]
+    assert journal_path.read_bytes() == first_bytes
+    assert sorted(path.name for path in db_path.parent.glob("history.*-*.jsonl")) == first_segments
+    await engine.dispose()
+
+
+async def test_checkpointed_journal_restart_reads_only_new_tail(tmp_path: Path) -> None:
+    db_path = tmp_path / "checkpoint" / "orchestrator.db"
+    db_path.parent.mkdir()
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    journal_path = db_path.parent / "history.jsonl"
+
+    async with factory() as session:
+        for position in range(1, 6):
+            session.add(
+                EventV2Model(
+                    aggregate_id=f"run-{position}",
+                    version=1,
+                    event_type="run_created",
+                    payload="{}",
+                    timestamp="2026-07-20T00:00:00+00:00",
+                )
+            )
+        await session.commit()
+        assert (
+            await drain_committed_events_to_journal(
+                session, journal_path, batch_size=2, use_checkpoint=True
+            )
+            == 5
+        )
+        assert (
+            await drain_committed_events_to_journal(
+                session, journal_path, batch_size=2, use_checkpoint=True
+            )
+            == 0
+        )
+        session.add(
+            EventV2Model(
+                aggregate_id="run-6",
+                version=1,
+                event_type="run_created",
+                payload="{}",
+                timestamp="2026-07-20T00:00:00+00:00",
+            )
+        )
+        await session.commit()
+        assert (
+            await drain_committed_events_to_journal(
+                session, journal_path, batch_size=2, use_checkpoint=True
+            )
+            == 1
+        )
+
+    assert [json.loads(line)["position"] for line in journal_path.read_text().splitlines()] == list(
+        range(1, 7)
+    )
+    await engine.dispose()
+
+
+async def test_checkpointed_legacy_adoption_preserves_and_repairs_bounded_debt(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "checkpoint-legacy" / "orchestrator.db"
+    db_path.parent.mkdir()
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    journal_path = db_path.parent / "history.jsonl"
+    archive_path = db_path.parent / "history.1-2.jsonl"
+    archive_path.write_text(
+        "\n".join(json.dumps({"position": position}) for position in (1, 2)) + "\n"
+    )
+    segment_reads: list[Path] = []
+
+    def read_segment(path: Path) -> set[int]:
+        segment_reads.append(path)
+        if not path.exists():
+            return set()
+        return {
+            record["position"]
+            for record in (json.loads(line) for line in path.read_text().splitlines())
+            if type(record.get("position")) is int
+        }
+
+    observer = JsonlOutboxObserver(journal_path, segment_reader=read_segment)
+    checkpoint_path = journal_path.with_name("history.jsonl.checkpoint")
+
+    async with factory() as session:
+        for position in range(1, 4):
+            session.add(
+                EventV2Model(
+                    aggregate_id=f"run-{position}",
+                    version=1,
+                    event_type="run_created",
+                    payload="{}",
+                    timestamp="2026-07-20T00:00:00+00:00",
+                )
+            )
+        await session.commit()
+
+        # Readiness adopts legacy state without opening even one old segment,
+        # but records the skipped SQL range as explicit, unverified debt.
+        assert (
+            await drain_committed_events_to_journal(
+                session,
+                journal_path,
+                observer=observer,
+                use_checkpoint=True,
+                defer_untrusted_legacy_audit=True,
+            )
+            == 0
+        )
+        assert segment_reads == []
+        assert json.loads(checkpoint_path.read_text()) == {
+            "version": 2,
+            "verified_through_position": 0,
+            "tail_through_position": 3,
+            "unverified_legacy_through_position": 3,
+        }
+
+        session.add(
+            EventV2Model(
+                aggregate_id="run-4",
+                version=1,
+                event_type="run_created",
+                payload="{}",
+                timestamp="2026-07-20T00:00:00+00:00",
+            )
+        )
+        await session.commit()
+        assert (
+            await drain_committed_events_to_journal(
+                session,
+                journal_path,
+                observer=observer,
+                use_checkpoint=True,
+                defer_untrusted_legacy_audit=True,
+            )
+            == 1
+        )
+        assert archive_path not in segment_reads
+        assert json.loads(checkpoint_path.read_text()) == {
+            "version": 2,
+            "verified_through_position": 0,
+            "tail_through_position": 4,
+            "unverified_legacy_through_position": 3,
+        }
+
+        # An operator audit is bounded to the captured legacy head.  It repairs
+        # position 3 exactly once and can then trust the independently delivered
+        # position-4 tail as part of the contiguous verified prefix.
+        assert (
+            await drain_committed_events_to_journal(
+                session,
+                journal_path,
+                observer=observer,
+                use_checkpoint=True,
+            )
+            == 3
+        )
+        assert json.loads(checkpoint_path.read_text()) == {
+            "version": 2,
+            "verified_through_position": 4,
+            "tail_through_position": 4,
+            "unverified_legacy_through_position": None,
+        }
+        assert (
+            await drain_committed_events_to_journal(
+                session,
+                journal_path,
+                observer=observer,
+                use_checkpoint=True,
+                defer_untrusted_legacy_audit=True,
+            )
+            == 0
+        )
+
+    positions = [
+        json.loads(line)["position"]
+        for path in (archive_path, journal_path)
+        for line in path.read_text().splitlines()
+    ]
+    assert sorted(positions) == [1, 2, 3, 4]
+    await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "checkpoint_payload",
+    [
+        {"version": 1, "through_position": 3},
+        {
+            "version": 2,
+            "verified_through_position": 3,
+            "tail_through_position": 2,
+            "unverified_legacy_through_position": None,
+        },
+    ],
+)
+async def test_checkpointed_legacy_adoption_treats_v1_and_invalid_state_as_untrusted(
+    tmp_path: Path,
+    checkpoint_payload: dict[str, object],
+) -> None:
+    db_path = tmp_path / "checkpoint-untrusted" / "orchestrator.db"
+    db_path.parent.mkdir()
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    journal_path = db_path.parent / "history.jsonl"
+    journal_path.write_text(json.dumps({"position": 1}) + "\n")
+    checkpoint_path = journal_path.with_name("history.jsonl.checkpoint")
+    checkpoint_path.write_text(json.dumps(checkpoint_payload) + "\n")
+
+    async with factory() as session:
+        for position in range(1, 4):
+            session.add(
+                EventV2Model(
+                    aggregate_id=f"run-{position}",
+                    version=1,
+                    event_type="run_created",
+                    payload="{}",
+                    timestamp="2026-07-20T00:00:00+00:00",
+                )
+            )
+        await session.commit()
+        assert (
+            await drain_committed_events_to_journal(
+                session,
+                journal_path,
+                use_checkpoint=True,
+                defer_untrusted_legacy_audit=True,
+            )
+            == 0
+        )
+
+    assert json.loads(checkpoint_path.read_text()) == {
+        "version": 2,
+        "verified_through_position": 0,
+        "tail_through_position": 3,
+        "unverified_legacy_through_position": 3,
+    }
+    assert [json.loads(line)["position"] for line in journal_path.read_text().splitlines()] == [1]
+    await engine.dispose()
+
+
+async def test_checkpoint_frontier_changes_only_after_successful_legacy_audit(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "checkpoint-audit-retry" / "orchestrator.db"
+    db_path.parent.mkdir()
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    journal_path = db_path.parent / "history.jsonl"
+    journal_path.write_text(
+        "\n".join(json.dumps({"position": position}) for position in (1, 2)) + "\n"
+    )
+    checkpoint_path = journal_path.with_name("history.jsonl.checkpoint")
+
+    async with factory() as session:
+        for position in range(1, 4):
+            session.add(
+                EventV2Model(
+                    aggregate_id=f"run-{position}",
+                    version=1,
+                    event_type="run_created",
+                    payload="{}",
+                    timestamp="2026-07-20T00:00:00+00:00",
+                )
+            )
+        await session.commit()
+        assert (
+            await drain_committed_events_to_journal(
+                session,
+                journal_path,
+                use_checkpoint=True,
+                defer_untrusted_legacy_audit=True,
+            )
+            == 0
+        )
+        adopted_bytes = checkpoint_path.read_bytes()
+
+        failing_observer = JsonlOutboxObserver(
+            journal_path,
+            rotation_operations=FailFirstCheckpointTailSyncOperations(SystemRotationOperations()),
+        )
+        with pytest.raises(OSError, match="injected checkpoint tail sync failure"):
+            await drain_committed_events_to_journal(
+                session,
+                journal_path,
+                observer=failing_observer,
+                use_checkpoint=True,
+            )
+        assert checkpoint_path.read_bytes() == adopted_bytes
+
+        assert (
+            await drain_committed_events_to_journal(
+                session,
+                journal_path,
+                use_checkpoint=True,
+            )
+            == 3
+        )
+
+    assert [json.loads(line)["position"] for line in journal_path.read_text().splitlines()] == [
+        1,
+        2,
+        3,
+    ]
+    assert json.loads(checkpoint_path.read_text()) == {
+        "version": 2,
+        "verified_through_position": 3,
+        "tail_through_position": 3,
+        "unverified_legacy_through_position": None,
+    }
     await engine.dispose()
 
 

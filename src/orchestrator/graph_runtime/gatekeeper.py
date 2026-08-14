@@ -131,7 +131,19 @@ def metadata_from_file_state_record(
     record_id = str(record.get("record_id", ""))
     residue = record.get("residue")
     if not isinstance(residue, list):
-        return []
+        paths = record.get("paths")
+        derived_residue: list[dict[str, object]] = []
+        if isinstance(paths, list):
+            for raw_entry in cast(list[object], paths):
+                if not isinstance(raw_entry, dict):
+                    continue
+                entry = cast(dict[str, object], raw_entry)
+                if (
+                    entry.get("source") in {"untracked", "ignored"}
+                    or entry.get("classification") == "external_artifact"
+                ):
+                    derived_residue.append(entry)
+        residue = derived_residue
     items: list[ResidueMetadata] = []
     for raw_entry in cast(list[object], residue):
         if len(items) >= max_items:

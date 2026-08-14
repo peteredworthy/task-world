@@ -58,6 +58,68 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
     )
 
 
+def _authoritative_fixture_events(events: list[EventEnvelope]) -> list[EventEnvelope]:
+    """Add the node origins required by strict event-store relationship checks."""
+    referenced = {
+        event.payload.get("producer_node_id")
+        for event in events
+        if event.event_type in {"output_record_accepted", "file_state_accepted"}
+    }
+    referenced.update(
+        event.payload.get("verifier_node_id")
+        for event in events
+        if event.event_type in {"verification_passed", "verification_failed"}
+    )
+    existing_record_ids = {
+        event.payload.get("record_id")
+        for event in events
+        if event.event_type in {"output_record_accepted", "file_state_accepted"}
+    }
+    verification_records = [
+        _event(
+            f"fixture-record-{event.payload.get('record_id')}",
+            events[0].run_id,
+            "output_record_accepted",
+            {
+                "record_id": event.payload["record_id"],
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": event.payload["verifier_node_id"],
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": event.payload.get("candidate_id", "candidate"),
+                "outcome": event.payload["outcome"],
+                "value": {"outcome": event.payload["outcome"], "grades": []},
+            },
+        )
+        for event in events
+        if event.event_type in {"verification_passed", "verification_failed"}
+        and event.payload.get("record_id") not in existing_record_ids
+    ]
+    node_events = {
+        event.payload.get("node_id"): event
+        for event in events
+        if event.event_type == "node_created"
+    }
+    setup = [
+        node_events.get(node_id)
+        or _event(
+            f"fixture-node-{node_id}",
+            events[0].run_id,
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+        )
+        for node_id in sorted(referenced - {None})
+    ]
+    setup_ids = {event.payload.get("node_id") for event in setup}
+    remaining = [
+        event
+        for event in events
+        if not (event.event_type == "node_created" and event.payload.get("node_id") in setup_ids)
+    ]
+    return [*setup, *verification_records, *remaining]
+
+
 def _sample_events(run_id: str) -> list[EventEnvelope]:
     return [
         _event("evt-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -750,7 +812,9 @@ async def test_projection_read_model_preserves_corrective_supersession_task_stat
 
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(session).append_events(
+                run_id, 0, _authoritative_fixture_events(events)
+            )
 
     async with session_factory() as session:
         store = GraphEventStore(session)
@@ -787,7 +851,9 @@ async def test_july_4_incident_replay_preserves_supersession_and_completion_pari
 
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(session).append_events(
+                run_id, 0, _authoritative_fixture_events(events)
+            )
 
     async with session_factory() as session:
         store = GraphEventStore(session)
@@ -830,7 +896,9 @@ async def test_projection_read_model_preserves_task_state_matrix(
 
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(session).append_events(
+                run_id, 0, _authoritative_fixture_events(events)
+            )
 
     async with session_factory() as session:
         store = GraphEventStore(session)

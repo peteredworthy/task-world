@@ -35,6 +35,7 @@ from orchestrator.graph import (
     projection_from_checkpoint,
     projection_to_checkpoint,
     reduce_event,
+    thaw_json,
 )
 from orchestrator.graph_runtime import (
     GraphController,
@@ -430,9 +431,10 @@ async def test_checkpoint_round_trip_and_tail_replay_retain_root_evidence(
     checkpoint = projection_to_checkpoint(full_projection)
     assert projection_from_checkpoint(checkpoint) == full_projection
 
-    before_tail = build_projection(events[:-1])
     async with harness.session_factory() as session:
         store = GraphEventStore(session)
+        projection_events = await store.read_run_projection(harness.run_id)
+        before_tail = build_projection(projection_events[:-1])
         await store.persist_projection_snapshot(
             harness.run_id,
             before_tail,
@@ -801,6 +803,8 @@ async def test_historical_string_root_replay_survives_projection_mode_sql_read()
     assert build_projection(projected) == build_projection(full)
     attempt = execution_attempts_view(build_projection(stored))["execution"]
     assert attempt.cache_roots == (root,)
+    assert thaw_json(attempt.payload) == {}
+    assert attempt.payload_ref is None
     await engine.dispose()
 
 

@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import subprocess
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Literal, cast
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from orchestrator.artifacts import FilesystemArtifactStore
+from orchestrator.artifacts import FilesystemArtifactStore, StoredArtifactRef
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    EventEnvelope,
     accepted_output_records_by_node_port_view,
     leases_view,
     node_states_view,
@@ -360,6 +363,30 @@ class StagedThenUnsuccessfulAgent(SubmitAgent):
         return ExecutionResult(success=False)
 
 
+class StagedThenSuccessfulAgent(SubmitAgent):
+    """Stages output, then waits so the durable callback artifact can be faulted."""
+
+    def __init__(self) -> None:
+        self.staged = asyncio.Event()
+        self.finish = asyncio.Event()
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        Path(context.working_dir, "README.md").write_text("changed before submission\n")
+        await on_submit()
+        self.staged.set()
+        await self.finish.wait()
+        return ExecutionResult(success=True)
+
+
 class IgnoredToUntrackedStagedAgent(SubmitAgent):
     def __init__(self) -> None:
         self.staged = asyncio.Event()
@@ -577,6 +604,22 @@ async def _read_events(
 ):
     async with session_factory() as session:
         return await GraphEventStore(session).read_run(run_id)
+
+
+async def _read_staged_output_records(
+    event: EventEnvelope,
+    artifact_store: FilesystemArtifactStore,
+) -> list[dict[str, object]]:
+    """Resolve a new staged callback through its public content-addressed store."""
+    assert "payload" not in event.payload
+    ref = StoredArtifactRef.model_validate(event.payload["payload_ref"])
+    content = await artifact_store.read(ref)
+    payload = json.loads(content.decode("utf-8"))
+    assert isinstance(payload, dict)
+    records = payload.get("output_records")
+    assert isinstance(records, list)
+    assert all(isinstance(record, dict) for record in records)
+    return [cast(dict[str, object], record) for record in records]
 
 
 async def _read_outbox_rows(
@@ -1403,12 +1446,13 @@ async def test_graph_runner_unsuccessful_result_recovers_staged_submission_befor
     ids = SequentialIds()
     run_id = "graph-runner-unsuccessful-result"
     controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": SubmitThenFailAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
-        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        artifact_store=artifact_store,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -1434,7 +1478,7 @@ async def test_graph_runner_unsuccessful_result_recovers_staged_submission_befor
         and event.payload.get("execution_id") == execution_id
     ]
     assert len(staged) == 1
-    staged_records = staged[0].payload["payload"]["output_records"]
+    staged_records = await _read_staged_output_records(staged[0], artifact_store)
     staged_record_ids = {str(record["record_id"]) for record in staged_records}
     assert staged_record_ids
 
@@ -1693,12 +1737,13 @@ async def test_graph_runner_boundary_mismatch_recovers_without_publishing_staged
     ids = SequentialIds()
     run_id = "graph-runner-boundary-mismatch"
     controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": SubmitThenMutateBoundaryAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
-        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        artifact_store=artifact_store,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -1724,7 +1769,7 @@ async def test_graph_runner_boundary_mismatch_recovers_without_publishing_staged
         and event.payload.get("execution_id") == execution_id
     ]
     assert len(staged) == 1
-    staged_records = staged[0].payload["payload"]["output_records"]
+    staged_records = await _read_staged_output_records(staged[0], artifact_store)
     assert {record["record_kind"] for record in staged_records} == {"output", "file_state"}
     staged_record_ids = {str(record["record_id"]) for record in staged_records}
 
@@ -1997,12 +2042,13 @@ async def test_graph_runner_restart_recovers_orphaned_staged_submission_before_u
     controller = await _seed_active_run(session_factory, run_id, clock, ids)
     agent = StagedThenUnsuccessfulAgent()
     running: dict[str, asyncio.Task[None]] = {}
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": agent, "verifier": GradingAgent("A")}),
         worktree_path=repo,
-        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        artifact_store=artifact_store,
         running_executions=running,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
@@ -2034,7 +2080,7 @@ async def test_graph_runner_restart_recovers_orphaned_staged_submission_before_u
             and event.payload["execution_id"] == execution_id
         ]
         assert len(staged) == 1
-        staged_records = staged[0].payload["payload"]["output_records"]
+        staged_records = await _read_staged_output_records(staged[0], artifact_store)
         assert staged_records
         assert {record["record_kind"] for record in staged_records} == {"output", "file_state"}
         staged_record_ids = {str(record["record_id"]) for record in staged_records}
@@ -2123,6 +2169,114 @@ async def test_graph_runner_restart_recovers_orphaned_staged_submission_before_u
             if not task.done():
                 task.cancel()
         await asyncio.gather(*abandoned_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("artifact_fault", ["missing", "corrupt"])
+async def test_graph_runner_staged_callback_artifact_fault_requests_managed_recovery(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+    artifact_fault: Literal["missing", "corrupt"],
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / f"repo-staged-callback-{artifact_fault}"
+    _init_repo(repo)
+    (repo / "unrelated-dirt.txt").write_text("preserve me\n")
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = f"graph-runner-staged-callback-{artifact_fault}"
+    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    agent = StagedThenSuccessfulAgent()
+    artifact_root = tmp_path / "artifacts"
+    artifact_store = FilesystemArtifactStore(artifact_root)
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": agent, "verifier": GradingAgent("A")}),
+        worktree_path=repo,
+        artifact_store=artifact_store,
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "schedule_tick",
+        {"lease_seconds": 60, "max_grants": 1},
+    )
+    await dispatcher.dispatch_pending()
+    await asyncio.wait_for(agent.staged.wait(), timeout=2)
+
+    staged_events = await _read_events(session_factory, run_id)
+    staged = [event for event in staged_events if event.event_type == "runner_submission_staged"]
+    assert len(staged) == 1
+    assert "payload" not in staged[0].payload
+    ref = StoredArtifactRef.model_validate(staged[0].payload["payload_ref"])
+    execution_id = str(staged[0].payload["execution_id"])
+    if artifact_fault == "missing":
+        await artifact_store.delete(ref)
+    else:
+        digest = ref.content_hash.removeprefix("sha256:")
+        blob_path = artifact_root / "sha256" / digest[:2] / digest[2:]
+        blob_path.write_bytes(b"corrupt staged callback")
+
+    agent.finish.set()
+    await executor.wait_for_all()
+
+    events_before_recovery = await _read_events(session_factory, run_id)
+    recovery_requests = [
+        event
+        for event in events_before_recovery
+        if event.event_type == "runner_recovery_requested"
+        and event.payload.get("execution_id") == execution_id
+    ]
+    assert len(recovery_requests) == 1
+    assert recovery_requests[0].payload["reason"] == "runner_died"
+    assert not any(
+        event.event_type in {"callback_accepted", "runner_execution_finalized"}
+        and event.payload.get("execution_id") == execution_id
+        for event in events_before_recovery
+    )
+    recovery_rows = [
+        row
+        for row in await _read_outbox_rows(session_factory)
+        if row.kind == "runner_recovery" and row.payload.get("execution_id") == execution_id
+    ]
+    assert len(recovery_rows) == 1
+    assert recovery_rows[0].status == "pending"
+    assert (repo / "README.md").read_text() == "changed before submission\n"
+
+    completed = await dispatcher.dispatch_pending(
+        run_id=run_id, allowed_kinds=frozenset({"runner_recovery"})
+    )
+    assert [item.kind for item in completed] == ["runner_recovery"]
+
+    events = await _read_events(session_factory, run_id)
+    recovery_completions = [
+        event
+        for event in events
+        if event.event_type == "runner_recovery_completed"
+        and event.payload.get("execution_id") == execution_id
+    ]
+    assert len(recovery_completions) == 1
+    assert (
+        len(
+            [
+                event
+                for event in events
+                if event.event_type == "runner_recovery_requested"
+                and event.payload.get("execution_id") == execution_id
+            ]
+        )
+        == 1
+    )
+    assert not any(
+        event.event_type in {"callback_accepted", "runner_execution_finalized"}
+        and event.payload.get("execution_id") == execution_id
+        for event in events
+    )
+    assert (repo / "README.md").read_text() == "# tmp repo\n"
+    assert (repo / "unrelated-dirt.txt").read_text() == "preserve me\n"
 
 
 @pytest.mark.asyncio

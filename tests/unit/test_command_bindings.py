@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
+    initial_projection,
+    reduce_event,
+)
 from orchestrator.graph import resolve_check_command_definition
 
 
@@ -67,3 +74,53 @@ def test_oracle_binding_unresolvable_without_any_command() -> None:
     events = [_dynamic_feature_event({"hidden_oracle_command": "", "acceptance_command": ""})]
 
     assert resolve_check_command_definition(dict(_ORACLE_BOUND_CHECK), events) is None
+
+
+def test_oracle_binding_reads_immutable_durable_routine_snapshot() -> None:
+    node = _dynamic_feature_event({})
+    node = node.model_copy(
+        update={
+            "event_id": "routine-snapshot-node",
+            "event_type": "node_created",
+            "payload": {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+        }
+    )
+    record = node.model_copy(
+        update={
+            "event_id": "routine-snapshot-record",
+            "position": 2,
+            "event_type": "output_record_accepted",
+            "payload": {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "graph_record",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "routine-1",
+                    "name": "Routine",
+                    "content_hash": "hash",
+                    "step_count": 1,
+                    "task_count": 1,
+                    "dynamic_feature": {
+                        "hidden_oracle_command": "uv run pytest tests/oracle -q",
+                        "acceptance_command": "uv run pytest tests -q",
+                    },
+                },
+            },
+        }
+    )
+    projection = reduce_event(reduce_event(initial_projection(), node), record)
+
+    definition = resolve_check_command_definition(
+        dict(_ORACLE_BOUND_CHECK), [], projection=projection
+    )
+
+    assert definition is not None
+    assert definition["cmd"] == "uv run pytest tests/oracle -q"

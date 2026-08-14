@@ -697,6 +697,29 @@ class GraphRunDriver:
             ):
                 previous_position = None
                 continue
+            # Recover disappeared executions immediately after the dispatch /
+            # wait pass.  Do not make this conditional on a stable graph head:
+            # a concurrently-ready node can emit a fresh ``node_deferred`` on
+            # every schedule tick while these leases hold its resources.  Those
+            # deferrals advance the head forever even though the leased work has
+            # no live executor, so the older no-progress-only recovery path
+            # classified the run graph_blocked after a resume.
+            next_retry_at = await dispatcher.earliest_pending_retry_at(run_id=run_id)
+            now = clock.now()
+            if next_retry_at is not None:
+                next_retry_at = _align_datetime_timezone(next_retry_at, now)
+            pending_retry = next_retry_at is not None and next_retry_at > now
+            if not pending_retry and await _recover_orphaned_active_leases(
+                run_id,
+                controller,
+                executor,
+                projection,
+                recovered_lease_ids,
+                node_recovery_counts,
+                orphan_states=frozenset({"leased"}),
+            ):
+                previous_position = None
+                continue
             if (
                 not projection.ready_nodes
                 and not projection.active_leases
@@ -740,11 +763,8 @@ class GraphRunDriver:
             # return blocked once recovery has nothing left to try.
             position = await controller.current_position(run_id)
             if position == previous_position:
-                next_retry_at = await dispatcher.earliest_pending_retry_at(run_id=run_id)
-                now = clock.now()
-                if next_retry_at is not None:
-                    next_retry_at = _align_datetime_timezone(next_retry_at, now)
-                if next_retry_at is not None and next_retry_at > now:
+                if pending_retry:
+                    assert next_retry_at is not None
                     await self._sleep((next_retry_at - now).total_seconds())
                     previous_position = None
                     continue
@@ -940,6 +960,8 @@ async def _recover_orphaned_active_leases(
     projection: GraphProjectionSnapshot,
     recovered_lease_ids: set[str],
     node_recovery_counts: dict[str, int],
+    *,
+    orphan_states: frozenset[str] = frozenset({"running"}),
 ) -> bool:
     """Revoke active leases whose dispatched execution is no longer live on
     THIS executor, so the kernel reschedules (or, once retries are exhausted,
@@ -980,18 +1002,14 @@ async def _recover_orphaned_active_leases(
             continue
         node_id = lease.get("node_id")
         node_state = projection.node_states.get(node_id) if isinstance(node_id, str) else None
-        if node_state != "running":
-            # Deliberately narrower than reconcile_runtime's startup check
-            # (which also treats "leased" as orphaned — safe there because a
-            # freshly restarted process hasn't dispatched anything yet). Mid
-            # drive-loop, "leased" is an ordinary transient state between a
-            # lease grant and dispatch_pending() actually starting it (or,
-            # for a kind with no matching agent, a real "nothing can ever
-            # dispatch this" block that the existing active-lease-without-
-            # callback classification already reports correctly). Only a
-            # node already "running" matches the incident this recovers: a
-            # dispatched execution that finished without producing a
-            # callback or agent_died.
+        if node_state not in orphan_states:
+            # This runs only after dispatch_pending() has returned and after
+            # any durable retry backoff has been checked.  At that boundary a
+            # leased node may be treated as orphaned by the immediate caller:
+            # its consume-once outbox item may have been delivered by a
+            # previous driver instance before a pause/restart.  Running nodes
+            # remain under the stable-head guard because a completed runner
+            # can legitimately await snapshot-publish finalization.
             continue
         execution_id = lease.get("execution_id")
         if isinstance(execution_id, str) and execution_id and executor.is_running(execution_id):

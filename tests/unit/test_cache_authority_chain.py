@@ -39,7 +39,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     project_pattern_library,
     reduce_event,
-    validate_projection_integrity,
+    validate_projection_critical_invariants,
 )
 from orchestrator.graph_runtime import (
     GraphController,
@@ -272,7 +272,7 @@ def test_authority_binding_and_integrity_require_snapshot_for_authority_lease() 
     with pytest.raises(ValueError, match="canonical routine-snapshot-record"):
         cache_authority_binding(projection)
     with pytest.raises(ProjectionCheckpointIntegrityError, match="routine-snapshot-record"):
-        validate_projection_integrity(projection)
+        validate_projection_critical_invariants(projection)
 
 
 @pytest.mark.parametrize("carrier", ["node", "lease"])
@@ -320,7 +320,7 @@ def test_authority_binding_rejects_mixed_legacy_snapshot_carriers(carrier: str) 
     with pytest.raises(ValueError, match="mixed"):
         cache_authority_binding(projection)
     with pytest.raises(ProjectionCheckpointIntegrityError, match="legacy cache authority"):
-        validate_projection_integrity(projection)
+        validate_projection_critical_invariants(projection)
 
 
 @pytest.mark.parametrize(
@@ -336,7 +336,7 @@ def test_integrity_rejects_partial_or_unknown_snapshot_authority(
     del case
     projection, _ = _snapshot_projection(**updates)
     with pytest.raises(ProjectionCheckpointIntegrityError, match="cache authority"):
-        validate_projection_integrity(projection)
+        validate_projection_critical_invariants(projection)
 
 
 def test_integrity_rejects_wrong_reserved_snapshot_record_type() -> None:
@@ -362,7 +362,7 @@ def test_integrity_rejects_wrong_reserved_snapshot_record_type() -> None:
     events[events.index(snapshot)] = snapshot.model_copy(update={"payload": payload})
     projection = build_projection(events)
     with pytest.raises(ProjectionCheckpointIntegrityError, match="routine-snapshot-record"):
-        validate_projection_integrity(projection)
+        validate_projection_critical_invariants(projection)
 
 
 @pytest.mark.parametrize("missing", [True, False])
@@ -380,7 +380,7 @@ def test_integrity_rejects_missing_or_mismatched_node_authority_hash(missing: bo
         payload["cache_authority_hash"] = "0" * 64
     events[events.index(node)] = node.model_copy(update={"payload": payload})
     with pytest.raises(ProjectionCheckpointIntegrityError, match="cache_authority_hash"):
-        validate_projection_integrity(build_projection(events))
+        validate_projection_critical_invariants(build_projection(events))
 
 
 @pytest.mark.parametrize("missing", [True, False])
@@ -403,7 +403,7 @@ def test_integrity_rejects_missing_or_mismatched_lease_authority_hash(missing: b
         payload["cache_authority_hash"] = "0" * 64
     lease_events[lease_events.index(lease)] = lease.model_copy(update={"payload": payload})
     with pytest.raises(ProjectionCheckpointIntegrityError, match="cache_authority_hash"):
-        validate_projection_integrity(build_projection([*events, *lease_events]))
+        validate_projection_critical_invariants(build_projection([*events, *lease_events]))
 
 
 @pytest.mark.parametrize(
@@ -688,8 +688,24 @@ class _CountingRunnerFactory:
 
 
 async def _persist_events(session_factory: Any, run_id: str, events: list[EventEnvelope]) -> None:
+    existing_nodes = {
+        event.payload.get("node_id") for event in events if event.event_type == "node_created"
+    }
+    producer_nodes = {
+        event.payload.get("producer_node_id")
+        for event in events
+        if event.event_type in {"output_record_accepted", "file_state_accepted"}
+    }
+    setup_events = [
+        _event(
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+            position=index,
+        ).model_copy(update={"event_id": f"node-created-{node_id}"})
+        for index, node_id in enumerate(sorted(producer_nodes - existing_nodes - {None}))
+    ]
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(session).append_events(run_id, 0, [*setup_events, *events])
         await session.commit()
 
 
@@ -1083,6 +1099,9 @@ async def test_executor_boundary_paths_use_snapshot_policy_not_learned_rules(
     baseline = next(event for event in events if event.event_type == "runner_baseline_recorded")
     staged = next(event for event in events if event.event_type == "runner_submission_staged")
     final = next(event for event in events if event.event_type == "runner_execution_finalized")
+    assert "payload" not in staged.payload
+    assert staged.payload["payload_ref"]["content_hash"] == staged.payload["payload_hash"]
+    assert staged.payload["owns_file_state_snapshot"] is True
     learned_path = "learned-cache/created.txt"
     assert baseline.payload["cache_roots"] == [{"path": "custom-cache", "kind": "ignored"}]
     assert not any(entry["path"] == learned_path for entry in baseline.payload["entries"])
@@ -1183,7 +1202,7 @@ def test_every_node_and_lease_pass_authority_integrity() -> None:
         SequentialIdGenerator(),
     )
     final = build_projection([*events, *scheduled])
-    validate_projection_integrity(final)
+    validate_projection_critical_invariants(final)
     digest = cache_authority_binding(final).hash
     assert all(
         node_cache_authority_hash(final, node_id) == digest for node_id in node_states_view(final)

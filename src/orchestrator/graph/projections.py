@@ -79,6 +79,7 @@ from orchestrator.graph.payload_registry import (
     GRAPH_PROJECTION_PAYLOAD_FIELDS as _GENERATED_GRAPH_PROJECTION_PAYLOAD_FIELDS,
 )
 from orchestrator.graph.projection_collections import FrozenMap, freeze_json, map_set, thaw_json
+from orchestrator.graph.projection_codec import PROJECTION_CHECKPOINT_SCHEMA_VERSION
 from orchestrator.graph.projection_models import (
     ApprovalDecisionValue,
     AuthorityDecisionValue,
@@ -112,6 +113,7 @@ from orchestrator.graph.projection_models import (
     ProjectedFileStateRecord,
     ProjectedRecord,
     ProjectedRoutineSnapshotRecord,
+    ProjectedStoredArtifactRef,
     RecoveryNodeIndexValue,
     RecordStore,
     ResourceClaimValue,
@@ -147,7 +149,8 @@ _NODE_STATE_VALUES = {state.value for state in NodeState}
 _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
 
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
-PROJECTION_SCHEMA_VERSION = 14
+# Schema 15 is the disposable envelope introduced for projection checkpoints.
+PROJECTION_SCHEMA_VERSION = PROJECTION_CHECKPOINT_SCHEMA_VERSION
 GRAPH_PROJECTION_PAYLOAD_FIELDS = _GENERATED_GRAPH_PROJECTION_PAYLOAD_FIELDS
 
 
@@ -487,6 +490,171 @@ def initial_projection() -> GraphProjection:
 
 class ProjectionReplayConflictError(ValueError):
     """A replay event attempts to redefine an immutable graph identity."""
+
+
+def _require_projection_reference(
+    values: FrozenMap[str, Any], value: str, *, relation: str, event_id: str
+) -> None:
+    """Reject a dangling graph relationship at the event/reducer boundary."""
+    if value not in values:
+        raise ProjectionReplayConflictError(
+            f"{relation} {value!r} is not represented before event {event_id!r}"
+        )
+
+
+def _validate_event_relationships(state: GraphProjection, event: EventEnvelope) -> None:
+    """Validate relationships while accepting authoritative events.
+
+    Pure fixture replay intentionally permits detached event fragments.  The
+    runtime event store opts into this strict boundary before it persists a
+    projection, so relationship failures are attributed to the event that
+    introduced them instead of to checkpoint loading.
+    """
+    if event.event_type == "edge_created":
+        from_node_id = event.payload.get("from_node_id")
+        to_node_id = event.payload.get("to_node_id")
+        if isinstance(from_node_id, str) and from_node_id != "*":
+            _require_projection_reference(
+                state.nodes,
+                from_node_id,
+                relation="edge source node",
+                event_id=event.event_id,
+            )
+        if isinstance(to_node_id, str):
+            _require_projection_reference(
+                state.nodes,
+                to_node_id,
+                relation="edge target node",
+                event_id=event.event_id,
+            )
+    elif event.event_type == "input_bound":
+        payload = InputBoundPayload.model_validate(event.payload)
+        _require_projection_reference(
+            state.nodes,
+            payload.to_node_id,
+            relation="input binding target node",
+            event_id=event.event_id,
+        )
+        edge = state.topology.edges.get(payload.edge_id)
+        if edge is None:
+            raise ProjectionReplayConflictError(
+                f"input binding edge {payload.edge_id!r} is not represented before "
+                f"event {event.event_id!r}"
+            )
+        if edge.to_node_id != payload.to_node_id or edge.to_port != payload.to_port:
+            raise ProjectionReplayConflictError(
+                f"input binding edge {payload.edge_id!r} does not target "
+                f"{payload.to_node_id!r}:{payload.to_port!r}"
+            )
+        for record_id in (*payload.record_ids, payload.supersedes_record_id):
+            if record_id is not None:
+                _require_projection_reference(
+                    state.records.by_id,
+                    record_id,
+                    relation="input binding record",
+                    event_id=event.event_id,
+                )
+    elif event.event_type in {"output_record_accepted", "file_state_accepted"}:
+        producer_node_id = event.payload.get("producer_node_id")
+        if isinstance(producer_node_id, str):
+            _require_projection_reference(
+                state.nodes,
+                producer_node_id,
+                relation="accepted record producer node",
+                event_id=event.event_id,
+            )
+        reference_fields = (
+            "candidate_record_id",
+            "file_state_record_id",
+            "superseding_record_id",
+            "verification_report_record_id",
+        )
+        referenced_ids: list[str] = []
+        for field in reference_fields:
+            value = event.payload.get(field)
+            if isinstance(value, str):
+                referenced_ids.append(value)
+        for field in (
+            "candidate_record_ids",
+            "file_state_record_ids",
+            "verification_report_record_ids",
+            "evaluated_record_ids",
+            "source_record_ids",
+        ):
+            value = event.payload.get(field)
+            if isinstance(value, list):
+                referenced_ids.extend(
+                    record_id for record_id in cast(list[Any], value) if isinstance(record_id, str)
+                )
+        nested_value = event.payload.get("value")
+        if isinstance(nested_value, dict):
+            typed_nested_value = cast(dict[str, Any], nested_value)
+            for field in reference_fields + (
+                "candidate_record_ids",
+                "file_state_record_ids",
+                "verification_report_record_ids",
+                "evaluated_record_ids",
+                "source_record_ids",
+            ):
+                value = typed_nested_value.get(field)
+                if isinstance(value, str):
+                    referenced_ids.append(value)
+                elif isinstance(value, list):
+                    referenced_ids.extend(
+                        record_id
+                        for record_id in cast(list[Any], value)
+                        if isinstance(record_id, str)
+                    )
+        created_record_id = event.payload.get("record_id")
+        for record_id in referenced_ids:
+            # A typed record may repeat its own identifier in a canonical
+            # citation field; that is identity, not a dangling prior record.
+            if record_id == created_record_id:
+                continue
+            _require_projection_reference(
+                state.records.by_id,
+                record_id,
+                relation="accepted record reference",
+                event_id=event.event_id,
+            )
+    elif event.event_type == "node_created":
+        for relation, field in (
+            ("recovery source node", "recovery_of_node_id"),
+            ("recovery source record", "recovery_of_record_id"),
+            ("appealed node", "appealed_node_id"),
+            ("carryover record", "carryover_record_id"),
+        ):
+            value = event.payload.get(field)
+            if not isinstance(value, str):
+                continue
+            values = state.nodes if field.endswith("node_id") else state.records.by_id
+            _require_projection_reference(values, value, relation=relation, event_id=event.event_id)
+    elif event.event_type in {"verification_passed", "verification_failed"}:
+        verifier_node_id = event.payload.get("verifier_node_id")
+        record_id = event.payload.get("record_id")
+        if isinstance(verifier_node_id, str):
+            _require_projection_reference(
+                state.nodes,
+                verifier_node_id,
+                relation="verification node",
+                event_id=event.event_id,
+            )
+        if isinstance(record_id, str):
+            _require_projection_reference(
+                state.records.by_id,
+                record_id,
+                relation="verification record",
+                event_id=event.event_id,
+            )
+    elif event.event_type == "gatekeeper_verdict_recorded":
+        record_id = event.payload.get("file_state_record_id")
+        if isinstance(record_id, str):
+            _require_projection_reference(
+                state.records.by_id,
+                record_id,
+                relation="gatekeeper file-state record",
+                event_id=event.event_id,
+            )
 
 
 def _replace_projection_groups(
@@ -1322,15 +1490,16 @@ def _reduce_gatekeeper_verdict(state: GraphProjection, event: EventEnvelope) -> 
     if not isinstance(record, ProjectedFileStateRecord):
         return state
     verdicts = {verdict.path: verdict.model_dump(mode="json") for verdict in payload.verdicts}
-    updates: dict[str, object] = {}
-    for field in ("classifications", "residue", "untracked", "ignored", "external"):
-        entries = getattr(record, field)
-        if entries:
-            updates[field] = tuple(_resolved_file_entry(entry, verdicts) for entry in entries)
-    if not updates:
+    if not record.paths:
+        return state
+    resolved_paths = tuple(_resolved_file_entry(entry, verdicts) for entry in record.paths)
+    if resolved_paths == record.paths:
         return state
     return _replace_projection_groups(
-        state, records=_replace_projected_record(state.records, record.model_copy(update=updates))
+        state,
+        records=_replace_projected_record(
+            state.records, record.model_copy(update={"paths": resolved_paths})
+        ),
     )
 
 
@@ -1839,7 +2008,14 @@ def _reduce_support_evidence(state: GraphProjection, event: EventEnvelope) -> Gr
     return _replace_projection_groups(state, requirements=requirements)
 
 
-def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+def reduce_event(
+    state: GraphProjection,
+    event: EventEnvelope,
+    *,
+    enforce_relationships: bool = False,
+) -> GraphProjection:
+    if enforce_relationships:
+        _validate_event_relationships(state, event)
     slice_a_state = _reduce_slice_a(state, event)
     if slice_a_state is not None:
         return _finalize_projection(slice_a_state, event)
@@ -2023,6 +2199,16 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 and existing.lease_id == payload.lease_id
                 and existing.lease_generation == payload.lease_generation
                 and existing.idempotency_key == payload.idempotency_key
+                and (
+                    existing.payload_ref.model_dump(mode="json")
+                    if existing.payload_ref is not None
+                    else None
+                )
+                == (
+                    payload.payload_ref.model_dump(mode="json")
+                    if payload.payload_ref is not None
+                    else None
+                )
                 and existing.payload_hash == payload.payload_hash
                 and existing.staged_snapshot_id == payload.staged_snapshot_id
                 and existing.staged_snapshot_ref == payload.staged_snapshot_ref
@@ -2055,6 +2241,13 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "state": "submission_staged",
                 "idempotency_key": payload.idempotency_key,
                 "payload": freeze_json(payload.payload) if payload.payload is not None else None,
+                "payload_ref": (
+                    ProjectedStoredArtifactRef.model_validate(
+                        payload.payload_ref.model_dump(mode="json")
+                    )
+                    if payload.payload_ref is not None
+                    else None
+                ),
                 "payload_hash": payload.payload_hash,
                 "payload_size_bytes": payload.payload_size_bytes,
                 "staged_snapshot_id": payload.staged_snapshot_id,
@@ -2626,6 +2819,9 @@ def _reduce_callback_accepted(state: GraphProjection, event: EventEnvelope) -> G
         idempotency_key=payload.idempotency_key,
         outcome="callback_accepted",
         payload=freeze_json(payload.payload) if payload.payload is not None else None,
+        payload_hash=payload.payload_hash,
+        payload_size_bytes=payload.payload_size_bytes,
+        record_ids=tuple(payload.record_ids),
     )
     execution = state.execution.model_copy(
         update={
@@ -5210,7 +5406,7 @@ def _file_state_source_by_path(record: dict[str, Any] | FileStateRecord | None) 
                     sources[path] = source
         return sources
 
-    for key in ("residue", "classifications"):
+    for key in ("paths", "residue", "classifications"):
         raw_entries = record.get(key)
         if not isinstance(raw_entries, list):
             continue

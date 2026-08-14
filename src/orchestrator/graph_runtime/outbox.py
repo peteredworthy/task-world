@@ -102,16 +102,19 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
         payload.update(event.payload)
         return "runner_recovery", payload
     if event.event_type == "runner_submission_staged":
-        callback = cast(object, event.payload.get("payload"))
-        records_raw: object = (
-            cast(dict[str, object], callback).get("output_records")
-            if isinstance(callback, dict)
-            else None
-        )
-        records = cast(list[object], records_raw) if isinstance(records_raw, list) else None
-        owns_file_state_snapshot = isinstance(records, list) and any(
-            _is_owned_file_state_snapshot(record, event.payload) for record in records
-        )
+        owns_file_state_snapshot = event.payload.get("owns_file_state_snapshot")
+        if not isinstance(owns_file_state_snapshot, bool):
+            # Historical staged events predate the explicit ownership bit.
+            callback = cast(object, event.payload.get("payload"))
+            records_raw: object = (
+                cast(dict[str, object], callback).get("output_records")
+                if isinstance(callback, dict)
+                else None
+            )
+            records = cast(list[object], records_raw) if isinstance(records_raw, list) else None
+            owns_file_state_snapshot = isinstance(records, list) and any(
+                _is_owned_file_state_snapshot(record, event.payload) for record in records
+            )
         if not owns_file_state_snapshot:
             return None
         payload = {
@@ -231,6 +234,14 @@ class OutboxDispatcher:
             try:
                 await self._executor.dispatch(item)
             except Exception as exc:
+                logger.warning(
+                    "Graph outbox dispatch failed: run=%s outbox_id=%s kind=%s attempt=%s error=%s",
+                    item.run_id,
+                    item.outbox_id,
+                    item.kind,
+                    item.attempts + 1,
+                    exc,
+                )
                 await self._mark_failed_attempt(item, exc)
             else:
                 completed.append(await self._mark_completed(item))

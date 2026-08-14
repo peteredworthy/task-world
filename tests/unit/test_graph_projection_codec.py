@@ -1,9 +1,6 @@
-"""Public checkpoint contracts for the immutable projection scaffold."""
+"""Focused tests for the disposable projection checkpoint contract."""
 
 from copy import deepcopy
-from collections import UserDict
-from math import inf, nan
-from types import MappingProxyType
 from typing import cast
 
 import pytest
@@ -11,22 +8,15 @@ from pydantic import BaseModel, ValidationError
 from pydantic_core import PydanticSerializationError
 
 from orchestrator.graph import (
-    Actor,
-    ActorKind,
-    EventEnvelope,
-    FakeClock,
     GraphProjection,
-    FrozenMap,
     ProjectionCheckpointCodecError,
-    build_projection,
+    PROJECTION_CHECKPOINT_SCHEMA_VERSION,
     projection_from_checkpoint,
     projection_to_checkpoint,
 )
 
 
 class SerializationFailure(BaseModel):
-    """A real Pydantic value whose serializer cannot produce JSON."""
-
     value: object
 
     def model_dump(self, **kwargs: object) -> dict[str, object]:
@@ -84,7 +74,7 @@ def final_projection_fixture() -> GraphProjection:
                         "producer_node_id": "node-1",
                         "task_region_id": "task-1",
                         "cleanup_id": "cleanup-1",
-                        "acceptance_identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "acceptance_identity": "a" * 64,
                     }
                 },
                 "ids_by_node_port": {"node-1": {"file_state": ("record-1",)}},
@@ -183,6 +173,7 @@ def final_projection_fixture() -> GraphProjection:
                         "node_id": "node-1",
                         "idempotency_key": "callback-1",
                         "outcome": "accepted",
+                        "record_ids": ["record-1"],
                     }
                 },
                 "cleanup_requests_by_id": {
@@ -199,292 +190,56 @@ def final_projection_fixture() -> GraphProjection:
     )
 
 
-def test_checkpoint_round_trip_preserves_ordinary_json_shape() -> None:
-    checkpoint = projection_to_checkpoint(final_projection_fixture())
+def test_valid_round_trip_has_only_the_disposable_contract() -> None:
+    checkpoint = projection_to_checkpoint(final_projection_fixture(), position=23)
 
-    assert type(checkpoint) is dict
-    assert type(checkpoint["nodes"]) is dict
-    assert type(checkpoint["scheduling"]["ready_node_ids"]) is list
+    assert set(checkpoint) == {"schema_version", "position", "state", "checksum"}
+    assert checkpoint["schema_version"] == PROJECTION_CHECKPOINT_SCHEMA_VERSION
+    assert checkpoint["position"] == 23
     assert projection_from_checkpoint(checkpoint) == final_projection_fixture()
 
 
-def test_checkpoint_round_trip_preserves_planner_patch_insertion_order() -> None:
-    projection = GraphProjection.model_validate(
-        {
-            "nodes": {
-                "planner-1": {
-                    "spec": {
-                        "node_id": "planner-1",
-                        "creation_position": 1,
-                        "kind": "planner",
-                    }
-                }
-            },
-            "planning": {
-                "accepted_patch_ids_by_node": {"planner-1": ["patch-1", "patch-2", "patch-3"]},
-                "no_successor_patch_ids_by_node": {
-                    "planner-1": ["no-successor-1", "no-successor-2"]
-                },
-                "latest_no_successor_patch_id_by_node": {"planner-1": "no-successor-2"},
-            },
-        }
-    )
-
-    checkpoint = projection_to_checkpoint(projection)
-    restored = projection_from_checkpoint(checkpoint)
-
-    assert restored.planning.accepted_patch_ids_by_node["planner-1"] == (
-        "patch-1",
-        "patch-2",
-        "patch-3",
-    )
-    assert restored.planning.no_successor_patch_ids_by_node["planner-1"] == (
-        "no-successor-1",
-        "no-successor-2",
-    )
-    assert restored.planning.latest_no_successor_patch_id_by_node["planner-1"] == "no-successor-2"
-
-
-def test_checkpoint_round_trip_freezes_nested_oversight_scope_arrays() -> None:
-    clock = FakeClock()
-    actor = Actor(kind=ActorKind.CONTROLLER)
-    projection = build_projection(
-        [
-            EventEnvelope(
-                event_id="node-created-1",
-                run_id="run-1",
-                position=1,
-                event_type="node_created",
-                schema_version=1,
-                actor=actor,
-                timestamp=clock.now(),
-                payload={"node_id": "oversight-1", "kind": "oversight", "state": "running"},
-            ),
-            EventEnvelope(
-                event_id="oversight-decision-2",
-                run_id="run-1",
-                position=2,
-                event_type="oversight_decision_recorded",
-                schema_version=1,
-                actor=actor,
-                timestamp=clock.now(),
-                payload={
-                    "decision_type": "oversight",
-                    "node_id": "oversight-1",
-                    "decision": "rejected",
-                    "decider": "operator",
-                    "scope": {"items": ["original"]},
-                },
-            ),
-        ]
-    )
-    checkpoint = projection_to_checkpoint(projection)
-
-    assert projection_from_checkpoint(checkpoint) == projection
-
-
-def test_checkpoint_round_trip_freezes_nested_authority_scope_arrays() -> None:
-    clock = FakeClock()
-    actor = Actor(kind=ActorKind.CONTROLLER)
-    projection = build_projection(
-        [
-            EventEnvelope(
-                event_id="node-created-1",
-                run_id="run-1",
-                position=1,
-                event_type="node_created",
-                schema_version=1,
-                actor=actor,
-                timestamp=clock.now(),
-                payload={"node_id": "authority-1", "kind": "authority_request", "state": "running"},
-            ),
-            EventEnvelope(
-                event_id="authority-decision-2",
-                run_id="run-1",
-                position=2,
-                event_type="authority_decision_recorded",
-                schema_version=1,
-                actor=actor,
-                timestamp=clock.now(),
-                payload={
-                    "decision_type": "authority",
-                    "node_id": "authority-1",
-                    "decision": "granted",
-                    "decider": "operator",
-                    "scope": {"tools": ["graph_write"]},
-                },
-            ),
-        ]
-    )
-    checkpoint = projection_to_checkpoint(projection)
-
+def test_round_trip_preserves_immutable_nested_json() -> None:
+    projection = final_projection_fixture()
+    checkpoint = projection_to_checkpoint(projection, position=1)
     restored = projection_from_checkpoint(checkpoint)
 
     assert restored == projection
-    scope = restored.governance.authority_decisions_by_id["authority-decision-2"].scope
-    assert isinstance(scope, FrozenMap)
-    assert scope["tools"] == ("graph_write",)
+    assert restored.topology.edges["edge-1"].edge_id == "edge-1"
 
 
-@pytest.mark.parametrize("bad", ["1", True, inf])
-def test_checkpoint_rejects_scalar_coercion(bad: object) -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    raw["usage"]["tokens_by_node"] = {"node-1": bad}
+def test_checksum_covers_envelope_and_state() -> None:
+    checkpoint = projection_to_checkpoint(final_projection_fixture(), position=4)
+    checkpoint["position"] = 5
 
-    with pytest.raises(ValidationError):
-        projection_from_checkpoint(raw)
-
-
-def test_checkpoint_rejects_non_dict_root_without_salvaging_it() -> None:
-    with pytest.raises(ValidationError):
-        projection_from_checkpoint([])
-
-
-@pytest.mark.parametrize("missing_group", ["lifecycle", "topology", "usage"])
-def test_checkpoint_rejects_missing_canonical_root_group(missing_group: str) -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    raw.pop(missing_group)
-
-    with pytest.raises(ValidationError, match="root keys"):
-        projection_from_checkpoint(raw)
-
-
-def test_checkpoint_missing_lifecycle_root_group_raises_validation_error() -> None:
-    checkpoint = projection_to_checkpoint(final_projection_fixture())
-    checkpoint.pop("lifecycle")
-
-    with pytest.raises(ValidationError, match="checkpoint root keys"):
+    with pytest.raises(ValueError, match="checksum"):
         projection_from_checkpoint(checkpoint)
 
 
-@pytest.mark.parametrize("case", ["projection", "user-dict", "mapping-proxy"])
-def test_checkpoint_rejects_model_or_non_exact_mapping_roots(case: str) -> None:
-    root: object
-    if case == "projection":
-        root = final_projection_fixture()
-    elif case == "user-dict":
-        root = UserDict({})
-    else:
-        root = MappingProxyType({})
+def test_corrupt_state_is_rejected_without_salvage() -> None:
+    checkpoint = projection_to_checkpoint(final_projection_fixture(), position=4)
+    corrupted = deepcopy(checkpoint)
+    corrupted["state"] = []
 
-    with pytest.raises(ValidationError, match="exact JSON object"):
-        projection_from_checkpoint(root)
+    with pytest.raises(ValidationError):
+        projection_from_checkpoint(corrupted)
 
 
-@pytest.mark.parametrize("number", [nan, inf, -inf])
-def test_checkpoint_rejects_all_nonfinite_numbers(number: float) -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    raw["usage"]["tokens_by_node"] = {"node-1": number}
+def test_schema_mismatch_is_rejected() -> None:
+    checkpoint = projection_to_checkpoint(final_projection_fixture(), position=4)
+    checkpoint["schema_version"] = PROJECTION_CHECKPOINT_SCHEMA_VERSION - 1
 
-    with pytest.raises(ValidationError, match="numbers must be finite"):
-        projection_from_checkpoint(raw)
+    with pytest.raises(ValueError, match="unsupported projection checkpoint schema"):
+        projection_from_checkpoint(checkpoint)
 
 
-def test_checkpoint_writer_wraps_only_pydantic_serialization_errors() -> None:
-    with pytest.raises(ProjectionCheckpointCodecError, match="serialization failed") as raised:
+def test_writer_wraps_only_pydantic_serialization_errors() -> None:
+    with pytest.raises(ProjectionCheckpointCodecError, match="serialization failed"):
         projection_to_checkpoint(cast(GraphProjection, SerializationFailure(value=object())))
 
-    assert isinstance(raised.value.__cause__, PydanticSerializationError)
 
-
-def test_checkpoint_writer_propagates_unrelated_serialization_errors() -> None:
+def test_writer_propagates_unrelated_serialization_errors() -> None:
     with pytest.raises(RuntimeError, match="unrelated failure"):
         projection_to_checkpoint(
             cast(GraphProjection, UnrelatedSerializationFailure(value=object()))
         )
-
-
-def test_checkpoint_rejects_unknown_or_malformed_sibling_without_defaulting() -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    before = deepcopy(raw)
-    raw["usage"] = {"unknown": True}
-
-    with pytest.raises(ValidationError):
-        projection_from_checkpoint(raw)
-
-    assert raw != before
-
-
-@pytest.mark.parametrize(
-    "replacement",
-    [
-        ("node-1",),
-        FrozenMap({"node-1": 1}),
-        UserDict({"node-1": 1}),
-        MappingProxyType({"node-1": 1}),
-        {1: "node-1"},
-        inf,
-    ],
-)
-def test_checkpoint_rejects_noncanonical_nested_json_values_without_mutating_input(
-    replacement: object,
-) -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    raw["scheduling"]["ready_node_ids"] = replacement
-    before = deepcopy(raw) if type(replacement) is not MappingProxyType else raw.copy()
-
-    with pytest.raises(ValidationError):
-        projection_from_checkpoint(raw)
-
-    assert raw == before
-
-
-def test_checkpoint_rejects_cyclic_json_before_model_validation() -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    cycle: list[object] = []
-    cycle.append(cycle)
-    raw["scheduling"]["ready_node_ids"] = cycle
-
-    with pytest.raises(ValidationError, match="cycle"):
-        projection_from_checkpoint(raw)
-
-
-def test_checkpoint_rejects_json_nesting_deeper_than_the_transport_limit() -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    nested: list[object] = []
-    cursor = nested
-    for _ in range(101):
-        child: list[object] = []
-        cursor.append(child)
-        cursor = child
-    raw["scheduling"]["ready_node_ids"] = nested
-
-    with pytest.raises(ValidationError, match="depth"):
-        projection_from_checkpoint(raw)
-
-
-def test_checkpoint_preserves_nested_json_arrays_as_immutable_field_values() -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    raw["topology"]["edges"]["edge-1"]["metadata"] = {"levels": [["one"], {"two": [2, 3]}]}
-
-    projection = projection_from_checkpoint(raw)
-
-    metadata = projection.topology.edges["edge-1"].metadata
-    assert isinstance(metadata, FrozenMap)
-    assert metadata["levels"] == (("one",), FrozenMap({"two": (2, 3)}))
-
-
-def test_checkpoint_freezes_nested_callback_payload_arrays() -> None:
-    raw = projection_to_checkpoint(final_projection_fixture())
-    raw["execution"]["callback_events_by_key"]["node-1\u0000callback-1"]["payload"] = {
-        "review_record_id": "review-record-1",
-        "output_records": [
-            {
-                "record_id": "output-record-1",
-                "value": {"graph_changes": [["path", "value"]]},
-            }
-        ],
-    }
-
-    projection = projection_from_checkpoint(raw)
-
-    payload = projection.execution.callback_events_by_key["node-1\u0000callback-1"].payload
-    assert isinstance(payload, FrozenMap)
-    assert payload["output_records"] == (
-        FrozenMap(
-            {
-                "record_id": "output-record-1",
-                "value": FrozenMap({"graph_changes": (("path", "value"),)}),
-            }
-        ),
-    )

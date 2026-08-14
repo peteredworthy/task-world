@@ -36,6 +36,7 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    FileStateRecord,
     GraphCommandContext,
     PatchCommandFields,
     PatchCommandContext,
@@ -2432,7 +2433,26 @@ def _pick_file_state_records(events: list[EventEnvelope], node_id: str) -> list[
         payload = event.payload
         if payload.get("producer_node_id") != node_id:
             continue
-        record = dict(payload)
+        canonical = FileStateRecord.model_validate(payload)
+        record = canonical.model_dump(mode="json", by_alias=True)
+        # Compatibility collections are response-only derived views. The
+        # durable event and projection continue to own each path exactly once.
+        for name in (
+            "tracked",
+            "untracked",
+            "ignored",
+            "external",
+            "classifications",
+            "residue",
+            "rejected_paths",
+        ):
+            entries: list[dict[str, Any]] = []
+            for entry in cast(list[Any], getattr(canonical, name)):
+                serialized = entry.model_dump(mode="json")
+                if name in {"tracked", "untracked", "ignored"} and serialized.get("source") == name:
+                    serialized.pop("source")
+                entries.append(serialized)
+            record[name] = entries
         record["classification_summary"] = _classification_summary(record)
         records.append(record)
     return records
@@ -2446,7 +2466,19 @@ def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
         "classifications": {},
     }
     class_counts: dict[str, int] = {}
-    for key in ("tracked", "untracked", "ignored", "external", "classifications", "residue"):
+    keys = (
+        ("paths",)
+        if isinstance(record.get("paths"), list)
+        else (
+            "tracked",
+            "untracked",
+            "ignored",
+            "external",
+            "classifications",
+            "residue",
+        )
+    )
+    for key in keys:
         entries = record.get(key)
         if not isinstance(entries, list):
             continue
@@ -2462,7 +2494,7 @@ def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
             if isinstance(classification, str):
                 class_counts[classification] = class_counts.get(classification, 0) + 1
     rejected_paths = record.get("rejected_paths")
-    if isinstance(rejected_paths, list):
+    if not isinstance(record.get("paths"), list) and isinstance(rejected_paths, list):
         rejected_count = len(cast(list[Any], rejected_paths))
         summary["rejected_paths"] = rejected_count
         summary["total_paths"] = int(summary["total_paths"]) + rejected_count
@@ -2477,7 +2509,15 @@ def _path_text(entry: dict[str, Any]) -> str | None:
 
 def _iter_record_path_entries(record: dict[str, Any]) -> Iterable[dict[str, Any]]:
     """Yield producer source entries without copying or globally deduplicating them."""
-    for key in ("classifications", "residue", "tracked", "untracked", "ignored", "external"):
+    for key in (
+        "paths",
+        "classifications",
+        "residue",
+        "tracked",
+        "untracked",
+        "ignored",
+        "external",
+    ):
         raw_entries = record.get(key)
         if not isinstance(raw_entries, list):
             continue
@@ -2491,6 +2531,19 @@ def _rejected_path_entries(
     record: dict[str, Any], path_limit: int
 ) -> tuple[list[FileStatePathResponse], int]:
     raw_entries = record.get("rejected_paths")
+    if not isinstance(raw_entries, list):
+        paths = record.get("paths")
+        raw_entries = (
+            [
+                entry
+                for raw_entry in cast(list[Any], paths)
+                if isinstance(raw_entry, dict)
+                for entry in [cast(dict[str, Any], raw_entry)]
+                if entry.get("rejected") is True
+            ]
+            if isinstance(paths, list)
+            else None
+        )
     if not isinstance(raw_entries, list):
         return [], 0
     entries: list[FileStatePathResponse] = []
@@ -2644,14 +2697,27 @@ def _file_state_boundary_response(
     # is consequently bounded by ``path_limit`` too.
     bounded_residue_by_path: dict[str, dict[str, Any]] = {}
     raw_residue = record.get("residue")
-    if isinstance(raw_residue, list):
-        for raw_entry in cast(list[Any], raw_residue):
-            if not isinstance(raw_entry, dict):
-                continue
-            entry = cast(dict[str, Any], raw_entry)
-            path = _path_text(entry)
-            if path in retained_paths and path not in bounded_residue_by_path:
-                bounded_residue_by_path[path] = entry
+    if not isinstance(raw_residue, list):
+        paths = record.get("paths")
+        derived_residue: list[dict[str, Any]] = []
+        if isinstance(paths, list):
+            for raw_entry in cast(list[Any], paths):
+                if not isinstance(raw_entry, dict):
+                    continue
+                entry = cast(dict[str, Any], raw_entry)
+                if (
+                    entry.get("source") in {"untracked", "ignored"}
+                    or entry.get("classification") == "external_artifact"
+                ):
+                    derived_residue.append(entry)
+        raw_residue = derived_residue
+    for raw_entry in cast(list[Any], raw_residue):
+        if not isinstance(raw_entry, dict):
+            continue
+        entry = cast(dict[str, Any], raw_entry)
+        path = _path_text(entry)
+        if path in retained_paths and path not in bounded_residue_by_path:
+            bounded_residue_by_path[path] = entry
     verdicts_by_path = {
         verdict.path: verdict
         for verdict in gatekeeper_verdicts.get(record_id, [])

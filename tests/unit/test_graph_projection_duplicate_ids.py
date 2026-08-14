@@ -309,7 +309,7 @@ def test_identical_requirement_revision_id_replay_preserves_first_write_and_inde
     twice = reduce_event(once, first.model_copy(update={"position": 4, "event_id": "retry"}))
 
     assert twice is once
-    revision = projection_to_checkpoint(twice)["requirements"]["revisions_by_id"][
+    revision = projection_to_checkpoint(twice)["state"]["requirements"]["revisions_by_id"][
         "requirement-1.v1"
     ]
     assert revision is not None
@@ -353,16 +353,18 @@ def test_conflicting_requirement_revision_id_replay_preserves_requirements_index
         reduce_event(state, conflicting)
 
     checkpoint = projection_to_checkpoint(state)
-    revision = checkpoint["requirements"]["revisions_by_id"]["requirement-1.v1"]
+    revision = checkpoint["state"]["requirements"]["revisions_by_id"]["requirement-1.v1"]
     assert revision is not None
     assert revision["change_classification"] == "documentation"
     assert revision["position"] == 2
     assert active_requirement_versions_view(state) == {"requirement-1": "requirement-1.v1"}
-    old_support = checkpoint["requirements"]["support_by_id"]["support-old"]
+    old_support = checkpoint["state"]["requirements"]["support_by_id"]["support-old"]
     assert old_support is not None
     assert old_support["status"] == "active"
     assert (
-        checkpoint["governance"].get("authority_revision_blockers", {}).get("requirement-1.v1")
+        checkpoint["state"]["governance"]
+        .get("authority_revision_blockers", {})
+        .get("requirement-1.v1")
         is None
     )
 
@@ -374,7 +376,7 @@ def test_identical_support_evidence_id_replay_preserves_first_write_and_indexes(
     twice = reduce_event(once, first.model_copy(update={"position": 4, "event_id": "retry"}))
 
     assert twice is once
-    support = projection_to_checkpoint(twice)["requirements"]["support_by_id"]["support-1"]
+    support = projection_to_checkpoint(twice)["state"]["requirements"]["support_by_id"]["support-1"]
     assert support is not None
     assert support["position"] == 3
     assert support["status"] == "active"
@@ -400,7 +402,7 @@ def test_conflicting_support_evidence_id_replay_preserves_canonical_evidence_and
         reduce_event(state, conflicting)
 
     checkpoint = projection_to_checkpoint(state)
-    support = checkpoint["requirements"]["support_by_id"]["support-1"]
+    support = checkpoint["state"]["requirements"]["support_by_id"]["support-1"]
     assert support is not None
     assert support["evidence_id"] == "evidence-1"
     assert support["requirement_id"] == "requirement-1"
@@ -410,7 +412,8 @@ def test_conflicting_support_evidence_id_replay_preserves_canonical_evidence_and
     assert support["position"] == 1
     assert active_requirement_versions_view(state) == {"requirement-1": "requirement-1.v1"}
     assert (
-        checkpoint["governance"]["authority_revision_blockers"].get("requirement-1.v1") is not None
+        checkpoint["state"]["governance"]["authority_revision_blockers"].get("requirement-1.v1")
+        is not None
     )
 
 

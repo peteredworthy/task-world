@@ -256,7 +256,12 @@ async def test_projection_snapshot_packs_the_entire_owner_row_deterministically(
         graph_store = GraphEventStore(session)
         await graph_store.append_events(run_id, 0, events)
         stored_events = await graph_store.read_run(run_id)
-        checkpoint_bytes = _json_bytes(projection_to_checkpoint(build_projection(stored_events)))
+        checkpoint_bytes = _json_bytes(
+            projection_to_checkpoint(
+                build_projection(stored_events),
+                position=max(event.position for event in stored_events),
+            )
+        )
         assert len(checkpoint_bytes) > store.GRAPH_RESPONSE_BYTES
         snapshot = await session.get(GraphProjectionSnapshotModel, run_id)
         assert snapshot is not None

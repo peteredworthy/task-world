@@ -828,17 +828,32 @@ def test_callback_accept_emits_boundary_events() -> None:
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
-        "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
-    candidate_record = output[1].payload
+    candidate_record = output[2].payload
     assert candidate_record["file_state_record_id"] == "file-state-1"
     assert candidate_record["file_state_record_ids"] == ["file-state-1"]
     assert candidate_record["value"]["file_state_record_ids"] == ["file-state-1"]
     assert candidate_record["provenance"]["file_state_record_ids"] == ["file-state-1"]
+    callback_audit = output[0].payload
+    assert "payload" not in callback_audit
+    assert callback_audit["payload_hash"].startswith("sha256:")
+    assert callback_audit["payload_size_bytes"] > 0
+    assert callback_audit["record_ids"] == ["candidate-1", "file-state-1"]
+    file_state = output[1].payload
+    assert "paths" in file_state
+    assert not {
+        "tracked",
+        "untracked",
+        "ignored",
+        "external",
+        "classifications",
+        "residue",
+        "rejected_paths",
+    }.intersection(file_state)
 
 
 def test_callback_rejects_candidate_file_state_citation_mismatch() -> None:
@@ -1018,15 +1033,14 @@ def test_callback_accepts_analysis_summary_record() -> None:
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
-        "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
-    assert output[4].payload["record_type"] == "analysis_summary"
-    assert output[4].payload["value"]["source_record_ids"] == ["candidate-1"]
+    assert output[3].payload["record_type"] == "analysis_summary"
+    assert output[3].payload["value"]["source_record_ids"] == ["candidate-1"]
 
 
 def test_callback_rejects_malformed_analysis_summary_record_atomically() -> None:
@@ -1317,9 +1331,8 @@ def test_callback_after_acknowledge_start_accepts_boundary() -> None:
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
-        "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
@@ -1355,9 +1368,8 @@ def test_late_callback_after_uncontested_lease_expiry_is_accepted() -> None:
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
-        "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
@@ -1434,14 +1446,13 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
+        "file_state_accepted",
         "output_record_accepted",
         "input_bound",
-        "output_record_accepted",
-        "file_state_accepted",
         "node_state_changed",
         "lease_released",
     ]
-    assert output[2].payload == {
+    assert output[3].payload == {
         "edge_id": "edge-candidate",
         "to_node_id": "verifier-1",
         "to_port": "candidate_under_test",
@@ -1514,16 +1525,15 @@ def test_callback_accepts_artifact_reference_output_record() -> None:
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
-        "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
-    assert output[4].payload["record_type"] == "artifact_reference"
-    assert output[4].payload["port"] == "artifact_reference"
-    assert output[4].payload["value"]["uri"] == "docs/out.txt"
+    assert output[3].payload["record_type"] == "artifact_reference"
+    assert output[3].payload["port"] == "artifact_reference"
+    assert output[3].payload["value"]["uri"] == "docs/out.txt"
 
 
 def test_callback_binds_first_record_only_for_one_cardinality_input() -> None:
@@ -2502,7 +2512,7 @@ def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
     assert failed_event["outcome"] == "failed"
 
 
-def test_verifier_callback_rejects_completion_without_grades() -> None:
+def test_verifier_callback_accepts_empty_grades_for_empty_rubric() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "completed"}, 1),
@@ -2577,8 +2587,38 @@ def test_verifier_callback_rejects_completion_without_grades() -> None:
         ),
     )
 
-    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == "verification record at index 0 missing grades"
+    event_types = [event.event_type for event in output]
+    assert "callback_rejected_conflict" not in event_types
+    assert "callback_accepted" in event_types
+    assert "verification_passed" in event_types
+
+    required_output = _apply(
+        _with_routine_requirement(events, "req-1"),
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-missing-required-grades",
+            payload={
+                "payload_hash": "hash-required",
+                "output_records": [
+                    {
+                        "record_id": "verification-required",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "outcome": "passed",
+                        "value": {"outcome": "passed", "grades": []},
+                    }
+                ],
+            },
+        ),
+    )
+    assert [event.event_type for event in required_output] == ["callback_rejected_conflict"]
+    assert required_output[0].payload["reason"] == ("verification record at index 0 missing grades")
 
 
 def test_verifier_callback_rejects_stale_status_with_outcome() -> None:
@@ -3485,9 +3525,8 @@ def test_callback_accepts_file_state_paths_within_lease_write_scope() -> None:
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
-        "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
@@ -3542,9 +3581,8 @@ def test_callback_allows_tool_cache_file_state_outside_write_scope() -> None:
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
-        "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]
@@ -3675,9 +3713,8 @@ def test_callback_accepts_file_state_path_under_path_in_scope_write_claim() -> N
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
-        "output_record_accepted",
-        "output_record_accepted",
         "file_state_accepted",
+        "output_record_accepted",
         "node_state_changed",
         "lease_released",
     ]

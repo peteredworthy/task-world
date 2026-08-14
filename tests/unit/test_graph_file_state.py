@@ -629,6 +629,73 @@ def test_cache_policy_roots_do_not_hide_sources_or_security_descendants(tmp_path
     assert boundary.classification.verdict == "rejected"
 
 
+def test_large_ignored_cache_is_one_root_plus_security_evidence(tmp_path: Path) -> None:
+    repo = _init_file_state_repo(tmp_path)
+    (repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "ignore large cache"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    cache = repo / "node_modules" / "dependency"
+    cache.mkdir(parents=True)
+    for index in range(1_500):
+        (cache / f"ordinary-{index}.js").write_text("module.exports = 1\n", encoding="utf-8")
+    (cache / "id_rsa").write_bytes(bytes(range(256)))
+    (cache / "outside").symlink_to(tmp_path / "outside")
+
+    boundary = capture_file_state_boundary(
+        worktree_path=repo,
+        run_id="run-large-cache",
+        node_id="worker-1",
+        execution_id="execution-1",
+        base_snapshot_id="base-1",
+    )
+    by_path = {entry.path: entry for entry in boundary.classification.paths}
+
+    assert set(by_path) == {
+        "node_modules",
+        "node_modules/dependency/id_rsa",
+        "node_modules/dependency/outside",
+    }
+    assert by_path["node_modules"].classification == "tool_cache"
+    assert by_path["node_modules/dependency/id_rsa"].classification == "secret"
+    assert by_path["node_modules/dependency/outside"].reason == "repo_escape"
+
+
+def test_worktree_venv_is_opaque_cache_root(tmp_path: Path) -> None:
+    repo = _init_file_state_repo(tmp_path)
+    (repo / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore"], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "ignore worktree venv"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    packages = repo / ".venv" / "lib" / "python3.12" / "site-packages"
+    packages.mkdir(parents=True)
+    (packages / "credentials.py").write_text("class Credentials: pass\n", encoding="utf-8")
+    (packages / "cacert.pem").write_text("test certificate bundle\n", encoding="utf-8")
+    executable = repo / ".venv" / "bin" / "python"
+    executable.parent.mkdir(parents=True)
+    executable.symlink_to(tmp_path / "managed-python")
+
+    boundary = capture_file_state_boundary(
+        worktree_path=repo,
+        run_id="run-venv",
+        node_id="planner-1",
+        execution_id="execution-1",
+        base_snapshot_id="base-1",
+    )
+
+    assert boundary.classification.verdict == "captured"
+    assert [entry.path for entry in boundary.classification.paths] == [".venv"]
+    assert boundary.classification.paths[0].classification == "tool_cache"
+
+
 def test_cache_security_scan_entry_budget_is_stable_and_charges_symlinks(tmp_path: Path) -> None:
     repo = _init_file_state_repo(tmp_path)
     (repo / ".gitignore").write_text("node_modules/\n", encoding="utf-8")

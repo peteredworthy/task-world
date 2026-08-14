@@ -400,6 +400,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 _boot_session,
                 _journal_path,
                 max_bytes=app.state.global_config.journal.max_bytes,
+                use_checkpoint=True,
+                defer_untrusted_legacy_audit=True,
             )
         await _boot_session.commit()
 

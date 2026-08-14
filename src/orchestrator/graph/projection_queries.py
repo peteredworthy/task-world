@@ -4,7 +4,7 @@ Each query owns the physical projection access and returns values that cannot
 mutate projection containers.
 """
 
-from typing import cast
+from typing import Any, cast
 
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
@@ -248,6 +248,20 @@ def node_command_definitions_view(
         for node_id, node in projection.nodes.items()
         if node.spec.command_definition is not None
     }
+
+
+def node_payload_view(projection: GraphProjection, node_id: str) -> dict[str, Any] | None:
+    """Return the durable scheduler payload for one projected node."""
+    node = projection.nodes.get(node_id)
+    if node is None:
+        return None
+    payload = node.spec.model_dump(mode="json", exclude_none=True)
+    runtime = node.runtime.model_dump(mode="json", exclude_none=True)
+    payload.update(runtime)
+    command_definition = payload.get("command_definition")
+    if isinstance(command_definition, dict) and "value" in command_definition:
+        payload["command_definition"] = command_definition["value"]
+    return payload
 
 
 def node_creation_positions_view(projection: GraphProjection) -> dict[str, int]:

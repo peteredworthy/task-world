@@ -795,13 +795,24 @@ class CallbackPayloadBase(StrictEventPayload):
     lease_generation: StrictInt
     execution_id: str
     idempotency_key: str
-    payload: dict[str, Any] | None
+    # ``payload`` is legacy replay compatibility only. New audit events carry
+    # the canonical identity and bounded record references.
+    payload: dict[str, Any] | None = None
+    payload_hash: str | None = None
+    payload_size_bytes: StrictInt | None = None
+    record_ids: list[str] = Field(default_factory=list)
 
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         data = super().model_dump(*args, **kwargs)
         if "payload" in self.model_fields_set:
             data["payload"] = self.payload
         return data
+
+    @model_validator(mode="after")
+    def callback_payload_has_legacy_body_or_compact_identity(self) -> "CallbackPayloadBase":
+        if "payload" not in self.model_fields_set and self.payload_hash is None:
+            raise ValueError("callback audit requires payload or payload_hash")
+        return self
 
 
 class CallbackAcceptedPayload(CallbackPayloadBase):
@@ -909,7 +920,10 @@ class RunnerSubmissionStagedPayload(StrictEventPayload):
     lease_id: str
     lease_generation: StrictInt
     idempotency_key: str
-    payload: dict[str, Any] | None
+    # New events store only ``payload_ref``. ``payload`` remains optional for
+    # replaying historical staged submissions written before CAS ownership.
+    payload: dict[str, Any] | None = None
+    payload_ref: StoredArtifactRef | None = None
     payload_hash: str
     # Schema-13/early-schema-14 streams omitted this metadata; zero makes the
     # absence explicit while new command emission always supplies the size.
@@ -925,6 +939,7 @@ class RunnerSubmissionStagedPayload(StrictEventPayload):
     is_mutating: bool
     complete_node: bool
     new_state: Literal["completed", "failed"]
+    owns_file_state_snapshot: bool | None = None
     cache_authority_hash: str | None = None
     cache_roots: list[RunnerCacheRoot | str] = Field(
         default_factory=lambda: cast(list[RunnerCacheRoot | str], [])
@@ -944,6 +959,15 @@ class RunnerSubmissionStagedPayload(StrictEventPayload):
                 raise BoundaryValidationError("boundary_hash does not match staged manifest")
         except BoundaryValidationError as exc:
             raise ValueError(str(exc)) from exc
+        if self.payload is None and self.payload_ref is None:
+            raise ValueError("staged submission requires payload or payload_ref")
+        if self.payload_ref is not None:
+            if self.payload_ref.content_hash != self.payload_hash:
+                raise ValueError("payload_ref content hash must match payload_hash")
+            if self.payload_size_bytes and self.payload_ref.size_bytes != self.payload_size_bytes:
+                raise ValueError("payload_ref size must match payload_size_bytes")
+            if self.payload_ref.artifact_id != self.payload_ref.content_hash:
+                raise ValueError("payload_ref artifact_id must be content-addressed")
         return self
 
 
@@ -2419,10 +2443,6 @@ def _empty_file_entries() -> list[FileEntry]:
     return []
 
 
-def _empty_external_file_entries() -> list[ExternalFileEntry]:
-    return []
-
-
 class FileStateRecord(TypedRecordBase):
     model_config = ConfigDict(frozen=True)
     record_id: str
@@ -2433,13 +2453,11 @@ class FileStateRecord(TypedRecordBase):
     port: str = "file_state"
     schema_: str = Field(default="FileStateRecord", alias="schema")
     git: GitRef | None = None
-    tracked: list[FileEntry] = Field(default_factory=_empty_file_entries)
-    untracked: list[FileEntry] = Field(default_factory=_empty_file_entries)
-    ignored: list[FileEntry] = Field(default_factory=_empty_file_entries)
-    external: list[ExternalFileEntry] = Field(default_factory=_empty_external_file_entries)
-    classifications: list[FileEntry] = Field(default_factory=_empty_file_entries)
-    residue: list[FileEntry] = Field(default_factory=_empty_file_entries)
-    rejected_paths: list[FileEntry] = Field(default_factory=_empty_file_entries)
+    # Canonical durable inventory. Historical payloads with repeated category
+    # arrays are normalized by ``canonicalize_path_inventory`` below; category
+    # views remain available as derived Python properties without being dumped
+    # back into new events.
+    paths: list[FileEntry] = Field(default_factory=_empty_file_entries)
     verdict: Literal["captured", "rejected"] = "captured"
     patch_bundle_id: str | None = None
     tree_snapshot_id: str | None = None
@@ -2460,6 +2478,85 @@ class FileStateRecord(TypedRecordBase):
     cleanup_applied_event_id: str | None = None
     compromised_snapshot_deleted: bool | None = None
     compromised_paths: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def canonicalize_path_inventory(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(cast(dict[str, Any], value))
+        groups = (
+            "paths",
+            "classifications",
+            "tracked",
+            "untracked",
+            "ignored",
+            "external",
+            "residue",
+            "rejected_paths",
+        )
+        inventory: dict[str, dict[str, Any]] = {}
+        saw_inventory_field = False
+        for group in groups:
+            saw_inventory_field = saw_inventory_field or group in payload
+            raw_entries = payload.pop(group, [])
+            if not isinstance(raw_entries, (list, tuple)):
+                continue
+            for raw_entry in cast(list[Any] | tuple[Any, ...], raw_entries):
+                if not isinstance(raw_entry, dict):
+                    continue
+                typed_entry = cast(dict[str, Any], raw_entry)
+                if not isinstance(typed_entry.get("path"), str):
+                    continue
+                entry = dict(typed_entry)
+                if group in {"tracked", "untracked", "ignored"}:
+                    entry.setdefault("source", group)
+                if group == "external":
+                    entry.setdefault("classification", "external_artifact")
+                if group == "rejected_paths":
+                    entry.setdefault("rejected", True)
+                path = cast(str, entry["path"])
+                inventory[path] = {**inventory.get(path, {}), **entry}
+        if saw_inventory_field:
+            payload["paths"] = list(inventory.values())
+        return payload
+
+    @property
+    def classifications(self) -> list[FileEntry]:
+        return list(self.paths)
+
+    @property
+    def tracked(self) -> list[FileEntry]:
+        return [entry for entry in self.paths if entry.source == "tracked"]
+
+    @property
+    def untracked(self) -> list[FileEntry]:
+        return [entry for entry in self.paths if entry.source == "untracked"]
+
+    @property
+    def ignored(self) -> list[FileEntry]:
+        return [entry for entry in self.paths if entry.source == "ignored"]
+
+    @property
+    def external(self) -> list[ExternalFileEntry]:
+        return [
+            ExternalFileEntry.model_validate(entry.model_dump(mode="json"))
+            for entry in self.paths
+            if entry.manifest is not None
+        ]
+
+    @property
+    def residue(self) -> list[FileEntry]:
+        return [
+            entry
+            for entry in self.paths
+            if entry.source in {"untracked", "ignored"}
+            or entry.classification == "external_artifact"
+        ]
+
+    @property
+    def rejected_paths(self) -> list[FileEntry]:
+        return [entry for entry in self.paths if entry.rejected is True]
 
     @model_validator(mode="after")
     def file_state_record_type_is_canonical(self) -> "FileStateRecord":
@@ -2709,7 +2806,10 @@ class CallbackIdempotencyEvent(GraphBaseModel):
     node_id: str
     idempotency_key: str
     outcome: str
-    payload: dict[str, Any] | None
+    payload: dict[str, Any] | None = None
+    payload_hash: str | None = None
+    payload_size_bytes: StrictInt | None = None
+    record_ids: list[str] = Field(default_factory=list)
 
 
 class PatchOp(StrictNestedModel):

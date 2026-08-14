@@ -110,9 +110,12 @@ def test_authority_request_record_is_owned_only_by_canonical_record_store() -> N
 
     checkpoint = projection_to_checkpoint(projection)
 
-    assert "authority_request_record" not in checkpoint["nodes"]["gate-1"]["spec"]
-    assert "authority_request" not in checkpoint["nodes"]["gate-1"]["spec"]
-    assert checkpoint["nodes"]["gate-1"]["spec"].get("authority_request_record_id") == record_id
+    assert "authority_request_record" not in checkpoint["state"]["nodes"]["gate-1"]["spec"]
+    assert "authority_request" not in checkpoint["state"]["nodes"]["gate-1"]["spec"]
+    assert (
+        checkpoint["state"]["nodes"]["gate-1"]["spec"].get("authority_request_record_id")
+        == record_id
+    )
     public_record = output_record_payloads_view(projection)[record_id]
     assert isinstance(public_record, AuthorityRequestRecord)
     assert public_record.record_id == record_id
@@ -256,19 +259,21 @@ def test_node_created_authority_request_record_identity_semantics() -> None:
     )
 
     assert (
-        projection_to_checkpoint(value_only)["nodes"]["value-only"]["spec"][
+        projection_to_checkpoint(value_only)["state"]["nodes"]["value-only"]["spec"][
             "authority_request_record_id"
         ]
         == "custom-id"
     )
     assert (
-        projection_to_checkpoint(envelope_only)["nodes"]["envelope-only"]["spec"][
+        projection_to_checkpoint(envelope_only)["state"]["nodes"]["envelope-only"]["spec"][
             "authority_request_record_id"
         ]
         == "envelope-id"
     )
     assert (
-        projection_to_checkpoint(id_only)["nodes"]["id-only"]["spec"]["authority_request_record_id"]
+        projection_to_checkpoint(id_only)["state"]["nodes"]["id-only"]["spec"][
+            "authority_request_record_id"
+        ]
         == "reference-id"
     )
 
@@ -311,13 +316,13 @@ def test_accepted_authority_request_record_fills_only_missing_node_reference() -
     )
 
     checkpoint = projection_to_checkpoint(projection)
-    assert checkpoint["nodes"]["missing-reference"]["spec"]["authority_request_record_id"] == (
-        "accepted-reference"
-    )
-    assert "authority_request" not in checkpoint["nodes"]["missing-reference"]["spec"]
-    assert checkpoint["nodes"]["first-reference"]["spec"]["authority_request_record_id"] == (
-        "first-reference-id"
-    )
+    assert checkpoint["state"]["nodes"]["missing-reference"]["spec"][
+        "authority_request_record_id"
+    ] == ("accepted-reference")
+    assert "authority_request" not in checkpoint["state"]["nodes"]["missing-reference"]["spec"]
+    assert checkpoint["state"]["nodes"]["first-reference"]["spec"][
+        "authority_request_record_id"
+    ] == ("first-reference-id")
     pending_gate = next(
         gate
         for gate in project_decision_view([], projection=projection)["pending_gates"]
@@ -502,9 +507,9 @@ def test_checkpoint_round_trip_preserves_public_reducer_outcomes() -> None:
 
 def test_checkpoint_rejects_a_malformed_current_version_body_as_a_whole() -> None:
     checkpoint = projection_to_checkpoint(initial_projection())
-    checkpoint["nodes"] = {"unexpected": "legacy-flat-body"}
+    checkpoint["state"]["nodes"] = {"unexpected": "legacy-flat-body"}
 
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValueError):
         projection_from_checkpoint(checkpoint)
 
 

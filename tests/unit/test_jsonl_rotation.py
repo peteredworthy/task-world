@@ -116,8 +116,8 @@ async def test_rotation_archives_exact_position_range_without_overwriting(tmp_pa
     ] == [11]
     assert path.read_text() == ""
 
-    # The exact bytes can recur after a restart/recovery. The second archive
-    # receives a collision ordinal instead of failing or replacing the first.
+    # The exact bytes can recur after a restart/recovery. The immutable archive
+    # is reused instead of multiplying identical collision copies.
     path.write_bytes(archive.read_bytes())
     await JsonlOutboxObserver(path, max_bytes=1)([_event(12)])
     repeated = [
@@ -125,9 +125,7 @@ async def test_rotation_archives_exact_position_range_without_overwriting(tmp_pa
         for segment in discover_journal_segments(path)
         if segment.first_position == 10 and segment.last_position == 10
     ]
-    assert len(repeated) == 2
-    assert len({candidate.name for candidate in repeated}) == 2
-    assert sorted(candidate.read_bytes() for candidate in repeated) == [archive.read_bytes()] * 2
+    assert repeated == [archive]
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
 
 
