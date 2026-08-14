@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
+    GraphPatchProposalRecord,
     CallbackIdempotencyEvent,
     CandidateProjection,
     CheckResultProjection,
@@ -18,8 +19,9 @@ from orchestrator.graph.models import (
     FileStateRecord,
     InputBindingProjection,
     LeaseProjection,
-    OUTPUT_RECORD_MODELS_BY_TYPE,
     OutputRecordAcceptedPayload,
+    RequirementRecord,
+    RoutineSnapshotRecord,
     ResourceClaimProjection,
     VerificationResultProjection,
     VerifierVerdictProjection,
@@ -40,14 +42,7 @@ from orchestrator.graph.projection_collections import (
     thaw_json,
 )
 from orchestrator.graph.projection_models import ExecutionAttemptValue
-from orchestrator.graph.projection_models import (
-    GraphRecordSummaryProjection,
-    ProjectedFanOutInputsRecord,
-    ProjectedGraphPatchProposalRecord,
-    ProjectedRequirementRecord,
-    ProjectedRoutineSnapshotRecord,
-    ProjectionModel,
-)
+from orchestrator.graph.projection_models import GraphRecordSummaryProjection
 from orchestrator.graph.projections import (
     AcceptedOutputRecord,
     GraphProjection,
@@ -225,7 +220,7 @@ def file_state_records_view(projection: GraphProjection) -> dict[str, FileStateR
             }
         )
         for record_id, record in projection.records.by_id.items()
-        if record.record_type == "file_state"
+        if isinstance(record, FileStateRecord)
     }
 
 
@@ -317,7 +312,7 @@ def requirements_for_node_view(projection: GraphProjection, node_id: str) -> lis
     requirements: list[str] = []
     for record_id in record_ids:
         record = projection.records.by_id.get(record_id)
-        if not isinstance(record, ProjectedRequirementRecord):
+        if not isinstance(record, RequirementRecord):
             continue
         requirements.append(f"{record.value.id}: {record.value.text}")
     return requirements
@@ -329,7 +324,7 @@ def routine_snapshot_dynamic_feature_view(
     """Return a thawed copy of the latest routine's dynamic feature inputs."""
     latest = projection.planning.latest_routine_snapshot
     record = projection.records.by_id.get(latest.record_id) if latest is not None else None
-    if not isinstance(record, ProjectedRoutineSnapshotRecord):
+    if not isinstance(record, RoutineSnapshotRecord):
         return None
     dynamic_feature = record.value.dynamic_feature
     if dynamic_feature is None:
@@ -380,7 +375,7 @@ def planner_patch_facts_view(
 
     open_proposals: list[dict[str, Any]] = []
     for record in projection.records.by_id.values():
-        if not isinstance(record, ProjectedGraphPatchProposalRecord):
+        if not isinstance(record, GraphPatchProposalRecord):
             continue
         proposal = record.value
         if proposal.proposed_by_node_id != node_id:
@@ -534,28 +529,9 @@ def _accepted_output_record(
     projection: GraphProjection, record_id: str
 ) -> AcceptedOutputRecordPayload:
     record = projection.records.by_id[record_id]
-    model = OUTPUT_RECORD_MODELS_BY_TYPE[record.record_type]
-    values = (
-        record.__dict__
-        if isinstance(record, ProjectedFanOutInputsRecord)
-        else {name: _event_record_value(value) for name, value in record.__dict__.items()}
-    )
-    if record.record_type == "file_state":
-        values = {name: value for name, value in values.items() if name != "acceptance_identity"}
-    return cast(
-        AcceptedOutputRecordPayload,
-        model.model_validate(values),
-    )
-
-
-def _event_record_value(value: object) -> object:
-    if isinstance(value, FrozenMap):
-        return value.thaw_json()
-    if isinstance(value, ProjectionModel):
-        return {name: _event_record_value(item) for name, item in value.__dict__.items()}
-    if isinstance(value, tuple):
-        return tuple(_event_record_value(item) for item in cast(tuple[object, ...], value))
-    return value
+    if isinstance(record, FileStateRecord):
+        return record.model_copy(update={"acceptance_identity": None})
+    return record
 
 
 def passed_verification_candidate_ids_view(projection: GraphProjection) -> list[str]:
@@ -741,7 +717,7 @@ def cache_authority_binding(projection: GraphProjection) -> CacheAuthorityBindin
             preimage=canonicalize_cache_authority(policy),
             hash=cache_authority_hash(policy),
         )
-    if not isinstance(record, ProjectedRoutineSnapshotRecord):
+    if not isinstance(record, RoutineSnapshotRecord):
         raise ValueError("routine-snapshot-record must be a routine snapshot record")
     value = getattr(record, "value")
     preimage = getattr(value, "cache_authority_preimage", None)

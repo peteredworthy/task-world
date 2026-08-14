@@ -17,6 +17,12 @@ from typing import Any, cast
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 from pydantic_core import PydanticSerializationError
 
+from orchestrator.graph.models import (
+    FileStateRecord,
+    RoutineSnapshotRecord,
+    freeze_canonical_record,
+)
+
 from orchestrator.graph.cache_authority import (
     POLICY_VERSION,
     CacheAuthorityPolicy,
@@ -24,11 +30,7 @@ from orchestrator.graph.cache_authority import (
     canonicalize_cache_authority,
     has_cache_authority_carrier,
 )
-from orchestrator.graph.projection_models import (
-    GraphProjection,
-    ProjectedFileStateRecord,
-    ProjectedRoutineSnapshotRecord,
-)
+from orchestrator.graph.projection_models import GraphProjection
 
 
 class ProjectionCheckpointCodecError(ValueError):
@@ -170,6 +172,8 @@ def projection_from_checkpoint(raw: object) -> GraphProjection:
         envelope.state,
         context={"canonical_checkpoint": True},
     )
+    for record in projection.records.by_id.values():
+        freeze_canonical_record(record)
     validate_projection_critical_invariants(projection)
     return projection
 
@@ -195,7 +199,7 @@ def validate_projection_critical_invariants(projection: GraphProjection) -> None
         (lease.cache_authority_hash for lease in projection.execution.leases.values()),
     )
     snapshot = projection.records.by_id.get("routine-snapshot-record")
-    if isinstance(snapshot, ProjectedRoutineSnapshotRecord):
+    if isinstance(snapshot, RoutineSnapshotRecord):
         value = snapshot.value
         version = value.cache_authority_version
         preimage = value.cache_authority_preimage
@@ -330,9 +334,7 @@ def validate_projection_critical_invariants(projection: GraphProjection) -> None
             record.schema_,
             record.producer_node_id,
             record.port,
-            record.position
-            if isinstance(record, ProjectedFileStateRecord)
-            else record.graph_position,
+            record.position if isinstance(record, FileStateRecord) else record.graph_position,
         )
         actual = (
             summary.record_id,

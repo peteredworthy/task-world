@@ -12,9 +12,9 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     FakeClock,
-    ProjectedExternalFileEntry,
-    ProjectedFileEntry,
-    ProjectedFileStateRecord,
+    ExternalFileEntry,
+    FileEntry,
+    FileStateRecord,
     build_projection,
     initial_projection,
     projection_from_checkpoint,
@@ -61,18 +61,18 @@ def test_canonical_gatekeeper_stream_preserves_ordinary_and_external_entry_subty
     stream = dict(STREAMS)["gatekeeper_verdict_recorded"]
     direct = fold_events(stream)
     direct_record = direct.records.by_id["file-state-1"]
-    assert isinstance(direct_record, ProjectedFileStateRecord)
-    assert type(direct_record.untracked[0]) is ProjectedFileEntry
-    assert type(direct_record.external[0]) is ProjectedExternalFileEntry
+    assert isinstance(direct_record, FileStateRecord)
+    assert type(direct_record.untracked[0]) is FileEntry
+    assert type(direct_record.external[0]) is ExternalFileEntry
 
     restored = projection_from_checkpoint(
         deepcopy(projection_to_checkpoint(fold_events(stream[:3])))
     )
     replayed = fold_events(stream[3:], restored)
     replayed_record = replayed.records.by_id["file-state-1"]
-    assert isinstance(replayed_record, ProjectedFileStateRecord)
-    assert type(replayed_record.untracked[0]) is ProjectedFileEntry
-    assert type(replayed_record.external[0]) is ProjectedExternalFileEntry
+    assert isinstance(replayed_record, FileStateRecord)
+    assert type(replayed_record.untracked[0]) is FileEntry
+    assert type(replayed_record.external[0]) is ExternalFileEntry
 
 
 def _fold(projection: Any, events: tuple[EventEnvelope, ...] | list[EventEnvelope]) -> Any:

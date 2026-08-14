@@ -37,7 +37,7 @@ from orchestrator.graph import (
     PlanningProjection,
     ProjectedCandidateValue,
     ProjectedCheckResultValue,
-    ProjectedRecord,
+    AcceptedOutputRecordPayload,
     ProjectionAuthorityRequestValue,
     ProjectionApprovalDecisionValue,
     ProjectionAuthorityDecisionValue,
@@ -53,6 +53,7 @@ from orchestrator.graph import (
     SupportEvidenceValue,
     SupportEvidenceProjection,
     TaskProjection,
+    TypedRecordBase,
     TopologyProjection,
     UsageProjection,
     VerificationProjection,
@@ -153,6 +154,8 @@ def test_model_graph_has_no_mutable_annotations_or_open_extra() -> None:
         if model in visited:
             continue
         visited.add(model)
+        if issubclass(model, TypedRecordBase):
+            continue
         if model.model_config.get("frozen") is not True:
             violations.append(f"{model.__name__} is not frozen")
         if model.model_config.get("extra") != "forbid":
@@ -298,19 +301,19 @@ def test_record_store_is_the_only_recursive_full_payload_owner() -> None:
     assert get_origin(ids_annotation) is FrozenMap
     assert Mapping not in get_args(ids_annotation)
 
-    record_models = _concrete_annotation_models(get_args(ProjectedRecord)[0])
+    record_models = _concrete_annotation_models(get_args(AcceptedOutputRecordPayload)[0])
     assert _grouped_paths_containing(GraphProjection, record_models) == {"records.by_id"}
 
 
 def test_recursive_full_payload_owner_guard_detects_a_second_group() -> None:
     class BadRecordGroup(ProjectionModel):
-        duplicate_by_id: FrozenMap[str, ProjectedRecord] = FrozenMap()
+        duplicate_by_id: FrozenMap[str, AcceptedOutputRecordPayload] = FrozenMap()
 
     class BadRoot(ProjectionModel):
         records: RecordStore = RecordStore()
         bad_records: BadRecordGroup = BadRecordGroup()
 
-    record_models = _concrete_annotation_models(get_args(ProjectedRecord)[0])
+    record_models = _concrete_annotation_models(get_args(AcceptedOutputRecordPayload)[0])
     paths = _grouped_paths_containing(BadRoot, record_models)
 
     assert paths == {"records.by_id", "bad_records.duplicate_by_id"}

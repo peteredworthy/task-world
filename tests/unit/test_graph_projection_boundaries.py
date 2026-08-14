@@ -14,7 +14,7 @@ from scripts.check_graph_projection_boundaries import (
     check_projection_boundaries,
     projection_annotation_violations,
     projection_event_dispatch_types,
-    projected_record_owner_paths,
+    canonical_record_owner_paths,
     has_projection_provenance_seed,
 )
 from scripts.graph_projection_boundary_provenance import projection_provenance
@@ -23,7 +23,7 @@ from orchestrator.graph import (
     FrozenMap,
     PROJECTION_NEUTRAL_EVENT_TYPES,
     GraphProjection,
-    ProjectedCandidateRecord,
+    CandidateRecord,
     ProjectionModel,
     RecordStore,
 )
@@ -1786,42 +1786,42 @@ def test_projection_annotation_guard_rejects_recursive_generic_alias_mutation() 
     assert projection_annotation_violations(MutableRoot)
 
 
-def test_projected_record_owner_guard_allows_only_record_store_by_id() -> None:
-    assert projected_record_owner_paths(GraphProjection) == frozenset({"records.by_id"})
+def test_canonical_record_owner_guard_allows_only_record_store_by_id() -> None:
+    assert canonical_record_owner_paths(GraphProjection) == frozenset({"records.by_id"})
     assert RecordStore.model_fields["by_id"].annotation is not None
 
 
-def test_projected_record_owner_guard_rejects_concrete_duplicate_owner() -> None:
+def test_canonical_record_owner_guard_rejects_concrete_duplicate_owner() -> None:
     class DuplicateOwner(ProjectionModel):
-        records: FrozenMap[str, ProjectedCandidateRecord] = FrozenMap()
+        records: FrozenMap[str, CandidateRecord] = FrozenMap()
 
-    assert projected_record_owner_paths(DuplicateOwner) == frozenset({"records"})
+    assert canonical_record_owner_paths(DuplicateOwner) == frozenset({"records"})
 
 
-def test_projected_record_owner_guard_checks_frozen_map_keys() -> None:
+def test_canonical_record_owner_guard_checks_frozen_map_keys() -> None:
     class DuplicateKeyOwner(ProjectionModel):
-        records: FrozenMap[ProjectedCandidateRecord, str] = FrozenMap()
+        records: FrozenMap[CandidateRecord, str] = FrozenMap()
 
-    assert projected_record_owner_paths(DuplicateKeyOwner) == frozenset({"records.key"})
+    assert canonical_record_owner_paths(DuplicateKeyOwner) == frozenset({"records.key"})
 
 
-def test_projected_record_owner_guard_expands_specialized_pep695_aliases() -> None:
+def test_canonical_record_owner_guard_expands_specialized_pep695_aliases() -> None:
     type OwnerAlias[Record] = FrozenMap[str, Record]
 
     class DuplicateAliasOwner(ProjectionModel):
-        records: OwnerAlias[ProjectedCandidateRecord] = FrozenMap()
+        records: OwnerAlias[CandidateRecord] = FrozenMap()
 
-    assert projected_record_owner_paths(DuplicateAliasOwner) == frozenset({"records"})
+    assert canonical_record_owner_paths(DuplicateAliasOwner) == frozenset({"records"})
 
 
-def test_projected_record_owner_guard_checks_recursive_generic_alias_arguments() -> None:
-    type RecursiveOwner[Value] = Value | RecursiveOwner[ProjectedCandidateRecord]
+def test_canonical_record_owner_guard_checks_recursive_generic_alias_arguments() -> None:
+    type RecursiveOwner[Value] = Value | RecursiveOwner[CandidateRecord]
 
     class DuplicateRecursiveOwner(ProjectionModel):
         model_config = ConfigDict(frozen=True, defer_build=True)
         records: RecursiveOwner[str]
 
-    assert projected_record_owner_paths(DuplicateRecursiveOwner) == frozenset({"records"})
+    assert canonical_record_owner_paths(DuplicateRecursiveOwner) == frozenset({"records"})
 
 
 def test_event_dispatch_guard_respects_branch_constraints() -> None:

@@ -186,9 +186,9 @@ task-world/
 │   │   ├── macros.py          # Planner-facing macro expansion to low-level patch ops
 │   │   ├── patch_validator.py # Pure graph patch validation
 │   │   ├── projection_collections.py # FrozenMap and persistent update primitives
-│   │   ├── projection_models.py # Frozen grouped GraphProjection and projected records
+│   │   ├── projection_models.py # Frozen grouped GraphProjection and canonical record ownership
 │   │   ├── projection_queries.py # Public, copy-out projection query boundary
-│   │   ├── projection_codec.py # Strict checkpoint codec and referential validation
+│   │   ├── projection_codec.py # Disposable schema/position/state/checksum checkpoint codec
 │   │   ├── projections.py     # Event reducer and projection policy/read models
 │   │   └── scheduler.py       # Pure readiness and lease scheduling helpers
 │   │
@@ -424,12 +424,13 @@ which wraps the immutable `DelegationState` value object.
 
 ### Immutable Graph Projection
 
-`GraphProjection` is a schema-13, grouped, deeply immutable read model. Its
+`GraphProjection` is a schema-14, grouped, deeply immutable read model. Its
 root groups and every reachable projection model are frozen; dynamic indexes use
 `FrozenMap`, ordered collections use tuples, and reducers make persistent
 updates with `model_copy`/`map_set` rather than mutation. `RecordStore.by_id`
-is the sole owner of complete projected records; other groups retain identifiers
-or summaries.
+is the sole owner of complete canonical accepted/output records; other groups
+retain identifiers or summaries. The projection does not maintain a duplicate
+projected record/value hierarchy or conversion registry.
 
 Only `projection_models.py`, `projection_collections.py`,
 `projection_queries.py`, `projection_codec.py`, and `projections.py` may read
@@ -439,8 +440,9 @@ access and return immutable values or fresh public copies.
 
 Checkpoints are disposable accelerators. Complete runtime state lives in the
 dedicated `graph_projection_checkpoints` owner with position, projection schema
-version, terminal metadata, checksum, and the unbounded codec envelope. It is
-read only when its metadata and strict codec/integrity validation agree. The
+version, serialized grouped state, and checksum. It is read only when its
+metadata, direct Pydantic state validation, and checksum agree. Relationship
+correctness remains at event acceptance and reducer/index writes. The
 separate `graph_projection_snapshots` owner contains only response-bounded
 public fields and is validated by position plus graph read-contract revision;
 public packing therefore cannot disable checkpoint-plus-tail execution.

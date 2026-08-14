@@ -26,6 +26,10 @@ from orchestrator.graph.event_registry import EVENT_PAYLOAD_MODELS, PROJECTION_N
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
     AppealOpenedPayload,
+    CandidateRecord,
+    CheckResultRecord,
+    CompletionDecisionRecord,
+    DecisionRequestRecord,
     ApprovalDecisionRecordedPayload,
     AuthorityDecisionRecordedPayload,
     AuthorityRequestRecord,
@@ -37,6 +41,7 @@ from orchestrator.graph.models import (
     ExternalFileEntry,
     FileEntry,
     FileStateRecord,
+    freeze_canonical_record,
     GatekeeperCostRecordedPayload,
     GatekeeperVerdictRecordedPayload,
     GraphBaseModel,
@@ -65,12 +70,15 @@ from orchestrator.graph.models import (
     OversightDecisionProjection,
     OversightDecisionRecordedPayload,
     OutputRecordAcceptedPayload,
+    OutputRecord,
     PlannerSessionStateChangedPayload,
     RequirementRevisionPayload,
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
     ResourceClaimProjection,
     SupportEvidencePayload,
+    RoutineSnapshotRecord,
+    StoredArtifactRef,
     VerificationFailedPayload,
     VerificationPassedPayload,
 )
@@ -103,18 +111,6 @@ from orchestrator.graph.projection_models import (
     OversightDecisionValue,
     PlannerSessionProjection,
     PlannerPatchDecisionValue,
-    ProjectedAuthorityRequestRecord,
-    ProjectedCandidateRecord,
-    ProjectedCheckResultRecord,
-    ProjectedCompletionDecisionRecord,
-    ProjectedDecisionRequestRecord,
-    ProjectedFanOutInputsRecord,
-    ProjectedExternalFileEntry,
-    ProjectedFileEntry,
-    ProjectedFileStateRecord,
-    ProjectedRecord,
-    ProjectedRoutineSnapshotRecord,
-    ProjectedStoredArtifactRef,
     RecoveryNodeIndexValue,
     RecordStore,
     ResourceClaimValue,
@@ -124,7 +120,6 @@ from orchestrator.graph.projection_models import (
     VerificationResultValue,
     VerifierVerdictValue,
     InvalidTestBlockValue,
-    project_validated_record_for_reducer,
 )
 
 
@@ -1235,7 +1230,7 @@ def _reduce_slice_a_binding(state: GraphProjection, event: EventEnvelope) -> Gra
     return _replace_projection_groups(state, topology=topology)
 
 
-def _canonical_projected_record(record: ProjectedRecord) -> dict[str, Any]:
+def _canonical_record(record: AcceptedOutputRecordPayload) -> dict[str, Any]:
     """Return the accepted-record content used for replay identity.
 
     Delivery timestamp, position, and graph position are attached to file-state
@@ -1244,40 +1239,39 @@ def _canonical_projected_record(record: ProjectedRecord) -> dict[str, Any]:
     logical identity.
     """
     canonical = record.model_dump(mode="json", by_alias=True)
-    if isinstance(record, ProjectedFileStateRecord):
+    if isinstance(record, FileStateRecord):
         canonical.pop("created_at", None)
         canonical.pop("position", None)
         canonical.pop("graph_position", None)
     return canonical
 
 
-def _file_state_acceptance_identity(record: ProjectedFileStateRecord) -> str:
+def _file_state_acceptance_identity(record: FileStateRecord) -> str:
     """Return a compact identity for immutable file-state acceptance facts."""
-    canonical = _canonical_projected_record(record)
+    canonical = _canonical_record(record)
     canonical.pop("acceptance_identity", None)
     encoded = dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def insert_projected_record(
-    store: RecordStore, record: ProjectedRecord, *, event_id: str
+def insert_record(
+    store: RecordStore, record: AcceptedOutputRecordPayload, *, event_id: str
 ) -> RecordStore:
     """Insert one canonical record, rejecting every non-identical id reuse."""
-    if isinstance(record, ProjectedFileStateRecord) and record.acceptance_identity is None:
+    record = cast(AcceptedOutputRecordPayload, freeze_canonical_record(record))
+    if isinstance(record, FileStateRecord) and record.acceptance_identity is None:
         record = record.model_copy(
             update={"acceptance_identity": _file_state_acceptance_identity(record)}
         )
     existing = store.by_id.get(record.record_id)
     if existing is not None:
-        if isinstance(existing, ProjectedFileStateRecord) and isinstance(
-            record, ProjectedFileStateRecord
-        ):
+        if isinstance(existing, FileStateRecord) and isinstance(record, FileStateRecord):
             if existing.acceptance_identity == record.acceptance_identity:
                 return store
             raise ProjectionReplayConflictError(
                 f"record {record.record_id!r} conflicts during replay (event {event_id!r})"
             )
-        if _canonical_projected_record(existing) == _canonical_projected_record(record):
+        if _canonical_record(existing) == _canonical_record(record):
             return store
         raise ProjectionReplayConflictError(
             f"record {record.record_id!r} conflicts during replay (event {event_id!r})"
@@ -1292,9 +1286,7 @@ def insert_projected_record(
         schema=record.schema_,
         producer_node_id=node_id,
         producer_port=port,
-        position=record.position
-        if isinstance(record, ProjectedFileStateRecord)
-        else record.graph_position,
+        position=record.position if isinstance(record, FileStateRecord) else record.graph_position,
     )
     indexes = store.ids_by_node_port
     if node_id is not None:
@@ -1309,25 +1301,25 @@ def insert_projected_record(
 
 
 def _record_destination(
-    record: ProjectedDecisionRequestRecord | ProjectedAuthorityRequestRecord,
+    record: DecisionRequestRecord | AuthorityRequestRecord,
 ) -> str:
     """Return the node addressed by a grouped governance request record."""
     return record.producer_node_id
 
 
-def _replace_projected_record(store: RecordStore, record: ProjectedRecord) -> RecordStore:
+def _replace_record(store: RecordStore, record: AcceptedOutputRecordPayload) -> RecordStore:
     """Replace a canonical record after a directly-caused immutable side effect."""
     if store.by_id.get(record.record_id) is None:
         return store
     return store.model_copy(update={"by_id": map_set(store.by_id, record.record_id, record)})
 
 
-def _apply_projected_record_side_effects(
-    state: GraphProjection, record: ProjectedRecord, *, position: int
+def _apply_record_side_effects(
+    state: GraphProjection, record: AcceptedOutputRecordPayload, *, position: int
 ) -> GraphProjection:
     """Apply only facts directly entailed by a newly accepted canonical record."""
     next_state = state
-    if isinstance(record, ProjectedRoutineSnapshotRecord):
+    if isinstance(record, RoutineSnapshotRecord):
         planning = state.planning.model_copy(
             update={
                 "latest_routine_snapshot": LatestRoutineSnapshotProjection(
@@ -1338,13 +1330,13 @@ def _apply_projected_record_side_effects(
             }
         )
         next_state = _replace_projection_groups(next_state, planning=planning)
-    elif isinstance(record, ProjectedCompletionDecisionRecord) and record.value.status == "passed":
+    elif isinstance(record, CompletionDecisionRecord) and record.value.status == "passed":
         if not state.lifecycle.completion_decision_passed:
             next_state = _replace_projection_groups(
                 next_state,
                 lifecycle=state.lifecycle.model_copy(update={"completion_decision_passed": True}),
             )
-    elif isinstance(record, ProjectedCandidateRecord | ProjectedFanOutInputsRecord):
+    elif isinstance(record, CandidateRecord | OutputRecord):
         producer = state.nodes.get(record.producer_node_id)
         task_region_id = record.task_region_id or (
             producer.spec.task_region_id if producer is not None else None
@@ -1355,7 +1347,7 @@ def _apply_projected_record_side_effects(
                 attempt_number = producer.runtime.attempt_number
             file_state_record_ids = record.file_state_record_ids
             supersedes_task_region_ids: tuple[str, ...] = ()
-            if isinstance(record, ProjectedCandidateRecord):
+            if isinstance(record, CandidateRecord):
                 file_state_record_ids = file_state_record_ids or record.value.file_state_record_ids
                 supersedes_task_region_ids = (
                     *record.supersedes_task_region_ids,
@@ -1369,7 +1361,7 @@ def _apply_projected_record_side_effects(
                 candidate_id=record.candidate_id or record.record_id,
                 attempt_number=attempt_number or 0,
                 position=position,
-                file_state_record_ids=file_state_record_ids,
+                file_state_record_ids=tuple(file_state_record_ids),
                 supersedes_task_region_ids=supersedes_task_region_ids,
             )
             task = state.tasks.get(task_region_id, TaskProjection())
@@ -1380,7 +1372,7 @@ def _apply_projected_record_side_effects(
                     task.model_copy(update={"candidates": (*task.candidates, candidate)}),
                 )
                 next_state = _replace_projection_groups(next_state, tasks=tasks)
-    elif isinstance(record, ProjectedCheckResultRecord):
+    elif isinstance(record, CheckResultRecord):
         result = CheckResultValue(
             node_id=record.producer_node_id,
             status=record.value.status,
@@ -1392,10 +1384,15 @@ def _apply_projected_record_side_effects(
             stderr_tail=record.value.stderr_tail,
             stdout_tail=record.value.stdout_tail,
             exit_code=record.value.exit_code,
-            candidate_record_ids=record.candidate_record_ids or record.value.candidate_record_ids,
-            file_state_record_ids=record.file_state_record_ids
-            or record.value.file_state_record_ids,
-            evaluated_record_ids=record.evaluated_record_ids or record.value.evaluated_record_ids,
+            candidate_record_ids=tuple(
+                record.candidate_record_ids or record.value.candidate_record_ids
+            ),
+            file_state_record_ids=tuple(
+                record.file_state_record_ids or record.value.file_state_record_ids
+            ),
+            evaluated_record_ids=tuple(
+                record.evaluated_record_ids or record.value.evaluated_record_ids
+            ),
         )
         verification = state.verification.model_copy(
             update={
@@ -1429,7 +1426,7 @@ def _apply_projected_record_side_effects(
                 }
             )
             next_state = _replace_projection_groups(next_state, execution=execution)
-    elif isinstance(record, ProjectedDecisionRequestRecord):
+    elif isinstance(record, DecisionRequestRecord):
         destination = _record_destination(record)
         governance = state.governance.model_copy(
             update={
@@ -1439,7 +1436,7 @@ def _apply_projected_record_side_effects(
             }
         )
         next_state = _replace_projection_groups(next_state, governance=governance)
-    elif isinstance(record, ProjectedAuthorityRequestRecord):
+    elif isinstance(record, AuthorityRequestRecord):
         node = state.nodes.get(_record_destination(record))
         if node is not None and node.spec.authority_request_record_id is None:
             next_state = _replace_node(
@@ -1453,7 +1450,7 @@ def _apply_projected_record_side_effects(
     return next_state
 
 
-def _reduce_projected_record_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+def _reduce_record_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
     record_type = event.payload.get("record_type")
     if (
         record_type == "routine_snapshot"
@@ -1481,40 +1478,38 @@ def _reduce_projected_record_event(state: GraphProjection, event: EventEnvelope)
         if record_model is not None
         else OutputRecordAcceptedPayload.model_validate(event.payload).root
     )
-    projected = project_validated_record_for_reducer(payload)
-    if isinstance(projected, ProjectedFileStateRecord):
-        projected = projected.model_copy(
+    record = payload
+    if isinstance(record, FileStateRecord):
+        record = record.model_copy(
             update={
                 "run_id": event.run_id,
                 "position": event.position,
             }
         )
-        projected = projected.model_copy(
-            update={"acceptance_identity": _file_state_acceptance_identity(projected)}
+        record = record.model_copy(
+            update={"acceptance_identity": _file_state_acceptance_identity(record)}
         )
-    records = insert_projected_record(state.records, projected, event_id=event.event_id)
+    records = insert_record(state.records, record, event_id=event.event_id)
     if records is state.records:
         return state
     next_state = _replace_projection_groups(state, records=records)
-    return _apply_projected_record_side_effects(next_state, projected, position=event.position)
+    return _apply_record_side_effects(next_state, record, position=event.position)
 
 
 def _reduce_gatekeeper_verdict(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
     payload = GatekeeperVerdictRecordedPayload.model_validate(event.payload)
     record = state.records.by_id.get(payload.file_state_record_id)
-    if not isinstance(record, ProjectedFileStateRecord):
+    if not isinstance(record, FileStateRecord):
         return state
     verdicts = {verdict.path: verdict.model_dump(mode="json") for verdict in payload.verdicts}
     if not record.paths:
         return state
     resolved_paths = tuple(_resolved_file_entry(entry, verdicts) for entry in record.paths)
-    if resolved_paths == record.paths:
+    if list(resolved_paths) == record.paths:
         return state
     return _replace_projection_groups(
         state,
-        records=_replace_projected_record(
-            state.records, record.model_copy(update={"paths": resolved_paths})
-        ),
+        records=_replace_record(state.records, record.model_copy(update={"paths": resolved_paths})),
     )
 
 
@@ -2075,7 +2070,7 @@ def reduce_event(
     if slice_a_state is not None:
         return _finalize_projection(slice_a_state, event)
     if event.event_type in {"output_record_accepted", "file_state_accepted"}:
-        return _finalize_projection(_reduce_projected_record_event(state, event), event)
+        return _finalize_projection(_reduce_record_event(state, event), event)
     if event.event_type == "gatekeeper_verdict_recorded":
         return _finalize_projection(_reduce_gatekeeper_verdict(state, event), event)
     slice_b2_state = _reduce_slice_b2(state, event)
@@ -2297,9 +2292,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "idempotency_key": payload.idempotency_key,
                 "payload": freeze_json(payload.payload) if payload.payload is not None else None,
                 "payload_ref": (
-                    ProjectedStoredArtifactRef.model_validate(
-                        payload.payload_ref.model_dump(mode="json")
-                    )
+                    StoredArtifactRef.model_validate(payload.payload_ref.model_dump(mode="json"))
                     if payload.payload_ref is not None
                     else None
                 ),
@@ -2794,7 +2787,7 @@ def _reduce_cleanup(state: GraphProjection, event: EventEnvelope) -> GraphProjec
         record_id = payload.file_state_record_id
         record = state.records.by_id.get(record_id) if record_id is not None else None
         records = state.records
-        if isinstance(record, ProjectedFileStateRecord):
+        if isinstance(record, FileStateRecord):
             replacement = record.model_copy(
                 update={
                     "compromised": True,
@@ -2804,7 +2797,7 @@ def _reduce_cleanup(state: GraphProjection, event: EventEnvelope) -> GraphProjec
                     "compromised_paths": tuple(payload.paths),
                 }
             )
-            records = _replace_projected_record(records, replacement)
+            records = _replace_record(records, replacement)
         if execution is state.execution and records is state.records:
             return state
         return _replace_projection_groups(state, execution=execution, records=records)
@@ -2845,8 +2838,8 @@ def _reduce_cleanup(state: GraphProjection, event: EventEnvelope) -> GraphProjec
         else None
     )
     records = state.records
-    if isinstance(record, ProjectedFileStateRecord):
-        records = _replace_projected_record(
+    if isinstance(record, FileStateRecord):
+        records = _replace_record(
             records,
             record.model_copy(
                 update={
@@ -4445,7 +4438,7 @@ def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[s
     """Project accepted file-state residue classifications by path."""
     report: dict[str, list[dict[str, Any]]] = {}
     for record in _project(events).records.by_id.values():
-        if not isinstance(record, ProjectedFileStateRecord):
+        if not isinstance(record, FileStateRecord):
             continue
         entries = record.residue or record.classifications
         for raw_entry in entries:
@@ -5181,7 +5174,7 @@ def _request_details_for_pending_gate(
     authority_request_record_id = node.spec.authority_request_record_id
     if authority_request_record_id is not None:
         record = projection.records.by_id.get(authority_request_record_id)
-        if isinstance(record, ProjectedAuthorityRequestRecord):
+        if isinstance(record, AuthorityRequestRecord):
             return _pending_gate_request_details(record.value)
     if node.spec.authority_request is not None:
         return _pending_gate_request_details(node.spec.authority_request)
@@ -5374,9 +5367,9 @@ def _environment_failure_reason_from_check_value(value: dict[str, Any]) -> str:
 
 
 def _resolved_file_entry(
-    raw_entry: FileEntry | ExternalFileEntry | ProjectedFileEntry | ProjectedExternalFileEntry,
+    raw_entry: FileEntry | ExternalFileEntry,
     verdicts_by_path: dict[str, dict[str, Any]],
-) -> FileEntry | ExternalFileEntry | ProjectedFileEntry | ProjectedExternalFileEntry:
+) -> FileEntry | ExternalFileEntry:
     entry = _file_entry_dict(raw_entry)
     path = entry.get("path")
     if not isinstance(path, str) or path not in verdicts_by_path:
@@ -5389,15 +5382,11 @@ def _resolved_file_entry(
     entry["gatekeeper_rationale"] = verdict.get("rationale")
     if isinstance(raw_entry, ExternalFileEntry):
         return ExternalFileEntry.model_validate(entry)
-    if isinstance(raw_entry, ProjectedExternalFileEntry):
-        return ProjectedExternalFileEntry.model_validate(entry)
-    if isinstance(raw_entry, ProjectedFileEntry):
-        return ProjectedFileEntry.model_validate(entry)
     return FileEntry.model_validate(entry)
 
 
 def _file_entry_dict(
-    entry: FileEntry | ExternalFileEntry | ProjectedFileEntry | ProjectedExternalFileEntry,
+    entry: FileEntry | ExternalFileEntry,
 ) -> dict[str, Any]:
     return entry.model_dump(mode="json")
 
@@ -5777,7 +5766,7 @@ def _task_file_state_accepted(
     candidate_id: str,
 ) -> bool:
     for record in state.records.by_id.values():
-        if not isinstance(record, ProjectedFileStateRecord):
+        if not isinstance(record, FileStateRecord):
             continue
         record_region_id = record.task_region_id
         if not isinstance(record_region_id, str):

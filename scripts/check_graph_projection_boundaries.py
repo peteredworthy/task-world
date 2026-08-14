@@ -18,7 +18,7 @@ from orchestrator.graph import (
     PROJECTION_NEUTRAL_EVENT_TYPES,
     FrozenMap,
     GraphProjection,
-    ProjectedRecordBase,
+    TypedRecordBase,
     ProjectionModel,
 )
 
@@ -174,6 +174,10 @@ def projection_annotation_violations(root: type[ProjectionModel]) -> tuple[str, 
         elif origin is Literal:
             if any(type(value) not in _IMMUTABLE_SCALARS for value in arguments):
                 violations.append(f"{path}: Literal contains a non-scalar value")
+        elif isinstance(annotation, type) and issubclass(annotation, TypedRecordBase):
+            # Canonical record models are validated and recursively frozen by
+            # freeze_canonical_record at the RecordStore ownership boundary.
+            return
         elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
             if annotation.model_config.get("frozen") is not True:
                 violations.append(f"{path}: model {annotation.__name__} is not frozen")
@@ -194,7 +198,7 @@ def projection_annotation_violations(root: type[ProjectionModel]) -> tuple[str, 
     return tuple(violations)
 
 
-def projected_record_owner_paths(root: type[ProjectionModel]) -> frozenset[str]:
+def canonical_record_owner_paths(root: type[ProjectionModel]) -> frozenset[str]:
     """Return every reachable projection path whose annotation owns a full record."""
     owners: set[str] = set()
     active_aliases: set[TypeAliasType] = set()
@@ -250,8 +254,9 @@ def projected_record_owner_paths(root: type[ProjectionModel]) -> frozenset[str]:
             if len(arguments) == 2:
                 visit(arguments[0], f"{path}.key", active_models, substitutions)
                 visit(arguments[1], path, active_models, substitutions)
-        elif isinstance(annotation, type) and issubclass(annotation, ProjectedRecordBase):
+        elif isinstance(annotation, type) and issubclass(annotation, TypedRecordBase):
             owners.add(path)
+            return
         elif isinstance(annotation, type) and issubclass(annotation, ProjectionModel):
             if annotation in active_models:
                 return
@@ -587,10 +592,10 @@ def projection_contract_violations(root: Path) -> tuple[str, ...]:
         violations.append("projection_models.py retains a legacy TypedDict projection")
     if "_clone_projection" in projection_source:
         violations.append("projections.py retains _clone_projection")
-    record_owners = projected_record_owner_paths(GraphProjection)
+    record_owners = canonical_record_owner_paths(GraphProjection)
     if record_owners != frozenset({"records.by_id"}):
         violations.append(
-            f"projected record owners must be records.by_id, found {sorted(record_owners)}"
+            f"canonical record owners must be records.by_id, found {sorted(record_owners)}"
         )
     dispatched = projection_event_dispatch_types(projection_source)
     if CANONICAL_EVENT_TYPES != dispatched | PROJECTION_NEUTRAL_EVENT_TYPES:

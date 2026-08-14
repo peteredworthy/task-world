@@ -31,6 +31,65 @@ from orchestrator.graph.cache_authority import (
     RunnerCacheRoot,
     canonicalize_cache_roots,
 )
+from orchestrator.graph.projection_collections import FrozenMap
+
+
+def _freeze_canonical_record_value(value: object) -> object:
+    """Freeze a validated record without introducing a projection schema."""
+    if isinstance(value, BaseModel):
+        for field_name in type(value).model_fields:
+            if hasattr(value, field_name):
+                object.__setattr__(
+                    value,
+                    field_name,
+                    _freeze_canonical_record_value(getattr(value, field_name)),
+                )
+        if isinstance(value, StrictNestedModel):
+            object.__setattr__(value, "__canonical_record_frozen__", True)
+        return value
+    if type(value) is FrozenMap:
+        return FrozenMap(
+            {key: _freeze_canonical_record_value(item) for key, item in value.object_items()}
+        )
+    if type(value) is dict:
+        return FrozenMap(
+            {
+                key: _freeze_canonical_record_value(item)
+                for key, item in cast(dict[object, object], value).items()
+            }
+        )
+    if type(value) in {list, tuple}:
+        return tuple(_freeze_canonical_record_value(item) for item in cast(list[object], value))
+    return value
+
+
+def _thaw_canonical_model(
+    model: BaseModel,
+) -> tuple[list[tuple[BaseModel, str, object]], object]:
+    changes: list[tuple[BaseModel, str, object]] = []
+
+    def thaw(value: object) -> object:
+        if isinstance(value, BaseModel):
+            for field_name in type(value).model_fields:
+                if hasattr(value, field_name):
+                    current = getattr(value, field_name)
+                    changes.append((value, field_name, current))
+                    object.__setattr__(value, field_name, thaw(current))
+            return value
+        if isinstance(value, FrozenMap):
+            return {key: thaw(item) for key, item in value.object_items()}
+        if isinstance(value, dict):
+            return {key: thaw(item) for key, item in cast(dict[object, object], value).items()}
+        if isinstance(value, tuple):
+            return [thaw(item) for item in cast(tuple[object, ...], value)]
+        return value
+
+    return changes, thaw(model)
+
+
+def _restore_canonical_model(changes: list[tuple[BaseModel, str, object]]) -> None:
+    for model, field_name, value in reversed(changes):
+        object.__setattr__(model, field_name, value)
 
 
 class GraphBaseModel(BaseModel):
@@ -49,6 +108,20 @@ class StrictNestedModel(GraphBaseModel):
     """Nested W5 values reject unknown fields without global graph strictness."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if self.__dict__.get("__canonical_record_frozen__", False):
+            raise TypeError("canonical record values are immutable")
+        super().__setattr__(name, value)
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        if not self.__dict__.get("__canonical_record_frozen__", False):
+            return super().model_dump(*args, **kwargs)
+        changes, _ = _thaw_canonical_model(self)
+        try:
+            return super().model_dump(*args, **kwargs)
+        finally:
+            _restore_canonical_model(changes)
 
 
 CommandDefinitionProjection: TypeAlias = dict[str, Any]
@@ -76,6 +149,26 @@ class TypedRecordBase(GraphBaseModel):
             msg = "schema_version must be positive"
             raise ValueError(msg)
         return self
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Serialize owned immutable values through the canonical JSON shape."""
+        changes, _ = _thaw_canonical_model(self)
+        try:
+            return super().model_dump(*args, **kwargs)
+        finally:
+            _restore_canonical_model(changes)
+
+
+def freeze_canonical_record(record: TypedRecordBase) -> TypedRecordBase:
+    """Freeze one accepted record when it enters projection-owned storage."""
+    for field_name in type(record).model_fields:
+        if hasattr(record, field_name):
+            object.__setattr__(
+                record,
+                field_name,
+                _freeze_canonical_record_value(getattr(record, field_name)),
+            )
+    return record
 
 
 class RunLifecycleState(str, Enum):
@@ -572,6 +665,8 @@ class ArtifactReferenceValue(StrictNestedModel):
 
 
 class StoredArtifactRef(StrictNestedModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
     artifact_id: str
     content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     size_bytes: StrictInt = Field(ge=0)
@@ -2478,6 +2573,13 @@ class FileStateRecord(TypedRecordBase):
     cleanup_applied_event_id: str | None = None
     compromised_snapshot_deleted: bool | None = None
     compromised_paths: list[str] | None = None
+    acceptance_identity: str | None = None
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        dumped = super().model_dump(*args, **kwargs)
+        if self.acceptance_identity is None:
+            dumped.pop("acceptance_identity", None)
+        return dumped
 
     @model_validator(mode="before")
     @classmethod

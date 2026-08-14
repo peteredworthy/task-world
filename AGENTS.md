@@ -237,13 +237,17 @@ database deletion/recreation.
 
 **Event sourcing for recovery.** SQL events are canonical for normal writes. JSONL is a secondary sink and an empty-DB bootstrap source; reconstruct from history on startup.
 
-**Graph projections are grouped and deeply immutable.** Schema-13 `GraphProjection`
+**Graph projections are grouped and deeply immutable.** Schema-14 `GraphProjection`
 uses frozen Pydantic groups, `FrozenMap` dynamic indexes, recursively frozen JSON,
 and tuples for ordered values. Reducers must never mutate a reachable value:
 create replacement models with `model_copy(update={...})` and persistent maps with
 `map_set`, `map_delete`, or `map_update`, preserving unchanged group identity.
-`RecordStore.by_id` is the sole full-record owner; other groups store IDs or
-summaries. Physical grouped storage is limited to
+Canonical accepted/output record models are the sole full-record values in
+`RecordStore.by_id`; no duplicate projected record/value schemas or conversion
+registry is retained. Other groups store IDs or summaries. Checkpoints are
+disposable envelopes containing schema version, position, directly validated
+serialized grouped state, and checksum; authoritative event acceptance keeps
+producer and relationship validation. Physical grouped storage is limited to
 `projection_models.py`, `projection_collections.py`, `projection_queries.py`,
 `projection_codec.py`, and `projections.py`; modules outside the graph package
 import public queries/types through `orchestrator.graph`. The permanent

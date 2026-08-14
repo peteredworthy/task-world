@@ -20,7 +20,7 @@ from orchestrator.graph import (
     OutputRecordAcceptedPayload,
     OversightDecisionRecordedPayload,
     ProjectionReplayConflictError,
-    ProjectedFileStateRecord,
+    FileStateRecord,
     RecordStore,
     EventEnvelope,
     accepted_output_records_by_node_port_view,
@@ -28,7 +28,7 @@ from orchestrator.graph import (
     build_projection,
     edges_view,
     initial_projection,
-    insert_projected_record,
+    insert_record,
     file_state_records_view,
     node_creation_positions_view,
     node_roles_view,
@@ -556,28 +556,28 @@ def test_file_state_duplicate_from_a_different_run_conflicts() -> None:
 def test_direct_file_state_insert_computes_identity_and_rejects_conflicting_missing_identity() -> (
     None
 ):
-    record = ProjectedFileStateRecord(
+    record = FileStateRecord(
         record_id="file-state-direct",
         record_type="file_state",
         producer_node_id="worker-1",
     )
 
-    inserted = insert_projected_record(RecordStore(), record, event_id="accepted-1")
+    inserted = insert_record(RecordStore(), record, event_id="accepted-1")
     accepted = inserted.by_id["file-state-direct"]
 
-    assert isinstance(accepted, ProjectedFileStateRecord)
+    assert isinstance(accepted, FileStateRecord)
     assert accepted.acceptance_identity is not None
     assert len(accepted.acceptance_identity) == 64
-    assert insert_projected_record(inserted, record, event_id="accepted-2") is inserted
+    assert insert_record(inserted, record, event_id="accepted-2") is inserted
 
-    conflicting = ProjectedFileStateRecord(
+    conflicting = FileStateRecord(
         record_id="file-state-direct",
         record_type="file_state",
         producer_node_id="worker-1",
         tracked=[{"path": "src/other.py", "status": "modified"}],
     )
     with pytest.raises(ProjectionReplayConflictError, match=r"record.*file-state-direct"):
-        insert_projected_record(inserted, conflicting, event_id="accepted-3")
+        insert_record(inserted, conflicting, event_id="accepted-3")
 
 
 @pytest.mark.parametrize(

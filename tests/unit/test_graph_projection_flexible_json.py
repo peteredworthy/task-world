@@ -6,7 +6,16 @@ from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
 from types import UnionType
-from typing import Annotated, Literal, TypeAliasType, Union, get_args, get_origin, get_type_hints
+from typing import (
+    Any,
+    Annotated,
+    Literal,
+    TypeAliasType,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+)
 
 import pytest
 
@@ -16,6 +25,8 @@ from orchestrator.graph import (
     FrozenMap,
     GraphProjection,
     ProjectionModel,
+    StrictNestedModel,
+    TypedRecordBase,
     build_projection,
     boundary_manifest_hash,
     projection_from_checkpoint,
@@ -43,21 +54,21 @@ EXPECTED_FLEXIBLE_JSON_FIELDS = frozenset(
         ("NodeSpecProjection", "dispatch_payload"),
         ("OversightDecisionValue", "decider"),
         ("OversightDecisionValue", "scope"),
-        ("ProjectedAuthorityDecisionRecordValue", "scope"),
-        ("ProjectedCheckResultRecordValue", "command"),
-        ("ProjectedCheckResultRecordValue", "command_binding"),
-        ("ProjectedCheckResultRecordValue", "environment_policy"),
-        ("ProjectedCompletionDecisionValue", "blockers"),
-        ("ProjectedDecisionRecordValue", "scope"),
-        ("ProjectedFanOutInputsRecord", "value"),
-        ("ProjectedGitRef", "diff_summary"),
-        ("ProjectedGraphPatchProposalValue", "macro_invocations"),
-        ("ProjectedGraphPatchProposalValue", "ops"),
-        ("ProjectedRecordBase", "payload"),
-        ("ProjectedRecordBase", "provenance"),
-        ("ProjectedRecoveryPlanValue", "graph_changes"),
-        ("ProjectedRoutineSnapshotValue", "dynamic_feature"),
-        ("ProjectedVerificationReportRecord", "evidence"),
+        ("AuthorityDecisionValue", "scope"),
+        ("CheckResultValue", "command"),
+        ("CheckResultValue", "command_binding"),
+        ("CheckResultValue", "environment_policy"),
+        ("CompletionDecisionValue", "blockers"),
+        ("DecisionRecordValue", "scope"),
+        ("OutputRecord", "value"),
+        ("GitRef", "diff_summary"),
+        ("GraphPatchProposalValue", "macro_invocations"),
+        ("GraphPatchProposalValue", "ops"),
+        ("TypedRecordBase", "payload"),
+        ("TypedRecordBase", "provenance"),
+        ("RecoveryPlanValue", "graph_changes"),
+        ("RoutineSnapshotValue", "dynamic_feature"),
+        ("VerificationReportRecord", "evidence"),
     }
 )
 
@@ -72,7 +83,7 @@ JSON_PROBES = (
 
 
 def _contains_flexible_json(annotation: object, active: set[object]) -> bool:
-    if annotation is FrozenJsonValue:
+    if annotation in {Any, FrozenJsonValue}:
         return True
     if annotation in active:
         return False
@@ -81,7 +92,7 @@ def _contains_flexible_json(annotation: object, active: set[object]) -> bool:
     origin = get_origin(annotation)
     if origin is Annotated:
         return _contains_flexible_json(get_args(annotation)[0], active)
-    if origin in {Union, UnionType, tuple, FrozenMap}:
+    if origin in {Union, UnionType, tuple, list, dict, FrozenMap}:
         return any(_contains_flexible_json(item, active) for item in get_args(annotation))
     return False
 
@@ -116,16 +127,26 @@ def discover_flexible_json_fields(root: type[ProjectionModel]) -> frozenset[tupl
         elif origin is FrozenMap:
             if len(args) == 2:
                 visit(args[1], active)
-        elif isinstance(annotation, type) and issubclass(annotation, ProjectionModel):
+        elif isinstance(annotation, type) and (
+            issubclass(annotation, ProjectionModel)
+            or issubclass(annotation, TypedRecordBase)
+            or issubclass(annotation, StrictNestedModel)
+        ):
             walk(annotation, active)
 
-    def walk(model: type[ProjectionModel], active: frozenset[type[ProjectionModel]]) -> None:
+    def walk(
+        model: type[ProjectionModel] | type[TypedRecordBase], active: frozenset[object]
+    ) -> None:
         if model in seen:
             return
         seen.add(model)
         hints = get_type_hints(model, include_extras=True)
         for declaring in reversed(model.__mro__):
-            if not isinstance(declaring, type) or not issubclass(declaring, ProjectionModel):
+            if not isinstance(declaring, type) or not (
+                issubclass(declaring, ProjectionModel)
+                or issubclass(declaring, TypedRecordBase)
+                or issubclass(declaring, StrictNestedModel)
+            ):
                 continue
             for name in getattr(declaring, "__annotations__", {}):
                 annotation = hints[name]
@@ -523,8 +544,8 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         lambda c: c["state"]["execution"]["attempts_by_execution_id"]["execution"].get("payload"),
         "map-value",
     )  # type: ignore[index]
-    cases[("ProjectedFanOutInputsRecord", "value")] = _record_case(
-        "ProjectedFanOutInputsRecord",
+    cases[("OutputRecord", "value")] = _record_case(
+        "OutputRecord",
         "value",
         "fan_out_inputs",
         "fan_out_inputs",
@@ -532,8 +553,8 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         lambda p: p,
         container="map-value",
     )
-    cases[("ProjectedCompletionDecisionValue", "blockers")] = _record_case(
-        "ProjectedCompletionDecisionValue",
+    cases[("CompletionDecisionValue", "blockers")] = _record_case(
+        "CompletionDecisionValue",
         "blockers",
         "completion_decision",
         "completion_decision",
@@ -541,8 +562,8 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         lambda p: {"status": "blocked", "blockers": p},
         container="tuple-map-value",
     )
-    cases[("ProjectedDecisionRecordValue", "scope")] = _record_case(
-        "ProjectedDecisionRecordValue",
+    cases[("DecisionRecordValue", "scope")] = _record_case(
+        "DecisionRecordValue",
         "scope",
         "decision_record",
         "decision_record",
@@ -555,8 +576,8 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         },
         container="map-value",
     )
-    cases[("ProjectedAuthorityDecisionRecordValue", "scope")] = _record_case(
-        "ProjectedAuthorityDecisionRecordValue",
+    cases[("AuthorityDecisionValue", "scope")] = _record_case(
+        "AuthorityDecisionValue",
         "scope",
         "authority_decision",
         "authority_decision",
@@ -569,36 +590,36 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         },
         container="map-value",
     )
-    cases[("ProjectedGraphPatchProposalValue", "ops")] = _record_case(
-        "ProjectedGraphPatchProposalValue",
+    cases[("GraphPatchProposalValue", "ops")] = _record_case(
+        "GraphPatchProposalValue",
         "ops",
         "graph_patch_proposal",
         "graph_patch_proposal",
         "GraphPatch",
         lambda p: {
             "patch_id": "patch-ops",
-            "proposed_by_node_id": "node-record-ProjectedGraphPatchProposalValue-ops",
+            "proposed_by_node_id": "node-record-GraphPatchProposalValue-ops",
             "base_graph_position": 0,
             "ops": p,
         },
         container="tuple-map-value",
     )
-    cases[("ProjectedGraphPatchProposalValue", "macro_invocations")] = _record_case(
-        "ProjectedGraphPatchProposalValue",
+    cases[("GraphPatchProposalValue", "macro_invocations")] = _record_case(
+        "GraphPatchProposalValue",
         "macro_invocations",
         "graph_patch_proposal",
         "graph_patch_proposal",
         "GraphPatch",
         lambda p: {
             "patch_id": "patch-macros",
-            "proposed_by_node_id": "node-record-ProjectedGraphPatchProposalValue-macro_invocations",
+            "proposed_by_node_id": "node-record-GraphPatchProposalValue-macro_invocations",
             "base_graph_position": 0,
             "macro_invocations": p,
         },
         container="tuple-map-value",
     )
-    cases[("ProjectedRecoveryPlanValue", "graph_changes")] = _record_case(
-        "ProjectedRecoveryPlanValue",
+    cases[("RecoveryPlanValue", "graph_changes")] = _record_case(
+        "RecoveryPlanValue",
         "graph_changes",
         "recovery_plan",
         "recovery_plan",
@@ -606,8 +627,8 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         lambda p: {"action": "retry", "responsible_actor": "controller", "graph_changes": p},
         container="tuple-map-value",
     )
-    cases[("ProjectedRoutineSnapshotValue", "dynamic_feature")] = _record_case(
-        "ProjectedRoutineSnapshotValue",
+    cases[("RoutineSnapshotValue", "dynamic_feature")] = _record_case(
+        "RoutineSnapshotValue",
         "dynamic_feature",
         "routine_snapshot",
         "routine_snapshot",
@@ -622,8 +643,8 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         },
         container="map-value",
     )
-    cases[("ProjectedVerificationReportRecord", "evidence")] = _record_case(
-        "ProjectedVerificationReportRecord",
+    cases[("VerificationReportRecord", "evidence")] = _record_case(
+        "VerificationReportRecord",
         "evidence",
         "verification_report",
         "verification_report",
@@ -632,12 +653,12 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         extra={"candidate_id": "candidate", "outcome": "passed", "evidence": None},
     )
     # evidence is an envelope field and needs its own event-backed producer.
-    evidence = cases[("ProjectedVerificationReportRecord", "evidence")]
-    cases[("ProjectedVerificationReportRecord", "evidence")] = FlexibleJsonCase(
+    evidence = cases[("VerificationReportRecord", "evidence")]
+    cases[("VerificationReportRecord", "evidence")] = FlexibleJsonCase(
         evidence.owner,
         evidence.field,
         lambda probe: _record(
-            "record-ProjectedVerificationReportRecord-evidence",
+            "record-VerificationReportRecord-evidence",
             "verification_report",
             "verification_report",
             "VerificationReport",
@@ -647,19 +668,19 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
             evidence=probe,
         ),
         lambda p: getattr(
-            _required_record(p, "record-ProjectedVerificationReportRecord-evidence"), "evidence"
+            _required_record(p, "record-VerificationReportRecord-evidence"), "evidence"
         ),
-        lambda c: c["state"]["records"]["by_id"][
-            "record-ProjectedVerificationReportRecord-evidence"
-        ].get("evidence"),
+        lambda c: c["state"]["records"]["by_id"]["record-VerificationReportRecord-evidence"].get(
+            "evidence"
+        ),
         "direct",
         lambda c: "evidence"
-        in c["state"]["records"]["by_id"]["record-ProjectedVerificationReportRecord-evidence"],
+        in c["state"]["records"]["by_id"]["record-VerificationReportRecord-evidence"],
         omits_none=True,
     )  # type: ignore[index]
     for field in ("payload", "provenance"):
-        cases[("ProjectedRecordBase", field)] = _record_case(
-            "ProjectedRecordBase",
+        cases[("TypedRecordBase", field)] = _record_case(
+            "TypedRecordBase",
             field,
             "fan_out_inputs",
             "fan_out_inputs",
@@ -688,8 +709,8 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         ("command", "map-value"),
         ("environment_policy", "map-value"),
     ):
-        cases[("ProjectedCheckResultRecordValue", field)] = _record_case(
-            "ProjectedCheckResultRecordValue",
+        cases[("CheckResultValue", field)] = _record_case(
+            "CheckResultValue",
             field,
             "check_result",
             "check_result",
@@ -703,8 +724,8 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
             container=container,
             extra={"candidate_id": "candidate", "task_region_id": "task", "attempt_number": 0},
         )
-    cases[("ProjectedGitRef", "diff_summary")] = FlexibleJsonCase(
-        "ProjectedGitRef",
+    cases[("GitRef", "diff_summary")] = FlexibleJsonCase(
+        "GitRef",
         "diff_summary",
         lambda probe: (
             _node("file-node"),
