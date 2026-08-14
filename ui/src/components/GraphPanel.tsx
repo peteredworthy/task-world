@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useArchivalGraphSnapshot, useDecisionView, useFileStateReport, useGraphEvents, useGraphHealth, useGraphProjection, useSchedulerView } from '../hooks/useApi';
+import { useDecisionView, useFileStateReport, useGraphEvents, useGraphHealth, useGraphProjection, useSchedulerView } from '../hooks/useApi';
 import { isRetryableGraphReadError } from '../api/client';
 import { FileStateViewer } from './FileStateViewer';
 import { GraphDecisionModal } from './GraphDecisionModal';
@@ -556,13 +556,6 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
     isFetching: isProjectionFetching,
     refetch: retryProjection,
   } = useGraphProjection(runId);
-  const {
-    data: archivalSnapshot,
-    error: archivalError,
-    isLoading: isArchivalLoading,
-    isFetching: isArchivalFetching,
-    refetch: retryArchival,
-  } = useArchivalGraphSnapshot(runId);
   const { data: schedulerView } = useSchedulerView(runId);
   const { data: health } = useGraphHealth(runId, open);
   const { data: decisionView } = useDecisionView(runId);
@@ -663,40 +656,6 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
         </div>
 
         <div className="mt-4 space-y-4">
-          <div className="rounded border border-border bg-bg-card p-3 text-xs text-text-muted" aria-live="polite">
-            {archivalSnapshot ? (
-              <>
-                <p className="font-medium text-text-secondary">Archival graph views at position {archivalSnapshot.position}</p>
-                <p className="mt-1">
-                  {archivalSnapshot.topology.total_known} topology entries ·{' '}
-                  {archivalSnapshot.finalBlockers.total_known} final blockers ·{' '}
-                  {archivalSnapshot.regions.total_known} regions
-                </p>
-                {(archivalSnapshot.topology.partial || archivalSnapshot.finalBlockers.partial || archivalSnapshot.regions.partial) && (
-                  <p className="mt-1">Oversized nested values are shown as bounded partial summaries.</p>
-                )}
-                {archivalError && <p className="mt-1">Refreshing archival views; showing the last complete position.</p>}
-              </>
-            ) : isArchivalLoading || isArchivalFetching ? (
-              <p>Loading archival graph views…</p>
-            ) : (
-              <div role="alert">
-                <p>
-                  {isRetryableGraphReadError(archivalError)
-                    ? 'Archival graph views are catching up. The graph remains available while they publish together.'
-                    : `Could not load archival graph views${archivalError instanceof Error ? `: ${archivalError.message}` : '.'}`}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void retryArchival()}
-                  disabled={isArchivalFetching}
-                  className="mt-2 text-accent-purple hover:text-accent-purple/80 underline decoration-dotted disabled:cursor-wait disabled:opacity-60"
-                >
-                  {isArchivalFetching ? 'Retrying archival graph views…' : 'Retry archival graph views'}
-                </button>
-              </div>
-            )}
-          </div>
           {health && <GraphHealth health={health} />}
           <OperatorSummary
             projection={projection}

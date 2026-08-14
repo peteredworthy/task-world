@@ -1217,6 +1217,26 @@ async def _finish_archival_maintenance(app: Any, run_id: str, *, batch_size: int
     return attempts
 
 
+async def test_topology_and_regions_are_deprecated_without_contract_metadata_changes(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-deprecation-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+
+    openapi = app.openapi()
+    assert openapi["paths"]["/api/runs/{run_id}/graph/topology"]["get"]["deprecated"] is True
+    assert openapi["paths"]["/api/runs/{run_id}/graph/regions"]["get"]["deprecated"] is True
+
+    for route, collection in (("topology", "nodes"), ("regions", "regions")):
+        response = await client.get(f"/api/runs/{run_id}/graph/{route}")
+        assert response.status_code == 200
+        assert response.headers["Deprecation"] == "true"
+        assert "Sunset" not in response.headers
+        assert "Link" not in response.headers
+        assert response.json()[collection] == []
+
+
 async def test_archival_graph_views_page_over_cap_through_http(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:

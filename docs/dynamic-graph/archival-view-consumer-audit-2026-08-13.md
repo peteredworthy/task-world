@@ -1,8 +1,34 @@
 # Archival Graph View Consumer Audit
 
-Date: 2026-08-13
-Scope: Wave 1 requirements `W1-AR-1` and `W1-AR-2` only
-Method: read-only source, test, and documentation audit; no production behavior was changed
+Date: 2026-08-14 (Stage 5 refresh)
+Scope: Stage 5 AR-A plus non-destructive deprecation preparation, building on merged
+Stage 3 source `ceff00c519f10504799c1d7a89b80d60795bb6af`
+Method: fresh source, test, and documentation audit followed by the authorized
+GraphPanel/deprecation patch; no archival owner, projection, ORM, or public client
+contract was removed
+
+## Stage 5 refresh result
+
+The accepted Stage 3 source was re-audited before patching. It confirmed that
+`useArchivalGraphSnapshot` is a public hook with independent retry/coherence tests,
+while `GraphPanel` was its only product caller. AR-A therefore removes only the
+panel import/invocation and the “Archival graph views” card. The hook, client
+methods, response types, routes, Python exports, ORM tables, maintenance worker,
+and archival rebuild code remain available for compatibility.
+
+The panel now relies on the existing projection, health, node/task, events,
+decisions, and scheduler surfaces. Product-facing UI coverage proves that opening
+the panel remains usable and emits neither an extra `/graph` anchor nor requests
+to `/graph/topology`, `/graph/final-blockers`, or `/graph/regions`. The retained
+hook coverage continues to prove its public retry behavior independently.
+
+Topology and regions are also marked deprecated in OpenAPI and successful responses
+return the standards-based `Deprecation: true` header. This preparation intentionally
+does not add a `Sunset` date, replacement `Link`, support window, external-consumer
+owner, or telemetry claim. Response bodies, status behavior, pagination, position,
+partial, and hash semantics remain owned by the existing routes. Exact compact
+health-count work remains a separately gated follow-up; this slice preserves the
+current unavailable semantics and does not convert unavailable values to zero.
 
 ## Executive recommendation
 
@@ -70,19 +96,21 @@ is present in the checkout.
 | Background maintenance worker | App lifespan selects one dirty archival checkpoint and rebuilds its complete generation continuously (`src/orchestrator/api/app.py:319-361`, task lifecycle at `:618-640`). | All archival owners and their route freshness guarantees. | `test_product_worker_publishes_coupled_archival_views` at `test_graph_api.py:1314-1355`. | Remove or rename only after retained final-blocker maintenance has a replacement. |
 | Public schemas and routes | Pydantic response models expose full typed node/edge, blocker, and region payloads plus pagination/partial metadata (`graph.py:200-257`, `:647-692`). FastAPI registers three GET routes (`:3376`, `:3525`, `:3724`). | Generated OpenAPI, UI API client, any external REST client, route-enumeration tests. | `docs/ARCHITECTURE.md:744-762` describes all three as public, bounded routes with shared publication. `tests/integration/test_cache_authority_recovery_durability.py:651-680` asserts the exact route set. | Treat changes as API deprecations, not internal cleanup. Do not silently change meanings of `total_known`, cursor, 409, 503, or partial metadata while routes exist. |
 | Python package exports | Pure topology, region, and blocker response builders are exported from `orchestrator.api` (`src/orchestrator/api/__init__.py:105-116`, `:145-159`, `:182-197`). Archival ORM classes are re-exported by `orchestrator.db` (`src/orchestrator/db/__init__.py:8-30`, `:189-209`) and its compatibility shim. | Tests and potential Python library consumers. No other production importer was found beyond the owning modules/re-export layers. | Repository-wide import/name search on 2026-08-13. | Include Python exports in the deprecation/removal checklist; HTTP removal alone does not close the public surface. |
-| Product UI | `useArchivalGraphSnapshot` obtains a fresh `/graph` anchor, then fetches topology, final blockers, and regions concurrently at that position (`ui/src/hooks/useApi.ts:87-123`). | `GraphPanel` only (`ui/src/components/GraphPanel.tsx:550-568`). | Render use is limited to `position`, each response's `total_known`, and the OR of three `partial` flags (`GraphPanel.tsx:665-698`). | Remove the hook from panel-open behavior first. The detailed bodies provide zero current user value. |
+| Product UI / compatibility hook | `useArchivalGraphSnapshot` still obtains a fresh `/graph` anchor, then fetches topology, final blockers, and regions concurrently at that position (`ui/src/hooks/useApi.ts:87-123`). | No current product component; its independent hook tests remain (`ui/src/hooks/useApi.graphEvents.test.tsx`). | Before AR-A, `GraphPanel` rendered only `position`, each response's `total_known`, and the OR of three `partial` flags. AR-A removed that render path. | Keep the public hook and detailed bodies available for compatibility; do not invoke them from panel-open behavior. |
 | UI client/types | Client methods implement all cursors/limits/expected-position parameters (`ui/src/api/client.ts:574-607`); response types include full item arrays and all paging metadata (`ui/src/types/runs.ts:318-360`). | The archival hook and tests. No second UI caller was found. | `rg` finds only `useApi.ts`, `GraphPanel.tsx`, their tests, and client tests. | Delete only after server deprecation needs are decided; a deprecated server client may remain temporarily without being invoked by the product UI. |
 | CLI and MCP | No CLI command, orchestrator MCP tool, graph MCP registry/tool, or runner MCP scope references these routes or their response types. | None found. | Searches of `src/orchestrator/cli/`, `src/orchestrator/api/mcp/`, `src/orchestrator/graph_runtime/graph_mcp_*`, and `src/orchestrator/runners/mcp_scope.py` returned no endpoint/name consumer. | Strong evidence of no in-repository CLI/MCP dependency, but not evidence about external REST clients. |
 | Documentation/product proof | Architecture and graph status documents name the routes as supported readbacks. FR-06, FR-13, FR-14, FR-17, and FR-18 use topology/region/blocker responses as observable acceptance evidence. | Developers, reviewers, and release expectations. | `docs/ARCHITECTURE.md:744-762`; `docs/dynamic-graph/status.md:1636-1648`; extensive historical product proof in `docs/dynamic-graph/complete/dynamic-graph-proof-ledger-validated-2026-06-26.md`. | Update the functional proof contract when routes migrate. Deleting assertions without replacement would weaken validated behavior. |
 
 ## Exact UI usage versus response payloads
 
-Opening the graph panel currently starts `useGraphProjection(runId)` and also starts
-`useArchivalGraphSnapshot(runId)`. The latter does not reuse the already queried
-React Query projection value; it calls `api.getRunGraphProjection` itself as an
-anchor (`useApi.ts:77-84`, `:99-112`). The archival feature therefore adds four
-requests per initial assembly and repeats the full four-request assembly after an
-expected-position mismatch or retryable failure.
+Before AR-A, opening the graph panel started `useGraphProjection(runId)` and also
+started `useArchivalGraphSnapshot(runId)`. The latter did not reuse the already
+queried React Query projection value; it called `api.getRunGraphProjection` itself
+as an anchor (`useApi.ts:77-84`, `:99-112`). That archival path added four requests
+per initial assembly and repeated the full four-request assembly after an
+expected-position mismatch or retryable failure. After AR-A, only the hook's
+independent compatibility tests exercise that bundle; `GraphPanel` does not invoke
+it or render its discarded counts.
 
 | Response | Payload returned | Fields the product renders | Payload discarded by the product UI |
 |---|---|---|---|
@@ -90,11 +118,12 @@ expected-position mismatch or retryable failure.
 | `/graph/final-blockers` | Typed blocker rows including node/edge/requirement/region and failed-outbox identity, error, kind, and attempts; pagination and per-field metadata (`graph.py:647-675`). | `total_known`, `partial`. | Every blocker reason and identity—including the failed-outbox details needed to diagnose or remediate work—plus cursor and metadata. The UI never requests page 2. |
 | `/graph/regions` | Region ID, state, nested blocker rows, pagination and per-field metadata (`graph.py:678-692`). | `total_known`, `partial`. | Every region state and blocker. The UI never requests page 2. |
 
-The hook tests do inspect returned arrays to prove coherent retry behavior
+The hook tests inspect returned arrays to prove coherent retry behavior
 (`ui/src/hooks/useApi.graphEvents.test.tsx:125-230`), but that is regression
-coverage of the hook, not a rendered product use. The sole rendering assertion
-checks only `3 topology entries · 1 final blockers · 2 regions`
-(`ui/src/components/__tests__/GraphPanel.decisions.test.tsx:111-125`, `:205-211`).
+coverage of the hook, not a rendered product use. The former rendering assertion
+for `3 topology entries · 1 final blockers · 2 regions` has been replaced by
+product-facing assertions that the panel remains usable without the archival card
+or request bundle.
 
 ## Counts available elsewhere—and gaps
 
@@ -110,11 +139,11 @@ count.
 | Final-blocker count | `/graph/health.counts.final_blockers` exists in the schema and UI (`graph.py:366-380`; `GraphPanel.tsx:63-68`). | For a non-empty graph, bounded health currently reports this count as `None`/unavailable (`graph.py:2164-2221`). An exact replacement must be implemented before removing the archival count. It must add failed-outbox rows to the canonical projection blocker count. |
 | Failed-outbox count | A scalar SQL count already exists inside the final-blocker route (`graph.py:3558-3567`). | Reusable for a compact health/stat owner. It is not presently returned anywhere else. |
 
-Recommended panel result: remove the “Archival graph views” card; show the existing
-node/task state UI and existing Graph Health card. Make health's final-blocker count
-exact and available by combining the retained final-blocker owner count with the
-failed-outbox scalar count. Do not add an edge count unless users have a concrete
-need for it.
+Stage 5 panel result: remove the “Archival graph views” card and continue showing
+the existing node/task state UI and Graph Health card. Exact compact final-blocker
+count availability, including failed-outbox accounting, is not claimed by AR-A and
+remains gated for a later owner decision. Do not add an edge count or infer one from
+nodes.
 
 ## Public-contract and external-consumer assessment
 
@@ -137,7 +166,7 @@ Evidence that these are public contracts:
 
 Evidence against additional in-repository production consumers:
 
-- the only UI execution path is `GraphPanel -> useArchivalGraphSnapshot`;
+- before AR-A, the only UI execution path was `GraphPanel -> useArchivalGraphSnapshot`; after AR-A, no product component invokes the hook;
 - no backend production module calls the HTTP handlers or page reader except the
   router/store ownership chain;
 - no CLI or MCP source references these routes; and
@@ -201,14 +230,14 @@ The absence of a repository consumer must therefore be recorded as “not found,
 ## Deprecation strategy
 
 1. **Decouple the UI without changing the API.** Remove the archival hook from
-   `GraphPanel`, remove the card, and make compact health provide the exact final
-   blocker count. Measure panel-open network behavior. Leave the three route methods
-   available for compatibility during this slice.
-2. **Instrument and announce.** Obtain route-level production request counts broken
-   down by authenticated caller/user-agent where policy permits. Mark topology and
-   regions deprecated in OpenAPI and architecture docs. Return standard
-   `Deprecation` and `Sunset` headers plus a replacement `Link` if this project has an
-   agreed release date. Do not invent a date before the support window is decided.
+   `GraphPanel`, remove the card, and measure panel-open network behavior. Leave the
+   three route methods available for compatibility during this slice; exact compact
+   health-count work is separately gated.
+2. **Prepare deprecation metadata without policy claims.** Mark topology and
+   regions deprecated in OpenAPI and return `Deprecation: true`. Do not add a
+   `Sunset` date or replacement `Link` until the support window and replacement
+   policy are decided. Production telemetry and external-consumer ownership remain
+   unknown rather than being inferred from repository evidence.
 3. **Migrate first-party proofs.** Replace region acceptance assertions with
    `/graph.task_states` plus retained final-blocker assertions. Decide whether edge
    binding proof remains an HTTP product contract; if yes, keep topology or create an
@@ -232,16 +261,18 @@ The absence of a repository consumer must therefore be recorded as “not found,
 
 | Slice | Requirement rows advanced | Files owned | Tests owned / required proof | Parallelism and conflicts |
 |---|---|---|---|---|
-| AR-A — UI decoupling | W1-AR-2 implementation precursor | `ui/src/components/GraphPanel.tsx`, `ui/src/hooks/useApi.ts`, optionally `ui/src/api/client.ts` and `ui/src/types/runs.ts` if deprecated methods are removed immediately | `ui/src/components/__tests__/GraphPanel.decisions.test.tsx`, `ui/src/hooks/useApi.graphEvents.test.tsx`, `ui/tests/api/client.test.ts`; product proof that opening the panel emits no topology/regions archival requests and still shows truthful health | Could run parallel with the runtime-checkpoint split because it has no shared source files. Coordinate if health count is delivered in another slice. |
+| AR-A — UI decoupling | W1-AR-2 implementation precursor; completed in Stage 5 | `ui/src/components/GraphPanel.tsx`; public hook/client/type surfaces remain intact | `GraphPanel.decisions.test.tsx` proves panel usability and no archival request bundle; existing decision, activity, hidden-diagnostics, and hook tests preserve truthful graph surfaces and compatibility | No runtime/store/ORM overlap. Exact health-count replacement remains outside this row. |
+| AR-A-deprecation — route metadata preparation | Stage 5 independently authorized preparation; completed in Stage 5 | `src/orchestrator/api/routers/graph.py` route decorators and response headers only | Integration coverage proves OpenAPI `deprecated` flags, `Deprecation: true`, unchanged successful empty response shape, and absence of invented `Sunset`/`Link` metadata | No route removal, body/pagination change, telemetry assertion, support-window claim, or archival-owner change is authorized. |
 | AR-B — exact compact blocker count | W1-AR-2 | `src/orchestrator/api/routers/graph.py`; `src/orchestrator/graph_runtime/store.py` only if a scalar/read owner is needed; UI type/health test | Focused graph health tests, final-blocker failed-outbox tests at `test_graph_api.py:1914-2144`, GraphPanel health rendering | `store.py` overlaps the completed checkpoint split. Build this slice on the current W1-CP result, or constrain it to router/UI work against an already available owner. |
 | AR-C — region retirement | W1-AR-2 after contract gate | `graph.py` region schema/builders/route; `store.py` region rebuild/read/delete branches; `models.py` region ORM; `db/__init__.py`, `db/models.py`; `client.ts`, `runs.ts`; `docs/ARCHITECTURE.md` | Region-specific builders in `tests/unit/test_graph_api_projection.py:671+`; archival query/store/API cases; route enumeration; FR-01/03/13/14/17/18 assertions migrated to `/graph` plus final blockers; fresh-schema test | Must follow checkpoint split because `store.py`, `models.py`, DB exports, delete/rebuild paths overlap. Can be separate from topology if final-blocker owner no longer depends on region grouping. |
 | AR-D — topology narrow/conditional retirement | W1-AR-2 after external gate | `graph.py` topology schema/builders/route; topology iterators/exports only if no diagnostics replacement; `store.py` topology rebuild/read/delete branches; `models.py` topology ORM; DB exports; UI client/types; architecture docs | `tests/unit/test_graph_archival_queries.py:33+`, `test_graph_api_projection.py:362+`; archival API suite; route enumeration; FR-02/03/06/07/08/09/12/14/17 route assertions replaced by equivalent product-interface proof | Server portion must follow checkpoint split. The telemetry/deprecation work can run in parallel. Do not delete canonical topology indexes used by the kernel. |
 | AR-E — final-blocker decoupling | W1-AR-2 | `store.py` final-blocker publication/page/count; `graph.py` final-blocker route/health; retained or replacement ORM owner; `api/app.py` maintenance task if still needed; DB exports/docs | Canonical command/projection tests remain unchanged; `test_graph_api.py:1914-2144`; bounded paging/rollback tests adapted to a single owner; W6 visibility proof | Highest semantic risk. Build on W1-CP and avoid mixing with topology removal in one patch. |
 | AR-F — dead archival infrastructure cleanup | W1-AR-2 final cleanup | `api/app.py:319-361,618-640`; remaining `GraphArchivalViewCheckpointModel`; `store.py` dirty/rebuild/delete helpers; DB exports and compatibility shim; stale docs | `tests/integration/test_database.py:289-340`; worker and coupled-generation tests in `test_graph_api.py:1220-1911`; full graph acceptance suite | Last slice only. It shares the checkpoint-split hot files, so it must build on the completed W1-CP result rather than run against an older base. |
 
-Recommended sequence is `W1-CP -> AR-A/telemetry -> AR-B -> AR-E -> AR-C ->
-AR-D decision -> AR-F`. W1-CP is now present in the inspected source. AR-A and
-telemetry preparation were the only implementation work cleanly parallel with it.
+Recommended sequence is `W1-CP -> AR-A/AR-A-deprecation -> AR-B -> AR-E -> AR-C ->
+AR-D decision -> AR-F`. W1-CP is present in the inspected source. Stage 5 only
+completed AR-A and metadata preparation; no telemetry, policy-window, owner, or
+destructive retirement claim was made.
 
 ## Merge-conflict notes relative to the runtime-checkpoint split
 
@@ -279,9 +310,8 @@ W1-AR-2 is sufficient to authorize implementation only under these gates:
   retire**;
 - an API support/deprecation window is selected;
 - route telemetry or a documented client-owner sign-off covers topology and regions;
-- GraphPanel open performs zero `/graph/topology` and `/graph/regions` requests and no
-  extra anchor `/graph` request; it performs zero `/graph/final-blockers` request if
-  exact health count is available;
+- GraphPanel open performs zero `/graph/topology`, `/graph/regions`, and
+  `/graph/final-blockers` requests and no extra anchor `/graph` request;
 - health reports an exact final-blocker count at the same graph position, including
   failed outbox rows, and never reports unavailable as zero;
 - canonical `complete` and final-gate blocker behavior is byte/semantically unchanged

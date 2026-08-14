@@ -3373,14 +3373,16 @@ async def get_graph_health(
     return build_bounded_graph_health_response(run_id, health)
 
 
-@router.get("/{run_id}/graph/topology", response_model=GraphTopologyResponse)
+@router.get("/{run_id}/graph/topology", response_model=GraphTopologyResponse, deprecated=True)
 async def get_graph_topology(
     run_id: str,
+    response: Response,
     graph_store: GraphEventStore = Depends(get_graph_store),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=GRAPH_FIXED_VIEW_ITEMS, ge=1, le=GRAPH_FIXED_VIEW_ITEMS),
     expected_position: int | None = Query(default=None, ge=0),
 ) -> GraphTopologyResponse:
+    response.headers["Deprecation"] = "true"
     try:
         archival = await graph_store.read_current_archival_view_page(
             run_id,
@@ -3721,14 +3723,16 @@ async def _next_failed_outbox_cursor(
     )
 
 
-@router.get("/{run_id}/graph/regions", response_model=GraphRegionsResponse)
+@router.get("/{run_id}/graph/regions", response_model=GraphRegionsResponse, deprecated=True)
 async def get_graph_regions(
     run_id: str,
+    response: Response,
     graph_store: GraphEventStore = Depends(get_graph_store),
     cursor: int = Query(default=0, ge=0),
     limit: int = Query(default=GRAPH_FIXED_VIEW_ITEMS, ge=1, le=GRAPH_FIXED_VIEW_ITEMS),
     expected_position: int | None = Query(default=None, ge=0),
 ) -> GraphRegionsResponse:
+    response.headers["Deprecation"] = "true"
     try:
         archival = await graph_store.read_current_archival_view_page(
             run_id,

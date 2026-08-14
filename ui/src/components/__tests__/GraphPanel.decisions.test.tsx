@@ -108,21 +108,6 @@ function renderPanel(
   if (preloadProjection) {
     queryClient.setQueryData(['graphProjection', run.id], projection);
   }
-  queryClient.setQueryData(['archivalGraphSnapshot', run.id], {
-    position: 2,
-    topology: {
-      run_id: run.id, event_count: 2, nodes: [], edges: [], truncated: false,
-      total_known: 3, next_cursor: null, partial: false, collection_meta: {},
-    },
-    finalBlockers: {
-      run_id: run.id, event_count: 2, blockers: [], truncated: false,
-      total_known: 1, next_cursor: null, partial: false, collection_meta: {},
-    },
-    regions: {
-      run_id: run.id, event_count: 2, regions: [], truncated: false,
-      total_known: 2, next_cursor: null, partial: false, collection_meta: {},
-    },
-  });
   queryClient.setQueryData(['graphDecisions', run.id], decisionView);
   if (preloadEvents) {
     queryClient.setQueryData(['graphEvents', run.id, 0, 50, 'summary'], {
@@ -203,11 +188,25 @@ function fileStateResponse(hasMore: boolean, nextPosition: number | null): Respo
 }
 
 describe('GraphPanel human-gate decisions', () => {
-  it('renders the coupled archival snapshot in the product graph panel', () => {
+  it('keeps archival graph views out of the product panel', () => {
     renderPanel();
 
-    expect(screen.getByText('Archival graph views at position 2')).toBeInTheDocument();
-    expect(screen.getByText('3 topology entries · 1 final blockers · 2 regions')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Graph projection' })).toBeInTheDocument();
+    expect(screen.queryByText(/Archival graph views/)).not.toBeInTheDocument();
+  });
+
+  it('opens without an archival request bundle or an extra graph anchor', async () => {
+    const requests: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      requests.push(String(input));
+      return graphApiResponse(input, init);
+    };
+
+    renderPanel();
+    await waitFor(() => expect(screen.getByRole('heading', { name: 'Graph projection' })).toBeInTheDocument());
+
+    expect(requests.some((url) => url.endsWith('/graph'))).toBe(false);
+    expect(requests.some((url) => /\/graph\/(topology|regions|final-blockers)(?:\?|$)/.test(url))).toBe(false);
   });
 
   it('keeps the panel visible through loading, catch-up exhaustion, and manual retry', async () => {
