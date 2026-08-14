@@ -164,11 +164,54 @@ class RecordingDispatcher:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def dispatch_pending(self, *, run_id: str | None = None) -> None:
+    async def dispatch_pending(
+        self,
+        *,
+        run_id: str | None = None,
+        allowed_kinds: frozenset[str] | None = None,
+    ) -> None:
+        del allowed_kinds
         self.calls += 1
 
     async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None:
         return None
+
+
+class OrderedController(RecordingController):
+    def __init__(self, order: list[str]) -> None:
+        super().__init__()
+        self._order = order
+
+    async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
+    ) -> object:
+        if command_type == "schedule_tick":
+            self._order.append("schedule")
+        return await super().handle_command(
+            run_id, expected_position, command_type, payload, context=context
+        )
+
+
+class OrderedDispatcher(RecordingDispatcher):
+    def __init__(self, order: list[str]) -> None:
+        super().__init__()
+        self._order = order
+
+    async def dispatch_pending(
+        self,
+        *,
+        run_id: str | None = None,
+        allowed_kinds: frozenset[str] | None = None,
+    ) -> None:
+        del allowed_kinds
+        self._order.append("dispatch")
+        await super().dispatch_pending(run_id=run_id)
 
 
 class FutureBackoffDispatcher(RecordingDispatcher):
@@ -366,6 +409,43 @@ async def test_loop_terminates_on_quiescence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_resume_primes_recovery_dispatch_before_schedule_tick() -> None:
+    """A resumed ready node must not lose its first scheduling opportunity.
+
+    Recovery completion is an outbox side effect.  The kernel intentionally
+    suppresses ``schedule_tick`` while that recovery is pending, so the resume
+    driver must deliver the recovery tranche before asking the scheduler to
+    classify the ready node.
+    """
+    order: list[str] = []
+    controller = OrderedController(order)
+    dispatcher = OrderedDispatcher(order)
+    executor = RecordingExecutor()
+    snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={},
+    )
+    reader = ScriptedProjectionReader([snapshot])
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+        prime_dispatch_before_schedule=True,
+    )
+
+    assert order[:2] == ["dispatch", "schedule"]
+    assert controller.commands[0] == "schedule_tick"
+    assert outcome.completed is False
+
+
+@pytest.mark.asyncio
 async def test_protocol_dispatcher_drains_second_cleanup_pass_before_completion() -> None:
     """The loop relies only on the dispatcher protocol for its final cleanup drain."""
     controller = RecordingController()
@@ -375,7 +455,13 @@ async def test_protocol_dispatcher_drains_second_cleanup_pass_before_completion(
         def __init__(self) -> None:
             self.calls = 0
 
-        async def dispatch_pending(self, *, run_id: str | None = None) -> None:
+        async def dispatch_pending(
+            self,
+            *,
+            run_id: str | None = None,
+            allowed_kinds: frozenset[str] | None = None,
+        ) -> None:
+            del allowed_kinds
             assert run_id == "run-1"
             self.calls += 1
 

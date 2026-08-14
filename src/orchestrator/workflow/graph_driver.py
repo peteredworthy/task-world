@@ -260,7 +260,12 @@ class GraphLoopController(Protocol):
 
 
 class GraphLoopDispatcher(Protocol):
-    async def dispatch_pending(self, *, run_id: str | None = None) -> Any: ...
+    async def dispatch_pending(
+        self,
+        *,
+        run_id: str | None = None,
+        allowed_kinds: frozenset[str] | None = None,
+    ) -> Any: ...
 
     async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None: ...
 
@@ -516,6 +521,7 @@ class GraphRunDriver:
                     executor=executor,
                     read_projection=self._read_projection,
                     should_continue=_still_active,
+                    prime_dispatch_before_schedule=not is_fresh,
                 )
             )
         except asyncio.CancelledError:
@@ -636,6 +642,7 @@ class GraphRunDriver:
         executor: GraphLoopExecutor,
         read_projection: Callable[[str], Awaitable[GraphProjectionSnapshot]],
         should_continue: Callable[[], Awaitable[bool]] | None = None,
+        prime_dispatch_before_schedule: bool = False,
     ) -> GraphRunOutcome:
         previous_position: int | None = None
         # Lease ids the driver has already attempted to revoke via a
@@ -656,12 +663,28 @@ class GraphRunDriver:
         # existing blocked-outcome return fires, restoring the pre-fix
         # fail-safe (pause graph_blocked for an operator).
         node_recovery_counts: dict[str, int] = {}
+        # A resumed run can have a ready node whose previous execution still
+        # has a durable runner-recovery request.  schedule_tick deliberately
+        # refuses to advance while that recovery is pending.  Deliver the
+        # recovery outbox tranche once before the first schedule tick so its
+        # completion can make the retry schedulable; the ordinary dispatch
+        # pass below then delivers the resulting agent-dispatch intent.  Limit
+        # this priming pass to recovery: a failed/reopened run may still have
+        # stale agent-dispatch rows that must not revive revoked leases. This
+        # is one-shot per driver invocation and recovery delivery is idempotent.
+        prime_dispatch = prime_dispatch_before_schedule
         while True:
             # Stop driving if the run was cancelled/paused/failed externally, so
             # an operator action (or a failed bridge) halts the agent-dispatch
             # loop instead of retrying dead agents indefinitely.
             if should_continue is not None and not await should_continue():
                 return project_graph_outcome(run_id, await read_projection(run_id))
+            if prime_dispatch:
+                await dispatcher.dispatch_pending(
+                    run_id=run_id,
+                    allowed_kinds=frozenset({"runner_recovery"}),
+                )
+                prime_dispatch = False
             await self._handle_command_at_head(
                 controller,
                 run_id,

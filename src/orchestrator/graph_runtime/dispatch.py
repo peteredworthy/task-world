@@ -38,6 +38,8 @@ from orchestrator.git import (
     snapshot_path_metadata,
 )
 from orchestrator.graph import (
+    cleanup_applied_ids_view,
+    cleanup_requested_events_view,
     file_state_records_view,
     execution_attempts_view,
     input_bindings_view,
@@ -73,6 +75,7 @@ from orchestrator.graph import (
     callback_payload_identity,
     canonical_callback_payload_bytes,
     classify_file_state,
+    CleanupRequestedPayload,
     run_state,
     thaw_json,
 )
@@ -1522,11 +1525,6 @@ class GraphDispatchExecutor(SideEffectExecutor):
         async with self._session_factory() as session:
             return await GraphEventStore(session).current_position(run_id)
 
-    async def _events(self, run_id: str) -> list[EventEnvelope]:
-        """Return only the bounded event facts permitted during execution."""
-        async with self._session_factory() as session:
-            return await GraphEventStore(session).read_bounded_runtime_events(run_id)
-
     async def _record_gatekeeper_verdicts(
         self,
         context: GraphDispatchContext,
@@ -1568,22 +1566,53 @@ class GraphDispatchExecutor(SideEffectExecutor):
         that ``cleanup_applied`` was already committed after an earlier
         filesystem cleanup; in that case the side effect intent is complete.
         """
-        events = await self._events(item.run_id)
-        cleanup_id = str(item.payload.get("cleanup_id", ""))
-        if _cleanup_applied_exists(events, cleanup_id):
+        try:
+            durable_cleanup = CleanupRequestedPayload.model_validate(
+                {
+                    field_name: item.payload.get(field_name)
+                    for field_name in CleanupRequestedPayload.model_fields
+                    if field_name in item.payload
+                }
+            )
+        except ValueError as exc:
+            raise ValueError(f"malformed snapshot cleanup outbox intent: {exc}") from exc
+        durable_payload = durable_cleanup.model_dump(mode="json")
+        cleanup_id = durable_cleanup.cleanup_id
+        projection = await self._controller.read_projection(item.run_id)
+        if cleanup_applied_ids_view(projection).get(cleanup_id) is True:
             return
-        cleanup_event = _cleanup_requested_event(events, cleanup_id)
-        if cleanup_event is None:
+        cleanup_request = cleanup_requested_events_view(projection).get(cleanup_id)
+        if cleanup_request is None:
             msg = f"unknown cleanup_requested: {cleanup_id}"
             raise ValueError(msg)
-        if cleanup_event.payload.get("snapshot_role") is not None:
-            await self._dispatch_managed_snapshot_cleanup(item, cleanup_event.payload)
+        projected_payload = cleanup_request.model_dump(mode="json")
+        compared_fields = (
+            "cleanup_id",
+            "file_state_record_id",
+            "snapshot_id",
+            "execution_id",
+            "producer_node_id",
+            "snapshot_ref",
+            "tree_sha",
+            "commit_sha",
+            "node_id",
+            "lease_id",
+            "lease_generation",
+            "snapshot_role",
+        )
+        for field_name in compared_fields:
+            if durable_payload.get(field_name) != projected_payload.get(field_name):
+                raise ValueError(
+                    f"snapshot cleanup outbox intent conflicts with projection: {field_name}"
+                )
+        cleanup_payload = durable_payload
+        if cleanup_payload.get("snapshot_role") is not None:
+            await self._dispatch_managed_snapshot_cleanup(item, cleanup_payload)
             return
-        record_id = cleanup_event.payload.get("file_state_record_id")
+        record_id = cleanup_payload.get("file_state_record_id")
         if not isinstance(record_id, str):
             msg = f"cleanup_requested missing file_state_record_id: {cleanup_id}"
             raise ValueError(msg)
-        projection = rebuild_projection(events)
         compromised_record = file_state_records_view(projection).get(record_id)
         if compromised_record is None:
             msg = f"unknown cleanup file_state record: {record_id}"
@@ -1591,7 +1620,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
 
         cleanup = apply_cleanup_requested(
             worktree_path=self._worktree_path,
-            cleanup_request=cleanup_event.payload,
+            cleanup_request=cleanup_payload,
             compromised_record=compromised_record.model_dump(mode="json"),
         )
         result = await self._handle_command_retry_stale(
@@ -1679,28 +1708,23 @@ class GraphDispatchExecutor(SideEffectExecutor):
         recovery_id = item.payload.get("recovery_id")
         if not isinstance(recovery_id, str):
             raise RecoveryEventError("runner_recovery missing recovery_id")
-        events = await self._events(item.run_id)
-        if any(
-            event.event_type == "runner_recovery_completed"
-            and event.payload.get("recovery_id") == recovery_id
-            for event in events
-        ):
-            return
-        request = next(
-            (
-                event
-                for event in events
-                if event.event_type == "runner_recovery_requested"
-                and event.payload.get("recovery_id") == recovery_id
-            ),
-            None,
-        )
-        if request is None:
+        projection = await self._controller.read_projection(item.run_id)
+        attempt_identities = execution_attempts_view(projection)
+        request_execution_id = item.payload.get("execution_id")
+        if not isinstance(request_execution_id, str):
+            raise RecoveryEventError(f"runner recovery {recovery_id} has invalid execution_id")
+        attempt = attempt_identities.get(request_execution_id)
+        if attempt is None or attempt.recovery_id != recovery_id:
             raise RecoveryEventError(f"unknown runner_recovery_requested: {recovery_id}")
+        if attempt.state in {"recovered", "finalized"}:
+            return
+        if attempt.state != "recovery_requested":
+            raise RecoveryEventError(f"runner recovery {recovery_id} is not pending")
         try:
-            payload = RunnerRecoveryRequestedPayload.model_validate(request.payload).model_dump(
-                mode="json"
-            )
+            payload_fields = RunnerRecoveryRequestedPayload.model_fields
+            payload = RunnerRecoveryRequestedPayload.model_validate(
+                {field: item.payload[field] for field in payload_fields if field in item.payload}
+            ).model_dump(mode="json")
         except ValueError as exc:
             raise RecoveryEventError(
                 f"runner recovery {recovery_id} has malformed requested event"
@@ -1731,24 +1755,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if recovery_scope not in {"selective", "full_baseline"}:
             raise RecoveryEventError(f"runner recovery {recovery_id} has invalid scope")
         try:
-            baseline_ref = next(
-                (
-                    event.payload.get("baseline_snapshot_ref")
-                    for event in events
-                    if event.event_type == "runner_baseline_recorded"
-                    and event.payload.get("execution_id") == values["execution_id"]
-                ),
-                None,
-            )
-            baseline_commit = next(
-                (
-                    event.payload.get("baseline_commit_sha")
-                    for event in events
-                    if event.event_type == "runner_baseline_recorded"
-                    and event.payload.get("execution_id") == values["execution_id"]
-                ),
-                None,
-            )
+            baseline_ref = attempt.baseline_snapshot_ref
+            baseline_commit = attempt.baseline_commit_sha
             if not isinstance(baseline_ref, str) or not isinstance(baseline_commit, str):
                 raise RecoveryEventError(f"runner recovery {recovery_id} has no owned baseline ref")
             ensure_snapshot_ref(
@@ -2246,25 +2254,6 @@ def _guard_no_pending_compromised_file_state_bindings(
                 if isinstance(cleanup_id, str) and cleanup_id:
                     msg = f"{msg}; cleanup pending: {cleanup_id}"
                 raise CompromisedFileStateError(msg)
-
-
-def _cleanup_requested_event(
-    events: list[EventEnvelope],
-    cleanup_id: str,
-) -> EventEnvelope | None:
-    for event in events:
-        if event.event_type != "cleanup_requested":
-            continue
-        if event.payload.get("cleanup_id") == cleanup_id:
-            return event
-    return None
-
-
-def _cleanup_applied_exists(events: list[EventEnvelope], cleanup_id: str) -> bool:
-    return any(
-        event.event_type == "cleanup_applied" and event.payload.get("cleanup_id") == cleanup_id
-        for event in events
-    )
 
 
 def _rejected_cleanup_already_applied(

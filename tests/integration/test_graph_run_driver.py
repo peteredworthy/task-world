@@ -1227,6 +1227,60 @@ async def test_operator_resume_reopens_failed_graph_run(
 
 
 @pytest.mark.asyncio
+async def test_paused_graph_resume_dispatches_ready_node_before_blocking(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A real paused-row resume gives the ready graph node a dispatch turn."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-paused-ready-resume"
+    _init_repo(repo)
+    run_id = "graph-paused-ready-resume"
+    routine = _routine()
+    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+
+    clock = FixedClock()
+    ids = SequentialIds()
+    await seed_run(
+        session_factory,
+        routine,
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        run_config={},
+    )
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    for command in ("accept_run", "start"):
+        position = await controller.current_position(run_id)
+        await controller.handle_command(run_id, position, command, {})
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_start_run(run_id)
+        await service.apply_pause_run(run_id, reason="ready_for_resume_test")
+
+    dispatch_order: list[str] = []
+    driver = _shared_driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=dispatch_order,
+        clock=clock,
+        ids=ids,
+    )
+
+    outcome = await driver.run(run_id)
+
+    assert outcome.completed is True
+    assert dispatch_order == ["worker", "verifier"]
+    events = await _events(session_factory, run_id)
+    dispatch_positions = [
+        event.position for event in events if event.event_type == "agent_dispatch_requested"
+    ]
+    assert dispatch_positions
+    assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
 async def test_driver_does_not_reopen_failed_graph_without_operator_resume(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
