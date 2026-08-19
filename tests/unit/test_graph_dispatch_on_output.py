@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from pathlib import Path
 import sqlite3
 import subprocess
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
@@ -33,6 +35,7 @@ from orchestrator.graph_runtime.dispatch import (
     _planner_evidence,
     _requirements_for_node,
     _runtime_death_max_attempts,
+    _full_raw_patch_validation_diagnostics,
 )
 from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
 from orchestrator.runners.types import (
@@ -46,6 +49,7 @@ from orchestrator.runners.types import (
     LogLineCallback,
     SubmitCallback,
 )
+from orchestrator.runners.graph_tool_routing import normalize_patch_payload
 from tests.unit.graph_test_utils import canonical_event_payload
 
 
@@ -1135,6 +1139,247 @@ async def test_graph_patch_callback_rejects_unauthorized_node_contracts() -> Non
                     "ops": [],
                 },
             )
+
+
+def test_raw_patch_tool_feedback_includes_all_locations_beyond_durable_cap() -> None:
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        {
+            "patch_id": "patch-many-errors",
+            "base_graph_position": -1,
+            "ops": [
+                {"op": "create_node", f"unexpected_{index}": "not-persisted"} for index in range(40)
+            ],
+        },
+        "planner-1",
+    )
+
+    assert diagnostics is not None
+    assert diagnostics["error_count"] == 40
+    assert diagnostics["omitted_error_count"] == 0
+    assert diagnostics["errors"][0]["path"] == "ops[0].unexpected_0"
+    assert diagnostics["errors"][-1]["path"] == "ops[9].unexpected_9"
+    assert all(item["message"] == "Extra field is not allowed" for item in diagnostics["errors"])
+
+
+@pytest.mark.parametrize(
+    "payload, expected_path",
+    [
+        (
+            {
+                "patch_id": "patch-extra-flat",
+                "base_graph_position": -1,
+                "ops": [],
+                "unexpected_outer": "not-persisted",
+            },
+            "unexpected_outer",
+        ),
+        (
+            {
+                "patch_id": "patch-extra-nested",
+                "base_graph_position": -1,
+                "ops": [],
+                "unexpected_nested": "not-persisted",
+            },
+            "unexpected_nested",
+        ),
+    ],
+)
+def test_raw_patch_feedback_preflight_locates_unknown_envelope_fields(
+    payload: dict[str, Any],
+    expected_path: str,
+) -> None:
+    diagnostics = _full_raw_patch_validation_diagnostics(payload, "planner-1")
+
+    assert diagnostics is not None
+    assert diagnostics["errors"] == [
+        {
+            "path": expected_path,
+            "code": "extra_forbidden",
+            "message": "Extra field is not allowed",
+        }
+    ]
+
+
+def test_nested_patch_feedback_preserves_native_wrapper_paths_without_duplicates() -> None:
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        normalize_patch_payload(
+            {
+                "patch": {
+                    "patch_id": "",
+                    "base_graph_position": "bad",
+                    "ops": [{"op": "create_node", "unexpected": "not-persisted"}],
+                    "unexpected_nested": "not-persisted",
+                },
+                "unexpected_wrapper": "not-persisted",
+            }
+        ),
+        "planner-1",
+    )
+
+    assert diagnostics is not None
+    paths = [item["path"] for item in diagnostics["errors"]]
+    assert "patch.patch_id" in paths
+    assert "patch.base_graph_position" in paths
+    assert "patch.ops[0].unexpected" in paths
+    assert "patch.unexpected_nested" in paths
+    assert "unexpected_wrapper" in paths
+    assert len(paths) == len(set(paths))
+
+
+def test_non_object_nested_patch_has_one_precise_wrapper_error() -> None:
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        normalize_patch_payload({"patch": "not-an-object"}),
+        "planner-1",
+    )
+
+    assert diagnostics == {
+        "error_count": 1,
+        "errors": [
+            {
+                "path": "patch",
+                "code": "model_type",
+                "message": "Input must be an object",
+            }
+        ],
+        "omitted_error_count": 0,
+    }
+
+
+def test_nested_patch_wrapper_paths_use_safe_validation_renderer() -> None:
+    long_key = "x" * 100
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        normalize_patch_payload(
+            {
+                "patch": {"patch_id": "patch-1", "base_graph_position": -1, "ops": []},
+                "api_key": "not-persisted",
+                "line\nbreak": "not-persisted",
+                long_key: "not-persisted",
+            }
+        ),
+        "planner-1",
+    )
+
+    assert diagnostics is not None
+    paths = {item["path"] for item in diagnostics["errors"]}
+    assert "api_key" not in paths
+    assert "<redacted>" in paths
+    assert "line\\nbreak" in paths
+    assert f"{'x' * 80}…" in paths
+
+
+def test_nested_patch_missing_envelope_fields_has_one_diagnostic_per_path() -> None:
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        normalize_patch_payload({"patch": {"ops": []}}),
+        "planner-1",
+    )
+
+    assert diagnostics is not None
+    assert diagnostics["errors"] == [
+        {
+            "path": "patch.base_graph_position",
+            "code": "missing",
+            "message": "Field required",
+        },
+        {
+            "path": "patch.patch_id",
+            "code": "missing",
+            "message": "Field required",
+        },
+    ]
+
+
+def test_raw_patch_feedback_aggregates_outer_and_operation_errors() -> None:
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        {
+            "patch_id": "patch-combined-errors",
+            "base_graph_position": -1,
+            "ops": [
+                {"op": "create_node", f"unexpected_{index}": "not-persisted"} for index in range(40)
+            ],
+            "unexpected_outer": "not-persisted",
+        },
+        "planner-1",
+    )
+
+    assert diagnostics is not None
+    assert diagnostics["error_count"] == 41
+    assert diagnostics["omitted_error_count"] == 0
+    assert {item["path"] for item in diagnostics["errors"]} == {
+        "unexpected_outer",
+        *(f"ops[{index}].unexpected_{index}" for index in range(40)),
+    }
+
+
+def test_raw_patch_feedback_aggregates_envelope_and_operation_errors() -> None:
+    diagnostics = _full_raw_patch_validation_diagnostics(
+        {
+            "patch_id": "",
+            "base_graph_position": "bad-position",
+            "ops": [
+                {"op": "create_node", f"unexpected_{index}": "not-persisted"} for index in range(40)
+            ],
+            "unexpected_outer": "not-persisted",
+        },
+        "planner-1",
+    )
+
+    assert diagnostics is not None
+    paths = {item["path"] for item in diagnostics["errors"]}
+    assert {
+        "patch_id",
+        "base_graph_position",
+        "unexpected_outer",
+        *(f"ops[{index}].unexpected_{index}" for index in range(40)),
+    } <= paths
+    assert diagnostics["error_count"] == len(paths)
+    assert diagnostics["omitted_error_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_graph_patch_callback_returns_all_safe_diagnostics_beyond_durable_cap() -> None:
+    class _FeedbackExecutor(GraphDispatchExecutor):
+        async def _current_position(self, run_id: str) -> int:
+            assert run_id == "run-1"
+            return -1
+
+        async def _handle_command_retry_stale(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                events=[
+                    _event(
+                        "command_rejected",
+                        {
+                            "command_type": "submit_patch",
+                            "reason": "malformed patch [malformed_patch]",
+                            "patch_id": "patch-many-errors",
+                        },
+                    )
+                ]
+            )
+
+    executor = _FeedbackExecutor(
+        cast(async_sessionmaker[AsyncSession], object()),
+        cast(Any, object()),
+        cast(Any, object()),
+        worktree_path="/tmp/worktree",
+        artifact_store=FilesystemArtifactStore(Path("/tmp/test-graph-artifacts")),
+    )
+    feedback = await executor._submit_graph_patch_callback(
+        _context(node_id="planner-1", node_kind="planner", node_role="planner"),
+        {
+            "patch_id": "patch-many-errors",
+            "base_graph_position": -1,
+            "ops": [
+                {"op": "create_node", f"unexpected_{index}": "not-persisted"} for index in range(40)
+            ],
+        },
+    )
+
+    diagnostics = json.loads(feedback.split("validation_diagnostics=", maxsplit=1)[1])
+    assert diagnostics["error_count"] == 40
+    assert diagnostics["omitted_error_count"] == 0
+    assert {item["path"] for item in diagnostics["errors"]} == {
+        f"ops[{index}].unexpected_{index}" for index in range(40)
+    }
 
 
 def test_gap_planner_submit_emits_classified_gap_after_accepted_nonempty_patch() -> None:

@@ -16,7 +16,7 @@ from orchestrator.graph._commands import (
     event_factory,
     serialize_event_payload,
 )
-from orchestrator.graph._error_rendering import safe_exception_reason
+from orchestrator.graph._error_rendering import safe_exception_reason, safe_validation_diagnostics
 from orchestrator.graph.command_models import (
     AcceptRunCommand,
     AcknowledgeStartCommand,
@@ -189,6 +189,7 @@ def apply_command(
                     code="invalid_command_payload",
                     message="invalid command payload",
                 ),
+                diagnostics=safe_validation_diagnostics(exc),
             )
         ]
     return spec.handler(

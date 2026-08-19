@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 import posixpath
 from typing import Any, Protocol, cast
 
+from pydantic import ValidationError
+
 from orchestrator.graph.callbacks import (
     CallbackOutcome,
     CallbackRequest,
@@ -43,7 +45,7 @@ from orchestrator.graph.command_models import (
     SubmitCallbackCommand,
     SubmitPatchCommand,
 )
-from orchestrator.graph._error_rendering import safe_exception_reason
+from orchestrator.graph._error_rendering import safe_exception_reason, safe_validation_diagnostics
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
     PortContract,
@@ -2339,15 +2341,20 @@ def _apply_patch_command(
             payload.macro_invocations,
             context.proposed_by_node_id,
         )
-        patch = PatchEnvelope(
-            patch_id=payload.patch_id,
-            proposed_by_node_id=context.proposed_by_node_id,
-            base_graph_position=payload.base_graph_position,
-            ops=[PatchOp(**op) for op in ops],
-            rationale_record_id=payload.rationale_record_id,
+        patch = PatchEnvelope.model_validate(
+            {
+                "patch_id": payload.patch_id,
+                "proposed_by_node_id": context.proposed_by_node_id,
+                "base_graph_position": payload.base_graph_position,
+                # Validate the complete list at once.  Besides avoiding a
+                # first-invalid-operation-only failure, this preserves Pydantic's
+                # precise ``ops[index].field`` locations for tool feedback.
+                "ops": ops,
+                "rationale_record_id": payload.rationale_record_id,
+            }
         )
     except (TypeError, ValueError) as exc:
-        rejected_payload = {
+        rejected_payload: dict[str, Any] = {
             "command_type": "submit_patch",
             "reason": safe_exception_reason(
                 exc,
@@ -2359,6 +2366,8 @@ def _apply_patch_command(
             "proposed_by_node_id": context.proposed_by_node_id,
             "base_graph_position": payload.base_graph_position,
         }
+        if isinstance(exc, ValidationError):
+            rejected_payload["diagnostics"] = safe_validation_diagnostics(exc)
         return [
             make_event(
                 "command_rejected",
@@ -5620,13 +5629,18 @@ def _command_rejected(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     command_type: str,
     reason: str,
+    *,
+    diagnostics: dict[str, Any] | None = None,
 ) -> EventEnvelope:
+    payload: dict[str, Any] = {
+        "command_type": command_type,
+        "reason": reason,
+    }
+    if diagnostics is not None:
+        payload["diagnostics"] = diagnostics
     return make_event(
         "command_rejected",
-        {
-            "command_type": command_type,
-            "reason": reason,
-        },
+        payload,
     )
 
 

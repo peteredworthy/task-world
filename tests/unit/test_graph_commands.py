@@ -4858,6 +4858,106 @@ def test_malformed_patch_is_rejected_at_schema_boundary() -> None:
     assert output[0].payload["command_type"] == "submit_patch"
     assert "invalid command payload" in output[0].payload["reason"]
     assert "payload [int_type]" in output[0].payload["reason"]
+    assert output[0].payload["diagnostics"] == {
+        "error_count": 1,
+        "errors": [
+            {
+                "path": "base_graph_position",
+                "code": "int_type",
+                "message": "Input must be an integer",
+            }
+        ],
+        "omitted_error_count": 0,
+    }
+
+
+def test_malformed_patch_reports_every_strict_op_error_with_safe_locations() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-bad-ops",
+            "base_graph_position": -1,
+            "ops": [
+                {"op": "create_node", "unexpected": "do-not-persist-this-value"},
+                {
+                    "op": "set_allowed_actions",
+                    "node_id": "worker-1",
+                    "allowed_actions": ["submit_records"],
+                    "not_a_patch_field": {"secret": "do-not-persist-this-value"},
+                },
+            ],
+        },
+    )
+
+    assert output[0].event_type == "command_rejected"
+    payload = output[0].payload
+    assert (
+        "payload [extra_forbidden] at ops[0].unexpected: Extra field is not allowed"
+        in payload["reason"]
+    )
+    assert (
+        "payload [extra_forbidden] at ops[1].not_a_patch_field: Extra field is not allowed"
+        in payload["reason"]
+    )
+    assert "do-not-persist-this-value" not in payload["reason"]
+    assert payload["diagnostics"] == {
+        "error_count": 2,
+        "errors": [
+            {
+                "path": "ops[0].unexpected",
+                "code": "extra_forbidden",
+                "message": "Extra field is not allowed",
+            },
+            {
+                "path": "ops[1].not_a_patch_field",
+                "code": "extra_forbidden",
+                "message": "Extra field is not allowed",
+            },
+        ],
+        "omitted_error_count": 0,
+    }
+
+
+def test_malformed_patch_reports_object_type_for_node_payload() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-bad-node",
+            "base_graph_position": -1,
+            "ops": [{"op": "create_node", "node": 5}],
+        },
+    )
+
+    assert (
+        "payload [dict_type] at ops[0].node: Input must be an object" in output[0].payload["reason"]
+    )
+
+
+def test_submit_patch_rejects_oversized_direct_operation_list_deterministically() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-too-many-ops",
+            "base_graph_position": -1,
+            "ops": [{"op": "create_node"} for _ in range(201)],
+        },
+    )
+
+    assert output[0].event_type == "command_rejected"
+    assert output[0].payload["diagnostics"] == {
+        "error_count": 1,
+        "errors": [
+            {
+                "path": "ops",
+                "code": "too_long",
+                "message": "Input exceeds the maximum allowed length",
+            }
+        ],
+        "omitted_error_count": 0,
+    }
 
 
 def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_run() -> None:

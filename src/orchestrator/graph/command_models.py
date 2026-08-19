@@ -522,7 +522,7 @@ class PatchCommandFields(StrictCommandPayload):
 class SubmitPatchCommand(PatchCommandFields):
     patch_id: CommandIdentifier
     base_graph_position: int = Field(ge=-1)
-    ops: list[dict[str, Any]] = Field(default_factory=_empty_patch_ops)
+    ops: list[dict[str, Any]] = Field(default_factory=_empty_patch_ops, max_length=200)
 
 
 class AcknowledgeStartCommand(StrictCommandPayload):

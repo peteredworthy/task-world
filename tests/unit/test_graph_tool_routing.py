@@ -37,6 +37,26 @@ def test_normalize_patch_payload_nested_patch() -> None:
     assert payload == {"patch_id": "p1", "base_graph_position": 3, "ops": []}
 
 
+@pytest.mark.parametrize(
+    "arguments, expected",
+    [
+        (
+            {"patch_id": "", "base_graph_position": "bad", "ops": "not-a-list"},
+            {"patch_id": "", "base_graph_position": "bad", "ops": "not-a-list"},
+        ),
+        (
+            {"patch": {"patch_id": "", "base_graph_position": "bad", "ops": "not-a-list"}},
+            {"patch_id": "", "base_graph_position": "bad", "ops": "not-a-list"},
+        ),
+    ],
+)
+def test_normalize_patch_payload_defers_invalid_envelope_fields_for_feedback(
+    arguments: dict[str, object],
+    expected: dict[str, object],
+) -> None:
+    assert normalize_patch_payload(arguments) == expected
+
+
 def test_normalize_macro_tool_payload_wraps_as_macro_invocation() -> None:
     payload = normalize_macro_tool_payload(
         "create_work_region",
@@ -77,6 +97,54 @@ async def test_route_tool_call_submit_graph_patch_calls_callback() -> None:
     )
     assert result == "accepted"
     assert calls == [{"patch_id": "p1", "base_graph_position": 1, "ops": []}]
+
+
+@pytest.mark.parametrize(
+    "arguments, expected_path",
+    [
+        (
+            {
+                "patch_id": "p1",
+                "base_graph_position": -1,
+                "ops": [],
+                "unexpected_outer": "do-not-drop",
+            },
+            "unexpected_outer",
+        ),
+        (
+            {
+                "patch": {
+                    "patch_id": "p1",
+                    "base_graph_position": -1,
+                    "ops": [],
+                    "unexpected_nested": "do-not-drop",
+                }
+            },
+            "unexpected_nested",
+        ),
+    ],
+)
+async def test_route_tool_call_preserves_unknown_patch_fields_for_safe_feedback(
+    arguments: dict[str, object],
+    expected_path: str,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def on_submit_graph_patch(payload: dict[str, object]) -> str:
+        calls.append(payload)
+        return "rejected"
+
+    result = await route_tool_call(
+        "submit_graph_patch",
+        arguments,
+        _noop_checklist,
+        _noop_submit,
+        on_submit_graph_patch=on_submit_graph_patch,
+        allowlist=_ALLOWLIST,
+    )
+
+    assert result == "rejected"
+    assert calls[0][expected_path] == "do-not-drop"
 
 
 async def test_route_tool_call_macro_tool_calls_callback_with_normalized_payload() -> None:

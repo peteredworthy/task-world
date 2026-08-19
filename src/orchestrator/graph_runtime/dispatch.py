@@ -19,6 +19,7 @@ from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from pydantic import ValidationError
 
 from orchestrator.artifacts import ArtifactStore
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
@@ -59,6 +60,8 @@ from orchestrator.graph import (
     RunnerRecoveryRequestedPayload,
     RunnerBoundaryEntry,
     PatchCommandContext,
+    PatchEnvelope,
+    SubmitPatchCommand,
     RequirementRecord,
     StoredArtifactRef,
     check_command_uses_acceptance_fallback,
@@ -78,6 +81,8 @@ from orchestrator.graph import (
     CleanupRequestedPayload,
     run_state,
     thaw_json,
+    safe_validation_diagnostics,
+    safe_validation_path,
 )
 from orchestrator.graph_runtime import prompts as _prompts
 from orchestrator.graph_runtime.controller import (
@@ -129,6 +134,119 @@ DEFAULT_CHECK_TIMEOUT_SECONDS = 300
 MAX_STALE_COMMAND_RETRIES = 5
 DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS = 3
 SNAPSHOT_REF_PATTERN = re.compile(r"^refs/orchestrator/snapshots/(?!.*\.\.)[A-Za-z0-9._-]+$")
+
+
+def _full_raw_patch_validation_diagnostics(
+    payload: dict[str, Any],
+    proposed_by_node_id: str,
+) -> dict[str, Any] | None:
+    """Return every safe raw-PatchOp error for the dynamic-tool response.
+
+    Durable events retain the bounded form.  The Codex dynamic tool has a
+    200-operation contract, so a normal tool invocation receives the complete
+    safe accounting in-band; direct oversized commands are rejected at the
+    command envelope before this preflight is reached.
+    """
+
+    raw_tool_input: object = getattr(payload, "tool_input", payload)
+    tool_input = (
+        cast(dict[str, Any], raw_tool_input) if isinstance(raw_tool_input, dict) else payload
+    )
+    nested = bool(getattr(payload, "nested", False))
+    envelope_raw: object = tool_input.get("patch") if nested else tool_input
+
+    if nested and not isinstance(envelope_raw, dict):
+        diagnostics: list[dict[str, str]] = [
+            {
+                "path": "patch",
+                "code": "model_type",
+                "message": "Input must be an object",
+            }
+        ]
+        diagnostics.extend(
+            {
+                "path": safe_validation_path((key,)),
+                "code": "extra_forbidden",
+                "message": "Extra field is not allowed",
+            }
+            for key in tool_input
+            if key != "patch"
+        )
+        return _complete_validation_diagnostics(diagnostics)
+
+    if not isinstance(envelope_raw, dict):
+        return None
+    envelope = cast(dict[str, Any], envelope_raw)
+    prefix = "patch." if nested else ""
+    raw_ops = envelope.get("ops")
+    raw_ops_list = cast(list[object], raw_ops) if isinstance(raw_ops, list) else None
+    if raw_ops_list is not None and len(raw_ops_list) > 200:
+        return {
+            "error_count": 1,
+            "errors": [
+                {
+                    "path": f"{prefix}ops",
+                    "code": "too_long",
+                    "message": "At most 200 operations are allowed",
+                }
+            ],
+            "omitted_error_count": 0,
+        }
+    diagnostics = []
+    try:
+        SubmitPatchCommand.model_validate(envelope)
+    except ValidationError as exc:
+        diagnostics.extend(_prefixed_validation_errors(exc, prefix))
+    command_error_paths = {item["path"] for item in diagnostics}
+    try:
+        PatchEnvelope.model_validate(
+            {
+                "patch_id": envelope.get("patch_id"),
+                "proposed_by_node_id": proposed_by_node_id,
+                "base_graph_position": envelope.get("base_graph_position"),
+                "ops": envelope.get("ops"),
+                "rationale_record_id": envelope.get("rationale_record_id"),
+            }
+        )
+    except ValidationError as exc:
+        diagnostics.extend(
+            item
+            for item in _prefixed_validation_errors(exc, prefix)
+            if item["path"] not in command_error_paths
+        )
+    if nested:
+        diagnostics.extend(
+            {
+                "path": safe_validation_path((key,)),
+                "code": "extra_forbidden",
+                "message": "Extra field is not allowed",
+            }
+            for key in tool_input
+            if key != "patch"
+        )
+    return _complete_validation_diagnostics(diagnostics)
+
+
+def _prefixed_validation_errors(exc: ValidationError, prefix: str) -> list[dict[str, str]]:
+    return [
+        {**item, "path": f"{prefix}{item['path']}"}
+        for item in safe_validation_diagnostics(exc, max_errors=None)["errors"]
+    ]
+
+
+def _complete_validation_diagnostics(
+    diagnostics: list[dict[str, str]],
+) -> dict[str, Any] | None:
+    if not diagnostics:
+        return None
+    unique = {(item["path"], item["code"], item["message"]): item for item in diagnostics}
+    errors = [unique[key] for key in sorted(unique, key=lambda item: (item[0], item[1], item[2]))]
+    return {
+        "error_count": len(errors),
+        "errors": errors,
+        "omitted_error_count": 0,
+    }
+
 
 _prompt_for_node = _prompts.prompt_for_node
 _prompt_summary_for_node = _prompts.prompt_summary_for_node
@@ -1461,6 +1579,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
             raise ValueError(msg)
         observed_position = await self._current_position(context.run_id)
         payload: dict[str, object] = dict(patch_payload)
+        full_validation_diagnostics = _full_raw_patch_validation_diagnostics(
+            patch_payload,
+            context.node_id,
+        )
         result = await self._handle_command_retry_stale(
             context.run_id,
             observed_position,
@@ -1494,6 +1616,13 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if rejection is not None:
             reason = rejection.payload.get("reason") or "unknown rejection"
             patch_id = rejection.payload.get("patch_id", payload.get("patch_id", "unknown"))
+            if full_validation_diagnostics is not None:
+                diagnostics = json.dumps(
+                    full_validation_diagnostics,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                return f"graph patch {patch_id} rejected: {reason}; validation_diagnostics={diagnostics}"
             return f"graph patch {patch_id} rejected: {reason}"
 
         return "graph patch command completed without accepted or rejected patch event"

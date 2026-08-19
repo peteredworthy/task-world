@@ -434,6 +434,26 @@ async def test_execute_routes_submit_graph_patch_to_callback_with_feedback() -> 
     assert responses[-1]["result"]["contentItems"] == [
         {"type": "inputText", "text": "graph patch patch-1 accepted"}
     ]
+    thread_start = next(
+        message for message in transport.sent if message.get("method") == "thread/start"
+    )
+    submit_graph_patch = next(
+        tool
+        for tool in thread_start["params"]["dynamicTools"]
+        if tool["name"] == "submit_graph_patch"
+    )
+    raw_op_schema = submit_graph_patch["inputSchema"]["properties"]["ops"]["items"]
+    assert raw_op_schema["additionalProperties"] is False
+    assert set(raw_op_schema["properties"]) >= {
+        "op",
+        "node",
+        "accepted_record_selector",
+        "resource_claims",
+    }
+    assert raw_op_schema["properties"]["node"]["anyOf"][0] == {"type": "object"}
+    claims = raw_op_schema["properties"]["resource_claims"]["anyOf"][0]["items"]
+    assert claims["additionalProperties"] is False
+    assert claims["required"] == ["mode", "scope"]
 
 
 async def test_execute_routes_item_started_submit_graph_patch_to_callback() -> None:

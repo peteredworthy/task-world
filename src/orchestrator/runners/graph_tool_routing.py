@@ -38,6 +38,26 @@ GRAPH_MACRO_TOOL_NAMES: frozenset[str] = frozenset(
 )
 
 
+class NormalizedPatchPayload(dict[str, Any]):
+    """Canonical graph command payload retaining the native dynamic-tool shape.
+
+    The mapping remains the canonical flat envelope consumed by graph commands.
+    The side attribute is in-memory only and lets the dispatcher report nested
+    ``patch.*`` paths without persisting wrapper input or rejected values.
+    """
+
+    def __init__(
+        self,
+        canonical: dict[str, Any],
+        *,
+        tool_input: dict[str, Any],
+        nested: bool,
+    ) -> None:
+        super().__init__(canonical)
+        self.tool_input = tool_input
+        self.nested = nested
+
+
 def is_allowed_tool(tool_name: str, allowlist: frozenset[str]) -> bool:
     return tool_name in allowlist
 
@@ -162,36 +182,27 @@ def normalize_macro_tool_payload(tool_name: str, args: dict[str, Any]) -> dict[s
 
 
 def normalize_patch_payload(args: dict[str, Any]) -> dict[str, Any]:
-    """Normalize planner patch arguments into a top-level PatchEnvelope payload."""
+    """Normalize a tool shape without discarding fields needed for diagnostics.
+
+    Strict envelope validation is deliberately deferred to the graph dispatcher
+    so malformed calls return a correlated, value-free diagnostic through the
+    dynamic tool rather than raising here with only a generic routing error.
+    """
     if "patch" in args:
-        if len(args) != 1:
-            raise ValueError("submit_graph_patch accepts either `patch` or patch fields, not both")
         raw_patch = args.get("patch")
-        if not isinstance(raw_patch, dict):
-            raise ValueError("submit_graph_patch requires `patch` to be an object")
-        patch = cast(dict[str, Any], raw_patch)
-        patch_id = patch.get("patch_id")
-        base_graph_position = patch.get("base_graph_position")
-        ops = patch.get("ops")
-        rationale_record_id = patch.get("rationale_record_id")
+        payload = dict(cast(dict[str, Any], raw_patch)) if isinstance(raw_patch, dict) else {}
+        for key, value in args.items():
+            if key == "patch":
+                if not isinstance(raw_patch, dict):
+                    payload["patch"] = value
+                continue
+            # Preserve every unexpected wrapper field for strict command
+            # validation.  Do not let it overwrite the nested envelope.
+            payload[key if key not in payload else f"outer_{key}"] = value
     else:
-        patch_id = args.get("patch_id")
-        base_graph_position = args.get("base_graph_position")
-        ops = args.get("ops")
-        rationale_record_id = args.get("rationale_record_id")
-
-    if not isinstance(patch_id, str) or not patch_id.strip():
-        raise ValueError("submit_graph_patch requires a non-empty patch_id")
-    if not isinstance(base_graph_position, int):
-        raise ValueError("submit_graph_patch requires integer base_graph_position")
-    if not isinstance(ops, list):
-        raise ValueError("submit_graph_patch requires an ops list")
-
-    payload: dict[str, Any] = {
-        "patch_id": patch_id,
-        "base_graph_position": base_graph_position,
-        "ops": ops,
-    }
-    if isinstance(rationale_record_id, str):
-        payload["rationale_record_id"] = rationale_record_id
-    return payload
+        payload = dict(args)
+    return NormalizedPatchPayload(
+        payload,
+        tool_input=dict(args),
+        nested="patch" in args,
+    )

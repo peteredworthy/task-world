@@ -593,11 +593,17 @@ def test_submit_graph_patch_exposed_only_to_graph_planner() -> None:
     ]
     assert schema["properties"]["patch"]["properties"]["ops"]["minItems"] == 0
     assert (
-        "Validated low-level patch expansion"
+        "Strict low-level PatchOp values"
         in schema["properties"]["patch"]["properties"]["ops"]["description"]
     )
     assert schema["properties"]["ops"]["minItems"] == 0
-    assert "Validated low-level patch expansion" in schema["properties"]["ops"]["description"]
+    assert "Strict low-level PatchOp values" in schema["properties"]["ops"]["description"]
+    raw_op_schema = schema["properties"]["ops"]["items"]
+    assert raw_op_schema["additionalProperties"] is False
+    assert raw_op_schema["required"] == ["op"]
+    assert schema["properties"]["ops"]["maxItems"] == 200
+    assert schema["properties"]["base_graph_position"]["minimum"] == -1
+    assert "unknown operation fields are rejected" in spec["description"]
 
 
 def test_planner_macros_are_exposed_with_typed_schemas() -> None:

@@ -23,7 +23,7 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
-from orchestrator.graph import DEFAULT_NODE_CONTRACTS
+from orchestrator.graph import DEFAULT_NODE_CONTRACTS, RecordSelector
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.graph_tool_routing import (
     GRAPH_MACRO_TOOL_NAMES,
@@ -43,6 +43,178 @@ from orchestrator.runners.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _nullable(schema: dict[str, Any]) -> dict[str, Any]:
+    """Return a JSON Schema value that permits the Pydantic model's ``None``."""
+
+    return {"anyOf": [schema, {"type": "null"}]}
+
+
+def _raw_patch_op_schema() -> dict[str, Any]:
+    """Build the strict wire schema accepted by :class:`PatchOp`.
+
+    The graph validator has additional operation-specific semantic rules, but
+    this schema deliberately mirrors the strict *envelope* boundary.  Open
+    objects are only used for fields that PatchOp itself intentionally models
+    as ``dict[str, Any]``; raw operation fields are never open-ended.
+    """
+
+    string_or_null = _nullable({"type": "string"})
+    object_or_null = _nullable({"type": "object"})
+    string_array_or_null = _nullable({"type": "array", "items": {"type": "string"}})
+    resource_claim = {
+        "type": "object",
+        "required": ["mode", "scope"],
+        "properties": {
+            "mode": {"type": "string"},
+            "scope": {"type": "string"},
+            "paths": _nullable({"type": "array", "items": {"type": "string"}}),
+            "external_resource_key": string_or_null,
+        },
+        "additionalProperties": False,
+        "allOf": [
+            {
+                "if": {"properties": {"mode": {"const": "external"}}, "required": ["mode"]},
+                "then": {
+                    "required": ["external_resource_key"],
+                    "properties": {"external_resource_key": {"type": "string"}},
+                },
+            }
+        ],
+    }
+    selector = {
+        "oneOf": [
+            {
+                "type": "object",
+                "required": ["record_type"],
+                "properties": {
+                    "record_type": {"const": "candidate"},
+                    "schema": {"const": "ImplementationCandidate"},
+                },
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "required": ["record_type"],
+                "properties": {
+                    "record_type": {"const": "check_result"},
+                    "schema": {"const": "CheckResult"},
+                    "status": _nullable({"enum": ["passed", "failed", "timeout"]}),
+                },
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "required": ["record_type"],
+                "properties": {
+                    "record_type": {"const": "verification_report"},
+                    "schema": {"const": "VerificationReport"},
+                    "outcome": _nullable({"enum": ["passed", "failed"]}),
+                },
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "required": ["record_type"],
+                "properties": {
+                    "record_type": {"const": "gap_classification"},
+                    "schema": {"const": "GapClassification"},
+                    "classification": _nullable(
+                        {
+                            "enum": [
+                                "corrective_work_required",
+                                "no_gap",
+                                "human_decision_required",
+                                "graph_mutation_required",
+                            ]
+                        }
+                    ),
+                },
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "required": ["record_type"],
+                "properties": {
+                    "record_type": {
+                        "enum": [
+                            "analysis_summary",
+                            "artifact_reference",
+                            "authority_decision",
+                            "authority_request_record",
+                            "completion_decision",
+                            "decision_record",
+                            "decision_request",
+                            "failure_record",
+                            "file_state",
+                            "graph_patch_proposal",
+                            "requirement_record",
+                            "routine_snapshot",
+                            "run_context",
+                        ]
+                    },
+                    "schema": string_or_null,
+                },
+                "additionalProperties": False,
+            },
+            {
+                "type": "object",
+                "required": ["record_type", "selectors"],
+                "properties": {
+                    "record_type": {"const": "any_of"},
+                    # Pydantic validates the recursive selector variants.
+                    "selectors": {"type": "array", "minItems": 1, "items": {"type": "object"}},
+                },
+                "additionalProperties": False,
+            },
+        ]
+    }
+    selector = RecordSelector.model_json_schema()
+    selector["$id"] = "urn:orchestrator:record-selector"
+    return {
+        "type": "object",
+        "required": ["op"],
+        "properties": {
+            "op": {
+                "type": "string",
+                "description": "Patch operation name; graph validation checks supported operations.",
+            },
+            "kind": string_or_null,
+            "state": string_or_null,
+            "edge_id": string_or_null,
+            "node": object_or_null,
+            "from_node_id": string_or_null,
+            "from_node_kind": string_or_null,
+            "from_node_role": string_or_null,
+            "from_port": string_or_null,
+            "to_node_id": string_or_null,
+            "to_port": string_or_null,
+            "required": _nullable({"type": "boolean"}),
+            "dependency_type": _nullable({"enum": ["input_binding", "state_dependency"]}),
+            "accepted_record_selector": _nullable(selector),
+            "binding_policy": string_or_null,
+            "prompt_hydration_policy": string_or_null,
+            "freshness_policy": string_or_null,
+            "purpose": string_or_null,
+            "description": string_or_null,
+            "selection": object_or_null,
+            "metadata": object_or_null,
+            "node_id": string_or_null,
+            "resource_claims": _nullable({"type": "array", "items": resource_claim}),
+            "allowed_actions": string_array_or_null,
+            "task_region_id": string_or_null,
+            "predecessor_node_ids": string_array_or_null,
+            "failed_candidate_id": string_or_null,
+            "worker_node": object_or_null,
+            "verifier_node": object_or_null,
+            "appealed_node_id": string_or_null,
+            "appeal_type": string_or_null,
+            "region_node_ids": string_array_or_null,
+            "reason": string_or_null,
+        },
+        "additionalProperties": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +442,11 @@ def build_dynamic_tool_specs(
     submit_graph_patch_spec: dict[str, Any] = {
         "name": "submit_graph_patch",
         "description": (
-            "Submit a graph patch envelope. Graph planners must use this to "
-            "propose graph mutations or an explicit no-op decision."
+            "Submit a graph patch envelope. Prefer a graph macro tool whenever "
+            "it expresses the mutation. Raw ops use the strict PatchOp schema "
+            "shown here; unknown operation fields are rejected. Graph planners "
+            "must use this tool or a macro to propose mutations or an explicit "
+            "no-op decision."
         ),
         "inputSchema": {
             "type": "object",
@@ -281,14 +456,15 @@ def build_dynamic_tool_specs(
                     "required": ["patch_id", "base_graph_position", "ops"],
                     "properties": {
                         "patch_id": {"type": "string"},
-                        "base_graph_position": {"type": "integer", "minimum": 0},
+                        "base_graph_position": {"type": "integer", "minimum": -1},
                         "ops": {
                             "type": "array",
                             "description": (
-                                "Validated low-level patch expansion. Prefer macro tools; use "
-                                "raw ops only when no macro can express the mutation."
+                                "Strict low-level PatchOp values. Prefer macro tools; use raw "
+                                "ops only when no macro can express the mutation. The graph "
+                                "also applies operation-specific semantic validation."
                             ),
-                            "items": {"type": "object", "additionalProperties": True},
+                            "items": _raw_patch_op_schema(),
                             "minItems": 0,
                             "maxItems": 200,
                         },
@@ -297,14 +473,15 @@ def build_dynamic_tool_specs(
                     "additionalProperties": False,
                 },
                 "patch_id": {"type": "string"},
-                "base_graph_position": {"type": "integer", "minimum": 0},
+                "base_graph_position": {"type": "integer", "minimum": -1},
                 "ops": {
                     "type": "array",
                     "description": (
-                        "Validated low-level patch expansion. Prefer macro tools; use raw ops "
-                        "only when no macro can express the mutation."
+                        "Strict low-level PatchOp values. Prefer macro tools; use raw ops "
+                        "only when no macro can express the mutation. The graph also applies "
+                        "operation-specific semantic validation."
                     ),
-                    "items": {"type": "object", "additionalProperties": True},
+                    "items": _raw_patch_op_schema(),
                     "minItems": 0,
                     "maxItems": 200,
                 },

@@ -1,6 +1,7 @@
 """Pure Pydantic execution graph models."""
 
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
+from orchestrator.graph._error_rendering import safe_validation_diagnostics, safe_validation_path
 from orchestrator.graph.boundary_types import (
     BoundaryValidationError,
     MAX_EVENT_ENVELOPE_BYTES,
@@ -489,6 +490,8 @@ __all__ = [
     "RETIRED_EVENT_TYPES",
     "EventEnvelope",
     "FakeClock",
+    "safe_validation_diagnostics",
+    "safe_validation_path",
     "MAX_CALLBACK_BYTES",
     "MAX_CALLBACK_DEPTH",
     "MAX_CALLBACK_ITEMS",
