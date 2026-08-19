@@ -2171,24 +2171,60 @@ def _validate_replay_cache_authority(state: GraphProjection, payload: object) ->
         raise ProjectionReplayConflictError(
             "runner lease cache_authority_hash differs from routine snapshot"
         )
-    observed = getattr(value, "observed_cache_roots", None)
-    if observed is not None:
-        roots = observed
-        status = value.cache_status_evidence or ()
-    else:
-        roots = value.cache_roots
+    roots = _replay_cache_roots(state, value)
+    fields_set = value.model_fields_set
+    status = (
+        value.cache_status_evidence or ()
+        if (
+            "observed_cache_roots" in fields_set
+            or ("observed_cache_roots" not in fields_set and "cache_roots" not in fields_set)
+        )
         # Earlier typed aggregate facts did not carry observed status evidence;
         # validate policy authority without misrepresenting them as current.
-        status = None
+        else None
+    )
     if not any(isinstance(root, str) for root in roots):
         try:
             validate_authorized_cache_roots(
-                roots,
+                cast(Any, roots),
                 binding.policy,
                 status=status,
             )
         except ValueError as exc:
             raise ProjectionReplayConflictError(str(exc)) from exc
+
+
+def _replay_cache_roots(state: GraphProjection, payload: object) -> tuple[object, ...]:
+    """Resolve compact event roots from evidence and snapshot-owned policy."""
+    from orchestrator.graph.cache_authority import derive_cache_roots
+    from orchestrator.graph.projection_queries import cache_authority_binding
+
+    value = cast(Any, payload)
+    fields_set = value.model_fields_set
+    if "observed_cache_roots" in fields_set:
+        return tuple(value.observed_cache_roots or ())
+    if "cache_roots" in fields_set:
+        return tuple(value.cache_roots)
+    return tuple(
+        derive_cache_roots(
+            value.cache_status_evidence or (),
+            cache_authority_binding(state).policy,
+        )
+    )
+
+
+def _explicit_cache_carrier_fields(payload: object) -> set[str]:
+    """Return cache carriers that contain an explicit non-null value."""
+    value = cast(Any, payload)
+    names = {
+        "cache_roots",
+        "observed_cache_roots",
+        "authorized_cache_roots",
+        "legacy_cache_root_paths",
+    }
+    return {
+        name for name in value.model_fields_set & names if getattr(value, name, None) is not None
+    }
 
 
 def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
@@ -2215,7 +2251,9 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
         baseline_data = payload.model_dump()
         baseline_data["baseline_entries"] = baseline_data.pop("entries")
         baseline_data["baseline_boundary_hash"] = baseline_data.pop("boundary_hash")
-        baseline_data["baseline_cache_roots"] = baseline_data.get("cache_roots", [])
+        replay_roots = _replay_cache_roots(state, payload)
+        baseline_data["cache_roots"] = replay_roots
+        baseline_data["baseline_cache_roots"] = replay_roots
         baseline_data["legacy_cache_root_paths"] = tuple(
             root for root in payload.cache_roots if isinstance(root, str)
         )
@@ -2241,6 +2279,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
             payload.cache_authority_hash,
         )
         existing = attempts.get(payload.execution_id)
+        replay_roots = _replay_cache_roots(state, payload)
         if existing is None:
             raise ProjectionReplayConflictError("runner submission has no baseline")
         if existing.state == "submission_staged":
@@ -2272,7 +2311,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 and existing.complete_node == payload.complete_node
                 and existing.new_state == payload.new_state
                 and existing.payload_size_bytes == payload.payload_size_bytes
-                and existing.staged_cache_roots == tuple(payload.cache_roots)
+                and existing.staged_cache_roots == replay_roots
                 and existing.cache_authority_hash == payload.cache_authority_hash
             ):
                 return state
@@ -2309,7 +2348,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "is_mutating": payload.is_mutating,
                 "complete_node": payload.complete_node,
                 "new_state": payload.new_state,
-                "staged_cache_roots": tuple(payload.cache_roots),
+                "staged_cache_roots": replay_roots,
                 "staged_cache_status_evidence": tuple(payload.cache_status_evidence or ()),
             }
         )
@@ -2332,13 +2371,20 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
         # Older durable recovery events predate ``cache_roots`` on this event.
         # Their requested paths were derived from the baseline attempt roots;
         # preserve that replay behavior while all new emitters carry the union.
-        legacy_event = payload.observed_cache_roots is None
+        carrier_fields = _explicit_cache_carrier_fields(payload)
+        compact_event = not carrier_fields
+        legacy_event = (
+            "cache_roots" in carrier_fields
+            and "observed_cache_roots" not in carrier_fields
+            and "authorized_cache_roots" not in carrier_fields
+            and "legacy_cache_root_paths" not in carrier_fields
+        )
         recovery_cache_roots = (
-            tuple(payload.observed_cache_roots or ())
+            _replay_cache_roots(state, payload)
             if not legacy_event
             else tuple(payload.cache_roots) or existing.cache_roots
         )
-        if not legacy_event:
+        if not legacy_event and not compact_event:
             expected_authorized = tuple(
                 RunnerCacheRoot.model_validate(root)
                 for root in _attempt_root_union(existing, recovery_cache_roots)
@@ -2419,7 +2465,9 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "recovery_observed_cache_roots": recovery_cache_roots,
                 "recovery_authorized_cache_roots": tuple(
                     payload.authorized_cache_roots
-                    if not legacy_event and payload.authorized_cache_roots is not None
+                    if not legacy_event
+                    and not compact_event
+                    and payload.authorized_cache_roots is not None
                     else [
                         root
                         for root in _attempt_root_union(existing, recovery_cache_roots)
@@ -2428,7 +2476,9 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 ),
                 "legacy_cache_root_paths": tuple(
                     payload.legacy_cache_root_paths
-                    if not legacy_event and payload.legacy_cache_root_paths is not None
+                    if not legacy_event
+                    and not compact_event
+                    and payload.legacy_cache_root_paths is not None
                     else existing.legacy_cache_root_paths
                 ),
                 "recovery_cache_status_evidence": tuple(payload.cache_status_evidence or ()),
@@ -2516,6 +2566,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
             payload.cache_authority_hash,
         )
         existing = attempts.get(payload.execution_id)
+        replay_roots = _replay_cache_roots(state, payload)
         if existing is None:
             raise ProjectionReplayConflictError("runner finalization has no baseline")
         if existing.state == "finalized":
@@ -2529,7 +2580,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 and existing.final_tree_sha == payload.final_tree_sha
                 and existing.final_boundary_hash == payload.boundary_hash
                 and existing.final_boundary_entries == tuple(payload.boundary_entries)
-                and existing.final_cache_roots == tuple(payload.cache_roots)
+                and existing.final_cache_roots == replay_roots
                 and existing.cache_authority_hash == payload.cache_authority_hash
             ):
                 return state
@@ -2555,9 +2606,9 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "final_tree_sha": payload.final_tree_sha,
                 "final_boundary_hash": payload.boundary_hash,
                 "final_boundary_entries": tuple(payload.boundary_entries),
-                "final_cache_roots": tuple(payload.cache_roots),
+                "final_cache_roots": replay_roots,
                 "final_cache_status_evidence": tuple(payload.cache_status_evidence or ()),
-                "cache_roots": _attempt_root_union(existing, tuple(payload.cache_roots)),
+                "cache_roots": _attempt_root_union(existing, replay_roots),
             }
         )
     else:
@@ -2593,10 +2644,16 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
         # Older facts used the aggregate ``cache_roots`` field only, so retain
         # their replay compatibility when the new observed-root carrier is
         # absent.
-        if payload.observed_cache_roots is not None:
+        carrier_fields = _explicit_cache_carrier_fields(payload)
+        if (
+            "observed_cache_roots" in carrier_fields
+            or "authorized_cache_roots" in carrier_fields
+            or "legacy_cache_root_paths" in carrier_fields
+        ):
+            observed_roots = _replay_cache_roots(state, payload)
             expected_authorized = tuple(
                 RunnerCacheRoot.model_validate(root)
-                for root in _attempt_root_union(existing, tuple(payload.observed_cache_roots))
+                for root in _attempt_root_union(existing, observed_roots)
                 if not isinstance(root, str)
             )
             if (
@@ -4964,8 +5021,18 @@ def project_graph_blocked_reason(projection: GraphProjectionSnapshot) -> str:
 
 
 def project_active_lease_wait_plan(
-    projection: GraphProjectionSnapshot, now: datetime
+    projection: GraphProjectionSnapshot,
+    now: datetime,
+    *,
+    renewal_lead_seconds: float = 0.0,
 ) -> ActiveLeaseWaitPlan:
+    """Plan a bounded executor wait before the next lease maintenance pass.
+
+    ``renewal_lead_seconds`` lets the driver wake before the kernel expiry
+    sweep can revoke a still-running execution.  It is intentionally supplied
+    by driver policy rather than embedded in the projection layer.
+    """
+    renewal_lead_seconds = max(0.0, renewal_lead_seconds)
     execution_ids: set[str] = set()
     timeouts: list[float] = []
     for lease in projection.active_leases.values():
@@ -4981,7 +5048,7 @@ def project_active_lease_wait_plan(
             continue
         if expires_at_dt.tzinfo is None:
             expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
-        timeouts.append(max(0.0, (expires_at_dt - now).total_seconds()))
+        timeouts.append(max(0.0, (expires_at_dt - now).total_seconds() - renewal_lead_seconds))
     if not execution_ids:
         return ActiveLeaseWaitPlan(execution_ids=set(), timeout_seconds=0.0)
     if not timeouts:

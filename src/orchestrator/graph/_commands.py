@@ -274,13 +274,30 @@ _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES = frozenset(
         "runtime_retry_scheduled",
     }
 )
+_CACHE_COMPACT_RUNNER_EVENT_PAYLOAD_TYPES = frozenset(
+    {
+        "runner_baseline_recorded",
+        "runner_submission_staged",
+        "runner_boundary_mismatch",
+        "runner_recovery_requested",
+        "runner_execution_finalized",
+    }
+)
+_REDUNDANT_CACHE_CARRIER_FIELDS = {
+    "cache_roots",
+    "observed_cache_roots",
+    "authorized_cache_roots",
+    "legacy_cache_root_paths",
+}
 
 
 def _validate_event_serialization_policy() -> None:
     modeled_event_types = frozenset(EVENT_PAYLOAD_MODELS)
-    unknown_policy_types = (_SPARSE_EVENT_PAYLOAD_TYPES | _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES) - (
-        modeled_event_types
-    )
+    unknown_policy_types = (
+        _SPARSE_EVENT_PAYLOAD_TYPES
+        | _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES
+        | _CACHE_COMPACT_RUNNER_EVENT_PAYLOAD_TYPES
+    ) - modeled_event_types
     if unknown_policy_types:
         mismatch = ", ".join(sorted(unknown_policy_types))
         raise ValueError(f"unknown event payload serialization policy: {mismatch}")
@@ -294,6 +311,12 @@ def serialize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[st
     if model is None:
         return payload
     typed = model.model_validate(payload)
+    if event_type in _CACHE_COMPACT_RUNNER_EVENT_PAYLOAD_TYPES:
+        return typed.model_dump(
+            mode="json",
+            exclude=_REDUNDANT_CACHE_CARRIER_FIELDS,
+            exclude_none=True,
+        )
     if event_type in _SPARSE_EVENT_PAYLOAD_TYPES:
         return typed.model_dump(mode="json", exclude_none=True, exclude_unset=True)
     if event_type in _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES:

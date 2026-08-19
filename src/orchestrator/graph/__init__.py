@@ -3,6 +3,7 @@
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
 from orchestrator.graph.boundary_types import (
     BoundaryValidationError,
+    MAX_EVENT_ENVELOPE_BYTES,
     MAX_BOUNDARY_MANIFEST_ITEMS,
     MAX_CALLBACK_BYTES,
     MAX_CALLBACK_DEPTH,
@@ -449,6 +450,7 @@ __all__ = [
     "Actor",
     "BoundaryValidationError",
     "MAX_BOUNDARY_MANIFEST_ITEMS",
+    "MAX_EVENT_ENVELOPE_BYTES",
     "ActorKind",
     "ActiveLeaseWaitPlan",
     "AppealOpenedPayload",

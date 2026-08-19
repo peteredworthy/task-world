@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import EventV2Model
 from orchestrator.db.access.mutations import save_run
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, MAX_EVENT_ENVELOPE_BYTES
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 
@@ -533,25 +533,36 @@ async def test_file_state_report_large_boundary_retains_only_capped_path_output(
         for index in range(10_000)
     ]
     async with app.state.session_factory() as session:
-        await GraphEventStore(session).append_events(
+        stored = await GraphEventStore(session).append_events(
             run_id,
             0,
             [
                 _event("node_created", {"node_id": "worker", "kind": "worker", "state": "planned"}),
-                _event(
-                    "file_state_accepted",
-                    {
-                        "record_id": "large-boundary",
-                        "record_kind": "file_state",
-                        "producer_node_id": "worker",
-                        "snapshot_id": "large-snapshot",
-                        "base_snapshot_id": "base",
-                        "verdict": "captured",
-                        "classifications": source_entries,
-                    },
-                ),
             ],
         )
+        historical = _event(
+            "file_state_accepted",
+            {
+                "record_id": "large-boundary",
+                "record_kind": "file_state",
+                "producer_node_id": "worker",
+                "snapshot_id": "large-snapshot",
+                "base_snapshot_id": "base",
+                "verdict": "captured",
+                "classifications": source_entries,
+            },
+        ).model_copy(update={"run_id": run_id, "position": 2})
+        assert len(historical.model_dump_json().encode()) > MAX_EVENT_ENVELOPE_BYTES
+        session.add(
+            EventV2Model(
+                aggregate_id=f"graph:{run_id}",
+                version=2,
+                event_type=historical.event_type,
+                payload=historical.model_dump_json(),
+                timestamp=historical.timestamp.isoformat(),
+            )
+        )
+        assert stored[0].position == 1
         await session.commit()
 
     response = await client.get(f"/api/runs/{run_id}/graph/file-state?path_limit=3")

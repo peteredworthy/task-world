@@ -300,7 +300,13 @@ def test_recovery_authority_uses_latest_phase_kind_for_the_same_root(
         "runner_recovery_requested",
     ]
     assert all(
-        event.payload["authorized_cache_roots"] == [_cache_root(".pytest_cache", final_kind)]
+        not {
+            "cache_roots",
+            "observed_cache_roots",
+            "authorized_cache_roots",
+            "legacy_cache_root_paths",
+        }
+        & event.payload.keys()
         for event in events
     )
     recovered = reduce_event(reduce_event(projection, events[0]), events[1])
@@ -372,7 +378,13 @@ def test_recovery_authority_collapses_identical_roots_retained_in_phase_history(
         "runner_recovery_requested",
     ]
     assert all(
-        event.payload["authorized_cache_roots"] == [_cache_root(".pytest_cache", "ignored")]
+        not {
+            "cache_roots",
+            "observed_cache_roots",
+            "authorized_cache_roots",
+            "legacy_cache_root_paths",
+        }
+        & event.payload.keys()
         for event in events
     )
 

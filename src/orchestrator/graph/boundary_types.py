@@ -18,6 +18,10 @@ MAX_CACHE_ROOT_ITEMS = 1_024
 MAX_CACHE_ROOT_BYTES = 64 * 1024
 MAX_BOUNDARY_STATUS_CHARS = 128
 SNAPSHOT_REF_PREFIX = "refs/orchestrator/snapshots/"
+# Authoritative persistence and replay limit for one complete EventEnvelope.
+# This is deliberately an envelope limit, rather than a payload-only limit, so
+# producers and consumers agree on the exact bytes that cross the boundary.
+MAX_EVENT_ENVELOPE_BYTES = 32 * 1024
 
 
 class BoundaryValidationError(ValueError):

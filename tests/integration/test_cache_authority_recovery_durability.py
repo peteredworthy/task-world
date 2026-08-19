@@ -355,13 +355,16 @@ async def test_boundary_authority_schema_preserves_each_root_phase(
     )
     boundary_event = mismatch or request
     for event in (boundary_event, request):
-        assert {
-            "observed_cache_roots",
-            "authorized_cache_roots",
-            "legacy_cache_root_paths",
-            "cache_status_evidence",
-        }.issubset(event.payload)
-        assert event.payload["legacy_cache_root_paths"] == []
+        assert (
+            not {
+                "observed_cache_roots",
+                "authorized_cache_roots",
+                "legacy_cache_root_paths",
+                "cache_roots",
+            }
+            & event.payload.keys()
+        )
+        assert "cache_status_evidence" in event.payload
         assert event.payload["cache_authority_hash"] == harness.authority_hash
 
     attempt = execution_attempts_view(projection)[harness.execution_id]
@@ -498,7 +501,15 @@ async def test_z_root_then_a_root_is_canonicalized_in_authorized_recovery_order(
         "runner_recovery_requested",
     ]
     for event in result.events:
-        assert event.payload["authorized_cache_roots"] == [_root("a-cache"), _root("z-cache")]
+        assert (
+            not {
+                "cache_roots",
+                "observed_cache_roots",
+                "authorized_cache_roots",
+                "legacy_cache_root_paths",
+            }
+            & event.payload.keys()
+        )
     attempt = execution_attempts_view(await harness.controller.read_projection(harness.run_id))[
         harness.execution_id
     ]

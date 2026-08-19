@@ -361,26 +361,31 @@ async def test_evidence_digest_skips_utf8_over_cap_evidence_body(
     async with session_factory() as session:
         store = GraphEventStore(session)
         position = await store.current_position(run_id)
-        await store.append_events(
-            run_id,
-            position,
-            [
-                _event(
-                    "output_record_accepted",
-                    {
-                        "record_id": "utf8-over-cap-output",
-                        "record_kind": "output",
-                        "record_type": "fan_out_inputs",
-                        "producer_node_id": "node-a",
-                        "port": "candidate",
-                        "schema": "ImplementationCandidate",
-                        # This is above the byte cap even though it contains
-                        # fewer Unicode code points than the cap value.
-                        "value": {"summary": "é" * (GRAPH_EVENT_PAYLOAD_BYTES // 2 + 1)},
-                    },
-                    position + 1,
-                )
-            ],
+        legacy_event = _event(
+            "output_record_accepted",
+            {
+                "record_id": "utf8-over-cap-output",
+                "record_kind": "output",
+                "record_type": "fan_out_inputs",
+                "producer_node_id": "node-a",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                # This historical body is above the byte cap even though it
+                # contains fewer Unicode code points than the cap value.
+                "value": {"summary": "é" * (GRAPH_EVENT_PAYLOAD_BYTES // 2 + 1)},
+            },
+            position + 1,
+        ).model_copy(update={"run_id": run_id})
+        # Seed a pre-contract canonical row directly. Production append must
+        # reject this body; this test owns only bounded historical readback.
+        session.add(
+            EventV2Model(
+                aggregate_id=graph_aggregate_id(run_id),
+                version=position + 1,
+                event_type=legacy_event.event_type,
+                payload=legacy_event.model_dump_json(),
+                timestamp=legacy_event.timestamp.isoformat(),
+            )
         )
         await session.commit()
 

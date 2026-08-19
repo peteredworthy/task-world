@@ -9,6 +9,18 @@ class StaleProjectionError(GraphRuntimeError):
     """Raised when a command appends against a stale run-local position."""
 
 
+class GraphEventEnvelopeTooLargeError(GraphRuntimeError):
+    """Raised when a complete serialized event exceeds the write contract."""
+
+    def __init__(self, *, event_type: str, observed_bytes: int, limit_bytes: int) -> None:
+        self.event_type = event_type
+        self.observed_bytes = observed_bytes
+        self.limit_bytes = limit_bytes
+        super().__init__(
+            f"graph event {event_type!r} is {observed_bytes} bytes; maximum is {limit_bytes} bytes"
+        )
+
+
 class OutboxAppendError(GraphRuntimeError):
     """Raised when side-effect intent cannot be written atomically."""
 

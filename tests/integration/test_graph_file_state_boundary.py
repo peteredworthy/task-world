@@ -212,9 +212,9 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
     }
     assert classifications["README.md"] == "tracked_change"
     assert classifications["residue.txt"] == "unknown_untracked"
-    # A cache root is represented once; descendant scanning is bounded and
-    # retains only security-relevant entries.
-    assert classifications["__pycache__"] == "tool_cache"
+    # Cache paths participate in classification/security scanning but are not
+    # duplicated in the durable accepted record.
+    assert "__pycache__" not in classifications
     assert classifications["ignored.log"] == "unknown_ignored"
     assert accepted.payload["git"]["ref"].startswith("refs/orchestrator/snapshots/")
 

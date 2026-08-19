@@ -28,6 +28,7 @@ from orchestrator.graph import (
     cache_authority_hash,
     canonicalize_cache_authority,
     compile_routine,
+    execution_attempts_view,
     file_state_policy_from_authority,
     initial_projection,
     lease_by_id,
@@ -1103,12 +1104,24 @@ async def test_executor_boundary_paths_use_snapshot_policy_not_learned_rules(
     assert staged.payload["payload_ref"]["content_hash"] == staged.payload["payload_hash"]
     assert staged.payload["owns_file_state_snapshot"] is True
     learned_path = "learned-cache/created.txt"
-    assert baseline.payload["cache_roots"] == [{"path": "custom-cache", "kind": "ignored"}]
+    carrier_fields = {
+        "cache_roots",
+        "observed_cache_roots",
+        "authorized_cache_roots",
+        "legacy_cache_root_paths",
+    }
+    assert carrier_fields.isdisjoint(baseline.payload)
+    assert carrier_fields.isdisjoint(staged.payload)
+    assert carrier_fields.isdisjoint(final.payload)
+    assert baseline.payload["cache_status_evidence"]
+    assert staged.payload["cache_status_evidence"]
+    assert final.payload["cache_status_evidence"]
+    assert baseline.payload["cache_authority_hash"] == staged.payload["cache_authority_hash"]
+    assert baseline.payload["cache_authority_hash"] == final.payload["cache_authority_hash"]
     assert not any(entry["path"] == learned_path for entry in baseline.payload["entries"])
     assert not any(
         entry["path"].startswith("custom-cache/") for entry in baseline.payload["entries"]
     )
-    assert final.payload["cache_roots"] == [{"path": "custom-cache", "kind": "ignored"}]
     assert any(entry["path"] == learned_path for entry in final.payload["boundary_entries"])
     assert not any(
         entry["path"].startswith("custom-cache/") for entry in final.payload["boundary_entries"]
@@ -1117,6 +1130,18 @@ async def test_executor_boundary_paths_use_snapshot_policy_not_learned_rules(
     assert not any(
         entry["path"].startswith("custom-cache/") for entry in staged.payload["boundary_entries"]
     )
+    attempts = execution_attempts_view(build_projection(events))
+    assert len(attempts) == 1
+    attempt = next(iter(attempts.values()))
+    assert [(root.path, root.kind) for root in attempt.baseline_cache_roots] == [
+        ("custom-cache", "ignored")
+    ]
+    assert [(root.path, root.kind) for root in attempt.staged_cache_roots] == [
+        ("custom-cache", "ignored")
+    ]
+    assert [(root.path, root.kind) for root in attempt.final_cache_roots] == [
+        ("custom-cache", "ignored")
+    ]
 
 
 @pytest.mark.asyncio
@@ -1125,11 +1150,14 @@ async def test_executor_recovery_capture_uses_snapshot_policy_not_learned_rules(
 ) -> None:
     events = await _run_runtime_boundary_case(tmp_path, fail=True)
     recovery = next(event for event in events if event.event_type == "runner_recovery_requested")
-    assert recovery.payload["observed_cache_roots"] == [{"path": "custom-cache", "kind": "ignored"}]
-    assert recovery.payload["authorized_cache_roots"] == [
-        {"path": "custom-cache", "kind": "ignored"}
-    ]
-    assert recovery.payload["legacy_cache_root_paths"] == []
+    assert {
+        "cache_roots",
+        "observed_cache_roots",
+        "authorized_cache_roots",
+        "legacy_cache_root_paths",
+    }.isdisjoint(recovery.payload)
+    assert recovery.payload["cache_status_evidence"]
+    assert recovery.payload["cache_authority_hash"]
     assert any(
         entry["path"] == "learned-cache/created.txt"
         for entry in recovery.payload["final_boundary_entries"]
@@ -1138,6 +1166,15 @@ async def test_executor_recovery_capture_uses_snapshot_policy_not_learned_rules(
         entry["path"].startswith("custom-cache/")
         for entry in recovery.payload["final_boundary_entries"]
     )
+    attempts = execution_attempts_view(build_projection(events))
+    assert len(attempts) == 1
+    attempt = next(iter(attempts.values()))
+    assert [(root.path, root.kind) for root in attempt.recovery_observed_cache_roots] == [
+        ("custom-cache", "ignored")
+    ]
+    assert [(root.path, root.kind) for root in attempt.recovery_authorized_cache_roots] == [
+        ("custom-cache", "ignored")
+    ]
 
 
 def test_lease_projection_preserves_all_authority_and_ownership_fields() -> None:

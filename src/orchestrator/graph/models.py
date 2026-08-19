@@ -990,7 +990,11 @@ class RunnerBaselineRecordedPayload(StrictEventPayload):
     entries: list[RunnerBoundaryEntry]
     boundary_hash: str
     cache_authority_hash: str | None = None
-    cache_roots: list[RunnerCacheRoot | str]
+    # Historical facts may carry the derived roots. New facts retain only the
+    # immutable policy hash and status evidence and derive roots during replay.
+    cache_roots: list[RunnerCacheRoot | str] = Field(
+        default_factory=lambda: cast(list[RunnerCacheRoot | str], [])
+    )
     cache_status_evidence: list[CacheStatusEvidence] | None = None
 
     @model_validator(mode="after")

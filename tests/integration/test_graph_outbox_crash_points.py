@@ -344,7 +344,7 @@ def test_file_state_snapshot_excludes_ignored_tool_cache(tmp_path: Path) -> None
         for entry in raw_classifications
         if isinstance(entry, dict)
     }
-    assert classifications[".venv"] == "tool_cache"
+    assert ".venv" not in classifications
     assert classifications["build/artifact.txt"] == "unknown_ignored"
     tree_paths = _tree_paths(repo, captured.commit_sha)
     assert ".venv/bin/python" not in tree_paths

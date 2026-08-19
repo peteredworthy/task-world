@@ -290,7 +290,13 @@ def _file_state_output_record(
     execution_id: str,
     base_snapshot_id: str,
 ) -> dict[str, object]:
-    entries = [entry.to_record() for entry in classification.paths]
+    # Tool caches were useful while deciding whether the boundary is safe, but
+    # they are derived, disposable state and are excluded from the managed
+    # snapshot.  Do not duplicate their often enormous path inventory in the
+    # durable accepted record.
+    entries = [
+        entry.to_record() for entry in classification.paths if entry.classification != "tool_cache"
+    ]
     return {
         "record_id": f"file-state-{execution_id}",
         "record_kind": "file_state",

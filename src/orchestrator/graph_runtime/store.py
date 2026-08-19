@@ -14,10 +14,12 @@ from typing import Annotated, Any, Generic, Literal, Mapping, TypeVar, cast, get
 from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import (
     LargeBinary,
+    and_,
     case,
     cast as sql_cast,
     delete,
     func,
+    or_,
     select,
     true,
     union_all,
@@ -52,6 +54,7 @@ from orchestrator.graph import (
     ActorKind,
     checkpoint_schema_is_current,
     EventEnvelope,
+    MAX_EVENT_ENVELOPE_BYTES,
     EVENT_PAYLOAD_SPECS,
     GraphProjection,
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
@@ -78,7 +81,7 @@ from orchestrator.graph import (
     project_scheduler_view,
     reduce_event,
 )
-from orchestrator.graph_runtime.errors import StaleProjectionError
+from orchestrator.graph_runtime.errors import GraphEventEnvelopeTooLargeError, StaleProjectionError
 from orchestrator.db import RunModel
 from orchestrator.state import ModelTokenUsage
 
@@ -103,7 +106,9 @@ GRAPH_ARCHIVAL_ENTRY_BYTES = GRAPH_RESPONSE_BYTES // 4
 # failed-outbox overlay on /final-blockers.  The page reader uses only this
 # budget before it decodes persisted JSON.
 GRAPH_ARCHIVAL_PAGE_PAYLOAD_BYTES = GRAPH_RESPONSE_BYTES - (4 * 1024)
-GRAPH_EVENT_PAYLOAD_BYTES = 16_384
+# Compatibility alias retained for read-contract callers.  The value now caps
+# the complete serialized EventEnvelope on both write and replay.
+GRAPH_EVENT_PAYLOAD_BYTES = MAX_EVENT_ENVELOPE_BYTES
 GRAPH_RUNTIME_TAIL_EVENTS = 128
 GRAPH_READ_MODEL_REBUILD_BATCH_EVENTS = 100
 _READ_CONTRACT_KEY = "_graph_read_contract"
@@ -120,6 +125,21 @@ HEAVY_GRAPH_EVENT_TYPES = frozenset(
         "file_state_rejected",
         "output_record_accepted",
     }
+)
+_RUNNER_CACHE_CARRIER_EVENT_TYPES = frozenset(
+    {
+        "runner_baseline_recorded",
+        "runner_submission_staged",
+        "runner_boundary_mismatch",
+        "runner_recovery_requested",
+        "runner_execution_finalized",
+    }
+)
+_RUNNER_CACHE_CARRIER_PATHS = (
+    "$.payload.cache_roots",
+    "$.payload.observed_cache_roots",
+    "$.payload.authorized_cache_roots",
+    "$.payload.legacy_cache_root_paths",
 )
 SUMMARY_PAYLOAD_FIELDS = (
     "accepted_patches",
@@ -807,6 +827,109 @@ def _json_utf8_byte_length(value: Any) -> Any:
     representation of the on-wire JSON body we are about to decode.
     """
     return func.length(sql_cast(value, LargeBinary))
+
+
+def _compatibility_compacted_event_json() -> Any:
+    """Return a SQL-only compacted envelope for bounded legacy reads.
+
+    The original JSON remains canonical in ``events_v2``.  Importantly, this
+    expression transforms legacy oversized values inside SQLite, so the raw
+    body never crosses into Python before the byte contract is checked.
+    """
+    runner_compacted = func.json_remove(
+        EventV2Model.payload,
+        *_RUNNER_CACHE_CARRIER_PATHS,
+    )
+    cache_authority_hash_type = func.json_type(
+        EventV2Model.payload, "$.payload.cache_authority_hash"
+    )
+    cache_status_evidence_type = func.json_type(
+        EventV2Model.payload, "$.payload.cache_status_evidence"
+    )
+    legacy_cache_root_paths_type = func.json_type(
+        EventV2Model.payload, "$.payload.legacy_cache_root_paths"
+    )
+    legacy_cache_root_paths_length = func.json_array_length(
+        EventV2Model.payload, "$.payload.legacy_cache_root_paths"
+    )
+    # A hash-bound event with retained status evidence can deterministically
+    # re-derive typed cache roots from the routine-owned authority snapshot.
+    # Pre-authority events carried string roots as the only authority record;
+    # compacting those (or any explicit legacy-root list) would silently turn
+    # real recovery authority into an empty set.
+    runner_cache_carriers_are_redundant = and_(
+        cache_authority_hash_type == "text",
+        cache_status_evidence_type == "array",
+        or_(
+            legacy_cache_root_paths_type.is_(None),
+            legacy_cache_root_paths_type == "null",
+            and_(
+                legacy_cache_root_paths_type == "array",
+                legacy_cache_root_paths_length == 0,
+            ),
+        ),
+    )
+    outer_paths = func.json_each(
+        func.coalesce(func.json_extract(EventV2Model.payload, "$.payload.paths"), "[]")
+    ).table_valued("key", "value")
+    non_cache_outer_paths = (
+        select(func.coalesce(func.json_group_array(func.json(outer_paths.c.value)), "[]"))
+        .select_from(outer_paths)
+        .where(
+            or_(
+                func.json_extract(outer_paths.c.value, "$.classification").is_(None),
+                func.json_extract(outer_paths.c.value, "$.classification") != "tool_cache",
+            )
+        )
+        .correlate(EventV2Model)
+        .scalar_subquery()
+    )
+    outer_file_state_compacted = func.json_set(
+        EventV2Model.payload,
+        "$.payload.paths",
+        func.json(non_cache_outer_paths),
+    )
+    nested_paths_type = func.json_type(EventV2Model.payload, "$.payload.payload.paths")
+    nested_paths = func.json_each(
+        func.coalesce(
+            func.json_extract(EventV2Model.payload, "$.payload.payload.paths"),
+            "[]",
+        )
+    ).table_valued("key", "value")
+    non_cache_nested_paths = (
+        select(func.coalesce(func.json_group_array(func.json(nested_paths.c.value)), "[]"))
+        .select_from(nested_paths)
+        .where(
+            or_(
+                func.json_extract(nested_paths.c.value, "$.classification").is_(None),
+                func.json_extract(nested_paths.c.value, "$.classification") != "tool_cache",
+            )
+        )
+        .correlate(EventV2Model)
+        .scalar_subquery()
+    )
+    file_state_compacted = case(
+        (
+            nested_paths_type == "array",
+            func.json_set(
+                outer_file_state_compacted,
+                "$.payload.payload.paths",
+                func.json(non_cache_nested_paths),
+            ),
+        ),
+        else_=outer_file_state_compacted,
+    )
+    return case(
+        (
+            and_(
+                EventV2Model.event_type.in_(_RUNNER_CACHE_CARRIER_EVENT_TYPES),
+                runner_cache_carriers_are_redundant,
+            ),
+            runner_compacted,
+        ),
+        (EventV2Model.event_type == "file_state_accepted", file_state_compacted),
+        else_=EventV2Model.payload,
+    )
 
 
 def _truncated_json_value(value: Any, bounded_value: Any) -> dict[str, Any]:
@@ -2195,13 +2318,20 @@ class GraphEventStore:
                     "payload": _payload_with_durable_graph_position(event, position, run_id),
                 }
             )
+            encoded = stored.model_dump_json().encode("utf-8")
+            if len(encoded) > MAX_EVENT_ENVELOPE_BYTES:
+                raise GraphEventEnvelopeTooLargeError(
+                    event_type=stored.event_type,
+                    observed_bytes=len(encoded),
+                    limit_bytes=MAX_EVENT_ENVELOPE_BYTES,
+                )
             stored_events.append(stored)
             rows.append(
                 EventV2Model(
                     aggregate_id=graph_aggregate_id(run_id),
                     version=position,
                     event_type=stored.event_type,
-                    payload=stored.model_dump_json(),
+                    payload=encoded.decode("utf-8"),
                     timestamp=stored.timestamp.isoformat(),
                 )
             )
@@ -2343,17 +2473,22 @@ class GraphEventStore:
             raise ValueError("limit must be positive")
         if payload_byte_cap < 1:
             raise ValueError("payload_byte_cap must be positive")
-        payload_json = func.json_extract(EventV2Model.payload, "$.payload")
-        payload_size = _json_utf8_byte_length(payload_json)
+        effective_cap = min(payload_byte_cap, MAX_EVENT_ENVELOPE_BYTES)
+        compacted_envelope = _compatibility_compacted_event_json()
+        compacted_size = _json_utf8_byte_length(compacted_envelope)
+        payload_json = func.json_extract(compacted_envelope, "$.payload")
+        original_payload_size = _json_utf8_byte_length(
+            func.json_extract(EventV2Model.payload, "$.payload")
+        )
         result = await self._session.execute(
             select(
                 EventV2Model.event_type,
                 EventV2Model.version,
                 EventV2Model.timestamp,
                 func.json_extract(EventV2Model.payload, "$.event_id").label("event_id"),
-                payload_size.label("payload_size"),
+                original_payload_size.label("payload_size"),
                 case(
-                    (payload_size <= payload_byte_cap, payload_json),
+                    (compacted_size <= effective_cap, payload_json),
                     else_=None,
                 ).label("bounded_payload"),
             )
@@ -3604,8 +3739,12 @@ class GraphEventStore:
         capped per selected boundary, so verdict and cost facts cannot split a
         boundary across cursor pages.
         """
-        payload_cap = GRAPH_READ_CONTRACTS["file_state"].byte_cap
-        payload_size = _json_utf8_byte_length(EventV2Model.payload)
+        payload_cap = min(
+            GRAPH_READ_CONTRACTS["file_state"].byte_cap,
+            MAX_EVENT_ENVELOPE_BYTES,
+        )
+        compacted_payload = _compatibility_compacted_event_json()
+        payload_size = _json_utf8_byte_length(compacted_payload)
         result = await self._session.execute(
             select(
                 EventV2Model.version,
@@ -3626,7 +3765,7 @@ class GraphEventStore:
                 ),
                 func.json_extract(EventV2Model.payload, "$.payload.verdict").label("verdict"),
                 case(
-                    (payload_size <= payload_cap, EventV2Model.payload),
+                    (payload_size <= payload_cap, compacted_payload),
                     else_=None,
                 ).label("bounded_payload"),
             )
@@ -3728,7 +3867,15 @@ class GraphEventStore:
         path_limit: int,
     ) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
         """Read a first-page path view and exact aggregate counts without decoding its event."""
-        source_keys = ("classifications", "residue", "tracked", "untracked", "ignored", "external")
+        source_keys = (
+            "paths",
+            "classifications",
+            "residue",
+            "tracked",
+            "untracked",
+            "ignored",
+            "external",
+        )
         entries: list[dict[str, Any]] = []
         source_total = 0
         classification_counts: dict[str, int] = {}
@@ -3738,18 +3885,22 @@ class GraphEventStore:
                 .table_valued("key", "value")
                 .alias(f"file_state_{source_key}")
             )
+            classification = func.json_extract(array_entries.c.value, "$.classification")
+            non_cache_entry = or_(
+                classification.is_(None),
+                classification != "tool_cache",
+            )
             count_rows = await self._session.execute(
                 select(
                     func.count().label("entry_count"),
-                    func.json_extract(array_entries.c.value, "$.classification").label(
-                        "classification"
-                    ),
+                    classification.label("classification"),
                 )
                 .select_from(EventV2Model)
                 .join(array_entries, true())
                 .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
                 .where(EventV2Model.version == position)
-                .group_by(func.json_extract(array_entries.c.value, "$.classification"))
+                .where(non_cache_entry)
+                .group_by(classification)
             )
             for count_row in count_rows:
                 count = int(count_row.entry_count)
@@ -3767,6 +3918,7 @@ class GraphEventStore:
                 .join(array_entries, true())
                 .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
                 .where(EventV2Model.version == position)
+                .where(non_cache_entry)
                 .order_by(array_entries.c.key)
                 .limit(path_limit - len(entries))
             )
@@ -3789,7 +3941,10 @@ class GraphEventStore:
     ) -> tuple[tuple[EventEnvelope, ...], dict[str, int]]:
         if not record_ids:
             return (), {}
-        payload_cap = GRAPH_READ_CONTRACTS["file_state"].byte_cap
+        payload_cap = min(
+            GRAPH_READ_CONTRACTS["file_state"].byte_cap,
+            MAX_EVENT_ENVELOPE_BYTES,
+        )
         record_id_expr = func.json_extract(EventV2Model.payload, "$.payload.file_state_record_id")
         fact_count_result = await self._session.execute(
             select(record_id_expr.label("record_id"), func.count().label("fact_count"))
@@ -3818,12 +3973,13 @@ class GraphEventStore:
             .where(record_id_expr.in_(record_ids))
             .subquery()
         )
-        payload_size = _json_utf8_byte_length(EventV2Model.payload)
+        compacted_payload = _compatibility_compacted_event_json()
+        payload_size = _json_utf8_byte_length(compacted_payload)
         fact_result = await self._session.execute(
             select(
                 EventV2Model.version,
                 case(
-                    (payload_size <= payload_cap, EventV2Model.payload),
+                    (payload_size <= payload_cap, compacted_payload),
                     else_=None,
                 ).label("bounded_payload"),
             )
@@ -3906,13 +4062,14 @@ class GraphEventStore:
         )
         if not unique_positions:
             return []
-        payload_size = _json_utf8_byte_length(EventV2Model.payload)
+        compacted_payload = _compatibility_compacted_event_json()
+        payload_size = _json_utf8_byte_length(compacted_payload)
         result = await self._session.execute(
             select(
                 EventV2Model.version,
                 payload_size.label("payload_size"),
                 case(
-                    (payload_size <= GRAPH_EVENT_PAYLOAD_BYTES, EventV2Model.payload),
+                    (payload_size <= MAX_EVENT_ENVELOPE_BYTES, compacted_payload),
                     else_=None,
                 ).label("bounded_payload"),
             )
@@ -4649,12 +4806,13 @@ class GraphEventStore:
         owner: str,
     ) -> list[EventEnvelope]:
         """Decode a fixed event window only after SQL has enforced byte caps."""
-        payload_size = _json_utf8_byte_length(EventV2Model.payload)
+        compacted_payload = _compatibility_compacted_event_json()
+        payload_size = _json_utf8_byte_length(compacted_payload)
         result = await self._session.execute(
             select(
                 EventV2Model.version,
                 case(
-                    (payload_size <= GRAPH_EVENT_PAYLOAD_BYTES, EventV2Model.payload),
+                    (payload_size <= MAX_EVENT_ENVELOPE_BYTES, compacted_payload),
                     else_=None,
                 ).label("bounded_payload"),
             )

@@ -112,7 +112,7 @@ def handle_record_runner_baseline(
     if reason := _authority_reason(projection, payload):
         return _conflict(make_event, "record_runner_baseline", reason)
     attempt = execution_attempts_view(projection).get(payload.execution_id)
-    event_payload = payload.model_dump(mode="json")
+    event_payload = payload.model_dump(mode="json", exclude={"cache_roots"})
     if attempt is not None:
         if (
             attempt.state == "baseline_captured"
@@ -127,7 +127,7 @@ def handle_record_runner_baseline(
             and attempt.baseline_boundary_hash == payload.boundary_hash
             and tuple(item.model_dump(mode="json") for item in attempt.baseline_entries)
             == tuple(event_payload["entries"])
-            and tuple(attempt.cache_roots) == tuple(event_payload["cache_roots"])
+            and tuple(attempt.baseline_cache_roots) == tuple(payload.cache_roots)
         ):
             return []
         return _conflict(make_event, "record_runner_baseline", "execution baseline conflicts")
@@ -253,7 +253,6 @@ def handle_stage_runner_submission(
         "new_state": payload.new_state,
         "owns_file_state_snapshot": owns_file_state_snapshot,
         "cache_authority_hash": payload.cache_authority_hash,
-        "cache_roots": payload.cache_roots,
         "cache_status_evidence": payload.cache_status_evidence,
     }
     return [make_event("runner_submission_staged", staged)]
@@ -325,9 +324,6 @@ def handle_finalize_runner_execution(
                         entry.model_dump(mode="json") for entry in payload.boundary_entries
                     ],
                     "cache_authority_hash": payload.cache_authority_hash,
-                    "observed_cache_roots": payload.cache_roots,
-                    "authorized_cache_roots": _authorized_roots(attempt, payload.cache_roots),
-                    "legacy_cache_root_paths": list(attempt.legacy_cache_root_paths),
                     "cache_status_evidence": payload.cache_status_evidence,
                     "reason": "boundary_mismatch",
                 },
@@ -353,9 +349,6 @@ def handle_finalize_runner_execution(
                         entry.model_dump(mode="json") for entry in payload.boundary_entries
                     ],
                     "cache_authority_hash": payload.cache_authority_hash,
-                    "observed_cache_roots": payload.cache_roots,
-                    "authorized_cache_roots": _authorized_roots(attempt, payload.cache_roots),
-                    "legacy_cache_root_paths": list(attempt.legacy_cache_root_paths),
                     "cache_status_evidence": payload.cache_status_evidence,
                     "paths": recovery_paths,
                 },
@@ -433,7 +426,7 @@ def handle_finalize_runner_execution(
     if not callback_plan or callback_plan[0].event_type != "callback_accepted":
         return [make_event(item.event_type, item.payload) for item in callback_plan]
     # Finalization precedes every externally visible callback effect atomically.
-    final_payload = payload.model_dump(mode="json", exclude={"callback_payload"})
+    final_payload = payload.model_dump(mode="json", exclude={"callback_payload", "cache_roots"})
     staged_snapshot_transferred = _accepted_file_state_owns_staged_snapshot(callback_plan, attempt)
     return [
         make_event("runner_execution_finalized", final_payload),
@@ -561,14 +554,6 @@ def handle_request_runner_recovery(
                     entry.model_dump(mode="json") for entry in payload.boundary_entries
                 ],
                 "cache_authority_hash": payload.cache_authority_hash,
-                "observed_cache_roots": [
-                    root.model_dump(mode="json") for root in payload.observed_cache_roots
-                ],
-                "authorized_cache_roots": [
-                    root.model_dump(mode="json")
-                    for root in _authorized_roots(attempt, payload.observed_cache_roots)
-                ],
-                "legacy_cache_root_paths": list(attempt.legacy_cache_root_paths),
                 "cache_status_evidence": payload.cache_status_evidence,
                 "paths": paths,
                 "recovery_scope": payload.recovery_scope,
