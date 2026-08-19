@@ -73,7 +73,6 @@ def create_cli_agent(
     # Resolve nudger config
     if nudger_config is None and global_config and global_config.nudger:
         nudger_config = global_config.nudger.to_agent_runner_config()
-
     return CLIAgent(
         command=command,
         args=args,

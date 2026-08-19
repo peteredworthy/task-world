@@ -27,6 +27,7 @@ def test_cli_config_uses_plain_model_field_without_discovered_models() -> None:
 
     assert getattr(command, "default") == "codex"
     assert getattr(model, "field_type") == "string"
+    assert getattr(model, "allow_custom") is False
     assert getattr(model, "options") is None
 
 
@@ -41,12 +42,13 @@ def test_cli_config_uses_select_model_field_with_discovered_models() -> None:
 
     assert getattr(command, "default") == "codex"
     assert getattr(model, "field_type") == "select"
+    assert getattr(model, "allow_custom") is False
     assert getattr(model, "options") == ["gpt-5.3-codex", "gpt-5.2"]
     assert getattr(model, "default") == "gpt-5.3-codex"
 
 
-def test_cli_config_prefers_gpt53_when_deprecated_model_is_first() -> None:
-    """Regression: gpt-5.2-codex first in list must not become the default."""
+def test_cli_config_defaults_to_first_discovered_model() -> None:
+    """The generic Codex CLI keeps its first discovered model as the default."""
     schema = ToolDetector._cli_config_for_codex(  # pyright: ignore[reportPrivateUsage]
         "codex",
         ["gpt-5.2-codex", "gpt-5.3-codex"],
@@ -56,7 +58,7 @@ def test_cli_config_prefers_gpt53_when_deprecated_model_is_first() -> None:
 
     assert getattr(model, "field_type") == "select"
     assert getattr(model, "options") == ["gpt-5.2-codex", "gpt-5.3-codex"]
-    assert getattr(model, "default") == "gpt-5.3-codex"
+    assert getattr(model, "default") == "gpt-5.2-codex"
 
 
 def test_codex_server_config_prefers_gpt53_when_deprecated_model_is_first() -> None:
@@ -65,8 +67,13 @@ def test_codex_server_config_prefers_gpt53_when_deprecated_model_is_first() -> N
 
     model = _field(schema, "model")
 
-    assert getattr(model, "field_type") == "select"
-    assert getattr(model, "options") == ["gpt-5.2-codex", "gpt-5.3-codex"]
+    assert getattr(model, "field_type") == "combobox"
+    assert getattr(model, "options") == [
+        "gpt-5.2-codex",
+        "gpt-5.3-codex",
+        "qwen3.8-27b-mlx@4bit",
+        "qwen3.8-27b-mlx@8bit",
+    ]
     assert getattr(model, "default") == "gpt-5.3-codex"
 
 
@@ -77,7 +84,11 @@ def test_codex_server_config_all_models_offered_preferred_is_default() -> None:
 
     model = _field(schema, "model")
 
-    assert getattr(model, "options") == models
+    assert getattr(model, "options") == [
+        *models,
+        "qwen3.8-27b-mlx@4bit",
+        "qwen3.8-27b-mlx@8bit",
+    ]
     assert getattr(model, "default") == "gpt-5.3-codex"
 
 
@@ -116,23 +127,32 @@ def test_select_preferred_model_prefers_known_model_over_custom() -> None:
     assert result == "gpt-5.3-codex"
 
 
-def test_cli_config_no_default_when_only_unsupported_model() -> None:
-    """CLI config model field has no default when only unsupported models are discovered."""
+def test_cli_config_uses_first_model_when_only_unsupported_model() -> None:
+    """CLI config preserves its first discovered model as the default."""
     schema = ToolDetector._cli_config_for_codex(  # pyright: ignore[reportPrivateUsage]
         "codex",
         ["gpt-5.2-codex"],
     )
     model = _field(schema, "model")
-    # Field should be a select (model list is non-empty) but default must be None
+    # Generic Codex CLI preserves the first discovered model as its default.
     assert getattr(model, "field_type") == "select"
-    assert getattr(model, "default") is None
+    assert getattr(model, "default") == "gpt-5.2-codex"
+
+
+def test_codex_server_config_exposes_lmstudio_provider_option() -> None:
+    schema = _codex_server_config_with_models([])
+
+    provider = _field(schema, "local_provider")
+
+    assert getattr(provider, "default") == "openai"
+    assert getattr(provider, "options") == ["openai", "lmstudio"]
 
 
 def test_codex_server_config_no_default_when_only_unsupported_model() -> None:
     """Codex Server config model field has no default when only unsupported models are discovered."""
     schema = _codex_server_config_with_models(["gpt-5.2-codex"])
     model = _field(schema, "model")
-    assert getattr(model, "field_type") == "select"
+    assert getattr(model, "field_type") == "combobox"
     assert getattr(model, "default") is None
 
 

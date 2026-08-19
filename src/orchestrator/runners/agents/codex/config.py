@@ -9,11 +9,27 @@ import logging
 import os
 from typing import Any
 
-from orchestrator.runners.types import AgentConfigField
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.runners.agents.codex.common import select_preferred_codex_model
+from orchestrator.runners.types import AgentConfigField
 
 logger = logging.getLogger(__name__)
+
+LMSTUDIO_QWEN_27B_MODELS: list[str] = [
+    "qwen3.8-27b-mlx@4bit",
+    "qwen3.8-27b-mlx@8bit",
+]
+
+CODEX_LOCAL_PROVIDER_FIELD = AgentConfigField(
+    name="local_provider",
+    field_type="select",
+    default="openai",
+    description=(
+        "Codex inference provider. Select LM Studio to use a locally loaded "
+        "model while retaining Codex Server's native orchestration tools."
+    ),
+    options=["openai", "lmstudio"],
+)
 
 CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
@@ -21,6 +37,13 @@ CODEX_SERVER_CONFIG: list[AgentConfigField] = [
         field_type="string",
         description="Model to use for Codex agent sessions",
         allow_custom=True,
+    ),
+    AgentConfigField(
+        name="callback_channel",
+        field_type="select",
+        default="rest",
+        description="How the Codex server calls back to the orchestrator",
+        options=["rest", "mcp"],
     ),
     AgentConfigField(
         name="restrictions",
@@ -42,34 +65,22 @@ CODEX_SERVER_CONFIG: list[AgentConfigField] = [
         description="Reasoning effort for Codex model turns",
         options=["low", "medium", "high"],
     ),
+    CODEX_LOCAL_PROVIDER_FIELD,
 ]
 
 
 def codex_server_config_with_models(models: list[str]) -> list[AgentConfigField]:
-    """Return the Codex Server config schema with the model field populated.
-
-    When *models* is non-empty the model field is upgraded to a ``"select"``
-    with the discovered model IDs as options.  The default is chosen via
-    ``select_preferred_codex_model`` so that known-working models are
-    preferred over deprecated ones (e.g. gpt-5.2-codex).  When empty the
-    field stays as a plain ``"string"`` with no options, preserving the
-    existing behaviour.
-
-    Args:
-        models: Ordered list of model ID strings returned by
-            ``fetch_codex_models()``.
-
-    Returns:
-        A new config schema list with the model field updated.
-    """
+    """Return the Codex Server config schema with discovered and local models."""
     config: list[AgentConfigField] = []
     for cfg_field in CODEX_SERVER_CONFIG:
-        if cfg_field.name == "model" and models:
+        if cfg_field.name == "model":
+            options = list(dict.fromkeys([*models, *LMSTUDIO_QWEN_27B_MODELS]))
             config.append(
                 cfg_field.model_copy(
                     update={
-                        "field_type": "select",
-                        "options": models,
+                        "field_type": "combobox",
+                        "allow_custom": True,
+                        "options": options,
                         "default": select_preferred_codex_model(models),
                     }
                 )
@@ -92,31 +103,7 @@ def prepare_codex_config(
     agent_runner_type: AgentRunnerType,
     agent_runner_config: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None]:
-    """Apply the deterministic recovery rule for Codex agents.
-
-    Inspects the stored session state (PID for local) and decides whether
-    to resume the persisted session or discard it and start a fresh attempt.
-
-    Rule:
-    - Healthy persisted session  -> return config unchanged so the agent
-      can resume (PID passed through).
-    - Stale / missing session    -> return a cleaned config (session keys
-      removed) and a non-None ``stale_reason`` string describing why the
-      session was discarded.
-
-    Only CODEX_SERVER is handled; all other agent runner types are returned
-    unchanged with ``stale_reason=None``.
-
-    Args:
-        agent_runner_type: The agent runner type of the run.
-        agent_runner_config: The current agent_runner_config dict from the run.
-
-    Returns:
-        ``(effective_config, stale_reason)`` where ``effective_config``
-        is the agent_runner_config to use for agent creation (may have session
-        keys stripped) and ``stale_reason`` is ``None`` when the session
-        is healthy or the agent runner type is not Codex.
-    """
+    """Apply the deterministic recovery rule for Codex agent sessions."""
     if agent_runner_type == AgentRunnerType.CODEX_SERVER:
         pid_raw = agent_runner_config.get("pid")
         if pid_raw is None:
@@ -125,7 +112,7 @@ def prepare_codex_config(
         if _is_codex_process_alive(pid):
             return agent_runner_config, None
         stale_reason = f"local_codex_process_not_alive (pid={pid})"
-        cleaned = {k: v for k, v in agent_runner_config.items() if k != "pid"}
+        cleaned = {key: value for key, value in agent_runner_config.items() if key != "pid"}
         logger.info("Codex config: session stale — %s; starting fresh", stale_reason)
         return cleaned, stale_reason
 

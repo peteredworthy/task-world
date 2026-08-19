@@ -8,7 +8,11 @@ from typing import Any
 
 import pytest
 
-from orchestrator.runners import CodexServerAgent, _build_workspace_write_config_toml
+from orchestrator.runners import (
+    CodexServerAgent,
+    _build_workspace_write_config_toml,
+    build_codex_app_server_launch,
+)
 from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
@@ -89,6 +93,25 @@ def test_workspace_write_config_toml_enables_network_and_serializes_roots() -> N
     assert '"/tmp/cache"' in config
     assert '"/tmp/gitmeta"' in config
     assert "network_access = true" in config
+
+
+def test_lmstudio_launch_uses_codex_server_provider_and_compatibility_bridge() -> None:
+    argv, environment = build_codex_app_server_launch(
+        "lmstudio",
+        "http://127.0.0.1:8000/",
+    )
+
+    assert argv == ["codex", "app-server", "-c", 'model_provider="lmstudio"']
+    assert environment == {
+        "CODEX_OSS_BASE_URL": "http://127.0.0.1:8000/api/agent-runners/lmstudio-codex"
+    }
+
+
+def test_openai_launch_does_not_override_codex_provider() -> None:
+    argv, environment = build_codex_app_server_launch("openai", None)
+
+    assert argv == ["codex", "app-server"]
+    assert environment == {}
 
 
 # ---------------------------------------------------------------------------

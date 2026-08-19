@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from orchestrator.runners.types import AgentConfigField
 
+
 CLI_SUBPROCESS_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="command",
@@ -71,11 +72,9 @@ def cli_config_for_command(command: str) -> list[AgentConfigField]:
 def cli_config_for_codex(command: str, models: list[str]) -> list[AgentConfigField]:
     """Return the CLI config schema for ``codex`` with model options populated.
 
-    When *models* is non-empty the ``model`` field is upgraded to a
-    ``"select"`` with the discovered IDs as options and the first entry
-    as the default.  When empty the field stays as a plain
-    ``"string"`` -- identical to the baseline ``cli_config_for_command``
-    output.
+    When *models* is non-empty the model field is upgraded to a ``"select"``
+    with the discovered IDs as options. The local-provider Codex Server runner
+    owns LM Studio model selection so it retains native orchestration tools.
 
     Args:
         command: The CLI command name (e.g. ``"codex"``).

@@ -281,6 +281,8 @@ def _agent_message_delta(text: str, item_id: str = "item_msg_001") -> dict[str, 
 
 def _make_agent(
     notifications: list[dict[str, Any]],
+    *,
+    local_provider: str = "openai",
 ) -> tuple[CodexServerAgent, _FakeStdioTransport]:
     """Return (agent, transport) with an injected fake transport.
 
@@ -296,7 +298,12 @@ def _make_agent(
         *notifications,
     ]
     transport = _FakeStdioTransport(recv_sequence)
-    agent = CodexServerAgent(api_key=None, _transport=transport, _environ={})
+    agent = CodexServerAgent(
+        api_key=None,
+        local_provider=local_provider,
+        _transport=transport,
+        _environ={},
+    )
     return agent, transport
 
 
@@ -399,7 +406,7 @@ async def test_execute_routes_submit_graph_patch_to_callback_with_feedback() -> 
         ),
         _turn_completed(),
     ]
-    agent, transport = _make_agent(notifications)
+    agent, transport = _make_agent(notifications, local_provider="lmstudio")
     received: list[dict[str, Any]] = []
 
     async def capture_patch(payload: dict[str, Any]) -> str:

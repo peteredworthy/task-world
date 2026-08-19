@@ -137,6 +137,25 @@ def _build_workspace_write_config_toml(
     return "\n".join(lines)
 
 
+def build_codex_app_server_launch(
+    local_provider: str,
+    api_base_url: str | None,
+) -> tuple[list[str], dict[str, str]]:
+    """Build the app-server command and provider-specific environment."""
+    argv = ["codex", "app-server"]
+    if local_provider != "lmstudio":
+        return argv, {}
+
+    orchestrator_base = (api_base_url or "http://localhost:8000").rstrip("/")
+    # The app-server accepts regular configuration overrides. Selecting its
+    # built-in LM Studio provider here preserves dynamic tool injection and
+    # callback routing in this existing runner.
+    return (
+        [*argv, "-c", 'model_provider="lmstudio"'],
+        {"CODEX_OSS_BASE_URL": (f"{orchestrator_base}/api/agent-runners/lmstudio-codex")},
+    )
+
+
 # ---------------------------------------------------------------------------
 # Stdio transport
 # ---------------------------------------------------------------------------
@@ -331,6 +350,7 @@ class CodexServerAgent:
         api_key: str | None = None,
         restrictions: str = "managed",
         reasoning_effort: str = "high",
+        local_provider: str = "openai",
         *,
         _transport: JsonRpcTransport | None = None,
         _environ: dict[str, str] | None = None,
@@ -347,6 +367,9 @@ class CodexServerAgent:
         # - "managed":  Use orchestrator-managed workspace-write roots and network policy.
         # - "use-local": Delegate entirely to the user's local Codex config.toml, including sandbox.
         self._restrictions = self._normalize_restrictions(restrictions)
+        self._local_provider = (
+            local_provider if local_provider in {"openai", "lmstudio"} else "openai"
+        )
         # Resolve API key: explicit arg only (or test-injected _environ).
         # Do NOT fall back to OPENAI_API_KEY from os.environ — doing so causes
         # execute() to call account/login/start with apiKey, which unconditionally
@@ -1098,7 +1121,11 @@ class CodexServerAgent:
         # apply to `codex exec` / interactive mode.  For `codex app-server` the
         # sandbox is controlled per-thread via the `sandbox` field in
         # thread/start (see Step 2 below).  No extra CLI flags are needed here.
-        argv: list[str] = ["codex", "app-server"]
+        argv, provider_env = build_codex_app_server_launch(
+            self._local_provider,
+            context.api_base_url,
+        )
+        clean_env.update(provider_env)
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -1134,10 +1161,12 @@ class CodexServerAgent:
         if on_agent_metadata is not None:
             await on_agent_metadata({"pid": proc.pid})
 
-        logger.debug(
-            "CodexServerAgent: spawned codex app-server — pid=%d, codex_home=%s",
+        logger.info(
+            "CodexServerAgent: spawned codex app-server — pid=%d, provider=%s, run=%s, task=%s",
             proc.pid,
-            tmp_codex_home,
+            self._local_provider,
+            context.run_id,
+            context.task_id,
         )
         return RealStdioTransport(proc), True, tmp_codex_home
 

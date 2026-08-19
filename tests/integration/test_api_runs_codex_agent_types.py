@@ -185,6 +185,63 @@ async def test_create_run_rejects_unsupported_codex_cli_model(
     assert "gpt-5.2-codex" in detail
 
 
+async def test_create_run_accepts_lmstudio_qwen_when_cloud_models_are_known(
+    client_with_known_models: AsyncClient,
+) -> None:
+    """LM Studio models must not be checked against Codex cloud discovery."""
+    response = await client_with_known_models.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+            "agent_runner_type": "codex_server",
+            "agent_runner_config": {
+                "model": "qwen3.8-27b-mlx@4bit",
+                "local_provider": "lmstudio",
+            },
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["agent_runner_config"] == {
+        "model": "qwen3.8-27b-mlx@4bit",
+        "local_provider": "lmstudio",
+    }
+
+
+async def test_create_run_rejects_unknown_codex_local_provider(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+            "agent_runner_type": "codex_server",
+            "agent_runner_config": {"local_provider": "unknown"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "local_provider must be one of: openai, lmstudio"
+
+
+async def test_create_run_rejects_cli_local_provider_field(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+            "agent_runner_type": "cli_subprocess",
+            "agent_runner_config": {"command": "codex", "local_provider": "lmstudio"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert "local_provider" in response.json()["detail"]
+
+
 async def test_create_run_accepts_supported_codex_model(
     client_with_known_models: AsyncClient,
 ) -> None:

@@ -24,10 +24,14 @@ from orchestrator.config.enums import AgentRunnerType
 from orchestrator.runners.agents.claude_cli.config import (
     CLI_SUBPROCESS_CONFIG as _CLI_SUBPROCESS_CONFIG,
     cli_config_for_command as _cli_config_for_command,
+    cli_config_for_codex as _cli_config_for_codex,
+)
+from orchestrator.runners.agents.codex.config import (
+    CODEX_SERVER_CONFIG as _CODEX_SERVER_CONFIG,
+    codex_server_config_with_models as _codex_server_config_with_models,
 )
 from orchestrator.runners.agents.codex.common import (
     fetch_codex_models,
-    select_preferred_codex_model,
 )
 from orchestrator.runners.types import AgentConfigField, AgentRunnerOption, AgentRunnerQuota
 
@@ -187,43 +191,6 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
     ),
 ]
 
-_CODEX_SERVER_CONFIG: list[AgentConfigField] = [
-    AgentConfigField(
-        name="model",
-        field_type="string",
-        description="Model to use for Codex agent sessions",
-        allow_custom=True,
-    ),
-    AgentConfigField(
-        name="callback_channel",
-        field_type="select",
-        default="rest",
-        description="How the Codex server calls back to the orchestrator",
-        options=["rest", "mcp"],
-    ),
-    AgentConfigField(
-        name="restrictions",
-        field_type="select",
-        default="managed",
-        description=(
-            "How strictly to sandbox Codex. "
-            "'none' runs with workspace-write and network enabled. "
-            "'managed' uses orchestrator-managed writable roots; network is currently enabled "
-            "so package-manager caches and hook environments can refresh. "
-            "'use-local' hands control to your local Codex config.toml (may be read-only)."
-        ),
-        options=["none", "managed", "use-local"],
-    ),
-    AgentConfigField(
-        name="reasoning_effort",
-        field_type="select",
-        default="high",
-        description="Reasoning effort for Codex model turns",
-        options=["low", "medium", "high"],
-    ),
-]
-
-
 _BUILTIN_CONFIG_SCHEMAS: dict[AgentRunnerType, list[AgentConfigField]] = {
     AgentRunnerType.OPENHANDS_LOCAL: _OPENHANDS_LOCAL_CONFIG,
     AgentRunnerType.OPENHANDS_DOCKER: _OPENHANDS_DOCKER_CONFIG,
@@ -246,7 +213,9 @@ def get_builtin_config_schema(agent_runner_type: AgentRunnerType) -> list[AgentC
 AGENT_CONFIG_FIELDS: dict[AgentRunnerType, set[str]] = {
     AgentRunnerType.OPENHANDS_LOCAL: {f.name for f in _OPENHANDS_LOCAL_CONFIG},
     AgentRunnerType.OPENHANDS_DOCKER: {f.name for f in _OPENHANDS_DOCKER_CONFIG},
-    AgentRunnerType.CLI_SUBPROCESS: {f.name for f in _CLI_SUBPROCESS_CONFIG},
+    AgentRunnerType.CLI_SUBPROCESS: {
+        *(f.name for f in _CLI_SUBPROCESS_CONFIG),
+    },
     AgentRunnerType.CODEX_SERVER: {f.name for f in _CODEX_SERVER_CONFIG},
 }
 
@@ -266,33 +235,6 @@ class _QuotaCacheEntry:
     last_success_quota: AgentRunnerQuota | None = None
     last_success_at: float | None = None  # wall-clock time.time() of last success
     retry_after: float = 0.0  # monotonic time before which no retry should be attempted
-
-
-def _codex_server_config_with_models(models: list[str]) -> list[AgentConfigField]:
-    """Return the Codex Server config schema with the model field populated.
-
-    When *models* is non-empty the model field is upgraded to a ``"select"``
-    with the discovered model IDs as options.  The default is chosen via
-    ``select_preferred_codex_model`` so that known-working models are
-    preferred over deprecated ones (e.g. gpt-5.2-codex).  When empty the
-    field stays as a plain ``"string"`` with no options, preserving the
-    existing behaviour.
-    """
-    config: list[AgentConfigField] = []
-    for cfg_field in _CODEX_SERVER_CONFIG:
-        if cfg_field.name == "model" and models:
-            config.append(
-                cfg_field.model_copy(
-                    update={
-                        "field_type": "select",
-                        "options": models,
-                        "default": select_preferred_codex_model(models),
-                    }
-                )
-            )
-        else:
-            config.append(cfg_field.model_copy())
-    return config
 
 
 class ToolDetector:
@@ -605,38 +547,20 @@ class ToolDetector:
         """Return the CLI config schema for ``codex`` with model options populated.
 
         When *models* is non-empty the ``model`` field is upgraded to a
-        ``"select"`` with the discovered IDs as options.  The default is chosen
-        via ``select_preferred_codex_model`` so that known-working models are
-        preferred over deprecated ones.  When empty the field stays as a plain
-        ``"string"`` — identical to the baseline ``_cli_config_for_command``
-        output.
+        ``"select"`` with the discovered IDs as options. When empty the field
+        stays as a plain ``"string"`` — identical to the baseline
+        ``_cli_config_for_command`` output.
         """
-        config: list[AgentConfigField] = []
-        for cfg_field in _CLI_SUBPROCESS_CONFIG:
-            if cfg_field.name == "command":
-                config.append(cfg_field.model_copy(update={"default": command}))
-            elif cfg_field.name == "model" and models:
-                config.append(
-                    cfg_field.model_copy(
-                        update={
-                            "field_type": "select",
-                            "options": models,
-                            "default": select_preferred_codex_model(models),
-                        }
-                    )
-                )
-            else:
-                config.append(cfg_field.model_copy())
-        return config
+        return _cli_config_for_codex(command, models)
 
     def _detect_codex_server(self) -> AgentRunnerOption:
         """Check if codex binary is available for running a local app-server process.
 
         When the binary is present, ``fetch_codex_models()`` is called to
         discover the models the Codex API server exposes.  If successful, the
-        ``model`` config field is upgraded to a ``"select"`` with the
-        available model IDs and the first model set as the default value.
-        When model discovery fails the field stays as a plain ``"string"``.
+        ``model`` config field includes the discovered IDs plus the supported
+        LM Studio Qwen IDs. When model discovery fails, local model choices
+        remain available through a customisable combobox.
         """
         path = shutil.which("codex")
         if path is not None:

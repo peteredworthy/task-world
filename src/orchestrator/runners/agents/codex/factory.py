@@ -28,10 +28,12 @@ def create_codex_agent(
     api_key = agent_runner_config.get("api_key")
     restrictions = agent_runner_config.get("restrictions", "managed")
     reasoning_effort = agent_runner_config.get("reasoning_effort", "high")
+    local_provider = agent_runner_config.get("local_provider", "openai")
 
     return CodexServerAgent(
         model=model,
         api_key=api_key,
         restrictions=str(restrictions),
         reasoning_effort=str(reasoning_effort),
+        local_provider=str(local_provider),
     )

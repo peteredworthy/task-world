@@ -251,6 +251,11 @@ def _is_codex_runner(runner_type: AgentRunnerType, config: dict[str, Any]) -> bo
     return False
 
 
+def _uses_lmstudio_codex(config: dict[str, Any]) -> bool:
+    """Return whether a Codex run resolves models through LM Studio."""
+    return str(config.get("local_provider", "")).lower() == "lmstudio"
+
+
 async def _graph_backed_run_ids(session: AsyncSession, run_ids: list[str]) -> set[str]:
     if not run_ids:
         return set()
@@ -603,6 +608,16 @@ def _build_run_from_request(
                         f"{sorted(unknown)}. Valid fields: {sorted(valid_fields)}"
                     ),
                 )
+            if run.agent_runner_type == AgentRunnerType.CODEX_SERVER:
+                local_provider = request.agent_runner_config.get("local_provider")
+                if local_provider is not None and (
+                    not isinstance(local_provider, str)
+                    or local_provider not in {"openai", "lmstudio"}
+                ):
+                    raise HTTPException(
+                        status_code=422,
+                        detail="local_provider must be one of: openai, lmstudio",
+                    )
         run.agent_runner_config = request.agent_runner_config
         run.verifier_model = request.agent_runner_config.get("model")
 
@@ -640,6 +655,7 @@ async def create_run(
             model
             and isinstance(model, str)
             and _is_codex_runner(run.agent_runner_type, run.agent_runner_config)
+            and not _uses_lmstudio_codex(run.agent_runner_config)
         ):
             available = await asyncio.to_thread(codex_models_fn)
             err = validate_codex_model_selection(model, available)
