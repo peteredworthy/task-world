@@ -115,6 +115,11 @@ from orchestrator.runners.types import ExecutionContext
 
 MAX_GRAPH_PROMPT_CHARS = _prompts.MAX_GRAPH_PROMPT_CHARS
 logger = logging.getLogger(__name__)
+
+# Managed local-model executions may run for many minutes without a callback.
+# This value is shared with the graph driver so the runner's asynchronous start
+# heartbeat can never shorten the lease granted by the scheduling policy.
+MANAGED_LEASE_TTL_SECONDS = 3600
 MAX_GRAPH_JSON_SECTION_CHARS = _prompts.MAX_GRAPH_JSON_SECTION_CHARS
 MAX_GRAPH_PROMPT_FIELD_CHARS = _prompts.MAX_GRAPH_PROMPT_FIELD_CHARS
 MAX_CHECK_OUTPUT_CHARS = 20_000
@@ -534,11 +539,28 @@ class GraphDispatchExecutor(SideEffectExecutor):
             ).load_projection_with_tail(run_id)
         terminal = run_state(projection) in {"cancelled", "completed", "failed"}
         handled: set[str] = set()
+        attempts = tuple(execution_attempts_view(projection).values())
+        # A pending outbox row may have been redispatched on this executor by
+        # ``recover()`` immediately before reconciliation.  Agent execution owns
+        # ``_worktree_execution_lock`` for its full mutation boundary, so trying
+        # to acquire that lock before recognizing our own task deadlocks lease
+        # maintenance behind the slow runner.  Classify current-runtime owners
+        # first; pre-restart owners exist only in the injected process registry
+        # and still take the locked quiescence/recovery path below.
+        for attempt in attempts:
+            if attempt.state in {"finalized", "recovered", "recovery_requested"}:
+                handled.add(attempt.execution_id)
+                continue
+            local_task = self._running.get(attempt.execution_id)
+            if local_task is not None and not local_task.done():
+                handled.add(attempt.execution_id)
+        attempts_requiring_recovery = tuple(
+            attempt for attempt in attempts if attempt.execution_id not in handled
+        )
+        if not attempts_requiring_recovery:
+            return handled
         async with self._worktree_execution_lock:
-            for attempt in execution_attempts_view(projection).values():
-                if attempt.state in {"finalized", "recovered", "recovery_requested"}:
-                    handled.add(attempt.execution_id)
-                    continue
+            for attempt in attempts_requiring_recovery:
                 if self.is_running(attempt.execution_id):
                     context = await self._reattached_execution_context(run_id, attempt)
 
@@ -852,11 +874,52 @@ class GraphDispatchExecutor(SideEffectExecutor):
             raise
         except Exception as exc:
             if managed:
+                # Record the runner exception before recovery mutates the
+                # graph attempt.  Recovery events intentionally describe the
+                # cleanup protocol, not the original transport failure; this
+                # standard AgentErrorEvent is the API/journal-visible forensic
+                # record and retains Codex's already-sanitized diagnostic.
+                try:
+                    await self._record_managed_runner_error(context, exc)
+                except Exception:
+                    logger.exception(
+                        "managed graph runner failure diagnostic could not be persisted "
+                        "for execution %s",
+                        context.execution_id,
+                    )
                 logger.info("managed graph runner failed before finalization: %s", exc)
                 if not isinstance(exc, CompromisedFileStateError):
                     await self._request_runner_recovery(context, "runner_died")
             else:
                 await self._agent_died(context, str(exc))
+
+    async def _record_managed_runner_error(
+        self,
+        context: GraphDispatchContext,
+        exc: Exception,
+    ) -> None:
+        """Persist the original managed-runner failure before recovery starts."""
+        from orchestrator.db import commit_with_event_outbox, create_wired_event_store_v2
+        from orchestrator.workflow import AgentErrorEvent
+
+        task_id = context.node_payload.get("task_id")
+        if not isinstance(task_id, str) or not task_id:
+            task_id = context.node_id
+        attempt_value = context.node_payload.get("attempt_number")
+        attempt_num = attempt_value if isinstance(attempt_value, int) else 1
+        event = AgentErrorEvent(
+            run_id=context.run_id,
+            task_id=task_id,
+            attempt_num=attempt_num,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            node_id=context.node_id,
+            execution_id=context.execution_id,
+        )
+        async with self._session_factory() as session:
+            store = create_wired_event_store_v2(session)
+            await store.append(event)
+            await commit_with_event_outbox(session)
 
     async def _run_check(self, context: GraphDispatchContext) -> None:
         try:
@@ -1002,7 +1065,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "node_id": context.node_id,
                 "lease_id": context.lease_id,
                 "generation": context.lease_generation,
-                "ttl_seconds": 300,
+                "ttl_seconds": MANAGED_LEASE_TTL_SECONDS,
             },
         )
         rejection = next(

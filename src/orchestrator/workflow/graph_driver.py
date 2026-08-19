@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.artifacts import ArtifactRootResolver, ArtifactStoreResolver
 
 from orchestrator.config.enums import AgentRunnerType, RunStatus
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from orchestrator.config.models import RoutineConfig
@@ -40,6 +40,7 @@ from orchestrator.graph_runtime import (
     GraphProcessRegistry,
     GraphEventStore,
     GraphReadModelUnavailable,
+    MANAGED_LEASE_TTL_SECONDS,
     OutboxDispatcher,
     StaleProjectionError,
     build_graph_runtime,
@@ -64,6 +65,12 @@ logger = logging.getLogger(__name__)
 # way every time — 3 attempts distinguishes the two without burning agent
 # spend on a node the kernel will not bound itself (no max_attempts).
 MAX_NODE_RECOVERIES_PER_DRIVE = 3
+
+# Managed executions receive the shared runtime lease TTL because local model
+# sessions can run for many minutes without emitting a callback. Wake one minute
+# before the deadline so a live execution is renewed before ``schedule_tick``
+# performs its expiry sweep.
+MANAGED_LEASE_RENEWAL_LEAD_SECONDS = 60
 
 
 def get_supported_graph_runner_types() -> frozenset[AgentRunnerType]:
@@ -192,6 +199,114 @@ async def apply_graph_cancel_until_terminal(
             return
 
     logger.warning("Graph cancel for %s stayed stale after retries", run_id)
+
+
+async def apply_graph_server_shutdown_pause(
+    session_factory: async_sessionmaker[AsyncSession],
+    create_service: Callable[[AsyncSession], Awaitable["WorkflowService"]],
+    run_id: str,
+    *,
+    journal_max_bytes: int = 64 * 1024 * 1024,
+) -> None:
+    """Fence a cancelled graph driver before recording a recoverable pause.
+
+    Server shutdown cancels the driver task while a managed runner can still
+    hold a graph lease.  Recording only the workflow-row pause leaves that
+    lease active, and the next startup cannot distinguish a live runner from
+    an orphan.  Revoke each active lease through the normal ``agent_died``
+    command first, then persist the recoverable row pause.  The caller must
+    re-raise its original cancellation after this helper returns.
+    """
+    logger.warning("Graph shutdown: reconciling cancelled driver for run %s", run_id)
+    controller = GraphController(
+        session_factory,
+        SystemClock(),
+        UuidIdGenerator(),
+        auto_dispatch=False,
+        journal_max_bytes=journal_max_bytes,
+    )
+
+    # The driver task has already been cancelled, so no new local dispatch can
+    # claim a lease.  Still retry stale heads because an in-flight callback may
+    # have appended just before cancellation was delivered.
+    for _attempt in range(4):
+        try:
+            async with session_factory() as session:
+                store = GraphEventStore(session)
+                projection, _, _ = await store.load_projection_with_tail(run_id)
+                facts = await store.read_bounded_runtime_projection_facts(run_id)
+            snapshot = project_graph_projection_snapshot(facts or [], projection=projection)
+        except GraphReadModelUnavailable as exc:
+            logger.warning(
+                "Graph shutdown: cannot inspect leases for %s; pausing row anyway: %s",
+                run_id,
+                exc,
+            )
+            break
+
+        active_leases = list(snapshot.active_leases.values())
+        if not active_leases:
+            break
+        stale = False
+        for lease in active_leases:
+            lease_id = lease.get("lease_id")
+            if not isinstance(lease_id, str):
+                continue
+            payload: dict[str, object] = {
+                "lease_id": lease_id,
+                "reason": "server_shutdown",
+            }
+            execution_id = lease.get("execution_id")
+            if isinstance(execution_id, str) and execution_id:
+                payload["execution_id"] = execution_id
+            node_id = lease.get("node_id")
+            max_attempts = (
+                snapshot.node_max_attempts.get(node_id) if isinstance(node_id, str) else None
+            )
+            if isinstance(max_attempts, int):
+                payload["max_attempts"] = max_attempts
+            position = await controller.current_position(run_id)
+            try:
+                result = await controller.handle_command(
+                    run_id,
+                    position,
+                    "agent_died",
+                    payload,
+                    context=GraphCommandContext(
+                        run_id=run_id,
+                        current_graph_position=position,
+                    ),
+                )
+            except StaleProjectionError:
+                stale = True
+                break
+            if any(event.event_type == "agent_died" for event in result.events):
+                logger.info(
+                    "Graph shutdown: revoked active lease %s for run %s (execution=%s)",
+                    lease_id,
+                    run_id,
+                    execution_id or "none",
+                )
+        if not stale:
+            # Re-read once to verify every active lease was actually revoked.
+            continue
+    else:
+        logger.warning(
+            "Graph shutdown: stale graph head prevented full lease reconciliation for %s", run_id
+        )
+
+    async with session_factory() as session:
+        service = await create_service(session)
+        run = await service.get_run(run_id)
+        if run.status in (RunStatus.ACTIVE, RunStatus.STOPPING):
+            await service.apply_pause_run(run_id, reason="server_shutdown")
+            logger.info("Graph shutdown: paused run %s with reason=server_shutdown", run_id)
+        else:
+            logger.info(
+                "Graph shutdown: run %s already transitioned to %s; no pause overwrite",
+                run_id,
+                run.status.value,
+            )
 
 
 async def _graph_seed_run_config(
@@ -492,9 +607,13 @@ class GraphRunDriver:
         # driver task.
         if not is_fresh:
             try:
+                logger.info("GraphRunDriver: recovery starting for %s", run_id)
                 report = await recover(self._session_factory, dispatcher, run_id=run_id)
+                logger.info("GraphRunDriver: outbox recovery complete for %s", run_id)
                 await reconcile_graph(controller, run_id=run_id)
+                logger.info("GraphRunDriver: graph reconciliation complete for %s", run_id)
                 await reconcile_runtime(controller, executor, report, dispatcher)
+                logger.info("GraphRunDriver: runtime reconciliation complete for %s", run_id)
             except Exception:
                 logger.exception(
                     "GraphRunDriver: recovery for %s failed; proceeding to drive", run_id
@@ -685,6 +804,22 @@ class GraphRunDriver:
                     allowed_kinds=frozenset({"runner_recovery"}),
                 )
                 prime_dispatch = False
+            clock = getattr(self, "_clock", None) or getattr(controller, "_clock", SystemClock())
+            preflight_projection = await read_projection(run_id)
+            # Renew live executions from a fresh projection before scheduling.
+            # The kernel's schedule tick expires leases first, so doing this
+            # after the tick loses a boundary race even when the runner is
+            # demonstrably alive.  A successful heartbeat changes the graph
+            # head; re-read on the next loop before issuing any schedule tick.
+            if await _renew_running_leases_near_expiry(
+                run_id,
+                controller,
+                executor,
+                preflight_projection,
+                clock.now(),
+            ):
+                previous_position = None
+                continue
             await self._handle_command_at_head(
                 controller,
                 run_id,
@@ -697,21 +832,33 @@ class GraphRunDriver:
                     # 2026-07-05 before this was widened. Long-running verifier
                     # sessions legitimately exceed 300s; orphan detection is
                     # handled by executor liveness, not lease expiry.
-                    "lease_seconds": 3600,
+                    "lease_seconds": MANAGED_LEASE_TTL_SECONDS,
                     "max_grants": 10,
                     "base_snapshot_id": "routine-snapshot",
                 },
             )
+            logger.info("GraphRunDriver: dispatch pass starting for %s", run_id)
             await dispatcher.dispatch_pending(run_id=run_id)
+            logger.info("GraphRunDriver: dispatch pass complete for %s", run_id)
             wait_projection = await read_projection(run_id)
-            clock = getattr(self, "_clock", None) or getattr(controller, "_clock", SystemClock())
-            wait_plan = project_active_lease_wait_plan(wait_projection, clock.now())
+            wait_plan = project_active_lease_wait_plan(
+                wait_projection,
+                clock.now(),
+                renewal_lead_seconds=MANAGED_LEASE_RENEWAL_LEAD_SECONDS,
+            )
+            logger.info(
+                "GraphRunDriver: waiting for %s execution(s) on %s (timeout=%s)",
+                len(wait_plan.execution_ids),
+                run_id,
+                wait_plan.timeout_seconds,
+            )
             await executor.wait_for_all(
                 timeout_seconds=wait_plan.timeout_seconds,
                 active_execution_ids=wait_plan.execution_ids,
             )
+            logger.info("GraphRunDriver: execution wait complete for %s", run_id)
             projection = await read_projection(run_id)
-            if await _renew_running_expired_leases(
+            if await _renew_running_leases_near_expiry(
                 run_id,
                 controller,
                 executor,
@@ -922,16 +1069,17 @@ class GraphRunDriver:
                 await service.apply_pause_run(run_id, reason=reason, error_detail=error_detail)
 
 
-async def _renew_running_expired_leases(
+async def _renew_running_leases_near_expiry(
     run_id: str,
     controller: GraphLoopController,
     executor: GraphLoopExecutor,
     projection: GraphProjectionSnapshot,
     now: datetime,
 ) -> bool:
+    renewal_deadline = now + timedelta(seconds=MANAGED_LEASE_RENEWAL_LEAD_SECONDS)
     renewed = False
     for lease in projection.active_leases.values():
-        if not _active_lease_expired(lease, now):
+        if not _active_lease_due_for_renewal(lease, renewal_deadline):
             continue
         execution_id = lease.get("execution_id")
         if not isinstance(execution_id, str) or not executor.is_running(execution_id):
@@ -943,7 +1091,7 @@ async def _renew_running_expired_leases(
         payload: dict[str, object] = {
             "lease_id": lease_id,
             "node_id": node_id,
-            "ttl_seconds": 3600,
+            "ttl_seconds": MANAGED_LEASE_TTL_SECONDS,
         }
         generation = lease.get("generation")
         if isinstance(generation, int) and not isinstance(generation, bool):
@@ -1073,7 +1221,7 @@ async def _recover_orphaned_active_leases(
     return recovered
 
 
-def _active_lease_expired(lease: dict[str, Any], now: datetime) -> bool:
+def _active_lease_due_for_renewal(lease: dict[str, Any], renewal_deadline: datetime) -> bool:
     expires_at = lease.get("expires_at")
     if not isinstance(expires_at, str):
         return False
@@ -1083,7 +1231,7 @@ def _active_lease_expired(lease: dict[str, Any], now: datetime) -> bool:
         return False
     if expires_at_dt.tzinfo is None:
         expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
-    return expires_at_dt <= now
+    return expires_at_dt <= renewal_deadline
 
 
 def _align_datetime_timezone(value: datetime, reference: datetime) -> datetime:

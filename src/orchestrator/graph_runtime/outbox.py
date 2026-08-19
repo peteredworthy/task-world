@@ -220,15 +220,29 @@ class OutboxDispatcher:
 
         Omitting ``limit`` uses :data:`OUTBOX_MAINTENANCE_BATCH_LIMIT`.  An
         explicit limit may make the batch smaller, but cannot exceed that cap.
-        Callers that own a long-running drain loop invoke this method again on
-        their next tick; one call never accumulates the complete outbox.
+        The eligible upper bound is captured before dispatch starts. Side
+        effects can append follow-on rows (including snapshot work requiring a
+        lock held by a newly-launched agent); those rows belong to the next
+        tick. This prevents one call from chasing new work and blocking the
+        driver's lease-maintenance pass behind the agent it just started.
         """
         batch_limit = _bounded_batch_limit(limit)
         await self.reset_dispatching_to_pending(run_id=run_id)
+        through_outbox_id = await self._pending_upper_bound(
+            run_id=run_id,
+            allowed_kinds=allowed_kinds,
+        )
+        if through_outbox_id is None:
+            return []
         completed: list[OutboxItem] = []
         remaining = batch_limit
         while True:
-            item = await self._claim_next(remaining, run_id=run_id, allowed_kinds=allowed_kinds)
+            item = await self._claim_next(
+                remaining,
+                run_id=run_id,
+                allowed_kinds=allowed_kinds,
+                through_outbox_id=through_outbox_id,
+            )
             if item is None:
                 return completed
             try:
@@ -248,6 +262,30 @@ class OutboxDispatcher:
             remaining -= 1
             if remaining <= 0:
                 return completed
+
+    async def _pending_upper_bound(
+        self,
+        *,
+        run_id: str | None,
+        allowed_kinds: frozenset[str] | None,
+    ) -> int | None:
+        async def _op() -> int | None:
+            async with self._session_factory() as session:
+                stmt = select(func.max(GraphOutboxModel.outbox_id)).where(
+                    GraphOutboxModel.status == OUTBOX_PENDING,
+                    or_(
+                        GraphOutboxModel.next_attempt_at.is_(None),
+                        GraphOutboxModel.next_attempt_at <= self._clock.now(),
+                    ),
+                )
+                if run_id is not None:
+                    stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+                if allowed_kinds is not None:
+                    stmt = stmt.where(GraphOutboxModel.kind.in_(allowed_kinds))
+                value = cast(int | None, (await session.execute(stmt)).scalar_one())
+                return int(value) if value is not None else None
+
+        return await self._retry_locked(_op)
 
     async def reset_dispatching_to_pending(self, *, run_id: str | None = None) -> int:
         """Treat startup ``dispatching`` rows as pending for at-least-once retry."""
@@ -424,6 +462,7 @@ class OutboxDispatcher:
         *,
         run_id: str | None = None,
         allowed_kinds: frozenset[str] | None = None,
+        through_outbox_id: int | None = None,
     ) -> OutboxItem | None:
         # Safe to retry on a lock: the claim transaction rolls back whole, so a
         # retried attempt re-selects the same still-pending row (at-least-once).
@@ -446,6 +485,8 @@ class OutboxDispatcher:
                         stmt = stmt.where(GraphOutboxModel.run_id == run_id)
                     if allowed_kinds is not None:
                         stmt = stmt.where(GraphOutboxModel.kind.in_(allowed_kinds))
+                    if through_outbox_id is not None:
+                        stmt = stmt.where(GraphOutboxModel.outbox_id <= through_outbox_id)
                     if limit is not None and limit <= 0:
                         return None
                     result = await session.execute(stmt)

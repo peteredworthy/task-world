@@ -188,6 +188,12 @@ class AgentErrorEvent(WorkflowEvent):
     attempt_num: int = 0
     error_type: str = ""  # e.g., "AgentExecutionError"
     error_message: str = ""
+    # Graph-managed runners do not have a legacy TaskState at their execution
+    # boundary. Keep their durable activity diagnostic correlated to the
+    # canonical graph node and execution attempt without introducing a second
+    # graph-specific free-form error event.
+    node_id: str | None = None
+    execution_id: str | None = None
 
 
 class ClarificationRequested(WorkflowEvent):

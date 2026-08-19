@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import select
 import shutil
 import tempfile
@@ -87,10 +88,38 @@ logger = logging.getLogger(__name__)
 
 _RECV_CHUNK_SIZE = 64 * 1024  # 64KB per read from process stdout.
 _MAX_JSON_RPC_LINE_BYTES = 16 * 1024 * 1024  # 16MB soft cap before dropping an oversized line.
+_MAX_STDERR_TAIL_CHARS = 16 * 1024
+
+
+def _sanitize_transport_diagnostic(text: str, tmp_codex_home: Path | None) -> str:
+    """Keep a useful app-server stderr tail without exposing credentials or homes."""
+    if tmp_codex_home is not None:
+        text = text.replace(str(tmp_codex_home), "<CODEX_HOME>")
+    # App-server diagnostics occasionally echo their environment/config.  A
+    # tail must never turn the temporary auth profile or a provider key into a
+    # persisted run error or journal entry.
+    text = re.sub(
+        r"(?i)\b(authorization|api[_-]?key|token|password)\b(\s*[:=]\s*)([^\s,;]+)",
+        r"\1\2<redacted>",
+        text,
+    )
+    text = re.sub(r"/[^\s'\"]*orchestrator-codex-[^\s/'\"]+(?:/[^\s'\"]*)?", "<CODEX_HOME>", text)
+    return text.replace("\x00", "").strip()
 
 
 def _is_submit_callback_rejection(tool_name: str, exc: Exception) -> bool:
     return tool_name == "submit" and str(exc).startswith("submit callback rejected:")
+
+
+def _transport_failure_diagnostic(
+    transport: JsonRpcTransport | None,
+    thread_id: str | None,
+    tmp_codex_home: Path | None,
+) -> str:
+    """Return diagnostic context for a real app-server transport failure."""
+    if isinstance(transport, RealStdioTransport):
+        return transport.diagnostic_summary(thread_id, tmp_codex_home)
+    return f"thread_id={thread_id or '<none>'}; transport=injected"
 
 
 def _build_workspace_write_config_toml(
@@ -127,10 +156,47 @@ class RealStdioTransport:
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self._proc = proc
         self._buffer = bytearray()
+        self._stderr_tail = ""
+        self._last_rpc_boundary = "spawned"
+        stderr = getattr(proc, "stderr", None)
+        self._stderr_task: asyncio.Task[None] | None = (
+            asyncio.create_task(self._drain_stderr(stderr)) if stderr is not None else None
+        )
+
+    async def _drain_stderr(self, stderr: Any) -> None:
+        """Drain stderr continuously so diagnostics cannot deadlock the server."""
+        try:
+            while chunk := await stderr.read(_RECV_CHUNK_SIZE):
+                self._stderr_tail = (self._stderr_tail + chunk.decode(errors="replace"))[
+                    -_MAX_STDERR_TAIL_CHARS:
+                ]
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("CodexServerAgent: stderr drainer stopped: %s", exc)
+
+    def record_rpc_boundary(self, method: str, request_id: int | str | None = None) -> None:
+        """Record the last safe protocol boundary, never request params."""
+        suffix = f" id={request_id}" if request_id is not None else ""
+        self._last_rpc_boundary = f"{method}{suffix}"
+
+    def diagnostic_summary(self, thread_id: str | None, tmp_codex_home: Path | None) -> str:
+        """Return a bounded, scrubbed transport state summary for a failure."""
+        exit_code = self._proc.returncode
+        state = str(exit_code) if exit_code is not None else "running"
+        tail = _sanitize_transport_diagnostic(self._stderr_tail, tmp_codex_home)
+        tail_summary = tail[-_MAX_STDERR_TAIL_CHARS:] if tail else "<empty>"
+        return (
+            f"pid={self._proc.pid}; exit_code={state}; thread_id={thread_id or '<none>'}; "
+            f"last_rpc={self._last_rpc_boundary}; stderr_tail={tail_summary}"
+        )
 
     async def send(self, message: dict[str, Any]) -> None:
         """Write one JSON-RPC message to the subprocess stdin."""
         assert self._proc.stdin is not None
+        method = message.get("method")
+        if isinstance(method, str):
+            self.record_rpc_boundary(method, message.get("id"))
         line = json.dumps(message) + "\n"
         self._proc.stdin.write(line.encode())
         await self._proc.stdin.drain()
@@ -159,6 +225,11 @@ class RealStdioTransport:
 
             chunk = await self._proc.stdout.read(_RECV_CHUNK_SIZE)
             if not chunk:
+                if self._stderr_task is not None:
+                    try:
+                        await asyncio.wait_for(asyncio.shield(self._stderr_task), timeout=0.2)
+                    except TimeoutError:
+                        pass
                 if self._buffer:
                     line = self._buffer.decode(errors="replace").strip()
                     self._buffer.clear()
@@ -204,6 +275,13 @@ class RealStdioTransport:
             self._proc.terminate()
         except ProcessLookupError:
             pass
+        if self._stderr_task is not None:
+            try:
+                await asyncio.wait_for(self._stderr_task, timeout=1)
+            except TimeoutError:
+                self._stderr_task.cancel()
+            except (asyncio.CancelledError, Exception):
+                pass
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +647,12 @@ class CodexServerAgent:
 
             thread_id: str = thread_resp["result"]["thread"]["id"]
             self._active_thread_id = thread_id
-            logger.debug("CodexServerAgent: thread created — thread_id=%s", thread_id)
+            logger.info(
+                "CodexServerAgent: thread started — run=%s task=%s thread_id=%s",
+                context.run_id,
+                context.task_id,
+                thread_id,
+            )
 
             # --- Step 3: Start turn ---
             turn_params: dict[str, Any] = {
@@ -589,11 +672,12 @@ class CodexServerAgent:
                     "turn/start failed",
                 )
 
-            logger.debug(
-                "CodexServerAgent: turn started — run=%s task=%s phase=%s",
+            logger.info(
+                "CodexServerAgent: turn started — run=%s task=%s phase=%s thread_id=%s",
                 context.run_id,
                 context.task_id,
                 "verifier" if is_verifier else "builder",
+                thread_id,
             )
 
             # --- Step 4: Process notification stream ---
@@ -712,6 +796,8 @@ class CodexServerAgent:
                 nonlocal num_actions, turn_usage, finish_reasons
                 # Dynamic tool call request from the server (has id AND method).
                 if msg.get("method") == "item/tool/call" and "id" in msg:
+                    if isinstance(transport, RealStdioTransport):
+                        transport.record_rpc_boundary("item/tool/call", msg.get("id"))
                     await _dispatch_tool_call(msg)
                     return False
                 # Skip stray response messages (no method field).
@@ -786,18 +872,34 @@ class CodexServerAgent:
             raise
         except OSError as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
-            logger.debug(
-                "CodexServerAgent: OS error after %dms — %s", duration_ms, exc, exc_info=True
+            diagnostic = _transport_failure_diagnostic(
+                transport, self._active_thread_id, tmp_codex_home
+            )
+            logger.warning(
+                "CodexServerAgent: transport OS error after %dms — %s; %s",
+                duration_ms,
+                exc,
+                diagnostic,
+                exc_info=True,
             )
             raise AgentNotAvailableError(
                 AgentRunnerType.CODEX_SERVER.value,
-                "Transport error communicating with codex app-server",
+                f"Transport error communicating with codex app-server; {diagnostic}",
             ) from exc
         except EOFError as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
+            diagnostic = _transport_failure_diagnostic(
+                transport, self._active_thread_id, tmp_codex_home
+            )
+            logger.warning(
+                "CodexServerAgent: app-server EOF after %dms — %s; %s",
+                duration_ms,
+                exc,
+                diagnostic,
+            )
             raise AgentNotAvailableError(
                 AgentRunnerType.CODEX_SERVER.value,
-                "codex app-server process terminated unexpectedly",
+                f"codex app-server process terminated unexpectedly; {diagnostic}",
             ) from exc
         except Exception as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
@@ -815,6 +917,12 @@ class CodexServerAgent:
         finally:
             # Only close the transport if we spawned it (not injected by tests).
             if spawned and transport is not None:
+                logger.info(
+                    "CodexServerAgent: closing app-server transport — run=%s task=%s thread_id=%s",
+                    context.run_id,
+                    context.task_id,
+                    self._active_thread_id or "<none>",
+                )
                 try:
                     await transport.close()
                 except Exception:
@@ -870,7 +978,9 @@ class CodexServerAgent:
                 )
             except Exception:
                 pass  # Best-effort — cancellation flag is the primary mechanism.
-        logger.info("CodexServerAgent: cancelled")
+        logger.info(
+            "CodexServerAgent: cancellation requested — thread_id=%s", thread_id or "<none>"
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers (public for testing)
@@ -995,7 +1105,7 @@ class CodexServerAgent:
                 *argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
                 env=clean_env,
                 cwd=context.working_dir,
                 limit=1024 * 1024,  # 1MB readline buffer for large JSON-RPC messages

@@ -15,7 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.artifacts import FilesystemArtifactStore, StoredArtifactRef
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
+from orchestrator.db import (
+    EventV2Model,
+    GraphOutboxModel,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
 from orchestrator.graph import (
     EventEnvelope,
     accepted_output_records_by_node_port_view,
@@ -40,6 +46,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.runners import AgentRunner
+from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import (
     AgentMetadataCallback,
     AgentRunnerInfo,
@@ -282,6 +289,36 @@ class RaisingAgent:
 
     async def cancel(self) -> None:
         return None
+
+
+class UnavailableRunnerAgent(RaisingAgent):
+    """Models a Codex transport failure after its diagnostic has been scrubbed."""
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        del (
+            context,
+            on_checklist_update,
+            on_submit,
+            on_output,
+            on_grade,
+            on_agent_metadata,
+            on_escalation,
+        )
+        raise AgentNotAvailableError(
+            "codex_server",
+            "codex app-server process terminated unexpectedly; pid=4242; "
+            "exit_code=17; thread_id=thr_test; last_rpc=turn/start id=3; "
+            "stderr_tail=<CODEX_HOME>/auth.json api_key=<redacted>",
+        )
 
 
 class MutatingNoSubmitAgent:
@@ -954,6 +991,57 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
 
 
 @pytest.mark.asyncio
+async def test_reconcile_runtime_preserves_currently_redispatched_agent(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Recovery must not quiesce work it just dispatched on the new executor."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-current-redispatch"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "graph-current-redispatch"
+    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    agent = BlockingSubmitAgent()
+    registry = RunnerOwnedProcessRegistry()
+    running: dict[str, asyncio.Task[None]] = {}
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": agent, "verifier": GradingAgent("A")}),
+        worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+        running_executions=running,
+        process_registry=registry,
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "schedule_tick",
+        {"lease_seconds": 60, "max_grants": 1},
+    )
+    await dispatcher.dispatch_pending(run_id=run_id)
+    await asyncio.wait_for(agent.started.wait(), timeout=2)
+    execution_task = next(iter(running.values()))
+    try:
+        report = await recover(session_factory, dispatcher, run_id=run_id)
+        await asyncio.wait_for(
+            reconcile_runtime(controller, executor, report, dispatcher),
+            timeout=2,
+        )
+
+        assert not execution_task.done()
+        events = await _read_events(session_factory, run_id)
+        assert not any(event.event_type == "runner_recovery_requested" for event in events)
+    finally:
+        agent.release.set()
+        await executor.wait_for_all()
+
+
+@pytest.mark.asyncio
 async def test_runner_refusal_quiesces_mutating_owner_before_recovery(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
@@ -1233,6 +1321,61 @@ async def test_graph_runner_exception_requests_recovery_before_retry(
         )
     )
     assert node_states_view(projection_after_recovery).get(node_id) == "ready"
+
+
+@pytest.mark.asyncio
+async def test_managed_runner_transport_failure_persists_before_recovery(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A sanitized Codex transport error remains visible after recovery begins."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-transport-failure"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "graph-runner-transport-failure"
+    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": UnavailableRunnerAgent(), "verifier": GradingAgent("A")}),
+        worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+
+    await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
+
+    async with session_factory() as session:
+        rows = list(
+            (
+                await session.execute(
+                    select(EventV2Model)
+                    .where(
+                        EventV2Model.event_type.in_(["agent_error", "runner_recovery_requested"])
+                    )
+                    .order_by(EventV2Model.position)
+                )
+            ).scalars()
+        )
+
+    error_row = next(row for row in rows if row.event_type == "agent_error")
+    recovery_row = next(
+        row
+        for row in rows
+        if row.event_type == "runner_recovery_requested" and run_id in row.aggregate_id
+    )
+    payload = json.loads(error_row.payload)
+    assert error_row.position < recovery_row.position
+    assert payload["run_id"] == run_id
+    assert payload["task_id"] == "task-1"
+    assert payload["node_id"] == "worker-step-1-task-1"
+    assert payload["execution_id"]
+    assert payload["error_type"] == "AgentNotAvailableError"
+    assert "pid=4242" in payload["error_message"]
+    assert "<CODEX_HOME>" in payload["error_message"]
+    assert "super-secret" not in payload["error_message"]
 
 
 @pytest.mark.asyncio

@@ -95,6 +95,40 @@ class _ChunkedFakeProcess:
         self.stdout = _ChunkedFakeStdout(payload, chunk_size=chunk_size)
 
 
+class _RecordingFakeStdin:
+    """Minimal async stdin used by the real transport's send path."""
+
+    def __init__(self) -> None:
+        self.lines: list[bytes] = []
+        self.closed = False
+
+    def write(self, line: bytes) -> None:
+        self.lines.append(line)
+
+    async def drain(self) -> None:
+        return None
+
+    def is_closing(self) -> bool:
+        return self.closed
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _DiagnosticFakeProcess:
+    """Concrete process-shaped fake for a real transport EOF diagnostic."""
+
+    def __init__(self, stdout_payload: bytes, stderr_payload: bytes) -> None:
+        self.stdin = _RecordingFakeStdin()
+        self.stdout = _ChunkedFakeStdout(stdout_payload)
+        self.stderr = _ChunkedFakeStdout(stderr_payload)
+        self.pid = 4242
+        self.returncode = 17
+
+    def terminate(self) -> None:
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -1011,6 +1045,42 @@ async def test_real_stdio_transport_discards_oversized_lines_and_recovers() -> N
 
     assert second["id"] == 2
     assert second["result"]["ok"] is True
+
+
+async def test_real_transport_eof_error_retains_sanitized_app_server_diagnostic() -> None:
+    """EOF failures identify the server boundary without leaking CODEX_HOME secrets."""
+    responses = (
+        b"\n".join(
+            json.dumps(message).encode()
+            for message in [
+                _initialize_response(),
+                _thread_start_response(),
+                _turn_start_response(),
+            ]
+        )
+        + b"\n"
+    )
+    stderr = (
+        b"app-server failed at /private/tmp/orchestrator-codex-secret/auth.json "
+        b"api_key=super-secret-token\n"
+    )
+    transport = RealStdioTransport(cast(Any, _DiagnosticFakeProcess(responses, stderr)))
+    agent = CodexServerAgent(api_key=None, _transport=transport, _environ={})
+
+    with pytest.raises(AgentNotAvailableError) as exc_info:
+        await agent.execute(
+            context=_ctx(),
+            on_checklist_update=_noop_checklist,
+            on_submit=_noop_submit,
+        )
+
+    message = exc_info.value.reason
+    assert "pid=4242" in message
+    assert "exit_code=17" in message
+    assert "thread_id=thr_test001" in message
+    assert "last_rpc=turn/start id=3" in message
+    assert "<CODEX_HOME>" in message
+    assert "super-secret-token" not in message
 
 
 async def test_execute_builds_structured_action_log_from_notifications() -> None:

@@ -14,6 +14,7 @@ from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db.access.mutations import save_run
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphEventStore
+from orchestrator.graph import project_graph_projection_snapshot
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import SignalConsumer, WorkflowService
 
@@ -185,6 +186,79 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
     async with session_factory() as session:
         after_drain_events = await GraphEventStore(session).read_run(run_id)
     assert [event.event_type for event in after_drain_events] == event_types
+
+
+@pytest.mark.asyncio
+async def test_server_shutdown_cancellation_pauses_graph_run_and_revokes_lease(
+    tmp_path: Path,
+) -> None:
+    """Consumer shutdown must not strand an ACTIVE graph row with a live lease."""
+    engine = create_engine(tmp_path / "graph-shutdown.db")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    run_id = "graph-server-shutdown-run"
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def create_service(session: AsyncSession) -> WorkflowService:
+        return WorkflowService(session)
+
+    async def graph_runner(received_run_id: str) -> None:
+        assert received_run_id == run_id
+        started.set()
+        await never.wait()
+
+    try:
+        await _create_run(
+            session_factory,
+            run_id,
+            execution_mode="graph",
+            status=RunStatus.ACTIVE,
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+        )
+        async with session_factory() as session:
+            await GraphEventStore(session).append_events(
+                run_id,
+                0,
+                [
+                    _graph_event("run_lifecycle_changed", {"to_state": "active"}),
+                    _graph_event(
+                        "node_created",
+                        {"node_id": "worker-1", "kind": "worker", "state": "running"},
+                    ),
+                    _graph_event(
+                        "lease_granted",
+                        {
+                            "lease_id": "lease-worker-1",
+                            "node_id": "worker-1",
+                            "generation": 1,
+                            "execution_id": "exec-worker-1",
+                            "expires_at": "2026-06-22T12:05:00+00:00",
+                        },
+                    ),
+                ],
+            )
+            await session.commit()
+
+        consumer = SignalConsumer(session_factory, create_service, graph_runner=graph_runner)
+        assert consumer.arm_graph_run(run_id) is True
+        await asyncio.wait_for(started.wait(), timeout=2)
+        await consumer.stop()
+
+        async with session_factory() as session:
+            run = await WorkflowService(session).get_run(run_id)
+            store = GraphEventStore(session)
+            events = await store.read_run(run_id)
+            projection, _, _ = await store.load_projection_with_tail(run_id)
+            facts = await store.read_bounded_runtime_projection_facts(run_id)
+        snapshot = project_graph_projection_snapshot(facts or [], projection=projection)
+
+        assert run.status == RunStatus.PAUSED
+        assert run.pause_reason == "server_shutdown"
+        assert "agent_died" in [event.event_type for event in events]
+        assert snapshot.active_leases == {}
+    finally:
+        await engine.dispose()
 
 
 async def _create_run(

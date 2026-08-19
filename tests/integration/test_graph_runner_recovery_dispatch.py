@@ -12,7 +12,7 @@ import asyncio
 import hashlib
 import subprocess
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -24,18 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import (
-    EventV2Model,
-    GraphOutboxModel,
-    create_engine,
-    create_session_factory,
-    init_db,
-)
+from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.git import GitError, SelectiveRestoreResult, WorktreeError, snapshot
 from orchestrator.graph import (
     node_states_view,
-    Actor,
-    ActorKind,
     EventEnvelope,
     GraphCommandContext,
     boundary_manifest_hash,
@@ -505,16 +497,20 @@ async def test_runner_recovery_rejects_malformed_or_missing_canonical_request(
     )
     executor = _executor(session_factory, controller, repo, tmp_path)
 
-    missing = _recovery_item("missing-request", "recovery-missing")
+    missing = _recovery_item(
+        "missing-request", "recovery-missing", execution_id="execution-missing"
+    )
     with pytest.raises(RecoveryEventError, match="unknown runner_recovery_requested"):
         await executor.dispatch(missing)
 
-    await _append_malformed_recovery_request(
-        session_factory, "malformed-request", "recovery-malformed"
-    )
-    malformed = _recovery_item("malformed-request", "recovery-malformed")
+    fixture = await _recovery_fixture(session_factory, tmp_path, "malformed-request")
+    malformed_payload = dict(fixture.item.payload)
+    malformed_payload.pop("node_id")
+    malformed = replace(fixture.item, payload=malformed_payload)
     with pytest.raises(RecoveryEventError, match="malformed requested event"):
-        await executor.dispatch(malformed)
+        await _executor(session_factory, fixture.controller, fixture.repo, tmp_path).dispatch(
+            malformed
+        )
 
 
 @pytest.mark.asyncio
@@ -959,14 +955,14 @@ async def _outbox_status(session_factory: async_sessionmaker[AsyncSession], outb
         return str(row.status)
 
 
-def _recovery_item(run_id: str, recovery_id: str) -> OutboxItem:
+def _recovery_item(run_id: str, recovery_id: str, *, execution_id: str) -> OutboxItem:
     now = FixedClock().now()
     return OutboxItem(
         outbox_id=1,
         event_id=f"outbox-{recovery_id}",
         run_id=run_id,
         kind="runner_recovery",
-        payload={"recovery_id": recovery_id},
+        payload={"recovery_id": recovery_id, "execution_id": execution_id},
         status="pending",
         attempts=0,
         created_at=now,
@@ -974,32 +970,6 @@ def _recovery_item(run_id: str, recovery_id: str) -> OutboxItem:
         next_attempt_at=None,
         last_error=None,
     )
-
-
-async def _append_malformed_recovery_request(
-    session_factory: async_sessionmaker[AsyncSession], run_id: str, recovery_id: str
-) -> None:
-    event = EventEnvelope(
-        event_id=f"event-{recovery_id}",
-        run_id=run_id,
-        position=1,
-        event_type="runner_recovery_requested",
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FixedClock().now(),
-        payload={"recovery_id": recovery_id},
-    )
-    async with session_factory() as session:
-        async with session.begin():
-            session.add(
-                EventV2Model(
-                    aggregate_id=f"graph:{run_id}",
-                    version=1,
-                    event_type=event.event_type,
-                    payload=event.model_dump_json(),
-                    timestamp=event.timestamp.isoformat(),
-                )
-            )
 
 
 def _event_types(events: list[EventEnvelope]) -> list[str]:

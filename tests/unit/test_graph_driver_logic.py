@@ -11,10 +11,11 @@ from sqlalchemy.exc import OperationalError
 
 from orchestrator.workflow.graph_driver import (
     GraphRunDriver,
+    MANAGED_LEASE_RENEWAL_LEAD_SECONDS,
     MAX_NODE_RECOVERIES_PER_DRIVE,
     _drive_with_transient_retries,
     _graph_seed_run_config,
-    _renew_running_expired_leases,
+    _renew_running_leases_near_expiry,
 )
 from orchestrator.graph import (
     ActiveLeaseWaitPlan,
@@ -402,9 +403,9 @@ async def test_loop_terminates_on_quiescence() -> None:
         read_projection=reader.read,
     )
 
-    assert controller.commands == ["schedule_tick", "schedule_tick"]
-    assert dispatcher.calls == 3
-    assert executor.calls == 2
+    assert controller.commands == ["schedule_tick"]
+    assert dispatcher.calls == 2
+    assert executor.calls == 1
     assert outcome.completed is True
 
 
@@ -572,6 +573,32 @@ def test_active_lease_wait_plan_uses_nearest_deadline() -> None:
     )
 
 
+def test_active_lease_wait_plan_wakes_at_renewal_lead() -> None:
+    now = datetime.fromisoformat("2026-06-27T19:30:00+00:00")
+
+    wait_plan = project_active_lease_wait_plan(
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={
+                "lease-live": {
+                    "execution_id": "exec-live",
+                    "expires_at": "2026-06-27T19:32:00+00:00",
+                }
+            },
+            schedulable_nodes=[],
+            task_states={},
+        ),
+        now,
+        renewal_lead_seconds=MANAGED_LEASE_RENEWAL_LEAD_SECONDS,
+    )
+
+    assert wait_plan == ActiveLeaseWaitPlan(
+        execution_ids={"exec-live"},
+        timeout_seconds=60.0,
+    )
+
+
 @pytest.mark.asyncio
 async def test_driver_reaches_scheduler_after_expired_active_lease() -> None:
     controller = RecordingController()
@@ -622,7 +649,8 @@ async def test_driver_reaches_scheduler_after_expired_active_lease() -> None:
         read_projection=reader.read,
     )
 
-    assert controller.commands == ["schedule_tick", "schedule_tick", "reconcile"]
+    assert controller.commands == ["schedule_tick", "reconcile"]
+    assert "record_heartbeat" not in controller.commands
     assert executor.waits[0] == (0.0, {"exec-expired"})
     assert outcome.completed is False
     assert outcome.blocked_reason == (
@@ -635,7 +663,7 @@ async def test_driver_renews_expired_lease_when_execution_is_still_running() -> 
     controller = RecordingController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor(running_execution_ids={"exec-live"})
-    expired_lease_snapshot = GraphProjectionSnapshot(
+    near_expiry_lease_snapshot = GraphProjectionSnapshot(
         run_state="active",
         ready_nodes=[],
         active_leases={
@@ -645,7 +673,23 @@ async def test_driver_renews_expired_lease_when_execution_is_still_running() -> 
                 "node_id": "planner-s-01",
                 "generation": 1,
                 "execution_id": "exec-live",
-                "expires_at": "2026-06-27T19:29:59+00:00",
+                "expires_at": "2026-06-27T19:30:30+00:00",
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"S-01": "pending"},
+    )
+    renewed_lease_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            "lease-live": {
+                "lease_id": "lease-live",
+                "state": "active",
+                "node_id": "planner-s-01",
+                "generation": 1,
+                "execution_id": "exec-live",
+                "expires_at": "2026-06-27T20:30:00+00:00",
             }
         },
         schedulable_nodes=[],
@@ -660,8 +704,9 @@ async def test_driver_renews_expired_lease_when_execution_is_still_running() -> 
     )
     reader = ScriptedProjectionReader(
         [
-            expired_lease_snapshot,
-            expired_lease_snapshot,
+            near_expiry_lease_snapshot,
+            renewed_lease_snapshot,
+            renewed_lease_snapshot,
             completed_snapshot,
             completed_snapshot,
         ]
@@ -682,8 +727,8 @@ async def test_driver_renews_expired_lease_when_execution_is_still_running() -> 
         read_projection=reader.read,
     )
 
-    assert controller.commands == ["schedule_tick", "record_heartbeat", "schedule_tick"]
-    assert executor.waits[0] == (0.0, {"exec-live"})
+    assert controller.commands == ["record_heartbeat", "schedule_tick"]
+    assert executor.waits[0] == (3540.0, {"exec-live"})
     assert outcome.completed is True
 
 
@@ -747,7 +792,7 @@ async def test_driver_retries_locked_heartbeat_renewal_at_new_head() -> None:
         {"now": lambda self: datetime.fromisoformat("2026-06-27T19:30:00+00:00")},
     )()
 
-    renewed = await _renew_running_expired_leases(
+    renewed = await _renew_running_leases_near_expiry(
         "run-1",
         controller,
         executor,
@@ -775,6 +820,7 @@ async def test_driver_runs_reconcile_before_quiescent_classification() -> None:
     )
     reader = ScriptedProjectionReader(
         [
+            quiescent_pending,
             quiescent_pending,
             quiescent_pending,
             GraphProjectionSnapshot(
@@ -818,7 +864,7 @@ async def test_driver_runs_reconcile_before_quiescent_classification() -> None:
     assert controller.commands == ["schedule_tick", "reconcile"]
     assert dispatcher.calls == 2
     assert executor.calls == 1
-    assert reader.calls == 4
+    assert reader.calls == 5
     assert outcome.completed is True
     assert outcome.blocked_reason is None
 
@@ -840,6 +886,7 @@ async def test_driver_returns_reconciled_quiescent_projection_without_second_sch
     )
     reader = ScriptedProjectionReader(
         [
+            quiescent_pending,
             quiescent_pending,
             quiescent_pending,
             GraphProjectionSnapshot(
@@ -869,7 +916,7 @@ async def test_driver_returns_reconciled_quiescent_projection_without_second_sch
     assert controller.commands == ["schedule_tick", "reconcile"]
     assert dispatcher.calls == 2
     assert executor.calls == 1
-    assert reader.calls == 4
+    assert reader.calls == 5
     assert outcome.completed is False
     assert outcome.blocked_reason == (
         "graph quiescent with non-terminal node(s): planner-recover-check-final=planned"
@@ -916,6 +963,7 @@ async def test_driver_continues_when_reconcile_creates_schedulable_work() -> Non
             quiescent_pending,
             quiescent_pending,
             quiescent_pending,
+            quiescent_pending,
             ready_after_reconcile,
             failed_after_second_tick,
             failed_after_second_tick,
@@ -935,7 +983,7 @@ async def test_driver_continues_when_reconcile_creates_schedulable_work() -> Non
     assert controller.commands == ["schedule_tick", "reconcile", "schedule_tick"]
     assert dispatcher.calls == 4
     assert executor.calls == 2
-    assert reader.calls == 7
+    assert reader.calls == 9
     assert outcome.completed is False
     assert outcome.run_state == "failed"
 
@@ -985,6 +1033,8 @@ async def test_driver_recovers_orphaned_lease_and_reschedules_node() -> None:
     )
     reader = ScriptedProjectionReader(
         [
+            orphaned_lease_snapshot,
+            orphaned_lease_snapshot,
             orphaned_lease_snapshot,
             orphaned_lease_snapshot,
             orphaned_lease_snapshot,
@@ -1057,6 +1107,7 @@ async def test_driver_recovers_resumed_leases_despite_ready_node_deferral_progre
         [
             orphaned_with_ready_snapshot,
             orphaned_with_ready_snapshot,
+            orphaned_with_ready_snapshot,
             completed_snapshot,
         ]
     )
@@ -1113,6 +1164,8 @@ async def test_driver_waits_for_future_outbox_backoff_before_declaring_blocked()
     )
     reader = ScriptedProjectionReader(
         [
+            orphaned_lease_snapshot,
+            orphaned_lease_snapshot,
             orphaned_lease_snapshot,
             orphaned_lease_snapshot,
             orphaned_lease_snapshot,
@@ -1293,11 +1346,11 @@ async def test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning(
     snapshots: list[GraphProjectionSnapshot] = []
     for index in range(MAX_NODE_RECOVERIES_PER_DRIVE + 1):
         current = snapshot(f"lease-{index}", f"exec-{index}")
-        # Each drive iteration reads a wait projection and then the projection
-        # used for progress comparison. Keep the same lease visible across two
-        # full iterations so the no-progress recovery branch is exercised.
-        snapshots.extend([current, current, current, current])
-    reader = ScriptedProjectionReader(snapshots, max_calls=len(snapshots) + 2)
+        # Each drive iteration reads a preflight, wait, and post-wait
+        # projection. Keep the same lease visible across two full iterations
+        # so the no-progress recovery branch is exercised.
+        snapshots.extend([current] * 6)
+    reader = ScriptedProjectionReader(snapshots, max_calls=len(snapshots) + 3)
 
     driver = GraphRunDriver.__new__(GraphRunDriver)
     outcome = await driver.drive_to_quiescence(

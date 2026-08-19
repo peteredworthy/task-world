@@ -89,6 +89,10 @@ class SignalConsumer:
         # later resume can transfer ownership to a new driver.
         self._graph_driver_tasks: dict[str, asyncio.Task[None]] = {}
         self._graph_driver_generations: dict[str, int] = {}
+        # ``stop()`` marks the graph drivers it owns before cancelling them so
+        # their cancellation handler can durably record a recoverable shutdown
+        # pause instead of silently dropping an ACTIVE row with a live lease.
+        self._server_shutdown_graph_runs: set[str] = set()
         # Per-run signal-processing tasks
         self._run_tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -115,7 +119,7 @@ class SignalConsumer:
             except asyncio.CancelledError:
                 pass
         for run_id in tuple(self._graph_driver_tasks):
-            await self._quiesce_graph_run(run_id)
+            await self._quiesce_graph_run(run_id, server_shutdown=True)
 
     # ------------------------------------------------------------------
     # Projector rebuild
@@ -663,6 +667,7 @@ class SignalConsumer:
             return False
         if run_id in self._active_graph_runs:
             return False
+        logger.info("SignalConsumer: arming graph driver for %s", run_id)
         self._active_graph_runs.add(run_id)
         generation = self._graph_driver_generations.get(run_id, 0) + 1
         self._graph_driver_generations[run_id] = generation
@@ -671,10 +676,17 @@ class SignalConsumer:
         )
         return True
 
-    async def _quiesce_graph_run(self, run_id: str) -> None:
+    async def _quiesce_graph_run(self, run_id: str, *, server_shutdown: bool = False) -> None:
         """Cancel and await this consumer's graph driver before ownership moves."""
         task = self._graph_driver_tasks.get(run_id)
         if task is not None and not task.done():
+            if server_shutdown:
+                self._server_shutdown_graph_runs.add(run_id)
+            logger.info(
+                "SignalConsumer: cancelling graph driver for %s (server_shutdown=%s)",
+                run_id,
+                server_shutdown,
+            )
             task.cancel()
             try:
                 await task
@@ -689,7 +701,27 @@ class SignalConsumer:
             if self._graph_runner is not None:
                 await self._graph_runner(run_id)
         except asyncio.CancelledError:
-            pass
+            if run_id in self._server_shutdown_graph_runs:
+                # Do this while the application still owns a live database
+                # engine.  Cancellation is deliberately re-raised below so
+                # shutdown semantics remain intact.
+                from orchestrator.workflow.graph_driver import apply_graph_server_shutdown_pause
+
+                try:
+                    await apply_graph_server_shutdown_pause(
+                        self._session_factory,
+                        self._create_service,
+                        run_id,
+                        journal_max_bytes=self._journal_max_bytes,
+                    )
+                except Exception:
+                    logger.exception(
+                        "SignalConsumer: failed to persist graph shutdown pause for %s", run_id
+                    )
+                finally:
+                    self._server_shutdown_graph_runs.discard(run_id)
+            logger.info("SignalConsumer: graph driver for %s cancelled", run_id)
+            raise
         except Exception:
             logger.exception("SignalConsumer: graph driver for %s failed", run_id)
         finally:

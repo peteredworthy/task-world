@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import json
 from collections.abc import AsyncGenerator
@@ -33,6 +34,7 @@ from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
     GraphDispatchExecutor,
+    MANAGED_LEASE_TTL_SECONDS,
     seed_run,
 )
 from orchestrator.graph_runtime.outbox import OutboxDispatcher
@@ -54,6 +56,7 @@ from orchestrator.workflow import WorkflowService
 from orchestrator.workflow.graph_driver import (
     GRAPH_OPERATOR_REOPEN_PAUSE_REASON,
     GraphRunDriver,
+    _renew_running_leases_near_expiry,
 )
 
 pytestmark = pytest.mark.slow
@@ -110,6 +113,30 @@ class SubmitAgent:
 
     async def cancel(self) -> None:
         return None
+
+
+class HoldingSubmitAgent(SubmitAgent):
+    """Keep a real dispatch task live until the lease-boundary assertion."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        del context, on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
+        self.started.set()
+        await self.release.wait()
+        await on_submit()
+        return ExecutionResult(success=True)
 
 
 class WritingSubmitAgent(SubmitAgent):
@@ -208,8 +235,9 @@ class CrashingOutboxDispatcher(OutboxDispatcher):
         limit: int | None = None,
         *,
         run_id: str | None = None,
+        allowed_kinds: frozenset[str] | None = None,
     ) -> list[Any]:
-        del limit, run_id
+        del limit, run_id, allowed_kinds
         self.entered = True
         raise RuntimeError("drive loop escaped after entry")
 
@@ -434,6 +462,83 @@ async def _run_status(
 ) -> RunStatus:
     async with session_factory() as session:
         return (await RunRepository(session).get(run_id)).status
+
+
+@pytest.mark.asyncio
+async def test_live_execution_is_renewed_before_expiry_sweep(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Cross an actual SQLite lease deadline while its dispatch task is live."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-live-lease-boundary"
+    _init_repo(repo)
+    run_id = "graph-live-lease-boundary"
+    clock = FixedClock()
+    ids = SequentialIds()
+    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    await controller.handle_command(run_id, await controller.current_position(run_id), "accept_run")
+    await controller.handle_command(run_id, await controller.current_position(run_id), "start")
+
+    agent = HoldingSubmitAgent()
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": agent}, []),
+        worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts-live-boundary"),
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+    try:
+        await controller.handle_command(
+            run_id,
+            await controller.current_position(run_id),
+            "schedule_tick",
+            {"lease_seconds": 30, "max_grants": 1, "base_snapshot_id": "S0"},
+        )
+        await dispatcher.dispatch_pending(run_id=run_id)
+        await asyncio.wait_for(agent.started.wait(), timeout=1.0)
+
+        # Dispatch acknowledgement extends the initial grant using the same
+        # lease policy as the driver. Cross that real persisted deadline by 1ms.
+        clock.advance(MANAGED_LEASE_TTL_SECONDS + 0.001)
+        projection = project_graph_projection_snapshot(await _events(session_factory, run_id))
+        assert projection.active_leases
+        execution_ids = {lease.get("execution_id") for lease in projection.active_leases.values()}
+        assert any(
+            isinstance(execution_id, str) and executor.is_running(execution_id)
+            for execution_id in execution_ids
+        ), (projection.active_leases, execution_ids)
+        renewed = await _renew_running_leases_near_expiry(
+            run_id,
+            controller,
+            executor,
+            projection,
+            clock.now(),
+        )
+        assert renewed, [
+            (event.event_type, event.payload)
+            for event in (await _events(session_factory, run_id))[-5:]
+        ]
+        await controller.handle_command(
+            run_id,
+            await controller.current_position(run_id),
+            "schedule_tick",
+            {"lease_seconds": 3600, "max_grants": 1, "base_snapshot_id": "S0"},
+        )
+
+        boundary_events = await _events(session_factory, run_id)
+        assert any(event.event_type == "lease_renewed" for event in boundary_events)
+        assert not any(
+            event.event_type == "node_state_changed"
+            and event.payload.get("reason") == "lease_expired_without_callback"
+            for event in boundary_events
+        )
+    finally:
+        agent.release.set()
+        await executor.wait_for_all()
 
 
 @pytest.mark.asyncio
