@@ -35,7 +35,7 @@ See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for:
 
 **Never `cd` outside your working directory.** If you are running in a worktree (`worktrees/rNN/`), stay there. Do not `cd` to the main project root, parent directories, or sibling worktrees. All source files, `pyproject.toml`, and dependencies are available in the worktree — use `uv run` to access them.
 
-**Interact with the orchestrator via API calls only.** Do not modify server code, restart the server, or touch `orchestrator.db` directly. Use `curl` to the orchestrator's REST API endpoints.
+**Interact with the orchestrator via API calls only.** Do not modify server code or touch `orchestrator.db` directly. Use `curl` to the orchestrator's REST API endpoints. When the local server is not running, an agent may start it only with the user's explicit authorization.
 
 **Do not run git operations on the main working tree.** Git commands should only operate on the current worktree's branch. Never run `git stash`, `git checkout`, or `git reset` from the main project root.
 
@@ -365,7 +365,12 @@ curl -s 'http://localhost:8000/api/runs/<run-id>/activity?limit=50&payload_mode=
 curl -s http://localhost:8000/api/runs/<run-id>/pending-actions | python3 -m json.tool
 ```
 
-**2. Server logs** — `server.log` and `server_output.log` in the project root. Search for the run ID to find executor events, pause reasons, agent spawns, and errors.
+**2. Server logs** — `.orchestrator/logs/server/latest/process.log` contains
+merged backend output and `.orchestrator/logs/server/latest/lifecycle.jsonl`
+contains supervisor/child PID, restart, exit-code/signal, and shutdown evidence.
+When launched through `dev.sh`, `server.log` and `server_output.log` in the
+project root are compatibility symlinks to the latest process log. Search for
+the run ID to find executor events, pause reasons, agent spawns, and errors.
 
 **3. Journal** — `.orchestrator/state/history.jsonl` contains every event (status changes, health checks, task transitions). Search by run ID:
 ```bash

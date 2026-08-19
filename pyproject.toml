@@ -20,6 +20,7 @@ dependencies = [
     "openhands-workspace>=1.11.0",
     "pyjwt>=2.11.0",
     "openhands-tools>=1.10.0",
+    "psutil>=7.0",
     "python-dotenv>=1.0.0",
     "graphifyy>=0.4.2",
     "immutables>=0.21,<1",

@@ -8,9 +8,35 @@ This document provides a high-level overview of the Orchestrator project structu
 
 **Backend API Server (FastAPI):**
 ```bash
-# Start the backend on port 8000
+# Start the supervised backend on port 8000
 uv run orchestrator serve --reload
 ```
+
+Every official `orchestrator serve` launch creates a timestamped session under
+`.orchestrator/logs/server/`. `latest` points to the current session, whose
+`process.log` contains merged Uvicorn/application output and whose fsynced
+`lifecycle.jsonl` records supervisor/child PIDs, commands, attempts, exact exit
+codes or signals, restart delays, clean shutdown, and crash-loop exhaustion.
+`supervisor-state.json` is atomically replaced and lets the next launch identify
+an unterminated prior session. It includes the child's process group and kernel
+creation time so a subsequent supervisor can verify and reclaim an orphaned
+server without signaling a reused PID. The new session records whether the stale
+child was reclaimed, already gone, or unsafe to signal; an unsafe match aborts
+startup. A child exit accompanied by a Python traceback is also recorded as
+`fatal_python_exception`. Use `--log-dir PATH` to relocate this evidence or
+`--no-supervisor` only for deliberate low-level debugging.
+
+For a failure, inspect these in order:
+
+1. `.orchestrator/logs/server/latest/lifecycle.jsonl` for process lifecycle and exit cause.
+2. `.orchestrator/logs/server/latest/process.log` for Python/Uvicorn tracebacks and fatal output.
+3. `.orchestrator/logs/server/supervisor-state.json` for the latest atomic process state.
+4. `.orchestrator/state/history.jsonl` for domain/run events after application startup.
+
+The supervisor restarts unexpected backend exits with capped exponential
+backoff and stops after a bounded crash loop. `SIGINT` and `SIGTERM` are
+forwarded to the backend process group so application shutdown completes before
+the supervisor records a clean stop.
 
 **Frontend UI (React/Vite):**
 ```bash
@@ -115,6 +141,8 @@ task-world/
 │   │
 │   ├── cli/                   # Click CLI commands
 │   │   ├── main.py            # Entry point (orchestrator command)
+│   │   ├── server_supervisor.py # Durable server process supervision and evidence
+│   │   ├── server_log_collector.py # Orphan-safe server stdout capture process
 │   │   ├── runs.py, routines.py, agents.py, repos.py
 │   │   ├── approve.py         # Human approval commands
 │   │   └── db.py              # Database commands

@@ -257,16 +257,14 @@ async def _run_startup_recovery(app: FastAPI) -> None:
                         f"({agent_runner_type.value}) after server shutdown"
                     )
                 await _asyncio.sleep(_STARTUP_RECOVERY_RUN_STAGGER_SECONDS)
-            except Exception as resume_err:
-                logger.warning(
-                    f"Startup recovery: failed to auto-resume run {run.id}: {resume_err}"
-                )
+            except Exception:
+                logger.exception("Startup recovery: failed to auto-resume run %s", run.id)
     except _asyncio.CancelledError:
         raise
-    except Exception as e:
+    except Exception:
         # If recovery fails (e.g., during first startup with no tables), log but
         # do not crash the application.
-        logger.warning(f"Startup recovery failed: {e}")
+        logger.exception("Startup recovery failed")
 
 
 async def _run_graph_startup_recovery(app: FastAPI) -> None:
@@ -312,8 +310,8 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
                 await _asyncio.sleep(_STARTUP_RECOVERY_RUN_STAGGER_SECONDS)
     except _asyncio.CancelledError:
         raise
-    except Exception as e:
-        logger.warning(f"Graph startup recovery failed: {e}")
+    except Exception:
+        logger.exception("Graph startup recovery failed")
 
 
 async def advance_graph_archival_maintenance_once(app: FastAPI) -> bool:
@@ -363,7 +361,7 @@ async def run_graph_archival_maintenance(app: FastAPI) -> None:
 
 
 @asynccontextmanager
-async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+async def _lifespan_core(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
     from orchestrator.runners import AgentRunnerMonitor
     from orchestrator.db import RunRepository
@@ -673,6 +671,28 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await asyncio.gather(*pending_tasks, return_exceptions=True)
 
     await app.state.engine.dispose()
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Log application lifecycle boundaries around the full core lifespan."""
+    session_dir = os.environ.get("ORCHESTRATOR_SERVER_SESSION_DIR")
+    session_id = Path(session_dir).name if session_dir else None
+    logger.info("Server lifespan starting pid=%s session=%s", os.getpid(), session_id)
+    try:
+        async with _lifespan_core(app):
+            logger.info("Server lifespan ready pid=%s session=%s", os.getpid(), session_id)
+            try:
+                yield
+            finally:
+                logger.info("Server lifespan stopping pid=%s session=%s", os.getpid(), session_id)
+    except BaseException:
+        logger.exception(
+            "Server lifespan terminated with an error pid=%s session=%s", os.getpid(), session_id
+        )
+        raise
+    else:
+        logger.info("Server lifespan stopped pid=%s session=%s", os.getpid(), session_id)
 
 
 def _resolve_cors_origins() -> list[str]:

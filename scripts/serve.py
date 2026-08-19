@@ -3,17 +3,60 @@
 Usage:
     uv run orchestrator serve --reload
 or:
-    cd /Users/peter/code/task-world && uv run python -m uvicorn scripts.serve:app --reload --reload-dir src --reload-dir scripts --port 8000
+    uv run orchestrator serve --port 8000
 """
 
+import faulthandler
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
+from types import TracebackType
 
 from dotenv import load_dotenv
 
 _ROOT = Path(__file__).resolve().parent.parent
+
+
+def _append_fatal_lifecycle_event(exception_type: type[BaseException]) -> None:
+    """Record an early Python failure without depending on application logging."""
+    lifecycle_value = os.environ.get("ORCHESTRATOR_SERVER_LIFECYCLE_LOG")
+    session_value = os.environ.get("ORCHESTRATOR_SERVER_SESSION_DIR")
+    if not lifecycle_value or not session_value:
+        return
+    event = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "event": "fatal_python_exception",
+        "session_id": Path(session_value).name,
+        "supervisor_pid": os.getppid(),
+        "child_pid": os.getpid(),
+        "detail": exception_type.__name__,
+    }
+    try:
+        with Path(lifecycle_value).open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(event, separators=(",", ":")) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError:
+        # The original exception and faulthandler output remain visible on stderr.
+        pass
+
+
+_original_excepthook = sys.excepthook
+
+
+def _server_excepthook(
+    exception_type: type[BaseException],
+    exception: BaseException,
+    traceback: TracebackType | None,
+) -> None:
+    _append_fatal_lifecycle_event(exception_type)
+    _original_excepthook(exception_type, exception, traceback)
+
+
+sys.excepthook = _server_excepthook
+faulthandler.enable(file=sys.stderr, all_threads=True)
 
 # --- Worktree startup guard ---
 # If .git is a file (not a directory), we're inside a git worktree.
@@ -49,7 +92,7 @@ if _git_path.is_file():
         if _assigned_port:
             print(
                 f"  Use the assigned port instead:\n"
-                f"    uv run uvicorn scripts.serve:app --port {_assigned_port}\n",
+                f"    uv run orchestrator serve --port {_assigned_port}\n",
                 file=sys.stderr,
             )
         else:
@@ -116,14 +159,30 @@ def _kill_stale_port_holders(port: int) -> None:
             os.kill(pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             pass
-    time.sleep(1)
+    # Give the existing server enough time to pause active work and close its
+    # graph signal consumer before using SIGKILL as the last resort.
+    deadline = time.monotonic() + 10
+    while pids and time.monotonic() < deadline:
+        pids = {pid for pid in pids if _pid_is_alive(pid)}
+        if pids:
+            time.sleep(0.25)
 
-    # Force-kill stragglers
+    # Force-kill stragglers after the grace period.
     for pid in pids:
         try:
             os.kill(pid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 # Only kill stale processes for main server (port 8000), not worktree servers.
@@ -159,7 +218,7 @@ from orchestrator.api.app import create_app  # noqa: E402
 from orchestrator.config.enums import RoutineSource  # noqa: E402
 
 app = create_app(
-    db_path=str(_ROOT / "orchestrator.db"),
+    db_path=os.environ.get("ORCHESTRATOR_DB_PATH", str(_ROOT / "orchestrator.db")),
     routine_dirs=[
         (_ROOT / "routines", RoutineSource.LOCAL),
         (_ROOT / "tests" / "fixtures" / "routines", RoutineSource.LOCAL),

@@ -38,6 +38,7 @@ tmp/*
 .DS_Store
 Thumbs.db
 server_output.log
+server.log
 
 # Coverage
 htmlcov/

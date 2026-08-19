@@ -1,5 +1,7 @@
 """Main CLI entry point."""
 
+import os
+import sys
 from pathlib import Path
 
 import click
@@ -31,20 +33,66 @@ def cli(ctx: click.Context, db: str, json: bool) -> None:
 @click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind")
 @click.option("--port", default=8000, show_default=True, help="Port to bind")
 @click.option("--reload/--no-reload", default=False, help="Restart when backend files change")
-def serve(host: str, port: int, reload: bool) -> None:
-    """Start the local FastAPI backend."""
-    import uvicorn
-
+@click.option(
+    "--log-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Supervisor log root (default: .orchestrator/logs/server)",
+)
+@click.option(
+    "--supervisor/--no-supervisor",
+    default=True,
+    help="Use the durable external process supervisor",
+)
+def serve(host: str, port: int, reload: bool, log_dir: Path | None, supervisor: bool) -> None:
+    """Start the local FastAPI backend with durable crash evidence."""
     root = Path(__file__).resolve().parents[3]
     reload_dirs = [str(root / "src"), str(root / "scripts")] if reload else None
-    uvicorn.run(
+    if not supervisor:
+        import uvicorn
+
+        os.environ.setdefault("PYTHONUNBUFFERED", "1")
+        os.environ.setdefault("PYTHONFAULTHANDLER", "1")
+        os.environ.setdefault("LOG_AUTO_CONFIG", "false")
+        uvicorn.run(
+            "scripts.serve:app",
+            host=host,
+            port=port,
+            reload=reload,
+            reload_dirs=reload_dirs,
+            app_dir=str(root),
+        )
+        return
+
+    from orchestrator.cli.server_supervisor import SupervisorConfig, run_server_supervisor
+
+    command = [
+        sys.executable,
+        "-m",
+        "uvicorn",
         "scripts.serve:app",
-        host=host,
-        port=port,
-        reload=reload,
-        reload_dirs=reload_dirs,
-        app_dir=str(root),
+        "--host",
+        host,
+        "--port",
+        str(port),
+        "--app-dir",
+        str(root),
+    ]
+    if reload:
+        command.append("--reload")
+        for reload_dir in reload_dirs or []:
+            command.extend(("--reload-dir", reload_dir))
+
+    resolved_log_dir = log_dir or root / ".orchestrator" / "logs" / "server"
+    exit_code = run_server_supervisor(
+        SupervisorConfig(
+            command=tuple(command),
+            cwd=root,
+            log_root=resolved_log_dir,
+        )
     )
+    if exit_code:
+        raise click.exceptions.Exit(exit_code)
 
 
 cli.add_command(serve)
