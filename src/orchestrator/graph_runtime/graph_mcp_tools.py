@@ -110,6 +110,9 @@ def build_graph_mcp_server(
         verifier_id: str | None = None,
         candidate_id: str | None = None,
         rationale_record_id: str | None = None,
+        objective: str | None = None,
+        access_mode: str | None = None,
+        acceptance: list[str] | None = None,
     ) -> str:
         """Create a work region in the graph."""
         args: dict[str, Any] = {
@@ -125,6 +128,12 @@ def build_graph_mcp_server(
             args["candidate_id"] = candidate_id
         if rationale_record_id is not None:
             args["rationale_record_id"] = rationale_record_id
+        if objective is not None:
+            args["objective"] = objective
+        if access_mode is not None:
+            args["access_mode"] = access_mode
+        if acceptance is not None:
+            args["acceptance"] = acceptance
         return await _route("create_work_region", args)
 
     mcp.add_tool(
@@ -142,6 +151,9 @@ def build_graph_mcp_server(
         candidate_id: str | None = None,
         classified_gap_source_node_id: str | None = None,
         rationale_record_id: str | None = None,
+        objective: str | None = None,
+        access_mode: str | None = None,
+        acceptance: list[str] | None = None,
     ) -> str:
         """Create a corrective region in the graph."""
         args: dict[str, Any] = {
@@ -159,6 +171,12 @@ def build_graph_mcp_server(
             args["classified_gap_source_node_id"] = classified_gap_source_node_id
         if rationale_record_id is not None:
             args["rationale_record_id"] = rationale_record_id
+        if objective is not None:
+            args["objective"] = objective
+        if access_mode is not None:
+            args["access_mode"] = access_mode
+        if acceptance is not None:
+            args["acceptance"] = acceptance
         return await _route("create_corrective_region", args)
 
     mcp.add_tool(

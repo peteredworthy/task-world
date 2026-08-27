@@ -55,6 +55,9 @@ def test_create_work_region_macro_expands_to_valid_patch() -> None:
                         "worker_id": "worker-feature",
                         "verifier_id": "verifier-feature",
                         "candidate_id": "candidate-feature",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 }
             ],
@@ -97,6 +100,9 @@ def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
                         "worker_id": "worker-fix",
                         "verifier_id": "verifier-fix",
                         "candidate_id": "candidate-fix",
+                        "objective": "Produce a corrective candidate that resolves the classified gap.",
+                        "access_mode": "write",
+                        "acceptance": ["corrective candidate resolves the classified gap"],
                     },
                 }
             ],
@@ -228,7 +234,12 @@ def test_submit_patch_command_accepts_macro_invocations() -> None:
             "macro_invocations": [
                 {
                     "macro": "create_work_region",
-                    "args": {"region_id": "feature-region"},
+                    "args": {
+                        "region_id": "feature-region",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
+                    },
                 }
             ],
         },
@@ -343,6 +354,68 @@ def test_attach_verifier_macro_rejects_planner_authored_candidate_id() -> None:
         assert "payload [extra_forbidden]" in str(exc)
     else:  # pragma: no cover - defensive
         raise AssertionError("expected ValueError")
+
+
+def test_create_work_region_macro_forwards_worker_contract_fields() -> None:
+    patch = _patch(
+        {
+            "patch_id": "macro-work-contract",
+            "base_graph_position": 0,
+            "macro_invocations": [
+                {
+                    "macro": "create_work_region",
+                    "args": {
+                        "region_id": "feature-region",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
+                    },
+                }
+            ],
+        }
+    )
+
+    worker = patch.ops[0].node
+    assert worker is not None
+    assert worker["objective"] == "Implement a candidate that satisfies the bound requirements."
+    assert worker["access_mode"] == "write"
+    assert worker["acceptance"] == ["candidate satisfies the bound requirements"]
+
+    result = validate_patch(
+        patch,
+        current_position=0,
+        events_since_base=[],
+        projection=initial_projection(),
+        actor_role="planner",
+    )
+
+    assert result.accepted is True
+
+
+def test_create_work_region_macro_without_contract_fields_is_rejected() -> None:
+    patch = _patch(
+        {
+            "patch_id": "macro-work-no-contract",
+            "base_graph_position": 0,
+            "macro_invocations": [
+                {
+                    "macro": "create_work_region",
+                    "args": {"region_id": "feature-region"},
+                }
+            ],
+        }
+    )
+
+    result = validate_patch(
+        patch,
+        current_position=0,
+        events_since_base=[],
+        projection=initial_projection(),
+        actor_role="planner",
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "worker node requires objective: worker-feature-region"
 
 
 class _Ids:

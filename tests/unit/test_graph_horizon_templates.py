@@ -42,6 +42,7 @@ def test_horizon_templates_include_required_purposes_with_allowed_ops() -> None:
 @pytest.mark.parametrize(
     "purpose",
     [
+        "discovery_region",
         "implementation_region",
         "validation_region",
         "gap_analysis_region",
@@ -133,6 +134,25 @@ def test_final_invariant_template_uses_wildcard_verifier_evidence() -> None:
     assert evidence_edge["from_node_kind"] == "verifier"
     assert evidence_edge["from_node_role"] == "verifier"
     assert evidence_edge["to_port"] == "verification_evidence"
+
+
+def test_worker_horizon_templates_declare_the_worker_contract() -> None:
+    for purpose in HORIZON_REGION_PURPOSES:
+        template = instantiate_horizon_template(purpose)
+        for op in template["ops"]:
+            if op.get("op") != "create_node":
+                continue
+            node = op["node"]
+            if node.get("kind") != "worker":
+                continue
+            objective = node.get("objective")
+            assert isinstance(objective, str) and objective.strip(), purpose
+            access_mode = node.get("access_mode")
+            assert access_mode in {"read_only", "write"}, purpose
+            acceptance = node.get("acceptance")
+            assert isinstance(acceptance, list) and acceptance, purpose
+            if purpose == "discovery_region":
+                assert access_mode == "read_only"
 
 
 def _planner_envelope(purpose: str, ops: list[dict[str, Any]]) -> PatchEnvelope:

@@ -7,10 +7,31 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 
 ## Slice 1 — worker contracts and prompt hydration
 
-Status: chunks 1-2 of 6 verified and committed (`3ac034a7b`, `8565c24f9`).
-Chunk 3 specified below (planning pass 3, not built). Chunks 4-6 not started.
+Status: chunks 1-3 of 6 verified and committed (`3ac034a7b`, `8565c24f9`, and
+chunk 3 pending commit below). Chunks 4-6 not started.
 
 ### Verified chunks
+
+- **Chunk 3 — Patch-validator contract enforcement.** Builder implemented
+  the mandatory-field check (`kind == "worker"`, role-independent, first
+  triggered on `objective` → `access_mode` → `acceptance` in order) plus
+  threaded the three fields through macros, horizon templates, the prompt
+  example patch, codex macro schemas, and MCP tool signatures so the
+  planner's own graph tools aren't a bypass. Independent Validator did a
+  dedicated anti-weakening audit of all 8 repaired test files and found zero
+  instances of the check being loosened, skipped, or opted-out to make a
+  fixture pass — every repair was a genuine "add the missing fields to the
+  worker node dict" fix. Confirmed: predicate does not reference
+  `EXECUTABLE_NODE_KINDS`; error messages match the spec verbatim;
+  `test_seed_compiled_events_...` (compiler-seeding exemption) byte-identical;
+  new `test_create_revision_attempt_worker_node_is_not_contract_checked`
+  genuinely pins the R5 out-of-scope boundary rather than closing it; new
+  `test_worker_contract_is_not_required_of_non_worker_kinds` exercises real
+  `verifier`/`check`/`planner` nodes. Full suite **5481 passed, 5 skipped**
+  (5466 + 15 new test IDs, 27 pre-existing failures repaired, zero other
+  regressions), schema version 15 unchanged, `models.py`/`contracts.py`/
+  `compiler.py`/`_commands.py`/`payload_registry.py` untouched as required,
+  ruff/format/pyright clean.
 
 - **Chunk 2 — `access_mode` field (work_mode collision resolution).**
   Builder added `access_mode: Literal["read_only","write"] | None` as a new,

@@ -40,6 +40,9 @@ class CreateWorkRegionArgs(MacroArgs):
     classified_gap_edge_id: str | None = None
     rubric: list[str] | None = None
     checks: list[dict[str, Any]] | None = None
+    objective: str | None = None
+    access_mode: Literal["read_only", "write"] | None = None
+    acceptance: list[str] | None = None
 
 
 class AttachVerifierArgs(MacroArgs):
@@ -202,6 +205,9 @@ def _create_work_region(
             candidate_id,
             role=worker_role,
             attempt_number=attempt_number,
+            objective=_str(args, "objective"),
+            access_mode=args.get("access_mode"),
+            acceptance=args.get("acceptance"),
         ),
         _verifier_node(
             verifier_id,
@@ -461,27 +467,34 @@ def _worker_node(
     *,
     role: str,
     attempt_number: int,
+    objective: str | None = None,
+    access_mode: str | None = None,
+    acceptance: list[str] | None = None,
 ) -> dict[str, Any]:
-    return {
-        "op": "create_node",
-        "node": {
-            "node_id": node_id,
-            "kind": "worker",
-            "role": role,
-            "state": "planned",
-            "task_region_id": region_id,
-            "candidate_id": candidate_id,
-            "attempt_number": attempt_number,
-            "authority": {
-                "allowed_actions": [
-                    "submit_records",
-                    "request_clarification",
-                    "raise_appeal",
-                ],
-                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
-            },
+    node: dict[str, Any] = {
+        "node_id": node_id,
+        "kind": "worker",
+        "role": role,
+        "state": "planned",
+        "task_region_id": region_id,
+        "candidate_id": candidate_id,
+        "attempt_number": attempt_number,
+        "authority": {
+            "allowed_actions": [
+                "submit_records",
+                "request_clarification",
+                "raise_appeal",
+            ],
+            "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
         },
     }
+    if objective is not None:
+        node["objective"] = objective
+    if access_mode is not None:
+        node["access_mode"] = access_mode
+    if acceptance is not None:
+        node["acceptance"] = acceptance
+    return {"op": "create_node", "node": node}
 
 
 def _verifier_node(

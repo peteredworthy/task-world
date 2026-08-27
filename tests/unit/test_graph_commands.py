@@ -4396,6 +4396,9 @@ def test_patch_accept_adds_default_worker_write_authority() -> None:
                         "task_region_id": "region-1",
                         "candidate_id": "candidate-1",
                         "attempt_number": 1,
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 }
             ],
@@ -4615,6 +4618,9 @@ def test_patch_accepts_authority_request_edge_to_worker_authority_input() -> Non
                         "state": "planned",
                         "task_region_id": "authority-product-proof",
                         "candidate_id": "candidate-docs-authorized",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 },
                 {
@@ -4715,6 +4721,9 @@ def test_gap_planner_corrective_work_patch_accepts_through_submit_patch() -> Non
                         "role": "builder",
                         "state": "planned",
                         "task_region_id": "corrective_work_region",
+                        "objective": "Produce a corrective candidate that resolves the classified gap.",
+                        "access_mode": "write",
+                        "acceptance": ["corrective candidate resolves the classified gap"],
                     },
                 }
             ],

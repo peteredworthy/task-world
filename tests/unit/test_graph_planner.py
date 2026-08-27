@@ -238,6 +238,9 @@ def test_planner_patch_rejects_dynamic_nodes_without_required_input_edges() -> N
                     "role": "fixer",
                     "state": "planned",
                     "task_region_id": "corrective-region",
+                    "objective": "Produce a corrective candidate that resolves the classified gap.",
+                    "access_mode": "write",
+                    "acceptance": ["corrective candidate resolves the classified gap"],
                 },
             },
             {
@@ -294,6 +297,9 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                         "role": "fixer",
                         "state": "planned",
                         "task_region_id": "corrective-region",
+                        "objective": "Produce a corrective candidate that resolves the classified gap.",
+                        "access_mode": "write",
+                        "acceptance": ["corrective candidate resolves the classified gap"],
                     },
                 },
                 {
@@ -567,6 +573,9 @@ def _region_ops(successor_id: str | None, *, generation: int = 1) -> list[dict[s
                 "task_region_id": "region-1",
                 "attempt_number": 1,
                 "candidate_id": "candidate-1",
+                "objective": "Implement a candidate that satisfies the bound requirements.",
+                "access_mode": "write",
+                "acceptance": ["candidate satisfies the bound requirements"],
             },
         },
         {

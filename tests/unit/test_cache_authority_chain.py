@@ -509,6 +509,9 @@ def test_dynamic_nodes_inherit_authority_hash(operation: str) -> None:
                 "state": "planned",
                 "task_region_id": "dynamic",
                 "candidate_id": "candidate-dynamic",
+                "objective": "Implement a candidate that satisfies the bound requirements.",
+                "access_mode": "write",
+                "acceptance": ["candidate satisfies the bound requirements"],
             },
         },
         "gate": {
@@ -569,6 +572,9 @@ def test_dynamic_nodes_reject_explicit_authority_mismatch(operation: str) -> Non
                 "task_region_id": "dynamic",
                 "candidate_id": "candidate-mismatch",
                 "cache_authority_hash": "0" * 64,
+                "objective": "Implement a candidate that satisfies the bound requirements.",
+                "access_mode": "write",
+                "acceptance": ["candidate satisfies the bound requirements"],
             },
         },
         "gate": {

@@ -187,6 +187,13 @@ def validate_patch(
                         accepted=False,
                         rejection_reason=f"executable node requires role: {kind}",
                     )
+                if kind == "worker":
+                    worker_contract_error = _validate_worker_contract(typed_node)
+                    if worker_contract_error is not None:
+                        return PatchValidationResult(
+                            accepted=False,
+                            rejection_reason=worker_contract_error,
+                        )
                 if kind == "check":
                     check_command_error = _validate_check_command(typed_node, actor_role)
                     if check_command_error is not None:
@@ -362,6 +369,30 @@ def _validate_gap_planner_node(node: dict[str, Any]) -> str | None:
         and node.get("task_region_id") != "corrective_work_region"
     ):
         return "gap planner executable nodes must target corrective_work_region"
+    return None
+
+
+def _validate_worker_contract(node: dict[str, Any]) -> str | None:
+    node_id = node.get("node_id")
+
+    objective = node.get("objective")
+    if not isinstance(objective, str) or not objective.strip():
+        return f"worker node requires objective: {node_id}"
+
+    access_mode = node.get("access_mode")
+    if access_mode is None:
+        return f"worker node requires access_mode: {node_id}"
+    if access_mode not in ("read_only", "write"):
+        return f"worker node access_mode must be read_only or write: {node_id}"
+
+    acceptance = node.get("acceptance")
+    if not acceptance:
+        return f"worker node requires acceptance: {node_id}"
+    if not isinstance(acceptance, list) or not all(
+        isinstance(item, str) and item.strip() for item in cast(list[Any], acceptance)
+    ):
+        return f"worker node acceptance must be a list of non-empty strings: {node_id}"
+
     return None
 
 

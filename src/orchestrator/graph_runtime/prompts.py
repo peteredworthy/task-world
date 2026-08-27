@@ -966,6 +966,9 @@ def _planner_patch_examples(
                             "task_region_id": region_id,
                             "attempt_number": 1,
                             "candidate_id": "candidate-example",
+                            "objective": "Implement a candidate that satisfies the bound requirements.",
+                            "access_mode": "write",
+                            "acceptance": ["candidate satisfies the bound requirements"],
                         },
                     },
                     {

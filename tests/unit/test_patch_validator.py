@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from orchestrator.graph import ResourceClaimProjection
 from orchestrator.graph import (
     Actor,
@@ -706,6 +708,9 @@ def test_create_edge_rejects_binding_policy_incompatible_with_target_cardinality
                         "kind": "worker",
                         "role": "builder",
                         "state": "planned",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 },
                 {
@@ -749,6 +754,9 @@ def test_create_edge_accepts_known_prompt_hydration_policy() -> None:
                         "kind": "worker",
                         "role": "builder",
                         "state": "planned",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 },
                 {
@@ -788,6 +796,9 @@ def test_create_edge_rejects_unknown_prompt_hydration_policy() -> None:
                         "kind": "worker",
                         "role": "builder",
                         "state": "planned",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 },
                 {
@@ -960,6 +971,9 @@ def test_gap_planner_can_append_corrective_work_region() -> None:
                         "role": "builder",
                         "state": "planned",
                         "task_region_id": "corrective_work_region",
+                        "objective": "Produce a corrective candidate that resolves the classified gap.",
+                        "access_mode": "write",
+                        "acceptance": ["corrective candidate resolves the classified gap"],
                     },
                 },
                 {
@@ -1508,3 +1522,218 @@ def test_create_edge_accepts_revision_attempt_embedded_nodes_in_same_patch() -> 
     )
 
     assert result.accepted
+
+
+def test_create_node_rejects_worker_without_objective() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "worker node requires objective: worker-1"
+
+
+def test_create_node_rejects_worker_without_access_mode() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "worker node requires access_mode: worker-1"
+
+
+def test_create_node_rejects_worker_with_invalid_access_mode() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "implementation",
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "worker node access_mode must be read_only or write: worker-1"
+
+
+def test_create_node_rejects_worker_without_acceptance() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "worker node requires acceptance: worker-1"
+
+
+def test_create_node_rejects_worker_with_malformed_acceptance() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": "run the tests",
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert (
+        result.rejection_reason
+        == "worker node acceptance must be a list of non-empty strings: worker-1"
+    )
+
+
+def test_create_node_accepts_worker_with_full_contract() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is True
+
+
+@pytest.mark.parametrize(
+    ("kind", "role", "extra"),
+    [
+        ("verifier", "verifier", {}),
+        ("check", "check", {"command_binding": "dynamic_feature_hidden_oracle"}),
+        ("planner", "planner", {}),
+    ],
+)
+def test_worker_contract_is_not_required_of_non_worker_kinds(
+    kind: str, role: str, extra: dict[str, Any]
+) -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "node-1",
+                        "kind": kind,
+                        "role": role,
+                        "state": "planned",
+                        **extra,
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is True
+
+
+def test_gap_planner_corrective_worker_requires_worker_contract() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-corrective",
+                        "kind": "worker",
+                        "role": "fixer",
+                        "state": "planned",
+                        "task_region_id": "corrective_work_region",
+                    },
+                }
+            ]
+        ),
+        actor_role="gap_planner",
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "worker node requires objective: worker-corrective"
+
+
+def test_create_revision_attempt_worker_node_is_not_contract_checked() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "candidate-1",
+                    "worker_node": {
+                        "node_id": "worker-revision-3",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                    },
+                },
+            ]
+        )
+    )
+
+    assert result.accepted is True

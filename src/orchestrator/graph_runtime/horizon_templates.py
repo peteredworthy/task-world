@@ -47,6 +47,9 @@ def instantiate_horizon_template(
                         "task_region_id": region_id,
                         "attempt_number": 1,
                         "candidate_id": f"discovery-{candidate_id}",
+                        "objective": "Gather the missing evidence this region needs.",
+                        "access_mode": "read_only",
+                        "acceptance": ["discovery evidence is recorded and accepted"],
                     },
                 }
             ],
@@ -70,6 +73,9 @@ def instantiate_horizon_template(
                         "task_region_id": region_id,
                         "attempt_number": 1,
                         "candidate_id": candidate_id,
+                        "objective": "Implement a candidate that satisfies the bound requirements.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 }
             ],
@@ -174,6 +180,9 @@ def instantiate_horizon_template(
                         "task_region_id": region_id,
                         "attempt_number": 2,
                         "candidate_id": f"corrective-{candidate_id}",
+                        "objective": "Produce a corrective candidate that resolves the classified gap.",
+                        "access_mode": "write",
+                        "acceptance": ["corrective candidate resolves the classified gap"],
                     },
                 },
                 {

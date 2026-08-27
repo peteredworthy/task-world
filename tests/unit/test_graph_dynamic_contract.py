@@ -93,6 +93,9 @@ def _worker(node_id: str, region: str, candidate: str = "cand") -> dict[str, Any
             "state": "planned",
             "task_region_id": region,
             "candidate_id": candidate,
+            "objective": "Implement a candidate that satisfies the bound requirements.",
+            "access_mode": "write",
+            "acceptance": ["candidate satisfies the bound requirements"],
         },
     }
 
@@ -185,6 +188,9 @@ _CORRECTIVE_WORKER = {
         "state": "planned",
         "task_region_id": "corrective_work_region",
         "candidate_id": "cand-fix",
+        "objective": "Produce a corrective candidate that resolves the classified gap.",
+        "access_mode": "write",
+        "acceptance": ["corrective candidate resolves the classified gap"],
     },
 }
 _CLASSIFIED_GAP_EDGE = _edge(
