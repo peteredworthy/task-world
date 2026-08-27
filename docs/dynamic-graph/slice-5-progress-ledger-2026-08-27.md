@@ -283,26 +283,165 @@ orphan path), `tests/unit/test_callbacks.py:234-243`
 
 ---
 
+## Verified facts from planning pass 2 (2026-08-27, post-chunk-1)
+
+Established by reading `a42c27c97` (chunk 1 landed). Line numbers below are as
+of `a42c27c97` and **supersede** the pass-1 numbers where they differ.
+
+### F. Citation drift from chunk 1 (re-confirmed, all still accurate)
+
+| thing | pass-1 line | now |
+|---|---|---|
+| `FailureClass` alias | *(new)* | `models.py:2439` |
+| `FailureRecordValue` | `models.py:2439` | `models.py:2455` (`failure_class` at `:2465`) |
+| `RecoveryPlanValue` | `models.py:2470` | `models.py:2493` |
+| `_base_snapshot_id_for_node` | `_commands.py:3945` | `_commands.py:3946` (override branch `:3957-3958`) |
+| `_apply_agent_died` | `_commands.py:4092` | `_commands.py:4092` (unchanged) |
+| retry branch | `_commands.py:4276-4332` | `_commands.py:4277-4336` |
+| `_failure_record_payload` | `_commands.py:4335` | `_commands.py:4339` |
+| `_recovery_plan_record_payload` | `_commands.py:4377-4411` | `_commands.py:4383-4417` |
+| `_expired_lease_events` | `_commands.py:5481` | `_commands.py:5487` (record at `:5517`) |
+| driver constant snapshot | `graph_driver.py:837` | `graph_driver.py:837` (unchanged) |
+
+`FailureClass` is imported into `_commands.py` at `:84` and is **not** exported
+from `graph/__init__.py`. Chunk 2 keeps that convention (no `__init__.py` edit).
+
+### G. Chunk 1's `failure_class` is not read by any decision — confirmed
+
+Repo-wide, `failure_class` appears only at `models.py:2465` (the field),
+`_commands.py:4343` (the required producer parameter) and the four emission
+sites. **No branch anywhere reads it.** In particular `_apply_agent_died`
+still decides retry-vs-terminal purely by string sniffing the death `reason`
+(`_is_rate_limit_death` `_commands.py:4420`, `_is_non_retryable_runtime_death`
+`_commands.py:4430`) and by the attempt budget (`:4234`), and the four
+`failure_class="infrastructure_failure"` literals sit *inside* the already-taken
+branches (`:4172`, `:4212`, `:4254`, `:5514`). So today classification happens
+**after** the retry decision, at four independent sites. Criterion 2's "before
+deciding on retry" is a real, structural, currently-false statement about the
+code — not a documentation nicety.
+
+### H. What the kernel actually knows at the retry decision point
+
+Inside `_apply_agent_died`, before any branch:
+
+- `lease.base_snapshot_id` — `LeaseProjection.base_snapshot_id`
+  (`models.py:1269`), populated from `lease_granted`
+  (`projections.py:2772`). Always a real string for a granted lease, because
+  `schedule_tick` defers a node with no resolvable snapshot rather than
+  fabricating one (`_commands.py:2711-2720`).
+- `attempt_number` = `node_attempts_view(projection).get(node_id, 0)`
+  (`_commands.py:4233`).
+- `payload.max_attempts` — **`AgentDiedCommand.max_attempts` defaults to `0`**
+  (`command_models.py:540`), and `0` means *unbounded*. The driver only fills
+  it when the node has a compiled budget (`graph_driver.py:1205-1209`);
+  dynamically created planner nodes have none. **This is the exact `fff4f6b7`
+  pathology, and it is currently invisible in every emitted record.**
+- `retry_backoff_seconds` = `payload.retry_backoff_seconds` (default `0`).
+
+### I. `80d74390f` gives no usable "why will this differ" signal
+
+Checked directly: `lease_renewed` is reduced at `projections.py:2785-2796` and
+updates only `state`, `node_id`, `generation`, `execution_id`, `expires_at`.
+**`LeaseValue` carries no renewal counter, no renewal timestamps, and no
+renewal history**, and `payload_registry.py:257-258` retains only
+`execution_id expires_at generation lease_id node_id`. So "previous attempt's
+lease was renewed T times before disappearing" is **not derivable** without
+adding projection state — which would bump
+`PROJECTION_CHECKPOINT_SCHEMA_VERSION` off 15 and is out of scope.
+
+**Therefore the honest answer to "why is a repeat attempt expected to behave
+differently?" on the kernel `agent_died` path is: it is not.** Nothing is
+health-checked, nothing is probed, the worktree is untouched, and the base
+snapshot is identical. The only thing that can differ is a backoff delay. The
+design consequence is recorded as decision D2 below.
+
+*(The managed boundary path is the one exception and does have a real
+differentiator — see fact J.)*
+
+### J. The managed boundary path *does* take a differentiating action
+
+`handle_complete_runner_recovery` (`boundary.py:580`) runs after
+`_dispatch_runner_recovery` has restored the worktree, and the attempt
+(`ExecutionAttemptValue`, `projection_models.py:648`) carries typed proof of
+exactly what was restored: `baseline_snapshot_id`, `baseline_tree_sha`,
+`recovery_scope` (`"selective"`/`"full_baseline"`), `restored_paths`,
+`removed_paths`, `lease_base_snapshot_id`, `recovery_reason`,
+`recovery_max_attempts`. Its retry branch (`boundary.py:678-702`) emits
+`runtime_retry_scheduled` + `node_state_changed→ready` and **no typed record at
+all**. So the one path that *can* honestly say "the repeat attempt differs
+because the worktree was restored to baseline tree `abc…`, 4 paths restored,
+1 removed" says nothing, while the path that cannot differentiate at least
+emits a `RecoveryPlan`. This asymmetry is real but is **not** on the
+missing-callback path criterion 2 names, so it is split into its own chunk
+(new chunk 4).
+
+### K. Record-id collision is a hard replay error, not a silent overwrite
+
+`insert_record` (`projections.py:1257-1278`) **raises
+`ProjectionReplayConflictError` on any non-identical reuse of a `record_id`**.
+Any new `FailureRecord`/`RecoveryPlan` emission site must therefore prove its
+`record_id` cannot collide with an existing one:
+
+- `_failure_record_payload` id is `f"failure-{node_id}-{lease_id or error_class}"`
+  (`_commands.py:4371`); `_recovery_plan_record_payload` id is
+  `f"recovery-plan-{node_id}-{lease_id}"` (`_commands.py:4408`).
+- Within `_apply_agent_died` the five branches are mutually exclusive, and a
+  second `agent_died` for the same lease is rejected `"lease not active"`
+  (`:4104`). A revoked lease is also invisible to `_expired_lease_events`
+  (`_lease_is_expired` returns `False` unless `state == "active"`,
+  `_commands.py:5554`). **So a new failure record on the retry branch keyed by
+  `lease_id` is collision-free** — but the Validator must confirm this
+  empirically (see verification condition 5), not take it on this argument.
+- A *later* chunk emitting from `boundary.py` for the same `node_id`+`lease_id`
+  **would** collide. New chunk 4 must namespace its ids by `recovery_id`
+  (`f"recovery:{execution_id}:{reason}"`, `boundary.py:534`).
+
+### L. Neither record type has projection side effects
+
+`_apply_record_side_effects` (`projections.py:1317-1341`) special-cases only
+`RoutineSnapshotRecord`, `CompletionDecisionRecord`, `CandidateRecord` and
+`OutputRecord`. `FailureRecord` and `RecoveryPlanRecord` fall through
+untouched. Adding fields or emissions cannot perturb derived projection state.
+
+---
+
 ## Chunk queue
 
 | # | Name | One-line description | AC |
 |---|------|----------------------|----|
 | 1 | Typed `FailureClass` on the failure-record path | Add a `FailureClass` `Literal` alias + additive optional `failure_class` on `FailureRecordValue`; make the `_failure_record_payload` helper *require* it; classify all four existing sites `infrastructure_failure`. No behaviour change. | 1 |
-| 2 | Classify before retry, and state the retry basis | Emit a classified `FailureRecord` on the two retry paths that emit none today (`_apply_agent_died` retry branch, `handle_complete_runner_recovery`); add `failure_class` / `retry_base_snapshot_id` / `retry_basis` to `RecoveryPlanValue` and populate them. | 1, 2 |
+| 2 | Classify before retry, and state the retry basis | **Revised in pass 2 — kernel path only.** Hoist the classification to a single point above every branch in `_apply_agent_died`; emit a `retryable=True` classified `FailureRecord` on the retry branch (which emits none today); add `failure_class` / `retry_base_snapshot_id` / `retry_basis` / `attempt_number` / `max_attempts` to `RecoveryPlanValue` and populate them. | 1, 2 |
 | 3 | Conclusive lease revocation on missing callback | When the per-node orphan-recovery budget is exhausted, terminally revoke the lease and fail the node with a `retryable=False` `infrastructure_failure` record instead of pausing with an active lease; make `project_graph_blocked_reason`'s active-lease branch unreachable-by-construction and rewrite the two tests that pin it. | 3 |
-| 4 | Typed failure records at the verification and invalid-plan surfaces | Emit `verification_failure` / `invalid_plan_failure` records at `verification_failed` and `graph_patch_rejected`, so the enum's other two members have real producers. **Deferrable** — see note below. | 1 |
-| 5 | Scenario #9 regression coverage | End-to-end: a missing callback terminates in either a healthy classified retry or a conclusively revoked lease with typed recovery state — never a paused run with an active lease. | 4 |
+| 4 | Boundary-path recovery symmetry | **New in pass 2 (split out of the old chunk 2).** `handle_complete_runner_recovery` (`boundary.py:580`) emits the same typed pair — a classified `FailureRecord` and a `RecoveryPlan` with `retry_basis="worktree_restored_to_baseline"` populated from the attempt's `baseline_tree_sha` / `restored_paths` / `removed_paths` (fact J). Ids namespaced by `recovery_id` (fact K). Events only, never command-payload fields (risk R3). **Deferrable.** | 2 |
+| 5 | Typed failure records at the verification and invalid-plan surfaces | Emit `verification_failure` / `invalid_plan_failure` records at `verification_failed` and `graph_patch_rejected`, so the enum's other two members have real producers. **Deferrable** — see note below. | 1 |
+| 6 | Scenario #9 regression coverage | End-to-end: a missing callback terminates in either a healthy classified retry or a conclusively revoked lease with typed recovery state — never a paused run with an active lease. | 4 |
 
-**Ordering rationale.** Chunk 1 is the only chunk with no prerequisite and is
-a pure serialize/replay property, so a failed validation is unambiguous.
-Chunk 2 must precede chunk 3 because chunk 3's terminal decision consumes the
-classification chunk 2 attaches to the retry paths. Chunk 4 is separated
-because it touches the callback and patch-acceptance command paths — a much
-larger blast radius than the lease paths — and criterion 1 as written asks
-only for the *type* to distinguish three classes, which chunk 1 delivers.
-**If the loop is running long, defer chunk 4 with a recorded reason rather
-than compressing chunk 3 or 5.** Chunk 5 is last because it asserts the
-composed behaviour of 1-3.
+**Ordering rationale (revised in pass 2).** Chunk 1 is the only chunk with no
+prerequisite and is a pure serialize/replay property, so a failed validation is
+unambiguous. Chunk 2 must precede chunk 3 because chunk 3's terminal decision
+consumes the classification and the `retry_basis` vocabulary chunk 2 attaches
+to the retry path.
+
+The old chunk 2 bundled three things; pass 2 splits the boundary-path half out
+as the new chunk 4, for three evidenced reasons: (i) criterion 2 scopes itself
+to "missing-callback / disappeared-execution handling", and that path is
+`_recover_orphaned_active_leases` → `agent_died` → `_apply_agent_died`
+(fact D1) — `handle_complete_runner_recovery` handles the *dispatch-exception*
+reasons `runner_died` / `boundary_mismatch` (`boundary.py:648`), a different
+trigger; so the kernel half alone fully satisfies criterion 2 and the boundary
+half is symmetry/completeness. (ii) It is a different file, a different command
+handler, and a different (integration) test surface —
+`tests/integration/test_graph_runner_recovery_dispatch.py` has 12 references to
+that path. (iii) It carries risk R3 (`recovery_proof_hash`), which the kernel
+half does not. Bundling would make a failed validation unattributable, which is
+the same reasoning that produced the chunk 1 / chunk 2 split.
+
+Chunk 5 (was 4) stays separated because it touches the callback and
+patch-acceptance command paths — a much larger blast radius than the lease
+paths — and criterion 1 as written asks only for the *type* to distinguish
+three classes, which chunk 1 delivers. **If the loop is running long, defer
+chunks 4 and 5 with a recorded reason rather than compressing chunk 3 or 6.**
+Chunk 6 is last because it asserts the composed behaviour of 1-3.
 
 **Non-goal, explicitly deferred (target doc's own carve-out).**
 Health-check-based runner probing before retry (contract doc §7.3). Fact A1
@@ -507,6 +646,388 @@ legacy path stays covered.
 
 ---
 
+## Chunk 2 — Classify before retry, and state the retry basis (SPECIFIED, not built)
+
+**Goal.** Make two currently-false statements true of the kernel's
+missing-callback path, `_apply_agent_died` (`_commands.py:4092`):
+
+1. the failure is classified **once, above every branch**, before the code
+   chooses retry-vs-terminal (criterion 2, first half — today classification
+   happens *inside* four already-taken branches, fact G); and
+2. the emitted recovery decision **states the base snapshot the retry will run
+   against, and states — as a typed value, not prose — what if anything
+   differentiates the repeat attempt** (criterion 2, second half).
+
+Plus the missing record: the retry branch (`_commands.py:4277-4336`) is the
+single most common infrastructure failure and emits **no `FailureRecord` at
+all** (fact B4). It gets one, and it is the first `retryable=True` failure
+record in the system.
+
+No lease-lifecycle change, no change to which branch is taken, no change to
+node states, no driver change, no `boundary.py` change.
+
+### Scope decision — the two halves of criterion 2 are ONE chunk
+
+They are the same edit to the same function. Half (a) on its own would be a
+hoisted local variable whose four consumers all receive the identical value
+they already hardcode — an edit with **no observable output change**, hence no
+non-vacuous validation. Half (b) is the observable consequence that proves the
+hoist happened (the `RecoveryPlanValue.failure_class` on the retry branch can
+only be populated *because* the class is computed before the branch). Splitting
+would produce one unvalidatable chunk and one that re-does its work.
+
+What *is* split off is the third item the pass-1 queue bundled here —
+`handle_complete_runner_recovery`. See the revised ordering rationale above.
+
+### Decision D1 — the classification point is a single assignment, not a dispatcher
+
+Add, in `_apply_agent_died` immediately after `reason = payload.reason`
+(`_commands.py:4118`) and **above** the `non_gap_planner_has_accepted_patch`
+check at `:4127`:
+
+```python
+# Criterion 2: the class is fixed here, before any branch below chooses
+# retry vs terminal failure.  Every `agent_died` reason is by definition an
+# execution or runner death with no graded result, so there is nothing to
+# dispatch on yet; when `invalid_plan_failure` gains a producer (chunk 5)
+# this is the seam that grows a classifier.
+failure_class: FailureClass = "infrastructure_failure"
+```
+
+Then **delete all four hardcoded `failure_class="infrastructure_failure"`
+literals inside the branches** (`:4172`, `:4212`, `:4254`) and pass
+`failure_class=failure_class` instead. `_commands.py:5514`
+(`_expired_lease_events`) is a *different* function and keeps its literal.
+
+**Do not** introduce a `_classify_agent_death(reason)` helper with one arm.
+A single-armed dispatcher that always returns the same constant looks like
+classification without being any, and would make the chunk untestable except
+against itself. The single assignment is the honest form: it is one place, it
+is above the branches, and the comment names the extension point.
+
+### Decision D2 — `retry_basis` is a typed `Literal`, and there is deliberately NO free-text rationale field
+
+Fact I establishes that on this path **nothing differentiates a retry**: no
+health check, no probe, no worktree restore, no renewal history to cite, and
+(fact C3 / question 4 below) a byte-identical base snapshot. The only thing
+that can differ is a backoff delay.
+
+So the field must be able to say *that*, explicitly and greppably:
+
+```python
+RetryBasis: TypeAlias = Literal[
+    "no_differentiating_action",
+    "retry_backoff_only",
+    "worktree_restored_to_baseline",
+]
+```
+
+- `no_differentiating_action` — same base snapshot, same worktree, no delay,
+  no probe. **The retry is expected to behave identically.** This is the value
+  the kernel path emits today with `retry_backoff_seconds == 0`, and it is
+  precisely the state `reliable-plan-execution-contract.md` §7 calls "not
+  recovery". Making it a first-class, assertable value is the point of the
+  field.
+- `retry_backoff_only` — the only difference is elapsed time
+  (`retry_backoff_seconds > 0`). Honest for transient rate/resource pressure,
+  and honestly weak.
+- `worktree_restored_to_baseline` — a real filesystem action was taken. **No
+  producer in chunk 2**; it is declared now so chunk 4 (`boundary.py`, fact J)
+  adds a producer rather than the vocabulary, and so chunk 3 can already
+  distinguish "a retry that did something" from "a retry that did nothing".
+
+**A `retry_rationale: str` free-text field is rejected.** Everything a prose
+sentence could say here is already fully determined by
+`retry_basis` + `retry_base_snapshot_id` + `attempt_number` + `max_attempts` +
+the existing `reason`. A string assembled from those four values adds no
+information, cannot be asserted on without pinning English, and — given that
+the honest content is "nothing differs" — would be the exact "canned string
+with no real differentiation" the brief warns against. If an operator surface
+later wants a sentence, it renders one from the typed fields; the kernel does
+not store prose. **Record any later request for this field here rather than
+adding it.**
+
+### Decision D3 — `base_snapshot_id: "routine-snapshot"` being a constant is OUT OF SCOPE
+
+Confirmed still live at `graph_driver.py:837` and mirrored at
+`api/routers/graph.py:3943`. `"routine-snapshot"` is not a placeholder — it is
+`_ROUTINE_SNAPSHOT_NODE_ID` (`graph/compiler.py:1047`), the compiler-created
+snapshot node whose identity every node in every run resolves to, forever,
+because `_base_snapshot_id_for_node` (`_commands.py:3946`) honours the command
+override at `:3957-3958` *before* consulting the node's
+`base_snapshot`/`root_snapshot`/`routine_snapshot` bindings at `:3960-3967`.
+
+Changing it would alter the `base_snapshot_id` on **every** `lease_granted`
+payload, every `agent_dispatch_requested`, every runner baseline capture and
+every boundary/recovery proof in the system, and would require deciding *what*
+per-attempt snapshot identity replaces it — which is Slice 4
+(candidate/accepted snapshot isolation), an explicit non-goal of this pass.
+That is categorically larger than "add typed fields to a record", and it is the
+same call chunk 4 of Slice 1 made about not fixing an upstream design while
+adding a typed field downstream.
+
+**Chunk 2 records the constant honestly and does not change it.** That is
+exactly what criterion 2 asks for: it says the decision must *state* which
+snapshot the retry will use, not that the snapshot must be new. A
+`RecoveryPlan` reading
+`retry_base_snapshot_id="routine-snapshot", retry_basis="no_differentiating_action"`
+is a true and damning statement, and it is the machine-readable evidence a
+future Slice 4 needs to justify itself.
+
+### Files touched (exactly these)
+
+Production (2):
+
+1. `src/orchestrator/graph/models.py`
+2. `src/orchestrator/graph/_commands.py`
+
+Tests (3):
+
+3. `tests/unit/test_graph_models.py`
+4. `tests/unit/test_graph_commands.py`
+5. `tests/unit/test_output_record_event_payloads.py`
+
+**Do not touch:** `graph/commands/boundary.py` (chunk 4),
+`workflow/graph_driver.py` (chunk 3; and D3 — the constant stays),
+`api/routers/graph.py` (D3), `graph/payload_registry.py` (fact B8 — `value` is
+retained wholesale, no edit needed), `graph/projections.py`,
+`graph/projection_codec.py` (schema version stays 15), `graph/__init__.py`
+(fact F — `FailureClass` is unexported; `RetryBasis` matches),
+`graph/contracts.py`, `graph/scheduler.py`, `graph_runtime/prompts.py`,
+`tests/graph_fr17_fixture.py` (its `recovery-plan-1` payload at `:214` is a
+legacy-replay pin and **must keep** its three-key `value`).
+
+### Exact production edits
+
+**1. `graph/models.py` — new `RetryBasis` alias.** Place immediately above
+`class RecoveryPlanValue` (`models.py:2493`), with the three members and the
+discriminants spelled out as in D2. `TypeAlias` and `Literal` are already
+imported (`models.py:6`).
+
+**2. `graph/models.py` — five additive fields on `RecoveryPlanValue`**
+(`models.py:2493-2499`). All optional with `None` defaults — `RecoveryPlanValue`
+is a `StrictNestedModel` (`extra="forbid"`), so widening is safe for replay and
+`exclude_unset=True` (`models.py:103`) keeps unset keys out of dumps, which is
+what preserves the `graph_fr17_fixture.py:214` and
+`test_output_record_event_payloads.py:229` legacy shapes:
+
+```python
+    failure_class: FailureClass | None = None
+    retry_base_snapshot_id: str | None = None
+    retry_basis: RetryBasis | None = None
+    attempt_number: StrictInt | None = None
+    max_attempts: StrictInt | None = None
+```
+
+`retry_base_snapshot_id` needs a comment stating exactly what it is and is not:
+*the failed lease's `base_snapshot_id`, which is what the retry resolves to
+unless the node's snapshot input bindings change before the next
+`schedule_tick` — and which the driver's constant override
+(`graph_driver.py:837`) makes invariant today.* `max_attempts` needs a comment
+that `None` means **unbounded**, the dynamically-created-node case
+(fact H) that produced `fff4f6b7`.
+
+**3. `graph/_commands.py` — hoist the classification.** As specified in D1.
+
+**4. `graph/_commands.py` — new `FailureRecord` on the retry branch.** Insert
+into the returned list at `:4306-4336`, **between `lease_revoked` and
+`runtime_retry_scheduled`**, so the event stream itself orders
+classify-then-retry and the three terminal branches and the retry branch share
+one ordering shape:
+
+```python
+make_event(
+    "output_record_accepted",
+    _failure_record_payload(
+        node_id=node_id,
+        phase="runtime",
+        failure_class=failure_class,
+        error_class="runtime_death_retry_scheduled",
+        retryable=True,
+        lease_id=lease_id,
+        execution_id=event_payload.get("execution_id"),
+        generation=generation,
+        reason=reason,
+        metadata={
+            "attempt_number": attempt_number,
+            **({"max_attempts": max_attempts} if max_attempts > 0 else {}),
+        },
+    ),
+),
+```
+
+Resulting retry-branch order: `agent_died`, `lease_revoked`,
+`output_record_accepted`(failure_record), `runtime_retry_scheduled`,
+`output_record_accepted`(recovery_plan), `node_state_changed`.
+
+Notes the Builder must respect:
+- `error_class="runtime_death_retry_scheduled"` is a **new** free-form detail
+  code and must not reuse any of the four existing ones — `record_id` is
+  `f"failure-{node_id}-{lease_id}"` and reuse would risk fact K.
+- `retryable=True` is deliberate and is the first such record in the system.
+  Do not "fix" it to `False` for consistency with the other four.
+- `max_attempts` is conditionally included precisely so an unbounded
+  (`0`) budget produces an **absent** key rather than a misleading `0`; the
+  unboundedness is then carried by `RecoveryPlanValue.max_attempts is None`.
+
+**5. `graph/_commands.py` — populate the recovery plan.** Extend
+`_recovery_plan_record_payload` (`:4383`) with four new keyword-only params —
+`failure_class: FailureClass`, `base_snapshot_id: str | None`,
+`attempt_number: int`, `max_attempts: int` — all **non-defaulted** (same
+enforcement pattern chunk 1 used on `_failure_record_payload`; it has exactly
+one call site, so this is free). Derive `retry_basis` inside the helper from
+data already passed, never from a caller-supplied string:
+
+```python
+    value["failure_class"] = failure_class
+    if base_snapshot_id is not None:
+        value["retry_base_snapshot_id"] = base_snapshot_id
+    value["retry_basis"] = (
+        "retry_backoff_only" if retry_backoff_seconds > 0 else "no_differentiating_action"
+    )
+    value["attempt_number"] = attempt_number
+    if max_attempts > 0:
+        value["max_attempts"] = max_attempts
+```
+
+Order the new keys after `reason` and before the existing
+`retry_after_seconds`/`retry_not_before` block so the emitted dict order stays
+stable and readable. At the call site (`:4326-4330`) pass
+`failure_class=failure_class`, `base_snapshot_id=lease.base_snapshot_id`,
+`attempt_number=next_attempt_number` (the number of the attempt the plan
+*schedules*, matching `node_state_payload["attempt_number"]` at `:4293`), and
+`max_attempts=max_attempts`.
+
+`record_id` stays `f"recovery-plan-{node_id}-{lease_id}"` — unchanged.
+
+### Exact test additions
+
+`tests/unit/test_graph_models.py`:
+
+- `test_recovery_plan_record_round_trips_with_retry_basis` — adjacent to
+  `test_recovery_plan_record_round_trips` (`:1691`); a `value` carrying all
+  five new keys round-trips through `assert_round_trips` with every key
+  preserved.
+- `test_recovery_plan_record_accepts_legacy_value_without_retry_basis` — the
+  existing `:1691` three-key `value` still validates and all five new
+  attributes are `None`. Name it so its replay-pin purpose is unmistakable.
+- `test_recovery_plan_record_rejects_unknown_retry_basis` —
+  `retry_basis="probed_runner"` raises `ValidationError`. (Pairs with the
+  existing `rejects_invalid_action` test at `:1731`.)
+
+`tests/unit/test_graph_commands.py` — **extend, never relax**, the two
+exact-equality assertions on the recovery-plan `value`, and shift the
+positional indices that the inserted event moves:
+
+- `:8236-8273` (`test_agent_died_...` retry, no backoff): the event-type list
+  gains `"output_record_accepted"` at index 2; `output[2]`→`output[3]`,
+  `output[3]`→`output[4]`, `output[4]`→`output[5]`. The recovery-plan
+  exact-equality `value` gains
+  `"failure_class": "infrastructure_failure"`,
+  `"retry_base_snapshot_id": <the lease's base snapshot>`,
+  `"retry_basis": "no_differentiating_action"`, `"attempt_number": 1`.
+  *(The fixture's `lease_granted` at `:8230` may carry no `base_snapshot_id`;
+  if so the key is legitimately absent — assert its absence explicitly rather
+  than adding a snapshot to the fixture, and add the base-snapshot assertion in
+  the new dedicated test below.)*
+- `:8404-8420` (backoff variant): same index shift; `value` gains
+  `"retry_basis": "retry_backoff_only"` alongside the existing
+  `retry_after_seconds`/`retry_not_before`.
+- `:8748-8756` (accepted-patch-then-death variant): event-type list and
+  `output[3]`/`output[4]` indices shift.
+- New `test_agent_died_retry_records_classified_failure_before_scheduling_retry`
+  — a fixture whose `lease_granted` carries an explicit
+  `base_snapshot_id="routine-snapshot"`, asserting: the failure record's
+  `output_record_accepted` appears at a **lower index** than
+  `runtime_retry_scheduled`; its `value["failure_class"] ==
+  "infrastructure_failure"`, `value["retryable"] is True`,
+  `value["error_class"] == "runtime_death_retry_scheduled"`,
+  `value["attempt_number"] == 0`; and the recovery plan's
+  `value["retry_base_snapshot_id"] == "routine-snapshot"` — i.e. the retry's
+  stated snapshot is byte-identical to the failed lease's.
+- New `test_agent_died_retry_plan_omits_max_attempts_when_unbounded` — with
+  `max_attempts` absent from the command (the dynamic-node case, fact H),
+  `"max_attempts"` is absent from both the failure record's and the recovery
+  plan's `value`; with `max_attempts=3` it is present and equal to `3`.
+
+`tests/unit/test_output_record_event_payloads.py`: extend the `recovery_plan`
+fixture at `:229-237` to carry the five new keys and assert they survive the
+round-trip, and **leave one bare three-key `recovery_plan` case in place** so
+the payload-level legacy path stays covered (mirroring what chunk 1 did for
+`failure_record`).
+
+### Verification conditions (what a Validator must independently confirm)
+
+1. **The hoist is real, by execution.** Change the single assignment to
+   `failure_class: FailureClass = "verification_failure"` and confirm that
+   **all five** emission sites in `_apply_agent_died` change together — the
+   three terminal `FailureRecord`s, the new retry `FailureRecord`, and the
+   `RecoveryPlan`'s `failure_class` — while `_expired_lease_events`
+   (`:5514`) is unaffected. Restore. If any site still says
+   `infrastructure_failure`, a literal survived and the hoist is incomplete.
+2. **Classification precedes the retry decision in the emitted stream.** In
+   the retry branch, assert by index that `output_record_accepted`
+   (failure_record) is emitted before `runtime_retry_scheduled` — not merely
+   that both are present.
+3. **Non-vacuity of `retry_basis`.** Confirm by execution that the *same*
+   fixture produces `"no_differentiating_action"` with
+   `retry_backoff_seconds=0` and `"retry_backoff_only"` with
+   `retry_backoff_seconds=60`. A field that returns one value for every input
+   is theatre; this must be shown to discriminate.
+4. **The stated snapshot is the failed lease's, empirically.** Grant a lease
+   with `base_snapshot_id="snap-A"`, kill it, and confirm the recovery plan
+   says `snap-A` — then confirm from the real driver payload
+   (`graph_driver.py:837`) that production always supplies
+   `"routine-snapshot"`, so the recorded value is invariant across retries.
+   **This is the evidence for criterion 2 and must be produced, not asserted
+   from the doc.**
+5. **Fact K, empirically.** Drive a full sequence through the real reduction
+   path — `lease_granted` → `agent_died`(retry) → `schedule_tick` (re-grant) →
+   `agent_died`(retry) — and confirm no `ProjectionReplayConflictError` from
+   `insert_record` (`projections.py:1257`), i.e. the two
+   `failure-{node}-{lease}` ids genuinely differ. Also confirm that a lease
+   revoked by the retry branch is never picked up by `_expired_lease_events`.
+6. **Legacy replay compatibility.** Reduce the `graph_fr17_fixture.py:214`
+   `recovery-plan-1` payload (three-key `value`) through
+   `graph/projections.py`'s `output_record_accepted` reduction
+   (`projections.py:1473-1479`) and confirm it validates with all five new
+   attributes `None`. Model-level `model_validate` alone is **not** sufficient
+   evidence.
+7. **No checkpoint-shape change.** `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still
+   `15`; no `payload_registry.py` edit; no `boundary.py`, `graph_driver.py` or
+   `api/routers/graph.py` edit (any of these means the chunk exceeded D3 and
+   must be justified or reverted).
+8. **Anti-weakening audit.** The two exact-equality `value` assertions at
+   `test_graph_commands.py:8252` and `:8412` are still exact-equality — they
+   must have grown keys, not been downgraded to subset/`in` checks or to
+   `assert payload["record_type"] == "recovery_plan"`. No assertion about
+   `error_class`, `retryable`, `phase`, event ordering or event count was
+   deleted; index shifts (`output[3]`→`output[4]`) are expected and legitimate,
+   deletions are not.
+9. **Suite.** Full suite ≥ **5518 passed, 5 skipped** with zero regressions
+   (expect 5518 + the new test IDs). `ruff check`, `ruff format --check`, and
+   `pyright` clean.
+
+### Explicitly out of scope for chunk 2
+
+- Changing `graph_driver.py:837`'s constant `"routine-snapshot"`, or making a
+  retry resolve a *different* snapshot (decision D3; Slice 4 territory).
+- Any change to `boundary.py` / `handle_complete_runner_recovery` (chunk 4),
+  including the `worktree_restored_to_baseline` producer — chunk 2 declares
+  that `RetryBasis` member but must emit **no** record from that file.
+- Any change to which branch of `_apply_agent_died` is taken, to lease
+  revocation, to `_recover_orphaned_active_leases`,
+  `MAX_NODE_RECOVERIES_PER_DRIVE`, or `project_graph_blocked_reason` (chunk 3).
+- Any consumer of `failure_class` / `retry_basis` — chunk 2 makes the decision
+  *stated*, chunk 3 makes it *acted on*. No branch may read the new fields yet.
+- Adding a renewal counter to `LeaseValue` to enable a richer rationale
+  (fact I) — that is a projection-shape change and would move
+  `PROJECTION_CHECKPOINT_SCHEMA_VERSION` off 15.
+- A free-text `retry_rationale` field (decision D2).
+- Typing `phase`, still deferred from chunk 1.
+
+---
+
 ## Open risks carried into later chunks
 
 - **R1 (chunk 3, high).** Terminally failing a node when the orphan-recovery
@@ -523,19 +1044,32 @@ legacy path stays covered.
   Deleting the branch outright would degrade an unrelated diagnostic. Prefer
   narrowing it and adding an assertion/invariant test that the *orphan*
   path can no longer reach it.
-- **R3 (chunk 2, medium).** `handle_complete_runner_recovery`
+- **R3 (now chunk 4, medium).** `handle_complete_runner_recovery`
   (`boundary.py:580`) is guarded by an exact-match idempotency comparison
   (`:592-634`) and a `recovery_proof_hash` (`:617-633`). Adding emitted
   events there is safe; adding *fields to the command payload* would change
-  the proof hash and break in-flight recoveries across a restart. Chunk 2
-  must add events only.
-- **R4 (chunk 2, medium).** Criterion 2's "which snapshot the retry will use"
-  is currently a constant (fact C3, `graph_driver.py:837`). Recording it
-  honestly means recording `"routine-snapshot"` and a `retry_basis` that says
-  the *worktree was restored to baseline*, not that the snapshot differs.
-  Resist the temptation to make the retry use a different snapshot in chunk 2
-  — that is Slice 4 (candidate/accepted snapshot isolation) territory and is
-  an explicit non-goal of this pass.
+  the proof hash and break in-flight recoveries across a restart. Chunk 4
+  must add events only. *Re-pointed in pass 2 (chunk 2 no longer touches this
+  file), and extended: chunk 4's new record ids must be namespaced by
+  `recovery_id` (`boundary.py:534`), because `insert_record` raises
+  `ProjectionReplayConflictError` on non-identical id reuse (fact K) and the
+  naive `failure-{node_id}-{lease_id}` scheme would collide with the record
+  chunk 2 emits from `_apply_agent_died` for the same lease.*
+- **R4 — RESOLVED in pass 2 as decision D3 (chunk 2 spec).** Criterion 2's
+  "which snapshot the retry will use" is a constant (fact C3,
+  `graph_driver.py:837`), and `"routine-snapshot"` is the compiler's
+  `_ROUTINE_SNAPSHOT_NODE_ID` (`compiler.py:1047`), not a placeholder. Chunk 2
+  records it honestly via `retry_base_snapshot_id` + a typed
+  `retry_basis="no_differentiating_action"` and **does not change it**;
+  changing it is Slice 4 territory. See D3 for the full argument and D2 for
+  why no prose rationale field is added.
+- **R6 (chunk 3, medium — new in pass 2).** Chunk 2 deliberately adds no
+  consumer of `failure_class`/`retry_basis`. If chunk 3 or 4 slips or is
+  deferred, the slice ends with a second write-only field family (fact B7's
+  problem, repeated). Criterion 2 as written only requires the decision to be
+  *stated*, so this is acceptable at the criterion level — but if chunks 3-4
+  are deferred, that fact must be recorded here explicitly rather than left
+  implied.
 - **R5 (chunk 4, low).** `_planner_outstanding_failures`
   (`prompts.py:914`) does not read `FailureRecord`s at all (fact B7). If a
   later chunk wants classified failures to reach the planner, that is
