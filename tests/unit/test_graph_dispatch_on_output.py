@@ -33,6 +33,7 @@ from orchestrator.graph_runtime.dispatch import (
     _execute_check_command,
     _output_records_for_submit,
     _planner_evidence,
+    _prompt_summary_for_node,
     _requirements_for_node,
     _runtime_death_max_attempts,
     _full_raw_patch_validation_diagnostics,
@@ -1543,6 +1544,27 @@ def test_access_mode_does_not_affect_legacy_execution_context_work_mode() -> Non
     context_access_only = _context(node_payload={"access_mode": "write"})
     execution_context_access_only = executor._execution_context(context_access_only)
     assert execution_context_access_only.work_mode == "implementation"
+
+
+def test_worker_prompt_summary_reports_the_work_contract_section() -> None:
+    context = _context(node_id="worker-1", node_kind="worker")
+
+    summary = _prompt_summary_for_node(context)
+
+    assert "work_contract" in summary["packet_keys"]
+    assert summary["prompt_sections"] == ["worker_instruction", "work_contract", "worker_authority"]
+
+
+def test_worker_prompt_summary_does_not_embed_work_contract_values() -> None:
+    context = _context(
+        node_id="worker-1",
+        node_kind="worker",
+        node_payload={"objective": "sentinel-objective-value-not-in-summary"},
+    )
+
+    summary = _prompt_summary_for_node(context)
+
+    assert "sentinel-objective-value-not-in-summary" not in json.dumps(summary)
 
 
 def test_verifier_submit_cites_bound_candidate_and_file_state_records() -> None:

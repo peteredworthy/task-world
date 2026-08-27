@@ -920,15 +920,16 @@ Do not run git commit manually; the orchestrator auto-commits uncommitted change
     <div class="prompt-card">
 <pre>{title or objective or node_id}
 {task_context if present}
-objective: {objective}
-corrective_requirement: {corrective_requirement}
-corrective_evidence_required: {corrective_evidence_required}
-expected_gap: {expected_gap}
-expected_artifact: {expected_artifact}
-feature_spec_path: {feature_spec_path}
-acceptance_command: {acceptance_command}
-expected_outputs: {bounded JSON list}
-invariants: {bounded JSON list}
+work_contract: {
+  "objective": {objective or null},
+  "access_mode": {access_mode or null},
+  "acceptance": {acceptance or null},
+  "scope": "{scope}",
+  "bound_requirement_ids": [...],
+  "invariants": [...],
+  "prohibited_actions": [...],
+  "bound_requirements": [...]
+}
 worker_authority: {
   "node_id": "{node_id}",
   "lease_id": "{lease_id}",

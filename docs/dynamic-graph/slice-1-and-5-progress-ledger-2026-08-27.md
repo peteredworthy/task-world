@@ -7,8 +7,27 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 
 ## Slice 1 — worker contracts and prompt hydration
 
-Status: chunks 1-4 of 6 verified and committed (`3ac034a7b`, `8565c24f9`,
-`4ee76eda8`, and chunk 4 pending commit below). Chunks 5-6 not started.
+Status: chunks 1-5 of 6 verified and committed (`3ac034a7b`, `8565c24f9`,
+`4ee76eda8`, `9ca1f26c1`, and chunk 5 pending commit below). Chunk 6 not
+started.
+
+- **Chunk 5 — Worker prompt hydration from typed fields.** New
+  `_worker_contract_packet()` renders `objective`/`access_mode`/`acceptance`
+  (always present, null when unset on exempt compiler-seeded workers) plus
+  `scope`/`bound_requirement_ids`/`invariants`/`prohibited_actions`/resolved
+  `bound_requirements` (omitted when absent) as a `work_contract:` line,
+  gated to `node_kind == "worker"` only. Deleted 7 dead node-payload-key
+  reads with no home; the LIVE `dynamic_feature`-sourced rendering of
+  `acceptance_command`/`feature_spec_path` (a different dict, unrelated)
+  confirmed intact. Independent Validator re-verified by direct execution
+  (not just tests): built a real worker payload, called the prompt function,
+  confirmed the exact rendered `work_contract` JSON and confirmed all 7
+  retired key names are absent from the string. Confirmed the one permitted
+  existing-test deletion only removed coverage for the 7 dead keys, with
+  adjacent live-path test blocks byte-identical. `node_detail`/operator
+  read-model wiring deferred (R8), as specified. Full suite **5511 passed, 5
+  skipped** (5504 + 7 new tests, zero regressions), ruff/format/pyright
+  clean.
 
 ### Verified chunks (chunk 4)
 

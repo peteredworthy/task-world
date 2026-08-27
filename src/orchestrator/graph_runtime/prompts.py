@@ -268,11 +268,14 @@ def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
                 context.graph_projection,
             )["bound_records"],
         }
-    return {
+    packet: dict[str, Any] = {
         "node_id": context.node_id,
         "task_region_id": context.node_payload.get("task_region_id", context.node_id),
         "worker_authority": _worker_authority_packet(context),
     }
+    if context.node_kind == "worker":
+        packet["work_contract"] = _worker_contract_packet(context)
+    return packet
 
 
 def _packet_type_for_context(context: GraphDispatchContext) -> str:
@@ -299,6 +302,8 @@ def _prompt_sections_for_context(context: GraphDispatchContext) -> list[str]:
         return sections
     if context.node_kind == "check":
         return ["check_command", "bound_evidence"]
+    if context.node_kind == "worker":
+        return ["worker_instruction", "work_contract", "worker_authority"]
     return ["worker_instruction", "worker_authority"]
 
 
@@ -348,28 +353,8 @@ def _worker_like_prompt(context: GraphDispatchContext) -> str:
     task_context = node.get("task_context")
     context_lines = [str(task_context)] if isinstance(task_context, str) and task_context else []
 
-    for key in (
-        "objective",
-        "corrective_requirement",
-        "corrective_evidence_required",
-        "expected_gap",
-        "expected_artifact",
-        "feature_spec_path",
-        "acceptance_command",
-    ):
-        value = node.get(key)
-        if isinstance(value, str) and value:
-            context_lines.append(f"{key}: {_bounded_text(value)}")
-
-    expected_outputs = node.get("expected_outputs")
-    if isinstance(expected_outputs, list) and expected_outputs:
-        context_lines.append(
-            f"expected_outputs: {_bounded_json(cast(list[Any], expected_outputs))}"
-        )
-
-    invariants = node.get("invariants")
-    if isinstance(invariants, list) and invariants:
-        context_lines.append(f"invariants: {_bounded_json(cast(list[Any], invariants))}")
+    if context.node_kind == "worker":
+        context_lines.append(f"work_contract: {_bounded_json(_worker_contract_packet(context))}")
 
     authority_packet = _worker_authority_packet(context)
     if authority_packet:
@@ -380,6 +365,40 @@ def _worker_like_prompt(context: GraphDispatchContext) -> str:
         context_lines.extend(_dynamic_feature_prompt_lines(node, dynamic_feature))
 
     return _bounded_prompt("\n".join([_bounded_text(title), *context_lines]).strip())
+
+
+def _worker_contract_packet(context: GraphDispatchContext) -> dict[str, Any]:
+    """Render the node's typed work contract as a bounded packet.
+
+    Mandatory-by-validator fields (``objective``/``access_mode``/``acceptance``)
+    are always present so a compiler-seeded worker that predates the contract
+    reads as an explicit ``null`` rather than a silent omission.
+    """
+    node = context.node_payload
+    objective = node.get("objective")
+    access_mode = node.get("access_mode")
+    acceptance = node.get("acceptance")
+    packet: dict[str, Any] = {
+        "objective": (
+            _bounded_text(objective) if isinstance(objective, str) and objective.strip() else None
+        ),
+        "access_mode": access_mode if isinstance(access_mode, str) else None,
+        "acceptance": (
+            [item for item in cast(list[Any], acceptance) if isinstance(item, str)]
+            if isinstance(acceptance, list)
+            else None
+        ),
+    }
+    scope = node.get("scope")
+    if isinstance(scope, str) and scope.strip():
+        packet["scope"] = _bounded_text(scope)
+    for key in ("bound_requirement_ids", "invariants", "prohibited_actions"):
+        value = node.get(key)
+        if isinstance(value, list) and value:
+            packet[key] = [item for item in cast(list[Any], value) if isinstance(item, str)]
+    if context.requirements:
+        packet["bound_requirements"] = list(context.requirements)
+    return packet
 
 
 def _worker_authority_packet(context: GraphDispatchContext) -> dict[str, Any]:
@@ -451,8 +470,6 @@ def _dynamic_feature_prompt_lines(
         ("feature_spec_content", "dynamic_feature_spec_content"),
         ("acceptance_command", "dynamic_acceptance_command"),
     ):
-        if isinstance(node.get(source_key), str) and node[source_key]:
-            continue
         value = dynamic_feature.get(source_key)
         if isinstance(value, str) and value:
             lines.append(f"{prompt_key}: {_bounded_text(value)}")

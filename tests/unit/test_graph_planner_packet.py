@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -650,38 +651,6 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert '"paths": ["docs/out.md"]' in worker_prompt
     assert '"worktree_path": "/tmp/worktree"' in worker_prompt
 
-    dynamic_worker_context = GraphDispatchContext(
-        run_id="run-planner-packet",
-        node_id="worker-dynamic-smoke-implementation-a1",
-        node_kind="worker",
-        node_payload={
-            "node_id": "worker-dynamic-smoke-implementation-a1",
-            "kind": "worker",
-            "objective": ("Create docs/graph-approach/dynamic-smoke-output.txt for dynamic-smoke."),
-            "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
-            "corrective_evidence_required": "include validation-strengthened: true",
-            "expected_artifact": "docs/graph-approach/dynamic-smoke-output.txt",
-            "acceptance_command": (
-                "test -f docs/graph-approach/dynamic-smoke-output.txt && "
-                'rg -q "dynamic-smoke" docs/graph-approach/dynamic-smoke-output.txt'
-            ),
-            "expected_outputs": ["docs/graph-approach/dynamic-smoke-output.txt"],
-        },
-        requirements=[],
-        worktree_path="/tmp/worktree",
-        lease_id="lease-dynamic-worker",
-        lease_generation=1,
-        execution_id="exec-dynamic-worker",
-        base_snapshot_id="snapshot-0",
-        dispatch_event_id="dispatch-dynamic-worker",
-    )
-    dynamic_worker_prompt = _prompt_for_node(dynamic_worker_context)
-    assert "docs/graph-approach/dynamic-smoke-output.txt" in dynamic_worker_prompt
-    assert "acceptance_command:" in dynamic_worker_prompt
-    assert "corrective_evidence_required:" in dynamic_worker_prompt
-    assert "expected_artifact:" in dynamic_worker_prompt
-    assert "expected_outputs:" in dynamic_worker_prompt
-
     fallback_dynamic_worker_context = GraphDispatchContext(
         run_id="run-planner-packet",
         node_id="worker-ds-builder",
@@ -874,6 +843,160 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert '"required_summary_schema"' in summarizer_prompt
     assert '"schema": "AnalysisSummary"' in summarizer_prompt
     assert "worker_authority:" not in summarizer_prompt
+
+
+def _work_contract_json(prompt: str) -> dict[str, Any]:
+    for line in prompt.splitlines():
+        if line.startswith("work_contract: "):
+            return json.loads(line[len("work_contract: ") :])
+    raise AssertionError("work_contract line not found in prompt")
+
+
+def test_worker_prompt_renders_the_full_typed_work_contract() -> None:
+    context = GraphDispatchContext(
+        run_id="run-planner-packet",
+        node_id="worker-contract-1",
+        node_kind="worker",
+        node_payload={
+            "node_id": "worker-contract-1",
+            "kind": "worker",
+            "title": "Implement candidate",
+            "objective": "Ship the bounded worker contract.",
+            "access_mode": "write",
+            "acceptance": ["Tests pass", "Docs updated"],
+            "scope": "src/orchestrator/graph_runtime/",
+            "bound_requirement_ids": ["REQ-1"],
+            "invariants": ["Never widen repo write authority."],
+            "prohibited_actions": ["force_push"],
+        },
+        requirements=["REQ-1: ship it"],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-worker-contract-1",
+        lease_generation=1,
+        execution_id="exec-worker-contract-1",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-worker-contract-1",
+    )
+    prompt = _prompt_for_node(context)
+    assert "work_contract:" in prompt
+    work_contract = _work_contract_json(prompt)
+    assert work_contract == {
+        "objective": "Ship the bounded worker contract.",
+        "access_mode": "write",
+        "acceptance": ["Tests pass", "Docs updated"],
+        "scope": "src/orchestrator/graph_runtime/",
+        "bound_requirement_ids": ["REQ-1"],
+        "invariants": ["Never widen repo write authority."],
+        "prohibited_actions": ["force_push"],
+        "bound_requirements": ["REQ-1: ship it"],
+    }
+    assert prompt.index("work_contract:") < prompt.index("worker_authority:")
+
+
+def test_worker_prompt_work_contract_omits_absent_optional_fields_and_nulls_mandatory_ones() -> (
+    None
+):
+    context = GraphDispatchContext(
+        run_id="run-planner-packet",
+        node_id="worker-contract-2",
+        node_kind="worker",
+        node_payload={
+            "node_id": "worker-contract-2",
+            "kind": "worker",
+        },
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-worker-contract-2",
+        lease_generation=1,
+        execution_id="exec-worker-contract-2",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-worker-contract-2",
+    )
+    prompt = _prompt_for_node(context)
+    work_contract = _work_contract_json(prompt)
+    assert work_contract == {"objective": None, "access_mode": None, "acceptance": None}
+
+
+def test_worker_prompt_no_longer_renders_retired_loose_node_keys() -> None:
+    retired = {
+        "corrective_requirement": "sentinel-corrective-requirement",
+        "corrective_evidence_required": "sentinel-corrective-evidence-required",
+        "expected_gap": "sentinel-expected-gap",
+        "expected_artifact": "sentinel-expected-artifact",
+        "feature_spec_path": "sentinel-feature-spec-path",
+        "acceptance_command": "sentinel-acceptance-command",
+        "expected_outputs": ["sentinel-expected-outputs"],
+    }
+    context = GraphDispatchContext(
+        run_id="run-planner-packet",
+        node_id="worker-contract-3",
+        node_kind="worker",
+        node_payload={
+            "node_id": "worker-contract-3",
+            "kind": "worker",
+            **retired,
+        },
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-worker-contract-3",
+        lease_generation=1,
+        execution_id="exec-worker-contract-3",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-worker-contract-3",
+    )
+    prompt = _prompt_for_node(context)
+    for key, value in retired.items():
+        assert key not in prompt
+        if isinstance(value, str):
+            assert value not in prompt
+        else:
+            for item in value:
+                assert item not in prompt
+
+
+def test_check_node_prompt_has_no_work_contract_section() -> None:
+    context = GraphDispatchContext(
+        run_id="run-planner-packet",
+        node_id="check-1",
+        node_kind="check",
+        node_payload={
+            "node_id": "check-1",
+            "kind": "check",
+        },
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-check-1",
+        lease_generation=1,
+        execution_id="exec-check-1",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-check-1",
+    )
+    prompt = _prompt_for_node(context)
+    assert "work_contract:" not in prompt
+
+
+def test_worker_prompt_work_contract_renders_resolved_bound_requirements() -> None:
+    context = GraphDispatchContext(
+        run_id="run-planner-packet",
+        node_id="worker-contract-4",
+        node_kind="worker",
+        node_payload={
+            "node_id": "worker-contract-4",
+            "kind": "worker",
+            "bound_requirement_ids": ["REQ-1"],
+        },
+        requirements=["REQ-1: the bound requirement text"],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-worker-contract-4",
+        lease_generation=1,
+        execution_id="exec-worker-contract-4",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-worker-contract-4",
+    )
+    prompt = _prompt_for_node(context)
+    work_contract = _work_contract_json(prompt)
+    assert work_contract["bound_requirement_ids"] == ["REQ-1"]
+    assert work_contract["bound_requirements"] == ["REQ-1: the bound requirement text"]
 
 
 def test_verifier_prompt_is_bounded_for_oversized_rubric() -> None:
