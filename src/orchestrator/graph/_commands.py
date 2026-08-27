@@ -81,6 +81,7 @@ from orchestrator.graph.models import (
     DecisionRecord,
     EdgeProjection,
     EventEnvelope,
+    FailureClass,
     FailureRecord,
     FileStateRecord,
     GapClassificationRecord,
@@ -4168,6 +4169,7 @@ def _apply_agent_died(
                 _failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
+                    failure_class="infrastructure_failure",
                     error_class="agent_rate_limited",
                     retryable=False,
                     lease_id=lease_id,
@@ -4207,6 +4209,7 @@ def _apply_agent_died(
                 _failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
+                    failure_class="infrastructure_failure",
                     error_class="runtime_configuration_error",
                     retryable=False,
                     lease_id=lease_id,
@@ -4248,6 +4251,7 @@ def _apply_agent_died(
                 _failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
+                    failure_class="infrastructure_failure",
                     error_class="max_attempts_exhausted",
                     retryable=False,
                     lease_id=lease_id,
@@ -4336,6 +4340,7 @@ def _failure_record_payload(
     *,
     node_id: str,
     phase: str,
+    failure_class: FailureClass,
     error_class: str,
     retryable: bool,
     lease_id: str | None = None,
@@ -4347,6 +4352,7 @@ def _failure_record_payload(
     value: dict[str, Any] = {
         "failed_node_id": node_id,
         "phase": phase,
+        "failure_class": failure_class,
         "error_class": error_class,
         "retryable": retryable,
     }
@@ -5511,6 +5517,7 @@ def _expired_lease_events(
                     _failure_record_payload(
                         node_id=node_id,
                         phase="runtime",
+                        failure_class="infrastructure_failure",
                         error_class="lease_expired_without_callback",
                         retryable=False,
                         lease_id=lease.lease_id,

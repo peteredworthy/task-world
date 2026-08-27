@@ -13,6 +13,23 @@ uv run pytest tests/ -q -n auto --dist worksteal
 5513 passed, 5 skipped, 4 warnings in 45.39s
 ```
 
+## Verified chunks
+
+- **Chunk 1 — Typed `FailureClass` on the failure-record path.** Additive
+  `failure_class: FailureClass | None` on `FailureRecordValue`; `error_class`
+  untouched. `_failure_record_payload` gained a non-defaulted keyword-only
+  `failure_class` param; all 4 current call sites pass
+  `"infrastructure_failure"` (correct — the other two classes have no
+  producer yet, deferred to chunk 4). Independent Validator confirmed by
+  EXECUTION, not just reading: (a) omitting `failure_class` raises
+  `TypeError: missing 1 required keyword-only argument`; (b) a legacy
+  payload with `error_class` set and no `failure_class` key survives the
+  real `reduce_event` reduction path unchanged, `failure_class` lands
+  `None`; (c) an unknown `failure_class` value raises `ValidationError`.
+  `record_id` derivation unchanged. Full suite **5518 passed, 5 skipped**
+  (5513 + 5 new tests, zero regressions), schema version 15 unchanged,
+  ruff/format/pyright clean.
+
 This — not the target doc's stale **5454** (which predates Slice 1's six
 chunks) — is the regression baseline every Slice 5 chunk must preserve.
 `PROJECTION_CHECKPOINT_SCHEMA_VERSION = 15` (`graph/projection_codec.py:40`);

@@ -1596,6 +1596,77 @@ def test_failure_record_round_trips() -> None:
     )
 
 
+def test_failure_record_round_trips_with_failure_class() -> None:
+    assert_round_trips(
+        FailureRecord,
+        {
+            "record_id": "failure-1",
+            "record_kind": "graph_record",
+            "record_type": "failure_record",
+            "producer_node_id": "runtime",
+            "port": "failure_record",
+            "schema": "FailureRecord",
+            "value": {
+                "failed_node_id": "worker-1",
+                "phase": "agent_execution",
+                "failure_class": "infrastructure_failure",
+                "error_class": "lease_expired",
+                "retryable": True,
+                "lease_id": "lease-1",
+                "execution_id": "exec-1",
+                "reason": "lease expired without callback",
+            },
+        },
+    )
+
+
+def test_failure_record_accepts_legacy_value_without_failure_class() -> None:
+    record = FailureRecord.model_validate(
+        {
+            "record_id": "failure-1",
+            "record_kind": "graph_record",
+            "record_type": "failure_record",
+            "producer_node_id": "runtime",
+            "port": "failure_record",
+            "schema": "FailureRecord",
+            "value": {
+                "failed_node_id": "worker-1",
+                "phase": "agent_execution",
+                "error_class": "lease_expired",
+                "retryable": True,
+                "lease_id": "lease-1",
+                "execution_id": "exec-1",
+                "reason": "lease expired without callback",
+            },
+        }
+    )
+    assert record.value.failure_class is None
+
+
+def test_failure_record_rejects_unknown_failure_class() -> None:
+    with pytest.raises(ValidationError):
+        FailureRecord.model_validate(
+            {
+                "record_id": "failure-1",
+                "record_kind": "graph_record",
+                "record_type": "failure_record",
+                "producer_node_id": "runtime",
+                "port": "failure_record",
+                "schema": "FailureRecord",
+                "value": {
+                    "failed_node_id": "worker-1",
+                    "phase": "agent_execution",
+                    "failure_class": "something_else",
+                    "error_class": "lease_expired",
+                    "retryable": True,
+                    "lease_id": "lease-1",
+                    "execution_id": "exec-1",
+                    "reason": "lease expired without callback",
+                },
+            }
+        )
+
+
 def test_failure_record_rejects_universal_field_mismatch() -> None:
     with pytest.raises(ValueError, match="producer_port must match port"):
         FailureRecord.model_validate(

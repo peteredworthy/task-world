@@ -178,6 +178,7 @@ def _record_cases() -> dict[str, dict[str, Any]]:
             "value": {
                 "failed_node_id": "node-1",
                 "phase": "agent_execution",
+                "failure_class": "infrastructure_failure",
                 "error_class": "lease_expired",
                 "retryable": True,
             },
@@ -301,3 +302,26 @@ def test_output_record_event_accepts_every_produced_record_type(
 
     assert accepted.record_type == record_type
     assert type(accepted) is OUTPUT_RECORD_MODELS_BY_TYPE[record_type]
+
+
+def test_output_record_event_accepts_legacy_failure_record_without_failure_class() -> None:
+    legacy_payload = {
+        "record_id": "failure-legacy-1",
+        "record_kind": "graph_record",
+        "record_type": "failure_record",
+        "producer_node_id": "runtime",
+        "port": "failure_record",
+        "schema": "FailureRecord",
+        "value": {
+            "failed_node_id": "node-1",
+            "phase": "agent_execution",
+            "error_class": "lease_expired",
+            "retryable": True,
+        },
+    }
+
+    accepted = OutputRecordAcceptedPayload.model_validate(legacy_payload).root
+
+    assert accepted.record_type == "failure_record"
+    assert type(accepted) is OUTPUT_RECORD_MODELS_BY_TYPE["failure_record"]
+    assert accepted.value.failure_class is None

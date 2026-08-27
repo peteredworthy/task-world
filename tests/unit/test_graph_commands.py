@@ -1292,6 +1292,7 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
     assert output[1].payload["value"] == {
         "failed_node_id": "verifier-1",
         "phase": "runtime",
+        "failure_class": "infrastructure_failure",
         "error_class": "lease_expired_without_callback",
         "retryable": False,
         "lease_id": "lease-1",
@@ -1314,6 +1315,50 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
     projected = _project([*events, *output])
     assert leases_view(projected)["lease-1"].state == "expired"
     assert node_state(projected, "verifier-1") == "failed"
+
+
+def test_schedule_tick_expired_lease_failure_record_carries_infrastructure_failure_class() -> None:
+    clock = FakeClock()
+    expired_at = clock.now() - timedelta(seconds=1)
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "running"}, 1
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": expired_at.isoformat(),
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["docs/out.md"]}],
+            },
+            2,
+        ),
+    ]
+
+    output = apply_command(
+        _project(events),
+        events,
+        "schedule_tick",
+        {"base_snapshot_id": "S0"},
+        _default_context(events, "schedule_tick"),
+        clock,
+        SequentialIdGenerator(),
+    )
+
+    failure_events = [
+        event
+        for event in output
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+    ]
+    assert len(failure_events) == 1
+    assert failure_events[0].payload["value"]["failure_class"] == "infrastructure_failure"
+    assert failure_events[0].payload["value"]["error_class"] == "lease_expired_without_callback"
 
 
 def test_callback_after_acknowledge_start_accepts_boundary() -> None:
@@ -8265,6 +8310,7 @@ def test_agent_died_check_missing_command_fails_without_retry() -> None:
     assert output[2].payload["value"] == {
         "failed_node_id": "check-1",
         "phase": "runtime",
+        "failure_class": "infrastructure_failure",
         "error_class": "runtime_configuration_error",
         "retryable": False,
         "lease_id": "lease-1",
@@ -8322,6 +8368,7 @@ def test_agent_died_cache_scan_budget_failure_is_terminal(metric: str) -> None:
     ]
     assert not any(event.event_type == "runtime_retry_scheduled" for event in output)
     assert output[2].payload["value"]["error_class"] == "runtime_configuration_error"
+    assert output[2].payload["value"]["failure_class"] == "infrastructure_failure"
     assert output[2].payload["value"]["retryable"] is False
     assert output[3].payload["new_state"] == "failed"
     assert output[3].payload["trigger"] == "non_retryable_runtime_error"
@@ -8475,6 +8522,7 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
     assert output[2].payload["value"] == {
         "failed_node_id": "worker-1",
         "phase": "runtime",
+        "failure_class": "infrastructure_failure",
         "error_class": "max_attempts_exhausted",
         "retryable": False,
         "lease_id": "lease-1",
@@ -8534,6 +8582,7 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
     assert output[2].payload["value"] == {
         "failed_node_id": "planner-1",
         "phase": "runtime",
+        "failure_class": "infrastructure_failure",
         "error_class": "agent_rate_limited",
         "retryable": False,
         "lease_id": "lease-1",
@@ -8592,6 +8641,7 @@ def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
         "node_state_changed",
     ]
     assert output[2].payload["value"]["error_class"] == "agent_rate_limited"
+    assert output[2].payload["value"]["failure_class"] == "infrastructure_failure"
     assert output[2].payload["value"]["retryable"] is False
     assert output[3].payload["trigger"] == "agent_rate_limited"
     assert leases_view(projection)["lease-1"].state == "revoked"

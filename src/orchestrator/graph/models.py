@@ -2436,10 +2436,33 @@ class AuthorityRequestRecord(TypedRecordBase):
         return self
 
 
+FailureClass: TypeAlias = Literal[
+    "infrastructure_failure",
+    "verification_failure",
+    "invalid_plan_failure",
+]
+"""Typed classification of a `FailureRecord`.
+
+- ``infrastructure_failure`` -- the execution or runner disappeared, died,
+  was rate-limited, or was misconfigured; no graded result was produced.
+- ``verification_failure`` -- the work ran to completion and produced a
+  graded failure (a verifier or check said no).
+- ``invalid_plan_failure`` -- the patch or plan itself was rejected; no
+  execution was ever attempted against it.
+"""
+
+
 class FailureRecordValue(StrictNestedModel):
     failed_node_id: str
     phase: str
+    # Free-form, fine-grained detail code (e.g. "agent_rate_limited",
+    # "lease_expired_without_callback"). Historical journals already carry
+    # arbitrary values here, so this field cannot be narrowed to a Literal
+    # without breaking replay -- see `failure_class` for the typed carrier.
     error_class: str
+    # Typed decision carrier, additive so historical records without it
+    # still replay. Optional on the model; producers should always set it.
+    failure_class: FailureClass | None = None
     retryable: StrictBool
     lease_id: str | None = None
     lease_generation: StrictInt | None = None
