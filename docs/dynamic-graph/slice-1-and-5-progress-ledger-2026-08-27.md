@@ -8,8 +8,60 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 ## Slice 1 — worker contracts and prompt hydration
 
 Status: chunks 1-3 of 6 verified and committed (`3ac034a7b`, `8565c24f9`,
-`4ee76eda8`). Chunk 4 specified below (planning pass 4), not built. Chunks 5-6
-not started.
+`4ee76eda8`). Chunk 4 spec below (planning pass 4); build attempt 1 FAILED
+independent validation with a real security-relevant bug (see "Chunk 4 —
+build attempt 1: FAILED" below) — fix in progress, retry 1 of 5 (default
+mind-the-gap retry limit). Chunks 5-6 not started.
+
+### Chunk 4 — build attempt 1: FAILED validation (2026-08-27)
+
+Independent Validator found a genuine escalation-refusal bypass, not a style
+nitpick — do not treat this as resolved until a fresh build+validate cycle
+passes.
+
+**Bug.** `_ensure_default_node_authority` (`graph/_commands.py`) and
+`macros.py`'s `_worker_node` both gate the mandatory `read_only` → `read`
+claim injection on `resource_claims` being *falsy* (missing or `[]`). Chunk 4
+also added an `"external"` claim-mode carve-out (validator check 9: an
+`external` resource claim is not repo write authority, so it's allowed on a
+`read_only` worker). Combining the two: a `create_node` op for a
+`role="discovery"`, `access_mode="read_only"` worker whose `authority.resource_claims`
+is `[{"mode": "external", ...}]` — non-empty, so the falsy check skips
+granting a `read` claim — is accepted with **no ranked claim at all**. The
+pre-existing (unmodified) escalation guard `_existing_resource_claim_rank`
+returns `None` for a node with no ranked claim, and
+`_resource_claim_escalation_reason` treats `None` as "no ceiling." A
+follow-up `set_resource_claims` op granting full `{"mode": "write", "scope":
+"repo", "paths": ["."]}}` on that node is therefore **accepted**, verified by
+direct execution against `apply_command` and confirmed live in the replayed
+projection. This is not contrived: a discovery worker legitimately declaring
+an `external` web-search claim alongside `access_mode: "read_only"` is
+ordinary usage, and the chunk's own new tests exercise `authority`-bearing
+`create_node` ops as a first-class path — they just never paired the
+`external`-only case with a follow-up escalation attempt.
+
+**Required fix (Validator's recommendation, adopted).** Fix the actual
+defect at the grant sites, not the general escalation logic: change
+`_ensure_default_node_authority`'s and `_worker_node`'s `read_only` branch
+condition from "is `resource_claims` falsy" to "does `resource_claims`
+contain any claim whose mode is in `MODE_RANK`" (i.e. any *ranked* claim,
+`read` or `write`) — if not, append (not replace) a `read` claim, regardless
+of whether an `external`-only list is already present. **Do NOT** fix this by
+changing `_existing_resource_claim_rank` to treat rank-`None` as rank `0`
+globally — that function is the shared escalation-refusal path for every
+node in the system, not just chunk-4 discovery nodes, and a claim-free node
+receiving its very first (often `write`) claim via
+`_ensure_default_node_authority` is the completely ordinary case for every
+non-discovery worker (`test_patch_accept_adds_default_worker_write_authority`
+pins exactly this). Treating "no ranked claim yet" as rank 0 globally would
+make that ordinary first-write-grant look like a 0→1 escalation and reject
+it — breaking the whole system, not fixing the hole.
+
+**New required test.** A discovery `read_only` worker admitted with only an
+`external` resource claim, followed by a `set_resource_claims` op requesting
+`write`, must be rejected by the pre-existing escalation-refusal message —
+this is the exact reproduction the Validator used and must become a
+permanent regression pin.
 
 ### Verified chunks
 
