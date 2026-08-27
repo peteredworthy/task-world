@@ -8,8 +8,9 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 ## Slice 1 — worker contracts and prompt hydration
 
 Status: chunks 1-5 of 6 verified and committed (`3ac034a7b`, `8565c24f9`,
-`4ee76eda8`, `9ca1f26c1`, and chunk 5 pending commit below). Chunk 6 not
-started.
+`4ee76eda8`, `9ca1f26c1`, `e0177275f`). Chunk 6 SPECIFIED (planning pass 6,
+2026-08-27), not built — see the chunk 6 section and the Slice 1 completion
+summary at the end of this Slice 1 area.
 
 - **Chunk 5 — Worker prompt hydration from typed fields.** New
   `_worker_contract_packet()` renders `objective`/`access_mode`/`acceptance`
@@ -2012,6 +2013,374 @@ only — no styling, no other slide.
   the same node's `prompt_summary["prompt_sections"]` is
   `["worker_instruction", "work_contract", "worker_authority"]`.
 
+### Verified facts from planning pass 6 (2026-08-27, chunk 6 research)
+
+Established by reading **and executing against** the branch at `e0177275f`
+(chunks 1-5 landed, working tree clean). Facts 54-56 and 58 were produced by
+running throwaway scratchpad probes, not by inspection.
+
+51. **Contract-doc scenario #1's substance is already covered by chunk 4, at
+    unit level, in six places.** `tests/unit/test_graph_commands.py`:
+    `test_patch_accept_grants_read_authority_to_read_only_worker` (`:4431`),
+    `test_patch_accept_grants_read_authority_when_read_only_worker_declares_empty_claims`
+    (`:4448`), `test_read_only_worker_cannot_be_escalated_to_write_authority`
+    (`:4470`), `test_read_only_worker_with_external_claim_cannot_be_escalated_to_write`
+    (`:4502` — the live-bypass regression pin from the failed chunk-4 build).
+    `tests/unit/test_patch_validator.py`:
+    `test_create_node_rejects_discovery_worker_declaring_write_access_mode`
+    (`:1756`), `test_create_node_rejects_read_only_worker_with_escalated_resource_claim`
+    (`:1833`, ×3 modes), plus the macro-path pair in
+    `tests/unit/test_graph_macros.py` (`:421`, `:457`). Chunk 6 must **not**
+    re-assert any of these; they are solid and specific.
+52. **Contract-doc scenario #4's substance is already covered by chunk 5 — but
+    only against hand-built payloads.**
+    `tests/unit/test_graph_planner_packet.py:855` asserts the whole
+    `work_contract` packet and `:978`
+    (`test_worker_prompt_work_contract_renders_resolved_bound_requirements`)
+    asserts `bound_requirement_ids` + `bound_requirements` together. Both build
+    a `GraphDispatchContext` literal whose `node_payload` and `requirements` are
+    written by hand.
+53. **No test anywhere in the repo crosses the admission → projection → prompt
+    seam.** `grep -rln "prompt_for_node" tests/` returns exactly one file,
+    `tests/unit/test_graph_planner_packet.py`, and
+    `grep -c "build_projection\|apply_command\|submit_patch"` on that file
+    returns **0**. Every prompt in the suite is rendered from a
+    literal-constructed context; every admission test stops at the emitted
+    event or the projection. The two halves of each scenario are therefore
+    joined only by the reader, never by an executable assertion. This — not
+    duplication of 51/52 — is chunk 6's entire justification.
+54. **The seam is real, closable, and closes cheaply: verified end to end by
+    execution.** A probe submitted a `role="discovery"`,
+    `access_mode="read_only"` worker through `submit_patch`, rebuilt the
+    projection with `build_projection`, hydrated the payload with
+    `_node_payload(events, node_id, projection=projection)`
+    (`dispatch.py:2166`, the production seeder), and rendered
+    `_prompt_for_node`. Observed output, verbatim:
+    - `work_contract:` line —
+      `{"acceptance": ["root cause identified and documented"], "access_mode": "read_only", "bound_requirement_ids": ["REQ-1"], "bound_requirements": ["REQ-1: report the root cause"], "invariants": ["never modify src/"], "objective": "Investigate the failure and report findings.", "prohibited_actions": ["git commit"], "scope": "docs/ and tests/ only"}`
+    - `worker_authority:` line — `"resource_claims": [{"mode": "read", "paths": ["."], "scope": "repo"}]`
+    The second line is the load-bearing new fact: **the `read` claim chunk 4
+    derives is what the agent is actually told it holds**, and *nothing in the
+    suite asserts this today*. Chunk 4's own decision record names this as the
+    third of the three properties option (a′) buys (chunk 4 §"What (a′)
+    actually buys", property 3), and it is the only one of the three with no
+    test behind it — properties 1 and 2 are covered by pre-existing scheduler
+    tests and by `test_read_only_worker_cannot_be_escalated_to_write_authority`
+    respectively.
+55. **A real requirement binding is reproducible in a unit test, and needs three
+    non-obvious details.** Verified by probe; without all three,
+    `_requirements_for_node` returns `[]` and a scenario-#4 test would silently
+    assert nothing:
+    - the `create_edge` op is **flat**, not nested under an `edge` key:
+      `{"op": "create_edge", "edge_id": …, "from_node_id": …, "from_port": …,
+      "to_node_id": …, "to_port": …, "required": True,
+      "accepted_record_selector": {…}}`. A nested `"edge": {…}` is rejected with
+      `malformed patch [malformed_patch]: payload [extra_forbidden] at
+      ops[1].edge`.
+    - the selector's schema must be **`"Requirement"`**, not `"RequirementRecord"`
+      — the `requirement` output port declares `schemas=("Requirement",)`
+      (`contracts.py:611`), and `"RequirementRecord"` is rejected with
+      `edge edge-req-1 schema selector is incompatible with source output port`
+      (`contracts.py:398`). The *accepted record* still carries
+      `"schema": "RequirementRecord"`.
+    - `edge_created` alone does **not** bind. `requirements_for_node_view`
+      (`projection_queries.py:302`) reads `topology.input_bindings`, which is
+      populated only by `_reduce_slice_a_binding` (`projections.py:1162`) from
+      an **`input_bound`** event. The test must append one explicitly
+      (`InputBoundPayload`, `models.py:2784`: `edge_id`, `to_node_id`,
+      `to_port`, `record_ids` (min 1), `bound_at_position`). Ordering does not
+      rescue it: accepting the record after the edge still yields `[]`.
+56. **`tests/unit/graph_test_utils.py` is sufficient; no cross-test-module
+    import is needed.** It already exports `event(type, payload, *, position)`
+    (whose `canonical_event_payload` has an `input_bound` branch, `:233`),
+    `patch_command_context(events, *, proposed_by_node_id, actor_role)`, and
+    `apply_command(...)`. The whole probe was re-run against these helpers plus
+    `initial_projection`/`reduce_event` and produced byte-identical output. Do
+    **not** import `_apply` / `_discovery_read_only_worker_node` from
+    `tests/unit/test_graph_commands.py`; that file's helpers are private to it.
+57. **Nothing in chunks 1-5 touches contract-doc scenario #3, and the machinery
+    it needs does not exist in `src/` at all.** `grep -rn
+    "plan_amendment\|plan_verification\|progressive_horizon" src/` returns
+    **zero hits**. `grep -rln horizon src/` returns exactly three files —
+    `graph_runtime/horizon_templates.py`, `graph_runtime/prompts.py`, and the
+    `graph_runtime/__init__.py` re-export — i.e. the horizon exists only as
+    *advisory prompt templates* handed to a planner, with no staging,
+    amendment, or region-count enforcement anywhere. Slice 1's six chunks are
+    all node-local (payload fields, per-node validation, per-node authority,
+    per-node prompt); scenario #3 is a property of graph *shape* across
+    regions.
+58. **`_bounded_json` sorts keys** (`prompts.py:71`,
+    `json.dumps(value, sort_keys=True)`). Chunk 6's assertions must parse the
+    line and compare dicts, never compare rendered substrings or assume field
+    order. (Chunk 5's landed tests already follow this via the
+    `_work_contract_json` helper at `test_graph_planner_packet.py:848`.)
+
+### Chunk 6 — Contract-doc regression scenarios (SPECIFIED, not built)
+
+**Goal.** Close criterion 5 by joining the two halves of scenarios #1 and #4 in
+executable form: one test per scenario that starts from a real `submit_patch`
+admission and ends at the rendered worker prompt. Independently verifiable:
+after this chunk, a rename or retention drop anywhere on the
+`create_node` → `_ensure_default_node_authority` → `node_created` →
+`build_projection` → `node_payload_view` → `_node_payload` → `_prompt_for_node`
+chain fails a test, which is not true today.
+
+#### Scope ruling — two tests, no more, and explicitly *not* a re-assertion
+
+Facts 51 and 52 say plainly that the *substance* of both scenarios is already
+pinned. The mind-the-gap cost discipline says do not restate solid coverage in
+a bigger fixture to make a chunk feel substantial. So chunk 6 is deliberately
+small, and each of its two tests must earn its place by asserting something no
+existing test asserts:
+
+- **Scenario #1's new assurance** is fact 54's second bullet: the `read` claim
+  reaches the agent's `worker_authority` packet, and `write` never appears in
+  the prompt. Chunk 4 proved the claim is *materialized on the event*; nothing
+  proves it is *communicated*. Plus the end-to-end joining of admission and
+  escalation refusal against the same projection.
+- **Scenario #4's new assurance** is fact 53: that the six typed contract fields
+  survive `projection=` retention and reach the prompt *from a real admitted
+  patch*, and that `bound_requirements` is resolved from a **real** requirement
+  record bound through a **real** edge (fact 55) rather than injected as a
+  literal `requirements=[...]` list.
+
+Anything beyond those two — re-testing the escalation message on its own,
+re-testing the validator messages, re-testing packet key presence — is
+duplication and must not be added.
+
+#### Scenario #3 — DEFERRED, with reason
+
+Criterion 5 permits deferral of scenario #3 ("a staged feature contract cannot
+be represented by one generic worker unless an accepted plan amendment
+explicitly changes the stages") with a recorded reason. **Deferred.** The
+reason is structural, not budgetary:
+
+1. **It is not a node-level property, and Slice 1 is entirely node-level.**
+   Every chunk 1-5 artefact is scoped to one node: six payload fields, a
+   per-node `create_node` validator check, per-node authority derivation, one
+   node's prompt packet. Scenario #3 is a property of the *shape of the graph
+   across regions* — "how many worker nodes represent this staged contract, and
+   did an accepted amendment authorise collapsing them". There is no node whose
+   admission could reject it.
+2. **The machinery it needs does not exist** (fact 57): zero references to
+   plan amendments or plan verification in `src/`, and the horizon exists only
+   as advisory prompt templates with no staging or region-count enforcement.
+   Building it means inventing a staged-plan record, an amendment record, an
+   acceptance path for amendments, and a graph-shape check that reads all
+   three.
+3. **It is already assigned elsewhere.** The reliability contract puts
+   progressive-horizon enforcement in **Slice 3**, which the target doc
+   (`slice-1-and-5-target-2026-08-27.md`, "Non-goals for this pass") explicitly
+   excludes from this pass alongside Slices 2, 4, and 6. Implementing it here
+   would be scope theft from an unscoped slice, not a stretch goal.
+
+Recorded as **R9** below so it is picked up deliberately when Slice 3 is
+scoped, not rediscovered.
+
+#### Files touched (exactly two)
+
+1. `tests/unit/test_plan_contract_regression_scenarios.py` — **new file**.
+2. `docs/dynamic-graph/slice-1-and-5-progress-ledger-2026-08-27.md` — the
+   chunk-6 verified-record entry and the completion-summary status flip only.
+
+A new file is correct rather than appending to
+`tests/unit/test_graph_commands.py` or `test_graph_planner_packet.py`: the
+tests deliberately span both modules' subjects (kernel admission *and* prompt
+rendering), and a file named for the contract doc's scenario list is where
+Slice 6's dogfood-regression work will later add scenarios #2 and #5-#10. Name
+each test after its scenario number so the mapping to
+`reliable-plan-execution-contract.md`'s "Required regression scenarios" list is
+mechanical.
+
+**Do not touch**: anything under `src/` (chunk 6 adds **zero** production
+code — if a test fails, that is a genuine regression in chunks 1-5 and must be
+reported, not patched around), any existing test file, `ui/`, or any
+`.orchestrator/state/*.jsonl`.
+
+#### 1. `tests/unit/test_plan_contract_regression_scenarios.py`
+
+Module docstring must name the source: these are the numbered scenarios from
+`docs/dynamic-graph/reliable-plan-execution-contract.md` §"Required regression
+scenarios", and each test's docstring quotes its scenario verbatim.
+
+**Imports** (fact 56 — `graph_test_utils` only, no cross-test-module import):
+
+```python
+from orchestrator.graph import (
+    FakeClock,
+    SequentialIdGenerator,
+    build_projection,
+    initial_projection,
+    reduce_event,
+)
+from orchestrator.graph_runtime.dispatch import (
+    GraphDispatchContext,
+    _node_payload,
+    _prompt_for_node,
+    _requirements_for_node,
+)
+from tests.unit.graph_test_utils import apply_command, event, patch_command_context
+```
+
+**Module-level helpers** (four, all private):
+
+- `_DISCOVERY_WORKER: dict[str, Any]` — the node dict, carrying all six chunk-1
+  fields plus `access_mode`: `node_id="worker-1"`, `kind="worker"`,
+  `role="discovery"`, `state="planned"`, `task_region_id="region-1"`,
+  `candidate_id="candidate-1"`, `attempt_number=1`, a non-empty `objective`,
+  `access_mode="read_only"`, a one-entry `acceptance`, a `scope`,
+  `bound_requirement_ids=["REQ-1"]`, a one-entry `invariants`, a one-entry
+  `prohibited_actions`, and
+  `inputs=[{"port": "requirement_1", "schema": "RequirementRecord"}]`. Copy it
+  (`dict(...)`) at each use site; never mutate the module constant.
+- `_project(events)` — `initial_projection()` folded with `reduce_event`.
+- `_submit(events, patch_id, ops)` — `apply_command(_project(events), events,
+  "submit_patch", {"patch_id": patch_id, "base_graph_position":
+  max((e.position for e in events), default=-1), "ops": ops},
+  patch_command_context(events, proposed_by_node_id="planner-1",
+  actor_role="planner"), FakeClock(), SequentialIdGenerator())`.
+- `_admitted_discovery_graph()` — returns the full event list. Steps, exactly
+  as verified by probe (fact 55):
+  1. seed `[event("node_created", {"node_id": "requirement-REQ-1", "kind":
+     "requirement", "state": "completed"}, position=0)]`;
+  2. `_submit(...)` a patch whose ops are the `create_node` for
+     `_DISCOVERY_WORKER` **and** the flat `create_edge`
+     (`edge_id="edge-req-1"`, `from_node_id="requirement-REQ-1"`,
+     `from_port="requirement"`, `to_node_id="worker-1"`,
+     `to_port="requirement_1"`, `required=True`,
+     `accepted_record_selector={"record_type": "requirement_record",
+     "schema": "Requirement"}`);
+  3. **assert** the emitted types are
+     `["graph_patch_accepted", "node_created", "edge_created"]` — this guards
+     the helper itself, so a future validator change that starts rejecting the
+     fixture fails loudly instead of silently emptying the assertions;
+  4. append an `output_record_accepted` for `requirement-REQ-1`
+     (`record_kind="graph_record"`, `record_type="requirement_record"`,
+     `producer_node_id="requirement-REQ-1"`, `port="requirement"`,
+     `schema="RequirementRecord"`,
+     `value={"id": "REQ-1", "text": "report the root cause",
+     "source": "routine"}`);
+  5. append the `input_bound` event
+     (`edge_id="edge-req-1"`, `to_node_id="worker-1"`,
+     `to_port="requirement_1"`, `record_ids=["requirement-REQ-1"]`,
+     `bound_at_position=<its own position>`).
+- `_dispatch_context(events)` — `projection = build_projection(events)`;
+  `payload = _node_payload(events, "worker-1", projection=projection)`; build a
+  `GraphDispatchContext` with `node_kind`/`node_role` **read off the payload**
+  (not hardcoded — that is part of what the chain must deliver),
+  `node_payload=payload`,
+  `requirements=_requirements_for_node(projection, "worker-1", events)`,
+  `graph_projection=projection`, `graph_events=list(events)`, and literal
+  `worktree_path`/`lease_id`/`lease_generation`/`execution_id`/
+  `base_snapshot_id`/`dispatch_event_id` (those are run-setup state, not graph
+  facts — chunk 5's landed tests use literals for them too).
+- `_prompt_line_json(prompt, prefix)` — split the prompt into lines, find the
+  one starting `f"{prefix}: "`, `json.loads` the remainder, `raise
+  AssertionError(f"{prefix} line not found")` otherwise. Fact 58: parse, never
+  substring-match.
+
+**Test 1 — `test_scenario_1_read_only_discovery_worker_cannot_obtain_write_authority`.**
+Docstring quotes scenario #1. Body:
+
+1. `events = _admitted_discovery_graph()`.
+2. `authority = _prompt_line_json(_prompt_for_node(_dispatch_context(events)),
+   "worker_authority")`; assert
+   `authority["resource_claims"] == [{"mode": "read", "scope": "repo",
+   "paths": ["."]}]`. **This is the assertion no existing test makes.**
+3. Assert the *rendered prompt string* contains no write grant:
+   `'"mode": "write"' not in prompt`. Cheap, and it is the property an agent
+   reading the prompt actually depends on.
+4. Assert the `work_contract` line's `access_mode` is `"read_only"` — i.e. the
+   contract the agent is shown agrees with the authority it is granted. (The
+   two come from different code paths, `_worker_contract_packet` and
+   `_worker_authority_packet`, so agreement is a real assertion.)
+5. Submit a `set_resource_claims` op for
+   `{"mode": "write", "scope": "repo", "paths": ["."]}` against **the same
+   event list**; assert the emitted types are `["graph_patch_rejected"]` and
+   the reason is `"resource claim escalation for worker-1: write"`.
+
+Step 5 does overlap `test_read_only_worker_cannot_be_escalated_to_write_authority`
+by design, and that is the one permitted overlap: it is what makes the test the
+*scenario* rather than three disconnected properties. Do not also re-test the
+admission refusal of `access_mode="write"` — `test_create_node_rejects_discovery_worker_declaring_write_access_mode`
+owns that and adding it here buys nothing.
+
+**Test 2 — `test_scenario_4_worker_prompt_carries_its_bound_requirement_and_objective`.**
+Docstring quotes scenario #4. Body:
+
+1. `events = _admitted_discovery_graph()`; `context = _dispatch_context(events)`.
+2. Assert `context.requirements == ["REQ-1: report the root cause"]` — proves
+   the binding chain actually resolved and that the next assertion is not
+   vacuous (fact 55's failure mode).
+3. `contract = _prompt_line_json(_prompt_for_node(context), "work_contract")`;
+   assert `contract ==` the **whole expected packet dict**, all eight keys:
+   `objective`, `access_mode`, `acceptance`, `scope`, `bound_requirement_ids`,
+   `invariants`, `prohibited_actions`, `bound_requirements`. Whole-dict
+   equality, not `in` checks — a field dropped from `projection=` retention or
+   renamed anywhere on the chain must fail this.
+4. Assert `contract["bound_requirement_ids"] == ["REQ-1"]` **and**
+   `contract["bound_requirements"] == ["REQ-1: report the root cause"]` as a
+   named, separately-failing assertion even though step 3 covers it — this is
+   the literal scenario-#4 sentence ("bound requirement … records") and a
+   reader should not have to diff a dict to see it.
+
+Expected packet, verified by execution against `e0177275f` — the Builder should
+reproduce it from its own fixture values rather than copying blind, but it must
+match this shape:
+
+```json
+{"acceptance": ["root cause identified and documented"],
+ "access_mode": "read_only",
+ "bound_requirement_ids": ["REQ-1"],
+ "bound_requirements": ["REQ-1: report the root cause"],
+ "invariants": ["never modify src/"],
+ "objective": "Investigate the failure and report findings.",
+ "prohibited_actions": ["git commit"],
+ "scope": "docs/ and tests/ only"}
+```
+
+#### Verification conditions (all must hold)
+
+- Exactly the two files above changed; `git status --short` shows nothing else.
+  In particular **`src/` is entirely unmodified** — `git diff --stat src/` is
+  empty. Chunk 6 is a pure-test chunk; any production edit means the spec was
+  misread.
+- `uv run pytest tests/ -q -n auto --dist worksteal` reports **5513 passed, 5
+  skipped** — chunk 5's 5511 plus exactly 2 new test IDs, zero regressions,
+  **zero existing tests modified**.
+- Both new tests fail for the right reason if the chain is broken. The Builder
+  must demonstrate this by temporary local experiment (reverted, not
+  committed, and **not** via any git command that discards changes — edit and
+  re-edit by hand): removing `authority` from the `node_created`
+  `projection=` retention string breaks test 1, and removing
+  `bound_requirement_ids` from it breaks test 2. Report both observed failure
+  messages. A test that still passes with the chain cut is worthless and this
+  is the only way to know.
+- `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still `15`.
+- Ruff, ruff format, and pyright clean.
+
+#### Audit of all ten contract-doc regression scenarios (informational)
+
+Requested for the Slice 1 close-out; **not** a work mandate. Verdicts are
+against branch `e0177275f` plus this chunk.
+
+| # | Scenario (abbreviated) | Verdict after Slice 1 |
+|---|---|---|
+| 1 | analysis-only discovery node cannot obtain repo write authority | **Covered.** Chunk 4 (6 unit pins, fact 51) + chunk 6 test 1 (end-to-end, incl. the prompt-advertises-`read` property). |
+| 2 | implementation not ready without accepted discovery + plan verification records | **Out of scope — Slice 3.** Generic readiness (`inputs_bound` preconditions, input bindings) is pre-existing and tested, but the *semantic* requirement — a typed discovery→implementation edge and an accepted plan-verification record — has no representation: `grep plan_verification src/` returns zero (fact 57). Real gap, correctly assigned elsewhere. |
+| 3 | staged contract cannot collapse to one generic worker without an accepted amendment | **Deferred, reason recorded** (R9 / chunk 6 §"Scenario #3"). Graph-shape property; needs plan-amendment + progressive-horizon machinery that does not exist (fact 57). Slice 3. |
+| 4 | worker prompts contain bound requirement and evidence records | **Covered for requirements; partial for evidence.** Chunk 5 + chunk 6 test 2 fully cover the *requirement* half end to end. The *evidence-record* half is not built: `_worker_like_prompt` hydrates no bound output records — `_hydrated_bound_record` (`prompts.py:754`) is reached only from `_planner_evidence` (planner and check packets). Flagged as **R10**. |
+| 5 | corrective prompts contain the exact failed grades and check results | **Real gap, newly sharpened by chunk 5.** Corrective workers are `kind="worker"` and now get a `work_contract`, but nothing hydrates the failure record, grades, or check results into their packet. Chunk 5 *deleted* the `corrective_requirement` / `corrective_evidence_required` node keys — correctly, since they were never written by anything (fact 39) — so no capability was lost, but the placeholders that hinted at the intent are gone. Flagged as **R11** so the intent survives the deletion. |
+| 6 | generic candidate/file-state cannot substitute for a schema-required artifact | **Out of scope — Slice 2** (semantic artifact envelope; a named non-goal of this pass). Partial pre-existing machinery: edge `accepted_record_selector` schema compatibility is enforced (`contracts.py:398`, exercised incidentally by chunk 6's own fixture, fact 55). The full scenario needs typed artifact schemas per consumer. |
+| 7 | failed candidates do not become the implicit base for later batches | **Out of scope — Slice 4** (candidate/accepted snapshot isolation; a named non-goal). Adjacent and relevant: chunk 4's R6 records that the graph worktree is shared across sequential executions, which is the same shared-dirty-state failure mode. |
+| 8 | final completion cannot occur with a missing batch verification or final audit | **Pre-existing, not a Slice 1 concern.** Final-check/completion-decision machinery predates this loop (`completion_decision_passed`, final-invariant region, `tests/unit/test_final_review_contracts.py`), and the July-2026 final-check poison-topology incident already produced pins. Not re-verified against this scenario's exact wording in this pass — stated as unaudited rather than green. |
+| 9 | missing callback ends with a healthy retry or a conclusively revoked lease + typed recovery state | **Next loop — Slice 5**, criterion 4 of the same target doc. Untouched by Slice 1. |
+| 10 | operator read model makes disconnected or semantically incomplete regions visible | **Deliberately deferred — R8.** Chunk 5 ruled `node_detail` retention out of scope with reasons; this is contract-doc requirement #9's surface. |
+
+Net: Slice 1 closes #1 and #4 (requirement half), sharpens #5 into a named
+follow-up, and leaves #2/#3/#6/#7 to their assigned later slices, #9 to the
+Slice 5 loop, and #10 to R8.
+
 ### Open risks carried into later chunks
 
 - **R1 (chunk 2, high) — RESOLVED by design, 2026-08-27 planning pass 2.**
@@ -2135,6 +2504,146 @@ only — no styling, no other slide.
   and surface them through `api/routers/graph.py`'s node-detail response. The
   prompt path is unaffected either way — it reads the `projection` retention
   set, which chunks 1-2 already populated.
+- **R9 (chunk 6, medium) — NEW. Contract-doc scenario #3 deferred.** "A staged
+  feature contract cannot be represented by one generic worker unless an
+  accepted plan amendment explicitly changes the stages" is not implementable
+  on Slice 1's foundations: it is a property of graph *shape across regions*,
+  whereas every Slice 1 artefact is node-local, and the machinery it needs —
+  staged-plan records, plan amendments, an acceptance path for them, and a
+  region-shape check reading all three — does not exist anywhere in `src/`
+  (fact 57: zero hits for `plan_amendment` / `plan_verification` /
+  `progressive_horizon`; the horizon is advisory prompt templates only). It
+  belongs to **Slice 3** (progressive horizon enforcement), a named non-goal of
+  this pass. When Slice 3 is scoped, this scenario is its acceptance test.
+  Target-doc criterion 5 explicitly permits this deferral with a recorded
+  reason; this is that record.
+- **R10 (post-chunk-6, low) — NEW. Scenario #4's evidence-record half is
+  unbuilt.** The scenario reads "worker prompts contain their bound requirement
+  **and evidence** records". Chunks 5-6 deliver the requirement half end to end.
+  No bound *output* record is hydrated into a worker packet:
+  `_hydrated_bound_record` (`prompts.py:754`) is reached only via
+  `_planner_evidence`, which serves the planner and check packets. A worker
+  consuming an upstream candidate or verification report therefore sees the
+  binding in the graph but not the record content in its prompt. Closing it is
+  a `_worker_like_prompt` change of roughly chunk-5 size, plus a decision about
+  which `prompt_hydration_policy` a worker input port should default to.
+- **R11 (post-chunk-6, medium) — NEW. Contract-doc scenario #5 has no home.**
+  "Corrective prompts contain the exact failed grades and check results" is
+  unimplemented: a corrective worker is `kind="worker"` and now receives a
+  `work_contract`, but nothing hydrates the failure record, verifier grades, or
+  check results into its packet. Recorded explicitly because chunk 5 *deleted*
+  the `corrective_requirement` and `corrective_evidence_required` node keys.
+  That deletion was correct — no writer ever set them and the payload model
+  would have rejected them (facts 38-39), so they were placeholders for an
+  intent, not an implementation — but with them gone the intent would otherwise
+  leave no trace in the code. Closely related to R10 (both are "hydrate bound
+  records into the worker packet"); the two should be scoped together.
+
+### Slice 1 — completion summary
+
+Written at chunk-6 specification time; **flip the status line and confirm the
+final count after chunk 6 is built and validated.** Merge to `main` when the
+conditions at the bottom hold.
+
+#### What Slice 1 achieved
+
+A worker node's contract went from unrepresentable to mandatory, enforced, and
+communicated:
+
+1. **Representable** (chunk 1, `3ac034a7b`). Six typed fields on
+   `NodeCreatedPayload` — `objective`, `scope`, `bound_requirement_ids`,
+   `acceptance`, `invariants`, `prohibited_actions` — plus `projection=`
+   retention so they survive both live append and checkpoint rebuild. Before
+   this, `NodeCreatedPayload` was `extra="forbid"` and a planner *physically
+   could not* put an objective on a node (fact 1). That, not a prompt bug, was
+   the mechanism behind the dogfood finding "worker packets with no bounded
+   objective".
+2. **Unambiguous** (chunk 2, `8565c24f9`). The read-only/write concept got its
+   own key, `access_mode: Literal["read_only","write"]`, rather than
+   overloading the legacy `work_mode` (`implementation`/`oversight`) that 15
+   historical `node_created` events in the git-tracked journal already carry.
+   No migration, no compatibility shim, no schema bump (R1).
+3. **Mandatory** (chunk 3, `4ee76eda8`). `validate_patch` rejects any
+   `create_node` for a `kind == "worker"` node missing `objective`,
+   `access_mode`, or `acceptance`, with one precise hand-written message per
+   field naming the node. Threaded through macros, horizon templates, the
+   prompt example patch, the codex tool schemas, and the MCP tool signatures so
+   the planner's own tools are not a bypass. 29 pre-existing under-specified
+   worker fixtures were repaired, never weakened — the Validator ran a
+   dedicated anti-weakening audit across all 8 affected test files.
+4. **Enforced with teeth** (chunk 4, `9ca1f26c1`). `access_mode` now determines
+   authority: a `read_only` worker is granted
+   `{"mode": "read", "scope": "repo", "paths": ["."]}` instead of the repo-write
+   default, at both patch-reachable grant sites. Because `read` is rank 0, the
+   pre-existing `set_resource_claims` escalation refusal makes the node
+   permanently un-escalatable. A `role="discovery"` worker may not declare
+   `access_mode="write"` without a durably recorded
+   `access_mode_override_justification`, which is itself rejected wherever it is
+   not needed, so a journal grep lists every exception ever granted. Build
+   attempt 1 shipped a real bypass (an `external`-only claim defeated the
+   mandatory `read` grant); independent validation caught it, the fix landed,
+   and the reproduction is now a permanent regression pin.
+5. **Communicated** (chunk 5, `e0177275f`). The worker prompt carries a single
+   typed `work_contract:` section rendered from the declared fields, with the
+   three mandatory keys always present (explicit `null` for compiler-seeded
+   workers, which stay exempt) and the optional ones omitted when absent. Seven
+   dead loose-dict reads that pretended to carry the contract were deleted, and
+   the `prompt_summary` records `work_contract` as hydration *evidence* without
+   copying contract text into the durable read model.
+6. **Pinned end to end** (chunk 6). Two scenario tests joining admission →
+   projection → prompt, closing the seam no single test crossed (fact 53),
+   including the previously untested property that a `read_only` worker's
+   prompt advertises `read` and never `write`.
+
+Target-doc criteria 1-5 are met, with two recorded renamings of the doc's
+vocabulary: the read-only/write concept is spelled `access_mode` (chunk 2
+§"Downstream naming note"), and criterion 3's "default discovery `work_mode` is
+`read_only`" is satisfied more strongly than by a default — the field is
+mandatory and explicit for every worker, so there is no planner-reachable path
+on which a default could apply (chunk 4 §"Framing correction").
+
+#### What was deliberately deferred
+
+Each with a reason recorded above, not silently skipped:
+
+- **R5** — `create_revision_attempt`'s `worker_node` and `seed_compiled_events`
+  remain contract-free. Both bypass `validate_node_payload` entirely, and
+  closing them needs their producers to supply the fields (the compiler would
+  populate the contract from `TaskConfig`). Pinned by
+  `test_create_revision_attempt_worker_node_is_not_contract_checked` so closing
+  it is an intentional edit.
+- **R6** — no boundary-time detector for a `read_only` worker that writes
+  anyway. Claim refusal is authority, not a filesystem sandbox; no per-node
+  sandbox exists (fact 30). The exact insertion point is recorded.
+- **R7** — the discovery/write *role policy* is not enforced on
+  `create_revision_attempt` (the authority *derivation* is). Pinned.
+- **R8** — the typed fields are not in `node_detail` retention, so the operator
+  read model still cannot show a node's objective, access mode, or scope. That
+  is contract-doc requirement #9, an unscoped nine-bullet item; the exact change
+  needed is recorded.
+- **R9** — contract-doc scenario #3 (staged plan collapse). Slice 3.
+- **R10 / R11** — evidence-record hydration into worker packets, and corrective
+  prompts carrying failed grades and check results (contract-doc scenario #5).
+
+None of these is a regression: every one is a surface that was equally open
+before this branch, now named with an insertion point.
+
+#### Expected final state at merge
+
+- Full suite **5513 passed, 5 skipped** (loop-start baseline on main
+  `2553748e3` was 5454 passed / 5 skipped; +59 test IDs across six chunks).
+- `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still **15** — every payload change in
+  the slice was a purely additive optional field, so no persisted checkpoint or
+  historical event changes shape and no replay migration is needed.
+- Ruff, ruff format, and pyright clean.
+- Exactly one existing test modified across the whole slice
+  (`test_prompt_routing_for_planner_worker_and_verifier`, chunk 5 — a deletion
+  of coverage for removed dead keys), plus the 29 chunk-3 fixture repairs, which
+  added missing contract fields rather than weakening any check.
+- `.orchestrator/state/*.jsonl` unmodified.
+
+The slice touches no runner, no UI, and no persisted-event shape. Merge is safe
+once chunk 6 is validated and the above hold.
 
 ## Slice 5 — recovery semantics
 
