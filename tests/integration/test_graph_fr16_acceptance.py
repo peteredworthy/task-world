@@ -513,9 +513,21 @@ async def test_fr16_terminal_exhausted_failure_record_callback_readbacks(
     assert graph["node_states"]["worker-step-1-task-1"] == "failed"
     assert event_types.count("agent_died") == 2
     assert "runtime_retry_scheduled" in event_types
-    assert len(failure_records) == 1
-    failure = failure_records[0]
-    assert failure["value"]["error_class"] == "max_attempts_exhausted"
+    # One retryable failure record from the first (retried) death, plus the
+    # terminal one from the second (attempts-exhausted) death.
+    assert len(failure_records) == 2
+    retry_failure = next(
+        record
+        for record in failure_records
+        if record["value"]["error_class"] == "runtime_death_retry_scheduled"
+    )
+    assert retry_failure["value"]["failure_class"] == "infrastructure_failure"
+    assert retry_failure["value"]["retryable"] is True
+    failure = next(
+        record
+        for record in failure_records
+        if record["value"]["error_class"] == "max_attempts_exhausted"
+    )
     assert failure["value"]["retryable"] is False
     assert failure["value"]["attempt_number"] == 2
     assert failure["value"]["max_attempts"] == 2

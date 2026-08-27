@@ -236,6 +236,11 @@ def _record_cases() -> dict[str, dict[str, Any]]:
                 "action": "retry",
                 "responsible_actor": "controller",
                 "graph_changes": [],
+                "failure_class": "infrastructure_failure",
+                "retry_base_snapshot_id": "routine-snapshot",
+                "retry_basis": "no_differentiating_action",
+                "attempt_number": 1,
+                "max_attempts": 3,
             },
         },
         "requirement_record": {
@@ -325,3 +330,29 @@ def test_output_record_event_accepts_legacy_failure_record_without_failure_class
     assert accepted.record_type == "failure_record"
     assert type(accepted) is OUTPUT_RECORD_MODELS_BY_TYPE["failure_record"]
     assert accepted.value.failure_class is None
+
+
+def test_output_record_event_accepts_legacy_recovery_plan_without_retry_basis() -> None:
+    legacy_payload = {
+        "record_id": "recovery-legacy-1",
+        "record_kind": "output",
+        "record_type": "recovery_plan",
+        "producer_node_id": "node-1",
+        "port": "recovery_plan",
+        "schema": "RecoveryPlan",
+        "value": {
+            "action": "retry",
+            "responsible_actor": "controller",
+            "graph_changes": [],
+        },
+    }
+
+    accepted = OutputRecordAcceptedPayload.model_validate(legacy_payload).root
+
+    assert accepted.record_type == "recovery_plan"
+    assert type(accepted) is OUTPUT_RECORD_MODELS_BY_TYPE["recovery_plan"]
+    assert accepted.value.failure_class is None
+    assert accepted.value.retry_base_snapshot_id is None
+    assert accepted.value.retry_basis is None
+    assert accepted.value.attempt_number is None
+    assert accepted.value.max_attempts is None

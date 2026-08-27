@@ -79,10 +79,10 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
             "retry_backoff_seconds": 60,
         },
     )
-    retry_not_before = retry_scheduled.events[2].payload["retry_not_before"]
-    assert retry_scheduled.events[2].event_type == "runtime_retry_scheduled"
-    assert retry_scheduled.events[2].payload["retry_after_seconds"] == 60
-    assert retry_scheduled.events[4].payload == {
+    retry_not_before = retry_scheduled.events[3].payload["retry_not_before"]
+    assert retry_scheduled.events[3].event_type == "runtime_retry_scheduled"
+    assert retry_scheduled.events[3].payload["retry_after_seconds"] == 60
+    assert retry_scheduled.events[5].payload == {
         "node_id": "worker-retry",
         "new_state": "blocked",
         "trigger": "agent_died_retry_backoff_scheduled",

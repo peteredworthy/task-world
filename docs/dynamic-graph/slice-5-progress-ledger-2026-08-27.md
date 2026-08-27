@@ -30,6 +30,30 @@ uv run pytest tests/ -q -n auto --dist worksteal
   (5513 + 5 new tests, zero regressions), schema version 15 unchanged,
   ruff/format/pyright clean.
 
+- **Chunk 2 — Classify before retry, typed retry basis.** `failure_class`
+  hoisted to a single assignment above all branches in `_apply_agent_died`
+  (was per-branch literals decided after the fact); the retryable branch,
+  which previously emitted no `FailureRecord` at all, now does
+  (`error_class="runtime_death_retry_scheduled"`, fresh/non-colliding).
+  `RecoveryPlanValue` gained `failure_class`/`retry_base_snapshot_id`/
+  `retry_basis`/`attempt_number`/`max_attempts` (max_attempts omitted, not
+  `0`, when unbounded); new `RetryBasis` literal's honest default is
+  `"no_differentiating_action"` — its third member
+  `"worktree_restored_to_baseline"` is declared with deliberately no
+  producer yet (chunk 4). Independent Validator: read all 3 unplanned
+  integration-test diffs (index shifts from the new event) line-by-line and
+  confirmed zero weakening — one even gained a new positive assertion; wrote
+  a standalone script driving a real retry-then-exhaust sequence through
+  `apply_command`/`reduce_event` and confirmed by EXECUTION zero
+  `ProjectionReplayConflictError`, with two failure records getting
+  genuinely distinct ids via distinct `lease_id`s; confirmed the two
+  exact-equality recovery-plan tests stayed exact-equality (grew keys, not
+  loosened). Full suite **5524 passed, 5 skipped** (5518 + 6, zero
+  regressions), schema version 15 unchanged, ruff/format/pyright clean. (One
+  unrelated environmental flake noted by the Validator when force-running
+  slow-marked tests outside the normal harness — not a regression, not part
+  of the canonical suite invocation.)
+
 This — not the target doc's stale **5454** (which predates Slice 1's six
 chunks) — is the regression baseline every Slice 5 chunk must preserve.
 `PROJECTION_CHECKPOINT_SCHEMA_VERSION = 15` (`graph/projection_codec.py:40`);

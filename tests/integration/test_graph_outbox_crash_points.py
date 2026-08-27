@@ -767,12 +767,14 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
     assert [event.event_type for event in died.events] == [
         "agent_died",
         "lease_revoked",
+        "output_record_accepted",
         "runtime_retry_scheduled",
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert died.events[3].payload["record_type"] == "recovery_plan"
-    assert died.events[3].payload["value"]["action"] == "retry"
+    assert died.events[2].payload["record_type"] == "failure_record"
+    assert died.events[4].payload["record_type"] == "recovery_plan"
+    assert died.events[4].payload["value"]["action"] == "retry"
     assert leases_view(projection_after_death)[lease_id].state == "revoked"
     assert node_states_view(projection_after_death)["worker-1"] == "ready"
     assert any(event.event_type == "runtime_retry_scheduled" for event in died.events)

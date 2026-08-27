@@ -8237,6 +8237,7 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
     assert [event.event_type for event in output] == [
         "agent_died",
         "lease_revoked",
+        "output_record_accepted",
         "runtime_retry_scheduled",
         "output_record_accepted",
         "node_state_changed",
@@ -8248,8 +8249,21 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "execution_id": "exec-1",
         "reason": "process_exit",
     }
-    assert output[2].payload["policy"] == "v1_requeue_same_node_after_agent_death"
-    assert output[3].payload == {
+    assert output[2].payload["record_type"] == "failure_record"
+    assert output[2].payload["value"] == {
+        "failed_node_id": "worker-1",
+        "phase": "runtime",
+        "failure_class": "infrastructure_failure",
+        "error_class": "runtime_death_retry_scheduled",
+        "retryable": True,
+        "lease_id": "lease-1",
+        "execution_id": "exec-1",
+        "lease_generation": 1,
+        "reason": "process_exit",
+        "attempt_number": 0,
+    }
+    assert output[3].payload["policy"] == "v1_requeue_same_node_after_agent_death"
+    assert output[4].payload == {
         "record_id": "recovery-plan-worker-1-lease-1",
         "record_kind": "output",
         "record_type": "recovery_plan",
@@ -8261,9 +8275,13 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
             "responsible_actor": "controller",
             "graph_changes": [{"op": "set_node_state", "node_id": "worker-1", "state": "ready"}],
             "reason": "process_exit",
+            "failure_class": "infrastructure_failure",
+            "retry_basis": "no_differentiating_action",
+            "attempt_number": 1,
         },
     }
-    assert output[4].payload == {
+    assert "retry_base_snapshot_id" not in output[4].payload["value"]
+    assert output[5].payload == {
         "node_id": "worker-1",
         "new_state": "ready",
         "trigger": "agent_died_retry_scheduled",
@@ -8410,20 +8428,25 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
     retry_not_before = (clock.now() + timedelta(seconds=60)).isoformat()
     projection = _project([*events, *output])
 
-    assert output[2].event_type == "runtime_retry_scheduled"
-    assert output[2].payload["retry_after_seconds"] == 60
-    assert output[2].payload["retry_not_before"] == retry_not_before
-    assert output[3].event_type == "output_record_accepted"
-    assert output[3].payload["record_type"] == "recovery_plan"
-    assert output[3].payload["value"] == {
+    assert output[2].event_type == "output_record_accepted"
+    assert output[2].payload["record_type"] == "failure_record"
+    assert output[3].event_type == "runtime_retry_scheduled"
+    assert output[3].payload["retry_after_seconds"] == 60
+    assert output[3].payload["retry_not_before"] == retry_not_before
+    assert output[4].event_type == "output_record_accepted"
+    assert output[4].payload["record_type"] == "recovery_plan"
+    assert output[4].payload["value"] == {
         "action": "retry",
         "responsible_actor": "controller",
         "graph_changes": [{"op": "set_node_state", "node_id": "worker-1", "state": "blocked"}],
         "reason": "process_exit",
+        "failure_class": "infrastructure_failure",
+        "retry_basis": "retry_backoff_only",
+        "attempt_number": 1,
         "retry_after_seconds": 60,
         "retry_not_before": retry_not_before,
     }
-    assert output[4].payload == {
+    assert output[5].payload == {
         "node_id": "worker-1",
         "new_state": "blocked",
         "trigger": "agent_died_retry_backoff_scheduled",
@@ -8473,6 +8496,126 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         "new_state": "leased",
         "trigger": "scheduler_grants_lease",
     }
+
+
+def test_agent_died_retry_records_classified_failure_before_scheduling_retry() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "routine-snapshot",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+        },
+    )
+
+    event_types = [event.event_type for event in output]
+    failure_index = next(
+        index
+        for index, event in enumerate(output)
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+    )
+    retry_index = event_types.index("runtime_retry_scheduled")
+    recovery_index = next(
+        index
+        for index, event in enumerate(output)
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "recovery_plan"
+    )
+
+    assert failure_index < retry_index
+
+    failure_value = output[failure_index].payload["value"]
+    assert failure_value["failure_class"] == "infrastructure_failure"
+    assert failure_value["retryable"] is True
+    assert failure_value["error_class"] == "runtime_death_retry_scheduled"
+    assert failure_value["attempt_number"] == 0
+
+    recovery_value = output[recovery_index].payload["value"]
+    assert recovery_value["retry_base_snapshot_id"] == "routine-snapshot"
+
+
+def test_agent_died_retry_plan_omits_max_attempts_when_unbounded() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    unbounded_output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+        },
+    )
+    unbounded_failure = next(
+        event
+        for event in unbounded_output
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+    )
+    unbounded_recovery = next(
+        event
+        for event in unbounded_output
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "recovery_plan"
+    )
+    assert "max_attempts" not in unbounded_failure.payload["value"]
+    assert "max_attempts" not in unbounded_recovery.payload["value"]
+
+    bounded_output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+            "max_attempts": 3,
+        },
+    )
+    bounded_failure = next(
+        event
+        for event in bounded_output
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+    )
+    bounded_recovery = next(
+        event
+        for event in bounded_output
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "recovery_plan"
+    )
+    assert bounded_failure.payload["value"]["max_attempts"] == 3
+    assert bounded_recovery.payload["value"]["max_attempts"] == 3
 
 
 def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
@@ -8748,12 +8891,14 @@ def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
     assert [event.event_type for event in output] == [
         "agent_died",
         "lease_revoked",
+        "output_record_accepted",
         "runtime_retry_scheduled",
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[3].payload["record_type"] == "recovery_plan"
-    assert output[4].payload["new_state"] == "ready"
+    assert output[2].payload["record_type"] == "failure_record"
+    assert output[4].payload["record_type"] == "recovery_plan"
+    assert output[5].payload["new_state"] == "ready"
 
 
 def test_agent_died_rejects_unknown_or_inactive_lease() -> None:

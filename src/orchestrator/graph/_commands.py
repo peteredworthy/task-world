@@ -4116,6 +4116,12 @@ def _apply_agent_died(
     node_id = str(lease.node_id)
     generation = lease.generation
     reason = payload.reason
+    # Criterion 2: the class is fixed here, before any branch below chooses
+    # retry vs terminal failure.  Every `agent_died` reason is by definition an
+    # execution or runner death with no graded result, so there is nothing to
+    # dispatch on yet; when `invalid_plan_failure` gains a producer (chunk 5)
+    # this is the seam that grows a classifier.
+    failure_class: FailureClass = "infrastructure_failure"
     event_payload = {
         "lease_id": lease_id,
         "node_id": node_id,
@@ -4169,7 +4175,7 @@ def _apply_agent_died(
                 _failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
-                    failure_class="infrastructure_failure",
+                    failure_class=failure_class,
                     error_class="agent_rate_limited",
                     retryable=False,
                     lease_id=lease_id,
@@ -4209,7 +4215,7 @@ def _apply_agent_died(
                 _failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
-                    failure_class="infrastructure_failure",
+                    failure_class=failure_class,
                     error_class="runtime_configuration_error",
                     retryable=False,
                     lease_id=lease_id,
@@ -4251,7 +4257,7 @@ def _apply_agent_died(
                 _failure_record_payload(
                     node_id=node_id,
                     phase="runtime",
-                    failure_class="infrastructure_failure",
+                    failure_class=failure_class,
                     error_class="max_attempts_exhausted",
                     retryable=False,
                     lease_id=lease_id,
@@ -4318,6 +4324,24 @@ def _apply_agent_died(
             ),
         ),
         make_event(
+            "output_record_accepted",
+            _failure_record_payload(
+                node_id=node_id,
+                phase="runtime",
+                failure_class=failure_class,
+                error_class="runtime_death_retry_scheduled",
+                retryable=True,
+                lease_id=lease_id,
+                execution_id=event_payload.get("execution_id"),
+                generation=generation,
+                reason=reason,
+                metadata={
+                    "attempt_number": attempt_number,
+                    **({"max_attempts": max_attempts} if max_attempts > 0 else {}),
+                },
+            ),
+        ),
+        make_event(
             "runtime_retry_scheduled",
             retry_payload,
         ),
@@ -4327,6 +4351,10 @@ def _apply_agent_died(
                 node_id=node_id,
                 retry_payload=retry_payload,
                 retry_backoff_seconds=retry_backoff_seconds,
+                failure_class=failure_class,
+                base_snapshot_id=lease.base_snapshot_id,
+                attempt_number=next_attempt_number,
+                max_attempts=max_attempts,
             ),
         ),
         make_event(
@@ -4385,6 +4413,10 @@ def _recovery_plan_record_payload(
     node_id: str,
     retry_payload: dict[str, Any],
     retry_backoff_seconds: int,
+    failure_class: FailureClass,
+    base_snapshot_id: str | None,
+    attempt_number: int,
+    max_attempts: int,
 ) -> dict[str, Any]:
     value: dict[str, Any] = {
         "action": "retry",
@@ -4398,6 +4430,15 @@ def _recovery_plan_record_payload(
         ],
         "reason": str(retry_payload.get("reason", "runtime_process_died")),
     }
+    value["failure_class"] = failure_class
+    if base_snapshot_id is not None:
+        value["retry_base_snapshot_id"] = base_snapshot_id
+    value["retry_basis"] = (
+        "retry_backoff_only" if retry_backoff_seconds > 0 else "no_differentiating_action"
+    )
+    value["attempt_number"] = attempt_number
+    if max_attempts > 0:
+        value["max_attempts"] = max_attempts
     if retry_backoff_seconds > 0:
         value["retry_after_seconds"] = retry_backoff_seconds
         retry_not_before = retry_payload.get("retry_not_before")

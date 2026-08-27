@@ -1708,6 +1708,75 @@ def test_recovery_plan_record_round_trips() -> None:
     )
 
 
+def test_recovery_plan_record_round_trips_with_retry_basis() -> None:
+    assert_round_trips(
+        RecoveryPlanRecord,
+        {
+            "record_id": "recovery-1",
+            "record_kind": "output",
+            "record_type": "recovery_plan",
+            "producer_node_id": "recovery-1",
+            "port": "recovery_plan",
+            "schema": "RecoveryPlan",
+            "value": {
+                "action": "retry",
+                "responsible_actor": "controller",
+                "graph_changes": [{"op": "set_node_state", "node_id": "worker-1"}],
+                "reason": "retryable lease expiry",
+                "failure_class": "infrastructure_failure",
+                "retry_base_snapshot_id": "routine-snapshot",
+                "retry_basis": "no_differentiating_action",
+                "attempt_number": 1,
+                "max_attempts": 3,
+            },
+        },
+    )
+
+
+def test_recovery_plan_record_accepts_legacy_value_without_retry_basis() -> None:
+    record = RecoveryPlanRecord.model_validate(
+        {
+            "record_id": "recovery-1",
+            "record_kind": "output",
+            "record_type": "recovery_plan",
+            "producer_node_id": "recovery-1",
+            "port": "recovery_plan",
+            "schema": "RecoveryPlan",
+            "value": {
+                "action": "retry",
+                "responsible_actor": "controller",
+                "graph_changes": [{"op": "set_node_state", "node_id": "worker-1"}],
+                "reason": "retryable lease expiry",
+            },
+        }
+    )
+    assert record.value.failure_class is None
+    assert record.value.retry_base_snapshot_id is None
+    assert record.value.retry_basis is None
+    assert record.value.attempt_number is None
+    assert record.value.max_attempts is None
+
+
+def test_recovery_plan_record_rejects_unknown_retry_basis() -> None:
+    with pytest.raises(ValidationError):
+        RecoveryPlanRecord.model_validate(
+            {
+                "record_id": "recovery-1",
+                "record_kind": "output",
+                "record_type": "recovery_plan",
+                "producer_node_id": "recovery-1",
+                "port": "recovery_plan",
+                "schema": "RecoveryPlan",
+                "value": {
+                    "action": "retry",
+                    "responsible_actor": "controller",
+                    "graph_changes": [],
+                    "retry_basis": "probed_runner",
+                },
+            }
+        )
+
+
 def test_recovery_plan_record_rejects_invalid_schema_version() -> None:
     with pytest.raises(ValueError, match="schema_version must be positive"):
         RecoveryPlanRecord.model_validate(

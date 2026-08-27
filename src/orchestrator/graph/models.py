@@ -2490,6 +2490,26 @@ class FailureRecord(TypedRecordBase):
         return self
 
 
+RetryBasis: TypeAlias = Literal[
+    "no_differentiating_action",
+    "retry_backoff_only",
+    "worktree_restored_to_baseline",
+]
+"""Typed statement of what, if anything, differentiates a repeat attempt.
+
+- ``no_differentiating_action`` -- same base snapshot, same worktree, no
+  delay, no probe. The retry is expected to behave identically to the
+  attempt that just failed.
+- ``retry_backoff_only`` -- the only difference is elapsed time
+  (``retry_backoff_seconds > 0``). Honest for transient rate/resource
+  pressure, and honestly weak.
+- ``worktree_restored_to_baseline`` -- a real filesystem action was taken.
+  No producer yet on the kernel `_apply_agent_died` path; the managed
+  boundary recovery path (`handle_complete_runner_recovery`) is the
+  intended producer, added separately.
+"""
+
+
 class RecoveryPlanValue(StrictNestedModel):
     action: Literal["retry", "supersede", "cancel", "cleanup"]
     responsible_actor: str
@@ -2497,6 +2517,20 @@ class RecoveryPlanValue(StrictNestedModel):
     reason: str | None = None
     retry_after_seconds: StrictInt | None = None
     retry_not_before: str | None = None
+    # Typed decision carrier, additive so historical records without them
+    # still replay. Optional on the model; the kernel `agent_died` retry
+    # path always sets all five.
+    failure_class: FailureClass | None = None
+    # The failed lease's `base_snapshot_id`, which is what the retry
+    # resolves to unless the node's snapshot input bindings change before
+    # the next `schedule_tick` -- and which the driver's constant override
+    # (`graph_driver.py:837`) makes invariant today.
+    retry_base_snapshot_id: str | None = None
+    retry_basis: RetryBasis | None = None
+    attempt_number: StrictInt | None = None
+    # `None` means unbounded -- the dynamically-created-node case that
+    # produced the `fff4f6b7` incident (no compiled `max_attempts` budget).
+    max_attempts: StrictInt | None = None
 
 
 class RecoveryPlanRecord(TypedRecordBase):
