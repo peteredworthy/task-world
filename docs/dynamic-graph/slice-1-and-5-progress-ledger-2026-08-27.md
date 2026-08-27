@@ -1490,6 +1490,509 @@ The criterion-3 teeth tests, using the file's `_apply` helper:
   the `read` claim, and a follow-up `set_resource_claims` write patch against
   that node is rejected as an escalation.
 
+### Verified facts from planning pass 5 (2026-08-27, chunk 5 research)
+
+Established by reading the branch at `9ca1f26c1` (chunks 1-4 landed). Line
+numbers are current as of that commit.
+
+38. **The dead-key region has moved to `prompts.py:345-382`
+    (`_worker_like_prompt`), and it is nine reads in four blocks**, not one:
+    - `:347` — `title = str(node.get("title") or node.get("objective") or
+      context.node_id)`. This read of `objective` is **no longer dead** (chunk 1
+      declared the field, chunk 3 made it mandatory on patch-created workers).
+    - `:351-362` — a seven-key `for key in (...)` loop rendering
+      `f"{key}: {_bounded_text(value)}"` for any `str` value:
+      `objective`, `corrective_requirement`, `corrective_evidence_required`,
+      `expected_gap`, `expected_artifact`, `feature_spec_path`,
+      `acceptance_command`.
+    - `:364-368` — `expected_outputs`, rendered as bounded JSON when a
+      non-empty `list`.
+    - `:370-372` — `invariants`, rendered as bounded JSON when a non-empty
+      `list`. **No longer dead** (chunk 1 field).
+39. **`extra` keys are structurally unreachable on `context.node_payload` in
+    production, so "no writer sets it" really does mean "always `None`".**
+    `_node_payload` (`dispatch.py:2166-2178`) seeds from
+    `node_payload_view(projection, node_id)` — the `dispatch_payload` built at
+    `projections.py:791` from the validated `extra="forbid"` model — then
+    `setdefault`s any remaining keys from the raw `node_created` event payload
+    in `context.graph_events`. Those raw payloads were themselves filtered to
+    `EVENT_PAYLOAD_SPECS["node_created"].projection` by `_projection_event`
+    (`store.py:6347`) and validated on append. The retention string
+    (`payload_registry.py:272`) contains **none** of
+    `corrective_requirement`, `corrective_evidence_required`, `expected_gap`,
+    `expected_artifact`, `feature_spec_path`, `acceptance_command`,
+    `expected_outputs`. Both entry paths are therefore closed: those seven keys
+    can never appear on a dispatched node payload.
+40. **Exactly one existing test keeps the dead branches alive, and it does so by
+    hand-building a raw dict that bypasses every one of those guards.**
+    `tests/unit/test_graph_planner_packet.py:653-683`
+    (inside `test_prompt_routing_for_planner_worker_and_verifier`) constructs a
+    `GraphDispatchContext` directly with `node_payload` carrying `objective`,
+    `feature_spec_path`, `corrective_evidence_required`, `expected_artifact`,
+    `acceptance_command`, `expected_outputs` and asserts five of them appear in
+    the prompt. This is the only test coverage the dead keys have; there is no
+    other worker-prompt assertion anywhere except `worker_authority:`
+    (`:646`, `:876`).
+41. **`_dynamic_feature_prompt_lines` (`prompts.py:444-476`) carries a
+    *suppression* dependency on two of the dead node keys.** Its loop head
+    (`:454-455`) is `if isinstance(node.get(source_key), str) and
+    node[source_key]: continue` over source keys `feature_spec_path`,
+    `feature_spec_content`, `acceptance_command` — i.e. "skip the
+    `dynamic_feature` fallback because the node already rendered this itself."
+    All three are dead as *node* keys by fact 39 (`feature_spec_content` is not
+    in the retention string either), so the guard never fires in production and
+    exists only to avoid double-rendering the lines chunk 5 deletes. The
+    `dynamic_feature`-sourced lines themselves (`dynamic_feature_spec_path`,
+    `dynamic_feature_spec_content`, `dynamic_acceptance_command`) are **live**
+    — they read the `dynamic_feature` dict, which *is* retained — and are
+    covered by `test_graph_planner_packet.py:732-740`. They stay.
+42. **`prompts.py` builds the full prompt *string*; no runner renders the
+    packet.** `dispatch.py:1145` `prompt = _prompt_for_node(context)` →
+    `ExecutionContext.prompt` (`:1150`). Every adapter embeds that string
+    verbatim: `codex/common.py:1245`
+    (`f"{context.prompt}\n\n## Requirements\n{requirements_text}\n\n…"`),
+    `openhands/common.py:394,422`, `claude_cli/agent.py:661`. **No runner file
+    needs a chunk-5 edit**; the section lands in the worker prompt for every
+    runner the moment `prompts.py` emits it.
+43. **Codex already appends bound requirement *text* out-of-band.**
+    `codex/common.py:1245` adds a `## Requirements` block from
+    `context.requirements`. `context.requirements` is
+    `["{id}: {text}", …]` produced by `_requirements_for_node`
+    (`dispatch.py:2181`) → `requirements_for_node_view`
+    (`projection_queries.py:302`), which resolves `RequirementRecord`s bound to
+    `requirement_*` input ports. The **graph prompt itself renders requirements
+    for verifiers only** (`_verifier_packet`, `prompts.py:100`); the worker
+    prompt renders none today, so a non-codex runner's worker sees no
+    requirements at all.
+44. **There is no requirement-id → record resolver.** `_hydrated_bound_record`
+    (`prompts.py:754`) hydrates *output* records by input-port binding under an
+    edge's `prompt_hydration_policy`; it is reached only via `_planner_evidence`
+    (planner packet, check packet, prompt-summary `bound_records`) and takes a
+    `record_payload`, not an id. Nothing maps a free-form
+    `bound_requirement_ids` entry to a record. So `bound_requirement_ids`
+    can only be rendered verbatim; the *resolved* requirement text available to
+    a worker is `context.requirements` (fact 43).
+45. **The prompt summary reports packet *keys*, never packet *values*.**
+    `_prompt_summary_for_node` (`prompts.py:216-247`) stores
+    `"packet_keys": sorted(packet)` plus `prompt_sections`, `input_ports`,
+    `bound_records`, `lease`, and a small allow list of schema/contract blocks
+    — it never embeds the packet body. The worker branch of
+    `_packet_for_prompt_summary` (`:271-275`) returns
+    `{node_id, task_region_id, worker_authority}`, and
+    `_prompt_sections_for_context`'s fall-through (`:302`) returns
+    `["worker_instruction", "worker_authority"]`. Adding a key to the worker
+    packet therefore surfaces it in the summary as *evidence that it was
+    hydrated*, with zero contract-content leakage into the durable read model —
+    which is exactly what contract-doc §5's last paragraph asks for.
+46. **Both `_packet_for_prompt_summary` and `_prompt_sections_for_context`
+    reach their worker branch by *fall-through*, so they also serve unknown
+    kinds.** `_prompt_for_node` routes `verifier`/`summarizer`/`planner`
+    explicitly and sends everything else — including `check` — to
+    `_worker_like_prompt` (`:213`). `_packet_for_prompt_summary` has an explicit
+    `check` branch (`:257`) but `_prompt_sections_for_context` does too
+    (`:300`), so the fall-through in both is "worker or an unrecognized kind".
+    The new section must gate on `context.node_kind == "worker"`, matching
+    chunk 3's predicate, not on the fall-through.
+47. **Two existing allowlist tests pin `node_detail` *negatively* for the
+    Slice 1 fields.** `tests/unit/test_graph_payload_field_allowlists.py:126`
+    (`test_node_created_retains_access_mode_and_legacy_work_mode_separately`)
+    asserts `"access_mode" not in spec.node_detail`, and `:135` asserts the
+    same for `access_mode_override_justification`. Adding `access_mode` to
+    `node_created`'s `node_detail=` retention would require **editing an
+    existing chunk-2 pin** — see the scope ruling below.
+48. **`node_detail` retention feeds the durable operator read model, not the
+    prompt.** `NODE_DETAIL_PAYLOAD_FIELDS` (`payload_registry.py:447`) is
+    consumed only by `store.py:4175 read_run_node_detail`, which backs
+    `rebuild_node_detail_summaries` (`:5698`) and the read-model rebuild
+    (`:5568`), writing `GraphNodeDetailSummaryModel` /
+    `GraphNodeDetailCollectionFactModel` rows served by
+    `api/routers/graph.py`. It is the surface contract-doc **requirement #9**
+    ("expose each node's objective, work mode, and scope in operator read
+    models") targets — a *different* requirement from target-doc criterion 4.
+49. **The presentation doc transcribes the dead-key prompt shape verbatim.**
+    `docs/dynamic-graph/dynamic-graph-how-it-works-presentation.html:920-931`
+    reproduces the worker prompt as `objective:` / `corrective_requirement:` /
+    … / `invariants:` lines. It becomes false the moment the deletions land.
+50. **Macros can only supply three of the six contract fields.** Chunk 3
+    threaded `objective`, `access_mode`, `acceptance` through
+    `CreateWorkRegionArgs` (`macros.py:43`), `_worker_node` (`:472`),
+    `graph_mcp_tools.py:113,157`, and `codex/common.py:578,661`. `scope`,
+    `bound_requirement_ids`, `invariants`, and `prohibited_actions` reach a node
+    only through a raw `create_node` op. The chunk-5 section must therefore
+    treat all four as genuinely optional at render time; widening the macro arg
+    surface is **not** chunk 5's job.
+
+### Chunk 5 — Worker prompt hydration from typed fields (SPECIFIED, not built)
+
+**Goal.** Make the worker prompt carry the node's typed work contract as one
+distinct, named section, and delete every dead loose-dict read that pretended
+to carry it. Independently verifiable: after this chunk a `kind="worker"`
+dispatch renders a `work_contract:` line containing `objective`, `access_mode`,
+and `acceptance` (plus `scope` / `bound_requirement_ids` / `bound_requirements`
+/ `invariants` / `prohibited_actions` when present); the seven orphan keys have
+zero references left in `src/`; and the node's `prompt_summary` records
+`work_contract` in both `packet_keys` and `prompt_sections`.
+
+#### Ruling on the nine keys (R4's "declare or delete")
+
+Investigated per fact 38-41 and 50. Verdict per key:
+
+| key | verdict | reason |
+|---|---|---|
+| `objective` | **keep, relocate** | Real typed field since chunk 1, mandatory since chunk 3. Moves out of the loose loop into `work_contract`. The `title` fallback read at `:347` **stays** — it is now a live read of a declared field and is the only thing keeping a title-less patch-created worker from opening with a bare node id. |
+| `invariants` | **keep, relocate** | Real typed field since chunk 1. Moves out of the loose block into `work_contract`. |
+| `acceptance_command` | **delete** | No typed field, and it is not the singular of `acceptance: list[str]` — it is a *`dynamic_feature`* sub-key (`compiler.py:1101`, `command_bindings.py:199`, `dispatch.py:2252`) whose live rendering already exists as `dynamic_acceptance_command` (fact 41). Rendering the typed `acceptance` list is the replacement; renaming the dead node-level read would create a second, conflicting spelling of the same concept. |
+| `feature_spec_path` | **delete** | Same shape as `acceptance_command`: a live `dynamic_feature` sub-key (`compiler.py:1078`, `graph_driver.py:320`) that is dead as a *node payload* key, already rendered live as `dynamic_feature_spec_path`. |
+| `expected_outputs` | **delete** | No typed field and deliberately none: fact 17 / chunk 2 record that target-doc criterion 1 pruned `required_inputs` and `expected_outputs` from contract-doc §1's list. Typed output ports are the graph's existing answer. Do **not** invent the field. |
+| `corrective_requirement` | **delete** | No typed field, no writer, no home. |
+| `corrective_evidence_required` | **delete** | Same. |
+| `expected_gap` | **delete** | Same. |
+| `expected_artifact` | **delete** | Same. |
+
+The four "no home" keys were re-checked against everything shipped in chunks
+1-4 and against the whole repo before deciding (fact 39): none maps to
+`scope`, `bound_requirement_ids`, `prohibited_actions`, or any authority or
+record concept. Per R4, they are deleted, not declared. **R4 is resolved by
+this section.**
+
+#### Ruling on `node_detail` retention — deliberately OUT OF SCOPE
+
+The chunk-queue row-5 one-liner says "add the fields to `node_detail`
+retention". That clause is **superseded by this section** (same precedent as
+chunk 2's superseded one-liner); the queue table is left as written for audit
+continuity. Reasons, stated rather than silently skipped:
+
+1. `node_detail` feeds the durable **operator read model**, not the prompt
+   (fact 48). Target-doc criterion 4 — the whole of chunk 5's mandate — is
+   about "a distinct section of the worker packet". Nothing in criterion 4
+   reads `node_detail`, and the prompt path reads the `projection` retention
+   set that chunks 1-2 already populated.
+2. The operator-surface requirement it would serve is contract-doc
+   **requirement #9**, which is a nine-bullet read-model/UI item (objective,
+   work mode, scope, bound requirements, expected outputs, checks, snapshot
+   identities, readiness reasoning, horizon, per-node token/hydration
+   summaries). Landing one third of one bullet in chunk 5 buys no verifiable
+   operator capability and pre-commits the shape of a slice nobody has scoped.
+3. It cannot be done additively: `access_mode` in `node_detail` forces an edit
+   to the chunk-2 pin `test_node_created_retains_access_mode_and_legacy_
+   work_mode_separately` (fact 47), breaking the loop's standing "zero existing
+   tests modified" property for a change with no acceptance criterion behind
+   it. Adding the six chunk-1 fields but not `access_mode`, to dodge that,
+   would ship an incoherent half of requirement #9's first bullet.
+
+Recorded as **R8** below. `ui/` is untouched by chunk 5 for the same reason.
+
+#### The prompt-summary question — no new summary entry needed
+
+Fact 45: the summary stores `packet_keys`, not packet bodies. Adding
+`work_contract` to the worker branch of `_packet_for_prompt_summary` and to
+`_prompt_sections_for_context` is the *complete* summary change: an operator
+reading `prompt_summary` sees that the work contract was hydrated into the
+packet, in the same "what was hydrated / summarized / omitted" vocabulary the
+existing `bound_records` entries use, without the contract text being copied
+into a durable read model. **Do not** add the contract values to
+`_prompt_summary_for_node`'s top-level dict — that is the `node_detail` /
+requirement-#9 surface ruled out above.
+
+#### Files touched (exactly these five)
+
+`src/` (one):
+
+1. `src/orchestrator/graph_runtime/prompts.py`
+
+`tests/` (two, one of which is a required modification):
+
+2. `tests/unit/test_graph_planner_packet.py` — new coverage **and** the
+   fact-40 repair.
+3. `tests/unit/test_graph_dispatch_on_output.py` — prompt-summary coverage
+   (this file already owns the `_context(...)` + `RecordingExecutor` helpers
+   used by chunk 2's cross-wiring pin).
+
+`docs/` (one):
+
+4. `docs/dynamic-graph/dynamic-graph-how-it-works-presentation.html` — fact 49.
+
+Ledger (one):
+
+5. `docs/dynamic-graph/slice-1-and-5-progress-ledger-2026-08-27.md` — chunk 5
+   verified-record entry only.
+
+**Do not touch**: `graph/models.py`, `graph/payload_registry.py` (no new field,
+no retention change — see the `node_detail` ruling), `graph/patch_validator.py`,
+`graph/macros.py`, `graph/_commands.py`, `graph/compiler.py`,
+`graph_runtime/dispatch.py`, `graph_runtime/horizon_templates.py`,
+`graph_runtime/graph_mcp_tools.py`, anything under `runners/` (fact 42),
+`ui/`, or any `.orchestrator/state/*.jsonl`.
+
+#### 1. `src/orchestrator/graph_runtime/prompts.py`
+
+**(a) New helper `_worker_contract_packet`.** Place it immediately *above*
+`_worker_authority_packet` (currently `:385`), mirroring that function's shape
+and its "always-present core keys, conditionally-present extras" style:
+
+```python
+def _worker_contract_packet(context: GraphDispatchContext) -> dict[str, Any]:
+    """Render the node's typed work contract as a bounded packet.
+
+    Mandatory-by-validator fields (``objective``/``access_mode``/``acceptance``)
+    are always present so a compiler-seeded worker that predates the contract
+    reads as an explicit ``null`` rather than a silent omission.
+    """
+    node = context.node_payload
+    objective = node.get("objective")
+    access_mode = node.get("access_mode")
+    acceptance = node.get("acceptance")
+    packet: dict[str, Any] = {
+        "objective": (
+            _bounded_text(objective)
+            if isinstance(objective, str) and objective.strip()
+            else None
+        ),
+        "access_mode": access_mode if isinstance(access_mode, str) else None,
+        "acceptance": (
+            [item for item in cast(list[Any], acceptance) if isinstance(item, str)]
+            if isinstance(acceptance, list)
+            else None
+        ),
+    }
+    scope = node.get("scope")
+    if isinstance(scope, str) and scope.strip():
+        packet["scope"] = _bounded_text(scope)
+    for key in ("bound_requirement_ids", "invariants", "prohibited_actions"):
+        value = node.get(key)
+        if isinstance(value, list) and value:
+            packet[key] = [item for item in cast(list[Any], value) if isinstance(item, str)]
+    if context.requirements:
+        packet["bound_requirements"] = list(context.requirements)
+    return packet
+```
+
+Rules the Builder may not vary:
+
+- **Key names mirror the typed field names exactly** — `objective`,
+  `access_mode`, `acceptance`, `scope`, `bound_requirement_ids`, `invariants`,
+  `prohibited_actions`. No renaming, no `work_mode` spelling (chunk 2's
+  downstream naming note).
+- **The three chunk-3-mandatory keys are always present**, `None` when unset.
+  Compiler-seeded workers are exempt from chunk 3 (fact 9), so `None` is a
+  reachable value in production and the explicit `null` is the honest
+  rendering — it is also the visible marker for the R5 follow-up
+  ("populate the contract from `TaskConfig`").
+- **The four optional keys are omitted when absent or empty**, matching
+  `_worker_authority_packet`'s conditional-key style. Fact 50: today they can
+  arrive only through a raw `create_node` op.
+- **`bound_requirements`** is the resolved requirement text already on
+  `context.requirements` (fact 43) — the same value `_verifier_packet` renders
+  at `:100`. It is included so the packet is self-contained for every runner,
+  not just codex, and so chunk 6 can assert contract-doc scenario #4 at the
+  `_prompt_for_node` level. The resulting duplication with codex's own
+  `## Requirements` block (fact 43) is **accepted**; dropping that block is a
+  runner-layer change and is explicitly not chunk 5.
+- `bound_requirement_ids` is rendered **verbatim**, not resolved — fact 44:
+  no id→record resolver exists, and inventing one is out of scope.
+
+**(b) Rewrite `_worker_like_prompt` (`:345-382`).** Final shape:
+
+```python
+def _worker_like_prompt(context: GraphDispatchContext) -> str:
+    node = context.node_payload
+    title = str(node.get("title") or node.get("objective") or context.node_id)
+    task_context = node.get("task_context")
+    context_lines = [str(task_context)] if isinstance(task_context, str) and task_context else []
+
+    if context.node_kind == "worker":
+        context_lines.append(f"work_contract: {_bounded_json(_worker_contract_packet(context))}")
+
+    authority_packet = _worker_authority_packet(context)
+    if authority_packet:
+        context_lines.append(f"worker_authority: {_bounded_json(authority_packet)}")
+
+    dynamic_feature = _dynamic_feature_from_context(context)
+    if dynamic_feature is not None:
+        context_lines.extend(_dynamic_feature_prompt_lines(node, dynamic_feature))
+
+    return _bounded_prompt("\n".join([_bounded_text(title), *context_lines]).strip())
+```
+
+i.e. **delete** the whole seven-key loop (`:351-362`), the `expected_outputs`
+block (`:364-368`) and the `invariants` block (`:370-372`); **insert** the
+`work_contract` line in their place, before `worker_authority`. `title` and
+`task_context` lines are unchanged. The `work_contract` line is gated on
+`context.node_kind == "worker"` (fact 46) so `check` nodes and any future kind
+falling through `_prompt_for_node` are unaffected.
+
+**(c) Delete the orphaned suppression guard in `_dynamic_feature_prompt_lines`
+(`:454-455`).** Remove exactly:
+
+```python
+        if isinstance(node.get(source_key), str) and node[source_key]:
+            continue
+```
+
+Justification (fact 41): the guard's only purpose was to stop the
+`dynamic_feature` fallback from double-rendering the node-level
+`feature_spec_path` / `feature_spec_content` / `acceptance_command` lines that
+(b) deletes. All three are dead as node keys, so the guard cannot fire in
+production either before or after. Leaving it would keep two of R4's named dead
+reads alive and defeat the "zero references" verification condition. The rest
+of the function — including its `node` parameter, used for `kind`, `role`, and
+`node_id` — is unchanged.
+
+**(d) `_packet_for_prompt_summary` (`:271-275`), fall-through branch.** Add
+`work_contract` for worker nodes only:
+
+```python
+    packet: dict[str, Any] = {
+        "node_id": context.node_id,
+        "task_region_id": context.node_payload.get("task_region_id", context.node_id),
+        "worker_authority": _worker_authority_packet(context),
+    }
+    if context.node_kind == "worker":
+        packet["work_contract"] = _worker_contract_packet(context)
+    return packet
+```
+
+**(e) `_prompt_sections_for_context` (`:302`), fall-through branch.** Replace
+the bare `return ["worker_instruction", "worker_authority"]` with:
+
+```python
+    if context.node_kind == "worker":
+        return ["worker_instruction", "work_contract", "worker_authority"]
+    return ["worker_instruction", "worker_authority"]
+```
+
+Section order must match render order from (b): instruction (title +
+task_context), then `work_contract`, then `worker_authority`.
+
+**(f) No new module export.** Do **not** add `_worker_contract_packet` to the
+`prompt_for_node = …` alias block at `:1543+`; tests reach it through
+`_prompt_for_node` / `_prompt_summary_for_node`, which are already re-exported
+via `dispatch.py:251-252`.
+
+#### 2. `tests/unit/test_graph_planner_packet.py`
+
+**(a) Required repair — delete the fact-40 dead-key block.** Inside
+`test_prompt_routing_for_planner_worker_and_verifier`, delete the
+`dynamic_worker_context` construction and its prompt assertions (currently
+`:653-683`) in full. Every one of its five assertions targets a key this chunk
+deletes; there is nothing in it to preserve. This is the **only** permitted
+existing-test modification in chunk 5, and it is a deletion of coverage for
+removed behavior, not a loosened assertion — the Validator should confirm that
+distinction explicitly. Leave the `worker_context` block (`:617-651`) and the
+`fallback_dynamic_worker_context` block (`:685-740`) byte-identical; the latter
+is the live `dynamic_feature` path (fact 41) and must keep passing untouched,
+which is also the regression pin proving (c) did not break the fallback.
+
+**(b) New tests** (module-level, next to
+`test_prompt_routing_for_planner_worker_and_verifier`; reuse its
+`GraphDispatchContext` construction style):
+
+- `test_worker_prompt_renders_the_full_typed_work_contract` — a
+  `node_kind="worker"` context whose `node_payload` carries all six typed
+  fields plus `access_mode`, and `requirements=["REQ-1: ship it"]`. Assert the
+  prompt contains `"work_contract:"`, and that the JSON on that line parses to
+  a dict equal to the expected packet — i.e. assert the **whole packet**, not
+  substrings, so a field silently dropped from the packet fails. Assert
+  `work_contract` appears **before** `worker_authority` in the prompt.
+- `test_worker_prompt_work_contract_omits_absent_optional_fields_and_nulls_mandatory_ones`
+  — a worker payload with none of the fields. Assert the parsed packet is
+  exactly `{"objective": None, "access_mode": None, "acceptance": None}`
+  (no `scope`/`bound_requirement_ids`/`invariants`/`prohibited_actions`/
+  `bound_requirements` keys). This pins both halves of the always/optional
+  rule and the compiler-seeded-worker case.
+- `test_worker_prompt_no_longer_renders_retired_loose_node_keys` — the
+  deletion pin. Build a worker context whose `node_payload` carries all seven
+  retired keys (`corrective_requirement`, `corrective_evidence_required`,
+  `expected_gap`, `expected_artifact`, `feature_spec_path`,
+  `acceptance_command`, `expected_outputs`) with distinctive sentinel values,
+  and assert none of the seven key names **and** none of the seven sentinel
+  values appears in the prompt. Because production cannot even produce such a
+  payload (fact 39), this test's job is purely to fail loudly if someone
+  reintroduces the loose reads.
+- `test_check_node_prompt_has_no_work_contract_section` — a
+  `node_kind="check"` context routed through `_prompt_for_node`; assert
+  `"work_contract:"` is absent (fact 46's gate).
+- `test_worker_prompt_work_contract_renders_resolved_bound_requirements` — a
+  worker context with `bound_requirement_ids=["REQ-1"]` on the payload and
+  `requirements=["REQ-1: the bound requirement text"]` on the context; assert
+  the packet carries both `bound_requirement_ids == ["REQ-1"]` and
+  `bound_requirements == ["REQ-1: the bound requirement text"]`. This is the
+  hook chunk 6's contract-doc scenario #4 asserts against.
+
+#### 3. `tests/unit/test_graph_dispatch_on_output.py`
+
+Add two tests near the existing `test_execution_context_*` group, using the
+file's `_context(...)` helper and importing `_prompt_summary_for_node` from
+`orchestrator.graph_runtime.dispatch` (already re-exported, `dispatch.py:252`):
+
+- `test_worker_prompt_summary_reports_the_work_contract_section` — worker
+  context; assert `summary["packet_keys"]` contains `"work_contract"` and
+  `summary["prompt_sections"] == ["worker_instruction", "work_contract",
+  "worker_authority"]`.
+- `test_worker_prompt_summary_does_not_embed_work_contract_values` — the
+  same context with a distinctive `objective` string; assert that string does
+  **not** appear anywhere in `json.dumps(summary)`. This pins the fact-45
+  boundary: the summary is hydration *evidence*, not a copy of the contract,
+  and the durable read model stays free of prompt bodies.
+
+#### 4. `docs/dynamic-graph/dynamic-graph-how-it-works-presentation.html`
+
+Update the "Actual prompt: worker and fixer" slide's `<pre>` block
+(currently `:920-931`) so the worker prompt shape it transcribes matches
+reality: `{title or objective or node_id}` and `{task_context if present}`
+stay; the nine `objective:` … `invariants:` lines are replaced by a single
+`work_contract: { … }` JSON block showing the packet's keys; the
+`worker_authority` and `dynamic_feature_*` blocks below it are unchanged. Text
+only — no styling, no other slide.
+
+#### Verification conditions (all must hold)
+
+- Exactly the five files above changed; `git status --short` shows nothing
+  else. In particular `graph/models.py`, `graph/payload_registry.py`,
+  `graph/patch_validator.py`, `graph/macros.py`, `graph/compiler.py`,
+  `graph_runtime/dispatch.py`, `graph_runtime/horizon_templates.py`,
+  `runners/**`, `ui/**`, and `.orchestrator/state/*.jsonl` are unmodified.
+- **Zero-reference greps** (each must return no `src/` hit):
+  `grep -rn "corrective_requirement\|corrective_evidence_required\|expected_gap\|expected_artifact" src/`
+  returns nothing at all;
+  `grep -rn "expected_outputs" src/` returns nothing at all;
+  `grep -rn "feature_spec_path\|acceptance_command" src/orchestrator/graph_runtime/prompts.py`
+  returns nothing (the remaining `compiler.py` / `command_bindings.py` /
+  `graph_driver.py` / `dispatch.py:2252` hits are the live `dynamic_feature`
+  sub-key reads and must be left alone).
+- `grep -n "objective\|invariants" src/orchestrator/graph_runtime/prompts.py`
+  returns exactly three hits: the `title` fallback, the example patch at
+  `:969`, and the new `_worker_contract_packet` body (plus its `invariants`
+  loop entry).
+- `uv run pytest tests/ -q -n auto --dist worksteal` reports **5504 + (new
+  test IDs) passed, 5 skipped**. Chunk 4's baseline is 5504 passed / 5 skipped.
+  Exactly **one** existing test is modified —
+  `test_prompt_routing_for_planner_worker_and_verifier`, by deletion of the
+  dead-key block (2(a)) — and nothing else. Any *other* pre-existing failure is
+  a genuine regression: repair the code, not the test.
+- `tests/unit/test_graph_planner_packet.py`'s
+  `fallback_dynamic_worker_prompt` assertions
+  (`dynamic_feature_spec_path:`, `dynamic_feature_spec_content:`,
+  `dynamic_acceptance_command:`, `dynamic_worker_instruction:`, and the
+  `dynamic_hidden_oracle_command:` / `validation-strengthened` negatives) pass
+  byte-identical — the pin that deleting the suppression guard (1(c)) did not
+  change the live `dynamic_feature` path.
+- `tests/integration/test_graph_fr09_acceptance.py` passes unchanged (it
+  asserts exact `packet_keys` / `prompt_sections` for the **summarizer** and
+  **gap planner** only, so the worker-branch additions must not touch it).
+- `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still `15`
+  (`graph/projection_codec.py:40`) — chunk 5 declares no field and changes no
+  retention set.
+- `EVENT_PAYLOAD_SPECS["node_created"].node_detail` is byte-identical to its
+  chunk-4 value, and
+  `tests/unit/test_graph_payload_field_allowlists.py` is unmodified.
+- Ruff, ruff format, and pyright clean.
+- Sanity check by execution (not a committed test): dispatching a worker whose
+  payload carries only `objective`/`access_mode`/`acceptance` produces a prompt
+  whose `work_contract:` line parses as JSON with exactly those three keys, and
+  the same node's `prompt_summary["prompt_sections"]` is
+  `["worker_instruction", "work_contract", "worker_authority"]`.
+
 ### Open risks carried into later chunks
 
 - **R1 (chunk 2, high) — RESOLVED by design, 2026-08-27 planning pass 2.**
@@ -1574,10 +2077,45 @@ The criterion-3 teeth tests, using the file's `_apply` helper:
   `test_create_revision_attempt_discovery_worker_is_not_access_mode_gated`.
   `graph/compiler.py` is *not* part of this risk: it never creates a discovery
   worker (fact 33).
-- **R4 (chunk 5, low).** `prompts.py:347-372` also reads six other dead keys
-  (`corrective_requirement`, `expected_gap`, `expected_artifact`,
-  `feature_spec_path`, `acceptance_command`, `expected_outputs`). Chunk 5
-  should either declare or delete them rather than leaving dead branches.
+- **R4 (chunk 5, low) — RESOLVED by decision, 2026-08-27 planning pass 5.**
+  The answer is **delete, for all seven** — the six R4 named plus
+  `corrective_evidence_required`, which R4's own list omitted (fact 38 counts
+  the region as nine reads, of which `objective` and `invariants` are now real
+  typed fields and are relocated into the new `work_contract` packet rather
+  than deleted). Each of the seven was re-checked against everything chunks 1-4
+  shipped and against the whole repo before the ruling, per the per-key table
+  in the chunk 5 section: `corrective_requirement`,
+  `corrective_evidence_required`, `expected_gap`, and `expected_artifact` have
+  no corresponding concept anywhere; `expected_outputs` is *deliberately*
+  absent (fact 17 — target-doc criterion 1 pruned it from contract-doc §1, and
+  typed output ports already carry it); `feature_spec_path` and
+  `acceptance_command` are live `dynamic_feature` **sub-keys** whose node-level
+  reads are dead and whose live rendering already exists as
+  `dynamic_feature_spec_path` / `dynamic_acceptance_command`. No new typed
+  field is invented for any of them. The ruling extends one step past R4's
+  citation: `_dynamic_feature_prompt_lines`'s suppression guard
+  (`prompts.py:454-455`) exists only to avoid double-rendering two of the
+  deleted node keys and is deleted with them (fact 41), so no dead branch is
+  left behind. Pinned by
+  `test_worker_prompt_no_longer_renders_retired_loose_node_keys` (all seven key
+  names *and* their values absent from the prompt) and by a zero-reference
+  `grep` verification condition over `src/`.
+- **R8 (post-chunk-5, low) — NEW.** Chunk 5 deliberately does **not** add the
+  typed contract fields to `node_created`'s `node_detail=` retention, so the
+  durable operator read model still cannot show a node's objective, access
+  mode, or scope. That surface is contract-doc **requirement #9** ("expose plan
+  semantics in operator read models"), a nine-bullet item outside the target
+  doc's Slice 1 criteria, and landing one third of its first bullet here would
+  pre-commit the shape of an unscoped slice while forcing an edit to the
+  chunk-2 pin `test_node_created_retains_access_mode_and_legacy_work_mode_
+  separately` (fact 47) — breaking the loop's standing "zero existing tests
+  modified" property for no verifiable capability. When requirement #9 is
+  scoped, the change is: add the six chunk-1 fields **and** `access_mode` to
+  the `node_detail=` string (`payload_registry.py:275`), flip the two negative
+  assertions in `tests/unit/test_graph_payload_field_allowlists.py:126,135`,
+  and surface them through `api/routers/graph.py`'s node-detail response. The
+  prompt path is unaffected either way — it reads the `projection` retention
+  set, which chunks 1-2 already populated.
 
 ## Slice 5 — recovery semantics
 
