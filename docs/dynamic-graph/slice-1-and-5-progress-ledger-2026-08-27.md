@@ -7,8 +7,8 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 
 ## Slice 1 — worker contracts and prompt hydration
 
-Status: chunks 1-2 of 6 verified and committed (`3ac034a7b`, and chunk 2
-pending commit below). Chunks 3-6 not started.
+Status: chunks 1-2 of 6 verified and committed (`3ac034a7b`, `8565c24f9`).
+Chunk 3 specified below (planning pass 3, not built). Chunks 4-6 not started.
 
 ### Verified chunks
 
@@ -220,6 +220,95 @@ without re-deriving them.
     worker contract must carry, alongside `required_inputs` and
     `expected_outputs` which the target doc already drops from criterion 1.
     The semantic is normative; the spelling is not.
+
+### Verified facts from planning pass 3 (2026-08-27, chunk 3 research)
+
+18. **There is no update/patch op that can strip a node's contract fields.**
+    `KNOWN_OPS` (`patch_validator.py:42`) is exactly `create_node`,
+    `create_edge`, `retire_node`, `create_revision_attempt`, `create_appeal`,
+    `create_gate`, `set_resource_claims`, `set_allowed_actions`,
+    `mark_plan_region_suspect`. Nothing mutates a node payload after creation:
+    `set_resource_claims`/`set_allowed_actions` touch authority only, and
+    `retire_node`/`mark_plan_region_suspect` touch state. Criterion 2's phrase
+    "`create_node`/`patch` operations" therefore collapses to `create_node`
+    alone — the conservative scope is also the complete one, and chunk 3 does
+    **not** need a "later op could strip the field" guard.
+19. **Macro expansion happens *before* patch validation, in the same command.**
+    `_commands.py:2339 expand_patch_macros(...)` runs at the top of the submit
+    path; `_commands.py:2380 validate_patch(...)` runs on the expanded op list.
+    So macro-produced ops are subject to every `validate_patch` check.
+    `macros.py:457 _worker_node` emits a `create_node` worker with **no**
+    `objective`/`access_mode`/`acceptance`, and `CreateWorkRegionArgs`
+    (`macros.py:30`) is `extra="forbid"` with no such args — meaning a planner
+    calling the `create_work_region` / `create_corrective_region` macro today
+    physically **cannot** supply them. Enforcement in `validate_patch` without
+    macro plumbing would brick the planner's primary graph tool, so the macro
+    arg surface is part of chunk 3, not a follow-up.
+20. **Three further agent-facing surfaces gate the macro args.** The chain is
+    `codex tool schema → graph_tool_routing → macros.py`:
+    `runners/agents/codex/common.py:565` (`create_work_region`) and `:643`
+    (`create_corrective_region`) declare `inputSchema` with
+    `additionalProperties: False`; `graph_runtime/graph_mcp_tools.py:105` /
+    `:136` declare typed Python signatures per macro arg;
+    `runners/graph_tool_routing.py:168 normalize_macro_tool_payload` is a
+    generic pass-through (`{k: v for k, v in args.items() if k not in
+    {patch_id, base_graph_position, rationale_record_id}}`) and needs **no**
+    change. So exactly two agent-facing files gate new macro args.
+21. **Two planner-facing *exemplars* teach the wrong shape.**
+    `graph_runtime/horizon_templates.py:44,67,171` (discovery /
+    implementation / corrective-work region templates) and
+    `graph_runtime/prompts.py:963` (the inline worker+verifier example patch)
+    both emit `create_node` worker nodes with none of the three fields. These
+    are handed to planners as copyable templates, so leaving them stale after
+    enforcement lands would make the validator reject patches the prompt told
+    the planner to write.
+22. **`create_revision_attempt` worker nodes bypass node-payload validation
+    entirely.** Only the `create_node` branch of `validate_patch` calls
+    `validate_node_payload`; `create_revision_attempt`'s `worker_node` /
+    `verifier_node` keys are only seen by `_validate_typed_topology`
+    (`patch_validator.py:244-261`) for duplicate-id registration. Confirmed by
+    the probe in fact 23: `tests/unit/test_cache_authority_chain.py:521`
+    (`"worker_node": {"node_id": "worker-revision", "kind": "worker", "role":
+    "builder"}`) did **not** fail under a `create_node`-scoped worker-contract
+    check.
+23. **Measured regression blast radius (probe, 2026-08-27).** A
+    `kind == "worker"` presence check for `objective` / `access_mode` /
+    `acceptance` was applied temporarily to `validate_patch`, the full suite
+    run, and the edit reverted (`git status --short` clean afterwards; no git
+    revert command used). Result: **29 failed, 5437 passed, 5 skipped** —
+    i.e. exactly 29 existing tests break, all with a
+    `worker node requires objective: ...` style rejection, none from an
+    unrelated cause. Per file: `test_graph_planner.py` 10,
+    `test_patch_validator.py` 4, `test_graph_macros.py` 3,
+    `test_graph_dynamic_contract.py` 3, `test_graph_commands.py` 3,
+    `test_cache_authority_chain.py` 2, `test_graph_horizon_templates.py` 2,
+    `test_graph_parent_child_translation.py` 2. Zero integration tests broke.
+24. **Compiler-seeded workers are provably exempt, and the pin already
+    exists.** `tests/unit/test_graph_commands.py:4963
+    test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_run`
+    seeds `{"node_id": "worker-1", "kind": "worker", "state": "planned"}` with
+    none of the three fields and **passed** under the probe. That test is the
+    standing regression pin for fact 9; chunk 3 adds no new test for it.
+25. **`horizon_templates.py`'s discovery worker is never validated today.**
+    `tests/unit/test_graph_horizon_templates.py:42-51` parametrizes
+    `test_instantiated_horizon_templates_validate_as_planner_patches` over
+    `implementation_region`, `validation_region`, `gap_analysis_region`,
+    `corrective_work_region`, `final_invariant_region` — `discovery_region` is
+    absent from the list, even though it is in `HORIZON_REGION_PURPOSES`.
+    That is why only 2 of the 3 template worker nodes broke under the probe,
+    and it is a pre-existing coverage hole on the exact node type the failed
+    dogfood run got wrong.
+26. **The per-kind contracts confirm `kind == "worker"` is the right
+    predicate.** `contracts.py:807` `worker` is `handler_type="agent"`,
+    `fulfillment="task_acceptance"`, required outputs `candidate` +
+    `file_state`, roles `builder, discovery, implementer, fixer, reviewer,
+    summarizer`. The other three members of `EXECUTABLE_NODE_KINDS` have
+    structurally different contracts: `verifier` (`contracts.py:883`) produces
+    a `verification_report` and already carries its obligation as `rubric`;
+    `check` (`contracts.py:943`) is `handler_type="deterministic_command"` and
+    already has a mandatory-command check (`_validate_check_command`);
+    `planner` (`contracts.py:628`) produces `graph_patch_proposal` and has no
+    acceptance concept at all. "Acceptance" is meaningless for all three.
 
 ### Chunk queue
 
@@ -499,6 +588,296 @@ they mean the read-only/write concept. After chunk 2 that concept is
 - Chunk 5's prompt section renders **`access_mode`**; the legacy `work_mode`
   stays out of the worker packet exactly as it is today.
 
+### Chunk 3 — Patch-validator contract enforcement (SPECIFIED, not built)
+
+**Goal.** Make a bounded worker contract *mandatory* on every planner- or
+agent-proposed worker node, with a message that names the missing field and the
+node. Independently verifiable: after this chunk a `create_node` op creating a
+`kind="worker"` node without `objective`, `access_mode`, or `acceptance` is
+rejected with a precise per-field reason; the same op with all three is
+accepted; `verifier` / `check` / `planner` nodes are unaffected; compiler-seeded
+workers still seed unchanged.
+
+#### Scope decision — the predicate is `kind == "worker"`, role-independent
+
+R2 asked for an explicit narrower predicate than `EXECUTABLE_NODE_KINDS`.
+Ruling: **`kind == "worker"`, every role, no exceptions.**
+
+- Not `EXECUTABLE_NODE_KINDS`: fact 26 — `verifier`, `check`, and `planner`
+  have structurally different contracts and no acceptance concept, and `check`
+  already has its own mandatory-command validation.
+- Not narrowed by `role`: all six declared worker roles (`builder`,
+  `discovery`, `implementer`, `fixer`, `reviewer`, `summarizer`) are
+  agent-executed units of work that need a bounded objective, a declared
+  access mode, and an acceptance condition. Exempting any role reopens exactly
+  the hole the failed run fell through — its offending node was a *discovery*
+  worker. `role` is already independently mandatory for executable nodes
+  (`patch_validator.py:185`), so the two checks compose rather than overlap.
+- Gap-planner-created corrective workers **are** in scope: they are
+  `kind == "worker"` and reach the same `create_node` branch. The existing
+  `_validate_gap_planner_node` check (region targeting) is orthogonal and runs
+  first; both must pass.
+
+#### Scope decision — `create_node` only, and that is complete
+
+Fact 18: no op in `KNOWN_OPS` can mutate a node payload after creation, so
+there is no "later op strips the field" surface to guard. Criterion 2's
+"`create_node`/`patch` operations" is fully covered by the `create_node`
+branch.
+
+Two adjacent surfaces are **deliberately out of scope** and must be left
+alone by the Builder:
+
+- `create_revision_attempt`'s `worker_node` (fact 22) — it bypasses
+  `validate_node_payload` today as well, so bringing it under the contract
+  check is a strictly larger change (it would also need the revision-attempt
+  producers to supply the fields). Recorded as R5.
+- `seed_compiled_events` (fact 9) — compiler-seeded workers keep working
+  untouched. This is the correct blast radius for chunk 3: the failed dogfood
+  run `fff4f6b7` was a *planner*-proposed graph, which is exactly the surface
+  this chunk closes. Populating the fields from the compiler is a separate,
+  later change.
+
+#### Files touched
+
+Six `src/` files, three test files for new coverage, plus the eight test files
+listed under "Existing tests that must be repaired" (two of which overlap:
+`test_patch_validator.py` and `test_graph_macros.py` are both edited for new
+coverage and repaired).
+
+`src/` (six):
+
+1. `src/orchestrator/graph/patch_validator.py` — the check.
+2. `src/orchestrator/graph/macros.py` — macro arg pass-through.
+3. `src/orchestrator/graph_runtime/horizon_templates.py` — templates carry the
+   fields.
+4. `src/orchestrator/graph_runtime/prompts.py` — **only** the example-patch
+   dicts around line 963. Do **not** touch `prompts.py:347-372` (chunk 5).
+5. `src/orchestrator/runners/agents/codex/common.py` — macro `inputSchema`
+   properties.
+6. `src/orchestrator/graph_runtime/graph_mcp_tools.py` — macro tool signatures.
+
+`tests/` edited for new coverage (three):
+
+7. `tests/unit/test_patch_validator.py`
+8. `tests/unit/test_graph_macros.py`
+9. `tests/unit/test_graph_horizon_templates.py`
+
+Do **not** touch: `graph/contracts.py` (the contract registry describes ports
+and roles, not payload-field presence — the check belongs next to the other
+hand-written `create_node` checks, not in `validate_node_payload`, which is
+also called from paths that must stay presence-agnostic), `graph/compiler.py`,
+`graph/_commands.py`, `graph/models.py`, `graph/payload_registry.py`,
+`graph/macros.py`'s `_verifier_node`/`_attach_check`, or any
+`.orchestrator/state/*.jsonl`.
+
+#### 1. `src/orchestrator/graph/patch_validator.py`
+
+Add a module-level helper next to `_validate_check_command` (i.e. after
+`_validate_gap_planner_node`, before `_validate_check_command`), and call it
+from the `create_node` branch of `validate_patch` immediately **after** the
+`executable node requires role` check and **before** the `if kind == "check":`
+branch:
+
+```python
+                if kind == "worker":
+                    worker_contract_error = _validate_worker_contract(typed_node)
+                    if worker_contract_error is not None:
+                        return PatchValidationResult(
+                            accepted=False,
+                            rejection_reason=worker_contract_error,
+                        )
+```
+
+The helper evaluates fields in the fixed order `objective` → `access_mode` →
+`acceptance` and returns the **first** failure (`validate_patch` carries a
+single `rejection_reason`). `node_id` is already guaranteed a non-empty `str`
+here because `validate_node_payload` ran first and rejects a missing one.
+
+**Exact error messages** (fact 10 hand-written convention: lowercase phrase,
+colon, offending node id; one field per message, never a bundled list):
+
+| condition | message |
+|---|---|
+| `objective` absent, `None`, non-`str`, or blank/whitespace-only | `f"worker node requires objective: {node_id}"` |
+| `access_mode` absent or `None` | `f"worker node requires access_mode: {node_id}"` |
+| `access_mode` present but not `"read_only"`/`"write"` | `f"worker node access_mode must be read_only or write: {node_id}"` |
+| `acceptance` absent, `None`, or `[]` | `f"worker node requires acceptance: {node_id}"` |
+| `acceptance` present but not a list of non-empty `str` | `f"worker node acceptance must be a list of non-empty strings: {node_id}"` |
+
+The two "must be" variants mirror the existing `resource_claims mode must be
+one of ...` style and keep a wrong *value* from being reported as a missing
+*field*. Do not add a sixth message, do not bundle fields, and do not route
+any of these through `_error_rendering` — these are hand-written rejections,
+not pydantic diagnostics.
+
+#### 2. `src/orchestrator/graph/macros.py`
+
+Add three **optional** fields to `CreateWorkRegionArgs` (shared by
+`create_work_region` and `create_corrective_region` via `_MACRO_SPECS`):
+
+```python
+    objective: str | None = None
+    access_mode: Literal["read_only", "write"] | None = None
+    acceptance: list[str] | None = None
+```
+
+`Literal` is already imported (`macros.py:9`). Thread them through
+`_create_work_region` into `_worker_node(...)` as keyword args, and have
+`_worker_node` emit each key **only when the value is not `None`**.
+
+They stay optional at the macro layer on purpose: a missing arg must surface
+as the validator's precise hand-written message, not as a pydantic
+`invalid_macro_arguments` blob from `_validate_invocation`
+(`macros.py:161-176`). `_validate_invocation` already does
+`model_dump(exclude_none=True)`, so unset args simply do not reach
+`_worker_node`. Do not touch `_verifier_node`.
+
+#### 3. `src/orchestrator/graph_runtime/horizon_templates.py`
+
+Add all three fields to the three worker `create_node` nodes (lines 44, 67,
+171 — discovery / implementation / corrective-work). Use concrete,
+purpose-appropriate placeholder values consistent with each template's
+existing `description`, and in particular give the **discovery** template
+`"access_mode": "read_only"` — it is the template for the exact node class the
+failed run got wrong, and chunk 4 will make that the enforced default.
+Implementation and corrective-work templates get `"access_mode": "write"`.
+
+#### 4. `src/orchestrator/graph_runtime/prompts.py`
+
+Add the same three keys to the `worker-example` node in the example patch at
+`prompts.py:963` (`"access_mode": "write"`, a one-line `objective`, a
+one-entry `acceptance`). Surgical dict edit only. `prompts.py:347-372` is
+chunk 5's and must not be touched — there is no overlap between the two
+regions.
+
+#### 5. `src/orchestrator/runners/agents/codex/common.py`
+
+Add `objective` (`{"type": "string"}`), `access_mode`
+(`{"type": "string", "enum": ["read_only", "write"]}`), and `acceptance`
+(`{"type": "array", "items": {"type": "string"}}`) to the `properties` of both
+`planner_macro_specs["create_work_region"]` (line 565) and
+`planner_macro_specs["create_corrective_region"]` (line 643). Both schemas are
+`additionalProperties: False`, so without this an agent cannot pass the fields
+at all.
+
+**Do not add them to either schema's `required` list.** Keeping them
+schema-optional means the single enforcement point — and the single error
+message — is the validator, identical for the macro path and the raw-`ops`
+path. Promoting them to schema-`required` is a reasonable follow-up once
+chunk 5 also documents them in the planner prompt text
+(`common.py:1181-1184`), and should be decided there, not here.
+
+#### 6. `src/orchestrator/graph_runtime/graph_mcp_tools.py`
+
+Add `objective: str | None = None`, `access_mode: str | None = None`,
+`acceptance: list[str] | None = None` to the `create_work_region` (line 105)
+and `create_corrective_region` (line 136) tool signatures, forwarded into
+`args` with the same `if ... is not None` pattern the existing optional params
+use. `runners/graph_tool_routing.py` needs no change (fact 20).
+
+#### 7. `tests/unit/test_patch_validator.py`
+
+Add one test group, using the file's existing `validate_patch` helper at
+line 95:
+
+- `test_create_node_rejects_worker_without_objective` — assert
+  `result.accepted is False` and
+  `result.rejection_reason == "worker node requires objective: worker-1"`.
+- `test_create_node_rejects_worker_without_access_mode` — objective present;
+  expect `"worker node requires access_mode: worker-1"`.
+- `test_create_node_rejects_worker_with_invalid_access_mode` — pass
+  `"access_mode": "implementation"`; expect
+  `"worker node access_mode must be read_only or write: worker-1"`. (This pins
+  the chunk-2 `access_mode`-vs-`work_mode` split at the validator layer too.)
+- `test_create_node_rejects_worker_without_acceptance` — objective and
+  access_mode present; expect `"worker node requires acceptance: worker-1"`.
+- `test_create_node_rejects_worker_with_malformed_acceptance` — pass
+  `"acceptance": "run the tests"` (a bare string); expect
+  `"worker node acceptance must be a list of non-empty strings: worker-1"`.
+- `test_create_node_accepts_worker_with_full_contract` — all three present;
+  assert `result.accepted is True`.
+- `test_worker_contract_is_not_required_of_non_worker_kinds` — parametrized
+  over `verifier`, `check`, `planner` (each with its own already-required
+  extras: `role`, and for `check` a `command_binding`), none carrying the
+  three fields; assert `result.accepted is True`. This is the R2 pin: it must
+  fail if anyone later widens the predicate back to `EXECUTABLE_NODE_KINDS`.
+- `test_gap_planner_corrective_worker_requires_worker_contract` — actor role
+  `gap_planner`, node in `corrective_work_region`, missing `objective`; expect
+  the objective message. Pins that corrective workers are in scope.
+- `test_create_revision_attempt_worker_node_is_not_contract_checked` — a
+  `create_revision_attempt` op whose `worker_node` carries none of the three
+  fields is still accepted. This deliberately pins the R5 scope boundary so a
+  later chunk that closes it has to change this test on purpose rather than by
+  accident.
+
+#### 8. `tests/unit/test_graph_macros.py`
+
+- `test_create_work_region_macro_forwards_worker_contract_fields` — invoke the
+  macro with the three new args, assert the expanded worker `create_node`
+  node dict carries them verbatim, and assert the expanded patch passes
+  `validate_patch`.
+- `test_create_work_region_macro_without_contract_fields_is_rejected` — invoke
+  the macro with no contract args and assert `validate_patch` rejects with
+  `"worker node requires objective: worker-<region_id>"`. This is the pin that
+  the macro is not a bypass around the check.
+
+#### 9. `tests/unit/test_graph_horizon_templates.py`
+
+- Add `"discovery_region"` to the `@pytest.mark.parametrize` list at lines
+  42-51, closing the pre-existing hole in fact 25. (This adds one test ID.)
+- `test_worker_horizon_templates_declare_the_worker_contract` — for every
+  purpose in `HORIZON_REGION_PURPOSES`, every `create_node` op with
+  `kind == "worker"` carries a non-empty `objective`, an `access_mode` in
+  `{"read_only", "write"}`, and a non-empty `acceptance` list; additionally
+  assert the `discovery_region` worker's `access_mode == "read_only"`.
+
+#### Existing tests that must be repaired (29, measured — fact 23)
+
+**Rule for the Builder: fix the fixtures, never weaken the check.** Every one
+of these is an under-specified worker node — precisely the shape the contract
+doc diagnosed in run `fff4f6b7`. Adding a one-line `objective`, an
+`access_mode`, and a one-entry `acceptance` to each worker node dict is the
+correct repair. Do not add an opt-out flag, do not narrow the predicate, and
+do not special-case a test module.
+
+| file | count | how to repair |
+|---|---|---|
+| `tests/unit/test_graph_planner.py` | 10 | Most flow from the shared `_region_ops` helper (line 558) plus the two inline corrective-worker ops near lines 233 and 289. Fix the helper first and re-run — the count should collapse. |
+| `tests/unit/test_patch_validator.py` | 4 | Incidental: three are `create_edge` tests (`..._binding_policy_incompatible_with_target_cardinality`, `..._accepts_known_prompt_hydration_policy`, `..._rejects_unknown_prompt_hydration_policy`) that happen to build a worker as the edge source, plus `test_gap_planner_can_append_corrective_work_region`. Add the three fields to the worker node dicts. |
+| `tests/unit/test_graph_macros.py` | 3 | `test_create_work_region_macro_expands_to_valid_patch`, `test_gap_planner_corrective_region_macro_expands_to_valid_patch`, `test_submit_patch_command_accepts_macro_invocations` — pass the three **new macro args** (not node-dict edits; these go through the macro). |
+| `tests/unit/test_graph_dynamic_contract.py` | 3 | `test_patch_contract[corrective_worker_without_classified_gap]`, `test_patch_contract[corrective_worker_by_gap_planner_is_exempt]`, `test_authority_request_edge_to_worker_authority_port_is_valid`. The first two share the `_CORRECTIVE_WORKER` constant (near line 247) — one edit fixes both. |
+| `tests/unit/test_graph_commands.py` | 3 | `test_patch_accept_adds_default_worker_write_authority`, `test_patch_accepts_authority_request_edge_to_worker_authority_input`, `test_gap_planner_corrective_work_patch_accepts_through_submit_patch`. |
+| `tests/unit/test_cache_authority_chain.py` | 2 | `test_dynamic_nodes_inherit_authority_hash[generic]` and `test_dynamic_nodes_reject_explicit_authority_mismatch[generic]` — the `generic` parametrization's worker node (near lines 507/567/587). The `[revision]`-style cases pass untouched (fact 22). |
+| `tests/unit/test_graph_horizon_templates.py` | 2 | `[implementation_region]` and `[corrective_work_region]` — repaired by the **src** change in file 3, **not** by editing the test. |
+| `tests/unit/test_graph_parent_child_translation.py` | 2 | `test_child_order_is_chain_order`, `test_region_label_names_child_routine` — the worker node dict near line 221. |
+
+Zero integration tests break, and
+`tests/unit/test_graph_commands.py::test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_run`
+passes untouched (fact 24) — that is the standing proof the compiler-seeding
+path stays exempt.
+
+#### Verification conditions (all must hold)
+
+- Exactly the six `src/` files and the test files above changed;
+  `git status --short` shows nothing else. In particular
+  `.orchestrator/state/*.jsonl`, `graph/models.py`, `graph/contracts.py`, and
+  `graph/compiler.py` are unmodified.
+- `uv run pytest tests/ -q -n auto --dist worksteal` reports
+  **5466 + (new test IDs) passed, 5 skipped**, with all 29 measured failures
+  repaired and no other regression. Chunk 2's baseline is 5466 passed / 5
+  skipped.
+- `grep -rn "EXECUTABLE_NODE_KINDS" src/` still returns only its definition
+  (`patch_validator.py:64`) and the single existing use at
+  `patch_validator.py:185` — the new check must **not** use it.
+- `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still `15`; no event payload or
+  retention change in this chunk.
+- Ruff, ruff format, and pyright clean.
+- Sanity check by execution (not a committed test): submitting a
+  `create_work_region` macro invocation with no contract args is rejected with
+  `worker node requires objective: worker-<region_id>`, and the same
+  invocation with all three args is accepted.
+
 ### Open risks carried into later chunks
 
 - **R1 (chunk 2, high) — RESOLVED by design, 2026-08-27 planning pass 2.**
@@ -514,9 +893,28 @@ they mean the read-only/write concept. After chunk 2 that concept is
   cross-wiring pin in `tests/unit/test_graph_dispatch_on_output.py`, and the
   "Downstream naming note" in the chunk 2 section. Later chunks inherit **no**
   replay-compatibility obligation for this field.
-- **R2 (chunk 3, medium).** `EXECUTABLE_NODE_KINDS` is broader than the doc's
-  "executable node" (it includes `check` and `planner`). Chunk 3 must pick an
-  explicit narrower predicate — most likely `kind == "worker"` — and record it.
+- **R2 (chunk 3, medium) — RESOLVED by decision, 2026-08-27 planning pass 3.**
+  The predicate is **`kind == "worker"`, role-independent**, not
+  `EXECUTABLE_NODE_KINDS`. Justified by fact 26 (`verifier` carries its
+  obligation as `rubric`, `check` is a deterministic command with its own
+  existing mandatory-command validation, `planner` emits graph patches and has
+  no acceptance concept) and by the failed run's offending node being a
+  *discovery* worker, which rules out narrowing by `role`. Corrective workers
+  created by a gap planner are in scope; `create_revision_attempt` worker
+  nodes and compiler-seeded workers are explicitly out of scope (R5, fact 9).
+  Pinned by `test_worker_contract_is_not_required_of_non_worker_kinds` and by
+  a `grep` verification condition asserting the new check does not reference
+  `EXECUTABLE_NODE_KINDS`.
+- **R5 (post-chunk-3, medium) — NEW.** Two worker-creation paths remain
+  contract-free after chunk 3: `create_revision_attempt`'s `worker_node`
+  (fact 22 — it bypasses `validate_node_payload` entirely, not just the new
+  check) and `seed_compiled_events` / `graph/compiler.py:519` (fact 9). The
+  first is a genuine planner-reachable hole and should be closed once the
+  revision-attempt producers can supply the fields; the second needs the
+  compiler to populate the contract from `TaskConfig` and is the natural
+  companion to chunk 5's prompt work. Chunk 3 pins the boundary deliberately
+  with `test_create_revision_attempt_worker_node_is_not_contract_checked` so
+  closing it is an intentional edit rather than a silent widening.
 - **R3 (chunk 4, medium).** There is no per-node filesystem sandbox (fact 7),
   so "read-only" can only be enforced at the file-state boundary or by refusing
   to grant the write claim. Chunk 4 must choose one and justify it; a
