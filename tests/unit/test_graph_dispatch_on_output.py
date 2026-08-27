@@ -1531,6 +1531,20 @@ def test_execution_context_preserves_explicit_node_tools() -> None:
     assert execution_context.available_tools == ["read_file"]
 
 
+def test_access_mode_does_not_affect_legacy_execution_context_work_mode() -> None:
+    executor = RecordingExecutor()
+
+    # Test with both fields present
+    context_both = _context(node_payload={"work_mode": "oversight", "access_mode": "read_only"})
+    execution_context_both = executor._execution_context(context_both)
+    assert execution_context_both.work_mode == "oversight"
+
+    # Test with only access_mode present (work_mode fallback)
+    context_access_only = _context(node_payload={"access_mode": "write"})
+    execution_context_access_only = executor._execution_context(context_access_only)
+    assert execution_context_access_only.work_mode == "implementation"
+
+
 def test_verifier_submit_cites_bound_candidate_and_file_state_records() -> None:
     graph_events = [
         _event(

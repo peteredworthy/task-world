@@ -1643,6 +1643,9 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     requirement: dict[str, Any] | None = None
     inputs: list[PortModel] = Field(default_factory=_empty_node_created_ports)
     outputs: list[PortModel] = Field(default_factory=_empty_node_created_ports)
+    # Repository write authority declared for this node (Slice 1 worker
+    # contract). Distinct from ``work_mode`` below.
+    access_mode: Literal["read_only", "write"] | None = None
     acceptance: list[str] | None = None
     artifact_reference_record: dict[str, Any] | None = None
     artifacts: list[Any] | None = None
@@ -1679,6 +1682,10 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     task_index: StrictInt | None = None
     title: str | None = None
     verifier_agent: str | None = None
+    # Legacy builder-vs-oversight prompt selector, mirrored from
+    # ``TaskConfig.work_mode`` by the compiler and consumed as
+    # ``ExecutionContext.work_mode``. Not repository authority — see
+    # ``access_mode``.
     work_mode: str | None = None
     cache_authority_hash: str | None = None
 

@@ -121,3 +121,12 @@ def test_node_created_retains_worker_contract_fields_for_projection_replay() -> 
         "scope",
     ):
         assert field in spec.projection
+
+
+def test_node_created_retains_access_mode_and_legacy_work_mode_separately() -> None:
+    spec = EVENT_PAYLOAD_SPECS["node_created"]
+    assert "access_mode" in spec.projection
+    assert "work_mode" in spec.projection
+    assert "access_mode" not in spec.light
+    assert "access_mode" not in spec.summary
+    assert "access_mode" not in spec.node_detail

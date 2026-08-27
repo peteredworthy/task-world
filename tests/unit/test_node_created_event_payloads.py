@@ -293,3 +293,68 @@ async def test_hidden_oracle_and_node_created_parity_survive_compact_sqlite_repl
                 assert projection_to_checkpoint(build_projection(compact_events)) == full_checkpoint
     finally:
         await engine.dispose()
+
+
+def test_access_mode_and_legacy_work_mode_are_independent_fields() -> None:
+    raw = {
+        "node_id": "worker-1",
+        "kind": "worker",
+        "state": "planned",
+        "access_mode": "read_only",
+        "work_mode": "implementation",
+    }
+    payload = NodeCreatedPayload.model_validate(raw)
+    assert payload.model_dump(mode="json") == raw
+    assert payload.access_mode == "read_only"
+    assert payload.work_mode == "implementation"
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    ["implementation", "oversight", "read"],
+)
+def test_access_mode_rejects_values_outside_the_read_write_literal(
+    invalid_value: str,
+) -> None:
+    raw = {
+        "node_id": "worker-1",
+        "kind": "worker",
+        "access_mode": invalid_value,
+    }
+    with pytest.raises(ValidationError):
+        NodeCreatedPayload.model_validate(raw)
+
+
+def test_legacy_work_mode_payloads_still_replay_without_access_mode() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "work_mode": "implementation",
+                },
+            )
+        ]
+    )
+    payload = node_payload_view(projection, "worker-1")
+    assert payload["work_mode"] == "implementation"
+    assert "access_mode" not in payload
+
+
+def test_access_mode_reaches_the_dispatch_payload() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "access_mode": "read_only",
+                },
+            )
+        ]
+    )
+    payload = node_payload_view(projection, "worker-1")
+    assert payload["access_mode"] == "read_only"

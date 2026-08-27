@@ -7,10 +7,23 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 
 ## Slice 1 — worker contracts and prompt hydration
 
-Status: chunk 1 of 6 verified and committed (`3ac034a7b`). Chunk 2 specified
-(planning pass 2) and ready to build; chunks 3-6 not started.
+Status: chunks 1-2 of 6 verified and committed (`3ac034a7b`, and chunk 2
+pending commit below). Chunks 3-6 not started.
 
 ### Verified chunks
+
+- **Chunk 2 — `access_mode` field (work_mode collision resolution).**
+  Builder added `access_mode: Literal["read_only","write"] | None` as a new,
+  fully independent field; `work_mode` untouched. Independent Validator
+  confirmed exactly the 5 expected files changed, field types/placement
+  correct, `projection=` retention isolated to `access_mode` only, tests
+  assert real independence (legacy `work_mode`-only replay still works,
+  `access_mode` rejects legacy literal values, no cross-wiring into
+  `ExecutionContext.work_mode`), zero scope creep (`access_mode` not
+  referenced anywhere in `runners/` or `dispatch.py` yet — that's chunk 4),
+  full suite **5466 passed, 5 skipped** (5458 + 8 new test IDs from 5
+  logical tests, one parametrized ×3; zero regressions), schema version 15
+  unchanged, ruff/format/pyright clean.
 
 - **Chunk 1 — Typed worker-contract fields on the node payload.** Builder
   implemented; independent Validator confirmed exactly the 4 specified files
