@@ -7,8 +7,9 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 
 ## Slice 1 — worker contracts and prompt hydration
 
-Status: chunks 1-3 of 6 verified and committed (`3ac034a7b`, `8565c24f9`, and
-chunk 3 pending commit below). Chunks 4-6 not started.
+Status: chunks 1-3 of 6 verified and committed (`3ac034a7b`, `8565c24f9`,
+`4ee76eda8`). Chunk 4 specified below (planning pass 4), not built. Chunks 5-6
+not started.
 
 ### Verified chunks
 
@@ -330,6 +331,128 @@ without re-deriving them.
     already has a mandatory-command check (`_validate_check_command`);
     `planner` (`contracts.py:628`) produces `graph_patch_proposal` and has no
     acceptance concept at all. "Acceptance" is meaningless for all three.
+
+### Verified facts from planning pass 4 (2026-08-27, chunk 4 research)
+
+Established by reading the branch at `4ee76eda8` (chunks 1-3 landed).
+
+27. **The file-state boundary is strictly post-execution evidence collection,
+    not a gate.** `capture_file_state_boundary`
+    (`graph_runtime/file_state.py:149`) is called from exactly two places, both
+    after the agent has finished: `dispatch.py:1215` in `_submit_callback` (the
+    worker has already returned its records) and `dispatch.py:1369` in
+    `_finalize_runner_execution`. A third capture,
+    `capture_worktree_file_state_baseline` (`dispatch.py:826`), runs *before*
+    the agent starts but only records the pre-existing dirt so it can be
+    subtracted later — it grants and denies nothing. The function itself is a
+    `git status --porcelain=v2` scan plus `classify_file_state`; it has no
+    write-blocking capability of any kind.
+28. **The policy that boundary capture classifies against is run-scoped, not
+    node-scoped, by explicit design.** `_authority_file_state_policy`
+    (`dispatch.py:491-500`) derives the `FileStatePolicy` from
+    `cache_authority_binding(context.graph_projection)` and its docstring reads
+    "Runtime boundary authority comes exclusively from the verified snapshot."
+    It re-checks `context.cache_authority_hash` against the binding and raises
+    if they diverge. There is no per-node input to it, and adding one would
+    mean breaking the property that the policy is bound to the verified routine
+    snapshot — i.e. a per-node boundary rule is a *cache-authority* design
+    change, not a small addition.
+29. **`runner_boundary_mismatch` is a drift detector between two
+    post-execution captures, unrelated to access control.**
+    `handle_finalize_runner_execution` (`graph/commands/boundary.py:305-311`)
+    emits it when `attempt.staged_boundary_hash != payload.boundary_hash`, i.e.
+    the worktree changed between staging a submission and finalizing it, and
+    pairs it with `runner_recovery_requested`. It cannot express "this node was
+    not allowed to write" and it never inspects the node's authority.
+30. **There is no per-node filesystem sandbox anywhere in the repo, and the two
+    real sandboxes are both scoped wider than a node.** (a) Codex:
+    `runners/agents/codex/agent.py:614-630` maps `self._restrictions` to the
+    thread-level `sandbox` param (`danger-full-access` / `workspace-write` /
+    config-decided); `_restrictions` is set once per agent from the DB agent
+    config (`codex/factory.py:29`, default `"managed"`) and is never per-node.
+    (b) Claude CLI: `git/worktree.py:173-249 _write_sandbox_settings` writes a
+    genuine seatbelt allow/deny-list (`denyRead: ["/"]`, `allowWrite: [wt_abs,
+    …]`, `denyWrite: read_only_paths`) — but it is written **once at worktree
+    provisioning time**, grants write to the whole worktree, and belongs to a
+    runner that graph dispatch does not use. Per-node sandboxing therefore
+    requires threading a node-derived restriction through the agent factory,
+    `ExecutionContext`, and each adapter: a runner-layer slice, not chunk 4.
+31. **Resource claims do have real, kernel-level teeth — two of them —
+    even though they are not a filesystem sandbox.**
+    - *Scheduler mutual exclusion* (`scheduler.py:89-116 claims_conflict`):
+      `write`/`write` conflicts on overlapping paths (106-107); a `read` claim
+      with `snapshot_id is None` conflicts with a concurrent `write` over
+      overlapping paths and vice versa (108-112); `read`/`read` never conflicts
+      (113-114). So a `read`-claiming node is *both* protected from concurrent
+      mutation of the shared worktree *and* freely parallelisable with other
+      readers — a behavioural difference, not a label.
+    - *Escalation refusal* (`patch_validator.py:857-882
+      _resource_claim_escalation_reason`, `MODE_RANK` at `:61`): a
+      `set_resource_claims` op is rejected when any requested mode outranks the
+      node's current maximum rank. `read` is rank 0 and `write` is rank 1, so a
+      node holding a `read` claim can **never** be raised to `write` by any
+      later patch — `f"resource claim escalation for {node_id}: {mode}"`. This
+      is the durable "read-only discovery cannot obtain write authority"
+      property contract-doc scenario #1 asks for.
+    - *Caveat that must not be glossed over:*
+      `_existing_resource_claim_rank` returns `None` when the node holds **no**
+      claims, and the escalation check then returns `None` (allows anything).
+      A node with an empty claim list is therefore escalatable to `write`.
+      Granting an explicit `read` claim — not "no claims" — is what closes
+      this.
+32. **`_ensure_default_node_authority` is the single chokepoint for every
+    patch-created node's authority.** It is called at `_commands.py:5280` (the
+    `create_node` branch of `_patch_op_events`) and at `_commands.py:5680`
+    inside `_node_payload_for_op`, which is itself used by `create_gate`,
+    `create_appeal`, both `worker_node`/`verifier_node` halves of
+    `create_revision_attempt`, and `_node_created_event`. Its body
+    (`_commands.py:5433-5444`) is `kind != "worker" → return`, then
+    `setdefault("allowed_actions", …)`, then
+    `if "resource_claims" not in authority: authority["resource_claims"] =
+    [{"mode": "write", "scope": "repo", "paths": ["."]}]`. Note the test is
+    `not in`, so an explicit `resource_claims: []` yields a claim-free node —
+    the fact-31 escalation hole.
+33. **The compiler never creates a discovery worker.**
+    `graph/compiler.py:424` hardcodes `worker_role = "builder"` and it is the
+    only value ever passed to `_create_worker`. Compiler workers also carry no
+    `access_mode` (chunk 3 left the compiler exempt, fact 9) and their write
+    claim is path-scoped via `_worker_write_paths(task)`
+    (`compiler.py:550-556`, `:1109`), not repo-wide, whenever the task declares
+    artifacts or `implementation_paths`. So `compiler.py` — the third site in
+    fact 6 — is **not** on the discovery path and needs no chunk-4 edit.
+34. **The macro *is* a live discovery-with-write path.** `worker_role` is a
+    free-form `str | None` macro arg (`macros.py:35`) defaulting to `"fixer"`
+    for corrective regions and `"builder"` otherwise (`macros.py:198`), and
+    `_worker_node` (`macros.py:463-497`) emits the hardcoded
+    `{"mode": "write", "scope": "repo", "paths": ["."]}` claim regardless of
+    the `access_mode` chunk 3 threaded into it. A planner can therefore invoke
+    `create_work_region` today with `worker_role: "discovery"` and
+    `access_mode: "read_only"` and still get a repo-write worker — the field
+    is currently decorative at this site.
+35. **The canonical read claim already exists in the codebase and is
+    runtime-proven.** `{"mode": "read", "scope": "repo", "paths": ["."]}` is
+    what the compiler grants to fan-out join nodes (`compiler.py:662`),
+    verifiers (`:773`), and check nodes (`:848`). Chunk 4 introduces no new
+    claim vocabulary; it reuses this exact literal.
+36. **An override flag must be a declared `NodeCreatedPayload` field.**
+    `contracts.py:101 validate_node_payload` is hand-written (node_id / kind /
+    role / ports) and does **not** model-validate, so an undeclared key
+    survives patch validation — but `projections.py:906` re-validates every
+    `node_created` payload through the `extra="forbid"` model on every replay
+    (fact 12), so an undeclared key would blow up at event-application/replay
+    time rather than at admission. There is no "carry it on the op only"
+    option.
+37. **Blast radius of an `access_mode`-driven authority change is near zero.**
+    `grep -rn read_only src tests` returns 26 hits, of which exactly **one**
+    `src` site creates a `read_only` node: `horizon_templates.py:51`
+    (`discovery_region`). No test applies that template through `submit_patch`,
+    and no existing test asserts a `read` claim on a worker. Changing what a
+    `read_only` worker is granted therefore cannot regress an existing
+    assertion; the `write`/absent path is left byte-identical on purpose so the
+    standing pin
+    `tests/unit/test_graph_commands.py:4381
+    test_patch_accept_adds_default_worker_write_authority` keeps passing
+    untouched.
 
 ### Chunk queue
 
@@ -899,6 +1022,406 @@ path stays exempt.
   `worker node requires objective: worker-<region_id>`, and the same
   invocation with all three args is accepted.
 
+### Chunk 4 — Discovery nodes read-only, with teeth (SPECIFIED, not built)
+
+**Goal.** Make `access_mode` *mean something* — a `read_only` worker is granted
+a `read` resource claim instead of repo write, which is a real scheduler and
+escalation-refusal property — and forbid a `role="discovery"` worker from
+declaring `access_mode="write"` unless it carries an explicit, separately
+recorded justification. Independently verifiable: after this chunk a discovery
+worker declaring `write` without an override is rejected by name; the same node
+with an override is accepted; a `read_only` worker is materialized with a
+`read` claim (never the repo-write default) and cannot subsequently be escalated
+to `write` by any patch; and non-discovery worker roles are entirely unaffected.
+
+#### Framing correction — there is no "default" left to control
+
+The target doc's criterion 3 and chunk-queue row 4 both say "default discovery
+`work_mode` is `read_only`". That framing predates chunk 3. The landed check
+(`patch_validator.py:375-396 _validate_worker_contract`) rejects **every**
+`kind == "worker"` `create_node` op whose `access_mode` is absent or `None`
+with `worker node requires access_mode: {node_id}`, role-independently. There is
+therefore no planner-reachable path on which an omitted `access_mode` could be
+defaulted — the field is already mandatory and explicit.
+
+Chunk 4 consequently splits into the two things that *are* still open, and the
+"default" bullet is satisfied more strongly than by a default: a discovery
+worker must state its access mode, and `read_only` is the only value it may
+state absent an override.
+
+1. **Authority derivation** — `access_mode` currently has no effect on anything.
+   All three fact-6 sites hand out repo write. This is the part that makes
+   criterion 3 more than a field label (fact 34: a discovery node declaring
+   `read_only` through the macro *still* gets repo write today).
+2. **Role policy** — `role == "discovery"` may not declare `access_mode:
+   "write"` without an explicit override field.
+
+The queue table row 4 is left as written for audit continuity, exactly as chunk
+2's row was; implement what is written here.
+
+#### Decision — option (a′): claim refusal at admission, plus real derivation
+
+Chosen: **(a) admission-time refusal, upgraded to (a′) by also deriving the
+resource claim from `access_mode` at the patch-reachable grant sites.** Options
+(b) and (c) are rejected.
+
+*Why plain (a) as originally posed is insufficient.* Validating that a discovery
+node may not *declare* `write` does not stop it from *receiving* write. Facts 32
+and 34: the node still flows through `_ensure_default_node_authority` (or the
+macro's hardcoded literal) and is materialized with
+`{"mode": "write", "scope": "repo", "paths": ["."]}`. A validator-only chunk 4
+would be precisely the "typed field with no teeth" outcome R3 warns against. The
+derivation is the load-bearing half.
+
+*Why not (b) boundary-time rejection.* Facts 27-29 settle this by reading the
+code path, not by assumption:
+
+- The boundary is captured only **after** the agent has finished
+  (`dispatch.py:1215`, `:1369`). It is post-hoc by construction. The
+  pre-execution capture (`dispatch.py:826`) is a baseline for subtraction and
+  grants nothing.
+- Damage lands in shared state before detection. The graph worktree is reused
+  across sequential executions (`capture_worktree_file_state_baseline`'s
+  docstring: "A graph worktree is shared across sequential task executions"),
+  serialized by `_worktree_execution_lock`. A discovery worker's writes are
+  already on disk and already in the next node's baseline by the time any
+  boundary is classified. That is *literally* the failed dogfood run's
+  "corrective work compounded in the same dirty worktree" symptom, so choosing
+  a mechanism that only fires afterwards would reproduce it.
+- It is not cheap. The classification policy is bound to the verified routine
+  snapshot and is documented as run-scoped
+  (`_authority_file_state_policy`, fact 28); introducing a per-node policy is a
+  cache-authority design change with its own hash-binding consequences.
+- `runner_boundary_mismatch` is the wrong instrument regardless (fact 29): it
+  compares a staged boundary hash to a final boundary hash to detect drift and
+  request recovery. It never reads node authority and cannot express an
+  access-control verdict.
+
+*Why not (c) both.* (c) was evaluated as "(a′) plus a cheap boundary-time
+assertion". It is not cheap: the assertion needs per-node policy plumbing (fact
+28), a new rejection shape distinguishable from `file_state_rejected`, and
+integration coverage on the hot callback path. Chunk 4 stays at unit-test cost.
+The idea is preserved rather than dropped — recorded as **R6** with the exact
+insertion point — so a later chunk can add it deliberately.
+
+*What (a′) actually buys, stated honestly.* It is **not** an OS-level sandbox
+and the ledger should not claim otherwise (fact 30: no per-node sandbox exists,
+and building one is a runner-layer slice). What it buys is three concrete,
+kernel-enforced properties:
+
+1. The node is scheduled under a `read` claim, so it can never be co-scheduled
+   with a repo writer over overlapping paths and never blocks other readers
+   (fact 31, `scheduler.py:106-114`).
+2. The node can never be raised to `write` by any subsequent patch —
+   `set_resource_claims` escalation refusal, rank 0 → rank 1 (fact 31,
+   `patch_validator.py:857-882`). This is the exact property contract-doc
+   scenario #1 names.
+3. The `worker_authority` prompt packet (`prompts.py:385-406`) advertises
+   `read`, not `write`, so the agent is told its actual authority.
+
+Combined with the admission gate, a discovery worker cannot be *created* with
+write authority, cannot be *granted* it by default, and cannot *acquire* it
+later. That is a durable authority property rather than a label, which is what
+criterion 3 asks for.
+
+#### Files touched (exactly these)
+
+`src/` (seven):
+
+1. `src/orchestrator/graph/models.py` — declare the override field.
+2. `src/orchestrator/graph/payload_registry.py` — `projection=` retention.
+3. `src/orchestrator/graph/patch_validator.py` — extend
+   `_validate_worker_contract`.
+4. `src/orchestrator/graph/_commands.py` — `_ensure_default_node_authority`
+   derivation.
+5. `src/orchestrator/graph/macros.py` — `_worker_node` derivation + the new
+   macro arg.
+6. `src/orchestrator/runners/agents/codex/common.py` — macro `inputSchema`
+   property (both macros).
+7. `src/orchestrator/graph_runtime/graph_mcp_tools.py` — macro tool signatures
+   (both macros).
+
+`tests/` (five): `tests/unit/test_patch_validator.py`,
+`tests/unit/test_graph_commands.py`, `tests/unit/test_graph_macros.py`,
+`tests/unit/test_node_created_event_payloads.py`,
+`tests/unit/test_graph_payload_field_allowlists.py`.
+
+**Do not touch:** `src/orchestrator/graph/compiler.py` (fact 33 — it never
+creates a discovery worker, its workers carry no `access_mode` to derive from,
+and its write claim is already path-scoped); `graph_runtime/prompts.py` (chunk
+5 owns it; its example patch is a `builder` + `write` worker and stays valid);
+`graph_runtime/horizon_templates.py` (the discovery template already declares
+`access_mode: "read_only"` from chunk 3 and needs no edit — chunk 4 makes that
+declaration bite); `graph/contracts.py`; `graph_runtime/dispatch.py`;
+`graph_runtime/file_state.py`; `graph/commands/boundary.py`; `graph/scheduler.py`;
+`runners/**` beyond file 6; any `.orchestrator/state/*.jsonl`.
+
+#### 1. `src/orchestrator/graph/models.py`
+
+One field on `NodeCreatedPayload`, inserted immediately **below**
+`access_mode` (currently 1648) to keep the block's alphabetical order:
+
+```python
+    # Recorded escape hatch: the only way a ``role="discovery"`` worker may
+    # declare ``access_mode="write"``. Rejected when present on any node that
+    # does not need it, so its presence in the journal is a precise audit
+    # marker rather than boilerplate.
+    access_mode_override_justification: str | None = None
+```
+
+Default `None`, optional at the model layer as always — presence rules live in
+the patch validator against the raw op dict (fact 8).
+
+#### 2. `src/orchestrator/graph/payload_registry.py`
+
+Add `access_mode_override_justification` to the `_spec("node_created", …)`
+`projection=` string **only** (it sorts directly after `access_mode`). Not
+`light=`, not `summary=`, not `node_detail=`. `PROJECTION_SCHEMA_VERSION` stays
+at **15** — purely additive optional field, no existing event's shape changes.
+
+#### 3. `src/orchestrator/graph/patch_validator.py`
+
+Extend the existing `_validate_worker_contract` helper (`:375`). **Append** the
+new checks after the current `acceptance` checks and return the first failure;
+do not reorder or reword any of the five chunk-3 messages, whose exact strings
+are asserted by landed tests. No new call site, no new helper, and the
+`kind == "worker"` predicate is unchanged (so `EXECUTABLE_NODE_KINDS` stays
+unreferenced by this path).
+
+Evaluation order, appended: **(6)** override-field shape → **(7)**
+discovery/write policy → **(8)** claim/`access_mode` consistency.
+
+| # | condition | message |
+|---|---|---|
+| 6 | `access_mode_override_justification` present but not a `str`, or blank/whitespace-only | `f"access_mode_override_justification must be a non-empty string: {node_id}"` |
+| 7 | `role == "discovery"` and `access_mode == "write"` and no non-blank `access_mode_override_justification` | `f"discovery worker cannot declare access_mode write; supply access_mode_override_justification: {node_id}"` |
+| 8 | a non-blank `access_mode_override_justification` on a node that is not (`role == "discovery"` and `access_mode == "write"`) | `f"access_mode_override_justification is only valid for a discovery worker declaring access_mode write: {node_id}"` |
+| 9 | `access_mode == "read_only"` and `authority.resource_claims` contains a claim whose `mode` ranks above `read` in `MODE_RANK` | `f"read_only worker cannot claim {mode} authority: {node_id}"` |
+
+Notes the Builder must respect:
+
+- The semicolon-clause shape of message 7 follows the existing
+  `"check node cannot expose hidden_oracle_command; use command_binding:
+  {node_id}"` precedent (`patch_validator.py:409`) — it is not a new
+  convention.
+- Message 9 interpolates the offending `mode` so `write`, `graph_write`, and
+  `review_write` each report themselves. Read the claims via the existing
+  `resource_claim_dicts(...)` helper off `node.get("authority")`; return on the
+  first offending claim. Modes absent from `MODE_RANK` — i.e. `external` — are
+  **permitted** on a `read_only` worker: an external-resource claim is not repo
+  write authority and gating it here would be unrelated scope.
+- Check 8 (rejecting an unnecessary override) is deliberate: without it
+  planners will cargo-cult the field onto every worker and it stops being a
+  signal. It also makes a `grep` of the journal for the field a complete list
+  of every discovery-write exception ever granted.
+- The justification requirement is *non-blank*, with no minimum length. No
+  other check in this file uses a magic length threshold, and the deterrent is
+  that the string is durably recorded on the node and rejected wherever it is
+  not needed — not that it is long.
+
+#### 4. `src/orchestrator/graph/_commands.py`
+
+Rewrite the claim branch of `_ensure_default_node_authority` (`:5433-5444`) to
+derive from `access_mode`. Everything else in the function — the early
+`kind != "worker"` return and the `allowed_actions` `setdefault` — is
+unchanged:
+
+```python
+    if node_payload.get("access_mode") == "read_only":
+        if not authority.get("resource_claims"):
+            authority["resource_claims"] = [
+                {"mode": "read", "scope": "repo", "paths": ["."]}
+            ]
+    elif "resource_claims" not in authority:
+        authority["resource_claims"] = [
+            {"mode": "write", "scope": "repo", "paths": ["."]}
+        ]
+```
+
+Two properties are load-bearing and must not be "tidied" into symmetry:
+
+- The `read_only` branch tests **falsiness** (`not authority.get(...)`), so an
+  explicit `resource_claims: []` is normalized to a `read` claim. This closes
+  the fact-31 escalation hole: a claim-free node has no rank and is escalatable
+  to `write` by a later `set_resource_claims`, whereas a rank-0 `read` claim is
+  not.
+- The `write` branch keeps the existing `"resource_claims" not in authority`
+  membership test verbatim, so behaviour for every non-`read_only` node —
+  including every node that exists today — is byte-identical (fact 37).
+
+This is the single chokepoint (fact 32), so the derivation lands for
+`create_node`, `create_gate`, `create_appeal`, `create_revision_attempt`'s
+`worker_node`, and `_node_created_event` in one edit.
+
+#### 5. `src/orchestrator/graph/macros.py`
+
+Two edits.
+
+(a) `_worker_node` (`:463`) already receives `access_mode`. Replace the
+hardcoded literal in its `authority` dict with the derived claim:
+
+```python
+            "resource_claims": [
+                {"mode": "read", "scope": "repo", "paths": ["."]}
+                if access_mode == "read_only"
+                else {"mode": "write", "scope": "repo", "paths": ["."]}
+            ],
+```
+
+Deliberately *not* deleting the claim and letting file 4 derive it: the
+expanded ops are what `validate_patch` sees (fact 19), so check 9 must be able
+to inspect the claim the node will actually get, and the macro's emitted patch
+stays a faithful, reviewable description of the node it creates.
+
+(b) Add one optional arg to `CreateWorkRegionArgs` (`:30`), beside the chunk-3
+trio:
+
+```python
+    access_mode_override_justification: str | None = None
+```
+
+Thread it through `_create_work_region` into `_worker_node(...)` and emit the
+key **only when not `None`**, exactly as the chunk-3 fields are handled. It
+stays optional at the macro layer for the chunk-3 reason: a missing value must
+surface as the validator's precise hand-written message, not as an
+`invalid_macro_arguments` blob. Exposing it at all is required by fact 19's
+rule — the macro must be able to express anything the validator will accept, or
+`create_work_region` becomes a trap for a planner that legitimately needs a
+discovery worker with write. Do not touch `_verifier_node`.
+
+#### 6. `src/orchestrator/runners/agents/codex/common.py`
+
+Add `access_mode_override_justification` (`{"type": "string"}`) to the
+`properties` of both `planner_macro_specs["create_work_region"]` (`:565`) and
+`["create_corrective_region"]` (`:643`). Both are
+`additionalProperties: False`, so without this an agent cannot pass it. **Do
+not** add it to either `required` list — same single-enforcement-point rule as
+chunk 3.
+
+#### 7. `src/orchestrator/graph_runtime/graph_mcp_tools.py`
+
+Add `access_mode_override_justification: str | None = None` to the
+`create_work_region` (`:105`) and `create_corrective_region` (`:136`)
+signatures, forwarded into `args` with the existing `if ... is not None`
+pattern. `runners/graph_tool_routing.py` needs no change (fact 20).
+
+#### 8. `tests/unit/test_patch_validator.py`
+
+Using the file's `_validate` helper (`:89`):
+
+- `test_create_node_rejects_discovery_worker_declaring_write_access_mode` —
+  `role="discovery"`, `access_mode="write"`, no override; expect
+  `"discovery worker cannot declare access_mode write; supply access_mode_override_justification: worker-1"`.
+- `test_create_node_accepts_discovery_worker_write_access_mode_with_override` —
+  same node plus a non-blank justification; `result.accepted is True`.
+- `test_create_node_rejects_blank_access_mode_override_justification` —
+  justification `"   "`; expect
+  `"access_mode_override_justification must be a non-empty string: worker-1"`.
+  (Pins that check 6 runs before check 7, so a blank string is never mistaken
+  for a valid override.)
+- `test_create_node_rejects_unnecessary_access_mode_override_justification` —
+  parametrized over `("discovery", "read_only")` and `("builder", "write")`;
+  expect
+  `"access_mode_override_justification is only valid for a discovery worker declaring access_mode write: worker-1"`.
+- `test_create_node_rejects_read_only_worker_with_escalated_resource_claim` —
+  parametrized over `write`, `graph_write`, `review_write` on a
+  `access_mode="read_only"` worker's `authority.resource_claims`; expect
+  `f"read_only worker cannot claim {mode} authority: worker-1"`.
+- `test_create_node_accepts_read_only_worker_with_read_resource_claim` — the
+  same node carrying `{"mode": "read", "scope": "repo", "paths": ["."]}`;
+  accepted. Add an `external` claim case in the same test asserting acceptance,
+  pinning the deliberate `external` carve-out.
+- `test_non_discovery_worker_roles_may_declare_write_access_mode` —
+  parametrized over `builder`, `implementer`, `fixer`, `reviewer`,
+  `summarizer` with `access_mode="write"` and no override; all accepted. This
+  is the "other roles unaffected" pin and must fail if anyone widens the
+  predicate off `role == "discovery"`.
+- `test_create_revision_attempt_discovery_worker_is_not_access_mode_gated` — a
+  `create_revision_attempt` whose `worker_node` is
+  `role="discovery"`/`access_mode="write"` with no override is still accepted.
+  The deliberate R7 boundary pin, mirroring chunk 3's R5 pin, so closing it
+  later is an intentional edit.
+
+#### 9. `tests/unit/test_graph_commands.py`
+
+The criterion-3 teeth tests, using the file's `_apply` helper:
+
+- `test_patch_accept_grants_read_authority_to_read_only_worker` — submit a
+  `create_node` patch for a `role="discovery"`, `access_mode="read_only"`
+  worker; assert the emitted `node_created` payload's
+  `authority["resource_claims"] == [{"mode": "read", "scope": "repo",
+  "paths": ["."]}]`.
+- `test_patch_accept_grants_read_authority_when_read_only_worker_declares_empty_claims`
+  — same node carrying `authority: {"resource_claims": []}`; assert the `read`
+  claim is injected rather than left empty. This is the escalation-hole
+  closure and must fail if the `read_only` branch is "simplified" to a
+  membership test.
+- `test_read_only_worker_cannot_be_escalated_to_write_authority` — apply the
+  read_only worker's `node_created`, then submit a `set_resource_claims` op
+  requesting `{"mode": "write", "scope": "repo", "paths": ["."]}`; assert the
+  patch is rejected with
+  `"resource claim escalation for worker-1: write"`. This is contract-doc
+  scenario #1 expressed as the property the kernel actually enforces, and it is
+  the single most important test in the chunk.
+
+`test_patch_accept_adds_default_worker_write_authority` (`:4381`) must pass
+**untouched** — it is the standing pin that the write path did not change.
+
+#### 10. `tests/unit/test_graph_macros.py`
+
+- `test_create_work_region_macro_grants_read_claim_for_read_only_worker` —
+  invoke with `access_mode: "read_only"`; assert the expanded worker node's
+  `authority.resource_claims` is the `read` claim and that `validate_patch`
+  accepts the expanded patch. Pins fact 34's hole closed.
+- `test_create_work_region_macro_discovery_write_requires_override` — invoke
+  with `worker_role: "discovery"`, `access_mode: "write"` and no
+  justification; assert `validate_patch` rejects with the check-7 message.
+  Then invoke the same with `access_mode_override_justification` set; assert
+  accepted and that the expanded node dict carries the justification verbatim.
+
+#### 11. `tests/unit/test_node_created_event_payloads.py`
+
+- `test_access_mode_override_justification_round_trips_and_reaches_dispatch_payload`
+  — mirror of the chunk-1/2 pattern: `model_validate` round-trip equality plus
+  `build_projection` over one `node_created` event, asserting
+  `node_payload_view(projection, "worker-1")["access_mode_override_justification"]`
+  holds the value.
+
+#### 12. `tests/unit/test_graph_payload_field_allowlists.py`
+
+- `test_node_created_retains_access_mode_override_justification_for_projection_replay`
+  — `"access_mode_override_justification" in spec.projection`, and absent from
+  `spec.light`, `spec.summary`, `spec.node_detail`.
+
+#### Verification conditions (all must hold)
+
+- Exactly the seven `src/` files and five test files above changed;
+  `git status --short` shows nothing else. In particular `graph/compiler.py`,
+  `graph_runtime/prompts.py`, `graph_runtime/horizon_templates.py`,
+  `graph_runtime/dispatch.py`, `graph/scheduler.py`, and
+  `.orchestrator/state/*.jsonl` are unmodified.
+- `uv run pytest tests/ -q -n auto --dist worksteal` reports
+  **5481 + (new test IDs) passed, 5 skipped** with **zero existing tests
+  modified**. Chunk 3's baseline is 5481 passed / 5 skipped. Fact 37 predicts
+  zero pre-existing failures; if any appear, they are a genuine regression in
+  the `write`/absent path and the derivation is wrong — repair the code, not
+  the test.
+- `tests/unit/test_graph_commands.py::test_patch_accept_adds_default_worker_write_authority`
+  passes byte-identical.
+- `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still `15`
+  (`graph/projection_codec.py:40`).
+- `grep -rn "EXECUTABLE_NODE_KINDS" src/` still returns only its definition and
+  the single existing use at `patch_validator.py:185`.
+- The five chunk-3 rejection messages are unchanged: `grep -n "worker node
+  requires\|worker node access_mode\|worker node acceptance"
+  src/orchestrator/graph/patch_validator.py` returns the same five strings.
+- Ruff, ruff format, and pyright clean.
+- Sanity check by execution (not a committed test): submitting a
+  `create_work_region` macro invocation with `worker_role: "discovery"` and
+  `access_mode: "read_only"` produces a worker whose materialized authority is
+  the `read` claim, and a follow-up `set_resource_claims` write patch against
+  that node is rejected as an escalation.
+
 ### Open risks carried into later chunks
 
 - **R1 (chunk 2, high) — RESOLVED by design, 2026-08-27 planning pass 2.**
@@ -936,10 +1459,53 @@ path stays exempt.
   companion to chunk 5's prompt work. Chunk 3 pins the boundary deliberately
   with `test_create_revision_attempt_worker_node_is_not_contract_checked` so
   closing it is an intentional edit rather than a silent widening.
-- **R3 (chunk 4, medium).** There is no per-node filesystem sandbox (fact 7),
-  so "read-only" can only be enforced at the file-state boundary or by refusing
-  to grant the write claim. Chunk 4 must choose one and justify it; a
-  field-label-only change would not satisfy criterion 3.
+- **R3 (chunk 4, medium) — RESOLVED by decision, 2026-08-27 planning pass 4.**
+  The choice is **refusing to grant the write claim**, at admission, plus
+  deriving the claim from `access_mode` so the refusal is materialized and not
+  merely validated (option (a′) in the chunk 4 section). The file-state
+  boundary was ruled out on read, not on assumption: it is captured only after
+  the agent finishes (fact 27), classified against a policy explicitly bound to
+  the verified routine snapshot with no per-node input (fact 28), and
+  `runner_boundary_mismatch` is a staged-vs-final drift detector that never
+  reads node authority (fact 29). Because the graph worktree is shared across
+  sequential executions, a post-hoc verdict would let a discovery worker's
+  writes reach the next node's baseline first — the failed dogfood run's exact
+  symptom. Claim refusal is not a filesystem sandbox and the ledger does not
+  claim it is (fact 30: none exists per-node, and building one is a
+  runner-layer slice); what it *is* is two kernel-enforced properties — a
+  `read` claim's scheduler conflict semantics, and `set_resource_claims`
+  escalation refusal making rank-0 → rank-1 impossible for the node's whole
+  life (fact 31). Together with the admission gate, a discovery worker cannot
+  be created with write authority, cannot be granted it by default, and cannot
+  acquire it later. Pinned by
+  `test_read_only_worker_cannot_be_escalated_to_write_authority` and
+  `test_patch_accept_grants_read_authority_to_read_only_worker`.
+- **R6 (post-chunk-4, medium) — NEW.** Chunk 4 deliberately ships no
+  boundary-time detector, so a `read_only` worker that writes anyway — because
+  the runner sandbox is global (fact 30) and claims are not a filesystem
+  sandbox (fact 7) — is not currently detected, only un-authorized. The
+  follow-up, if wanted, is an assertion in
+  `graph_runtime/dispatch.py::_submit_callback` (around `:1215`): when
+  `context.node_payload.get("access_mode") == "read_only"` and the captured
+  boundary's classification is non-empty, take the existing
+  `boundary.rejection_record is not None` path with a distinguishable reason.
+  It was rejected for chunk 4 because the classification policy is run-scoped
+  by design (fact 28) and a per-node rule is a cache-authority change, and
+  because it lands on the hot callback path and would need integration
+  coverage. Recorded here so a later chunk adds it on purpose rather than
+  rediscovering it.
+- **R7 (post-chunk-4, low) — NEW, extends R5.** The discovery/write admission
+  gate lives in the `create_node` branch only, so a `create_revision_attempt`
+  whose `worker_node` declares `role="discovery"` with `access_mode="write"` is
+  not gated — the same boundary R5 already records for the chunk-3 contract
+  check. Severity is lower than R5's because the *authority derivation* (file 4)
+  does reach that path: `create_revision_attempt` flows through
+  `_node_payload_for_op` → `_ensure_default_node_authority` (fact 32), so a
+  revision worker declaring `read_only` still receives the `read` claim.
+  Only the role policy is unenforced there. Pinned by
+  `test_create_revision_attempt_discovery_worker_is_not_access_mode_gated`.
+  `graph/compiler.py` is *not* part of this risk: it never creates a discovery
+  worker (fact 33).
 - **R4 (chunk 5, low).** `prompts.py:347-372` also reads six other dead keys
   (`corrective_requirement`, `expected_gap`, `expected_artifact`,
   `feature_spec_path`, `acceptance_command`, `expected_outputs`). Chunk 5
