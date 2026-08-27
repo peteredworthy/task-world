@@ -130,3 +130,11 @@ def test_node_created_retains_access_mode_and_legacy_work_mode_separately() -> N
     assert "access_mode" not in spec.light
     assert "access_mode" not in spec.summary
     assert "access_mode" not in spec.node_detail
+
+
+def test_node_created_retains_access_mode_override_justification_for_projection_replay() -> None:
+    spec = EVENT_PAYLOAD_SPECS["node_created"]
+    assert "access_mode_override_justification" in spec.projection
+    assert "access_mode_override_justification" not in spec.light
+    assert "access_mode_override_justification" not in spec.summary
+    assert "access_mode_override_justification" not in spec.node_detail

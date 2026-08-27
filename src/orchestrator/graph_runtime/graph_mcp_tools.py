@@ -113,6 +113,7 @@ def build_graph_mcp_server(
         objective: str | None = None,
         access_mode: str | None = None,
         acceptance: list[str] | None = None,
+        access_mode_override_justification: str | None = None,
     ) -> str:
         """Create a work region in the graph."""
         args: dict[str, Any] = {
@@ -134,6 +135,8 @@ def build_graph_mcp_server(
             args["access_mode"] = access_mode
         if acceptance is not None:
             args["acceptance"] = acceptance
+        if access_mode_override_justification is not None:
+            args["access_mode_override_justification"] = access_mode_override_justification
         return await _route("create_work_region", args)
 
     mcp.add_tool(
@@ -154,6 +157,7 @@ def build_graph_mcp_server(
         objective: str | None = None,
         access_mode: str | None = None,
         acceptance: list[str] | None = None,
+        access_mode_override_justification: str | None = None,
     ) -> str:
         """Create a corrective region in the graph."""
         args: dict[str, Any] = {
@@ -177,6 +181,8 @@ def build_graph_mcp_server(
             args["access_mode"] = access_mode
         if acceptance is not None:
             args["acceptance"] = acceptance
+        if access_mode_override_justification is not None:
+            args["access_mode_override_justification"] = access_mode_override_justification
         return await _route("create_corrective_region", args)
 
     mcp.add_tool(

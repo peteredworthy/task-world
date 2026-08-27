@@ -1737,3 +1737,202 @@ def test_create_revision_attempt_worker_node_is_not_contract_checked() -> None:
     )
 
     assert result.accepted is True
+
+
+def _discovery_worker_node(**overrides: Any) -> dict[str, Any]:
+    node: dict[str, Any] = {
+        "node_id": "worker-1",
+        "kind": "worker",
+        "role": "discovery",
+        "state": "planned",
+        "objective": "Implement a candidate that satisfies the bound requirements.",
+        "access_mode": "write",
+        "acceptance": ["candidate satisfies the bound requirements"],
+    }
+    node.update(overrides)
+    return node
+
+
+def test_create_node_rejects_discovery_worker_declaring_write_access_mode() -> None:
+    result = _validate(_patch([{"op": "create_node", "node": _discovery_worker_node()}]))
+
+    assert result.accepted is False
+    assert result.rejection_reason == (
+        "discovery worker cannot declare access_mode write; supply "
+        "access_mode_override_justification: worker-1"
+    )
+
+
+def test_create_node_accepts_discovery_worker_write_access_mode_with_override() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": _discovery_worker_node(
+                        access_mode_override_justification=(
+                            "Requires write access to reproduce the failure in place."
+                        )
+                    ),
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is True
+
+
+def test_create_node_rejects_blank_access_mode_override_justification() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": _discovery_worker_node(access_mode_override_justification="   "),
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == (
+        "access_mode_override_justification must be a non-empty string: worker-1"
+    )
+
+
+@pytest.mark.parametrize(
+    ("role", "access_mode"),
+    [("discovery", "read_only"), ("builder", "write")],
+)
+def test_create_node_rejects_unnecessary_access_mode_override_justification(
+    role: str, access_mode: str
+) -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": _discovery_worker_node(
+                        role=role,
+                        access_mode=access_mode,
+                        access_mode_override_justification="Not needed here.",
+                    ),
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == (
+        "access_mode_override_justification is only valid for a discovery worker "
+        "declaring access_mode write: worker-1"
+    )
+
+
+@pytest.mark.parametrize("mode", ["write", "graph_write", "review_write"])
+def test_create_node_rejects_read_only_worker_with_escalated_resource_claim(mode: str) -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": _discovery_worker_node(
+                        role="builder",
+                        access_mode="read_only",
+                        authority={
+                            "resource_claims": [{"mode": mode, "scope": "repo", "paths": ["."]}]
+                        },
+                    ),
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == f"read_only worker cannot claim {mode} authority: worker-1"
+
+
+def test_create_node_accepts_read_only_worker_with_read_resource_claim() -> None:
+    for claim in (
+        {"mode": "read", "scope": "repo", "paths": ["."]},
+        {"mode": "external", "scope": "repo", "paths": ["."]},
+    ):
+        result = _validate(
+            _patch(
+                [
+                    {
+                        "op": "create_node",
+                        "node": _discovery_worker_node(
+                            role="builder",
+                            access_mode="read_only",
+                            authority={"resource_claims": [claim]},
+                        ),
+                    }
+                ]
+            )
+        )
+
+        assert result.accepted is True
+
+
+@pytest.mark.parametrize("role", ["builder", "implementer", "fixer", "reviewer", "summarizer"])
+def test_non_discovery_worker_roles_may_declare_write_access_mode(role: str) -> None:
+    # The "fixer" role separately requires a classified_gap input edge
+    # (`_is_corrective_worker`), unrelated to access_mode; satisfy it with a
+    # pre-existing gap-source node (so creating that node doesn't itself
+    # trigger the unrelated "gap planner requires verification input edge"
+    # check) so this test isolates the access_mode/role predicate under test.
+    if role == "fixer":
+        projection = _projection(
+            node_kinds={"gap-source": "planner"}, node_roles={"gap-source": "gap_planner"}
+        )
+        extra_ops = [
+            {
+                "op": "create_edge",
+                "edge_id": "edge-classified-gap",
+                "from_node_id": "gap-source",
+                "from_port": "classified_gap",
+                "to_node_id": "worker-1",
+                "to_port": "classified_gap",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                    "classification": "corrective_work_required",
+                },
+            },
+        ]
+    else:
+        projection = initial_projection()
+        extra_ops = []
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": _discovery_worker_node(role=role, access_mode="write"),
+                },
+                *extra_ops,
+            ]
+        ),
+        projection=projection,
+    )
+
+    assert result.accepted is True
+
+
+def test_create_revision_attempt_discovery_worker_is_not_access_mode_gated() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "candidate-1",
+                    "worker_node": _discovery_worker_node(node_id="worker-revision-3"),
+                },
+            ]
+        )
+    )
+
+    assert result.accepted is True

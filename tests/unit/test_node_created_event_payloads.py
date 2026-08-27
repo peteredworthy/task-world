@@ -358,3 +358,23 @@ def test_access_mode_reaches_the_dispatch_payload() -> None:
     )
     payload = node_payload_view(projection, "worker-1")
     assert payload["access_mode"] == "read_only"
+
+
+def test_access_mode_override_justification_round_trips_and_reaches_dispatch_payload() -> None:
+    raw = {
+        "node_id": "worker-1",
+        "kind": "worker",
+        "role": "discovery",
+        "state": "planned",
+        "access_mode": "write",
+        "access_mode_override_justification": (
+            "Requires write access to reproduce the failure in place."
+        ),
+    }
+    assert NodeCreatedPayload.model_validate(raw).model_dump(mode="json") == raw
+
+    projection = build_projection([event("node_created", raw)])
+    payload = node_payload_view(projection, "worker-1")
+    assert payload["access_mode_override_justification"] == (
+        "Requires write access to reproduce the failure in place."
+    )

@@ -7,13 +7,29 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 
 ## Slice 1 — worker contracts and prompt hydration
 
-Status: chunks 1-3 of 6 verified and committed (`3ac034a7b`, `8565c24f9`,
-`4ee76eda8`). Chunk 4 spec below (planning pass 4); build attempt 1 FAILED
-independent validation with a real security-relevant bug (see "Chunk 4 —
-build attempt 1: FAILED" below) — fix in progress, retry 1 of 5 (default
-mind-the-gap retry limit). Chunks 5-6 not started.
+Status: chunks 1-4 of 6 verified and committed (`3ac034a7b`, `8565c24f9`,
+`4ee76eda8`, and chunk 4 pending commit below). Chunks 5-6 not started.
 
-### Chunk 4 — build attempt 1: FAILED validation (2026-08-27)
+### Verified chunks (chunk 4)
+
+- **Chunk 4 — Discovery read-only enforcement with real claim derivation.**
+  Build attempt 1 failed independent validation (see incident record below,
+  kept for audit trail). Fix retry 1: changed the grant-site gate from "is
+  `resource_claims` falsy" to "does it contain any *ranked* claim (mode in
+  `MODE_RANK`)", appending rather than replacing, so an `external`-only claim
+  no longer defeats the mandatory `read` grant. Independent Validator (fresh
+  agent, retry) reproduced the original bug's absence by direct execution
+  (not just the new test), then adversarially tried 4 more angles (multiple
+  external claims, unrecognized claim mode, write-access-mode claim-free
+  first-grant, the `_commands.py`→`patch_validator.py` import direction) —
+  found no new bypass, confirmed the claim-free first-write-grant case is
+  pre-existing unrelated behavior correctly left alone, confirmed
+  `macros.py` was never actually vulnerable (no incoming claims to gate on),
+  re-ran the full original chunk-4 battery and confirmed it still holds.
+  Full suite **5504 passed, 5 skipped** (5481 + 23 new test IDs, zero
+  regressions), schema version 15 unchanged, ruff/format/pyright clean.
+
+### Chunk 4 — build attempt 1: FAILED validation (2026-08-27) [historical]
 
 Independent Validator found a genuine escalation-refusal bypass, not a style
 nitpick — do not treat this as resolved until a fresh build+validate cycle

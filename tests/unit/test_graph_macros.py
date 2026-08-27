@@ -418,6 +418,106 @@ def test_create_work_region_macro_without_contract_fields_is_rejected() -> None:
     assert result.rejection_reason == "worker node requires objective: worker-feature-region"
 
 
+def test_create_work_region_macro_grants_read_claim_for_read_only_worker() -> None:
+    patch = _patch(
+        {
+            "patch_id": "macro-work-read-only",
+            "base_graph_position": 0,
+            "macro_invocations": [
+                {
+                    "macro": "create_work_region",
+                    "args": {
+                        "region_id": "feature-region",
+                        "objective": "Investigate root cause and report findings.",
+                        "access_mode": "read_only",
+                        "acceptance": ["root cause identified and documented"],
+                    },
+                }
+            ],
+        }
+    )
+
+    worker = patch.ops[0].node
+    assert worker is not None
+    assert worker["authority"]["resource_claims"] == [
+        {"mode": "read", "scope": "repo", "paths": ["."]}
+    ]
+
+    result = validate_patch(
+        patch,
+        current_position=0,
+        events_since_base=[],
+        projection=initial_projection(),
+        actor_role="planner",
+    )
+
+    assert result.accepted is True
+
+
+def test_create_work_region_macro_discovery_write_requires_override() -> None:
+    base_args = {
+        "region_id": "feature-region",
+        "worker_role": "discovery",
+        "objective": "Implement a candidate that satisfies the bound requirements.",
+        "access_mode": "write",
+        "acceptance": ["candidate satisfies the bound requirements"],
+    }
+
+    rejected_patch = _patch(
+        {
+            "patch_id": "macro-work-discovery-write",
+            "base_graph_position": 0,
+            "macro_invocations": [{"macro": "create_work_region", "args": base_args}],
+        }
+    )
+    rejected_result = validate_patch(
+        rejected_patch,
+        current_position=0,
+        events_since_base=[],
+        projection=initial_projection(),
+        actor_role="planner",
+    )
+
+    assert rejected_result.accepted is False
+    assert rejected_result.rejection_reason == (
+        "discovery worker cannot declare access_mode write; supply "
+        "access_mode_override_justification: worker-feature-region"
+    )
+
+    accepted_patch = _patch(
+        {
+            "patch_id": "macro-work-discovery-write-override",
+            "base_graph_position": 0,
+            "macro_invocations": [
+                {
+                    "macro": "create_work_region",
+                    "args": {
+                        **base_args,
+                        "access_mode_override_justification": (
+                            "Requires write access to reproduce the failure in place."
+                        ),
+                    },
+                }
+            ],
+        }
+    )
+    worker = accepted_patch.ops[0].node
+    assert worker is not None
+    assert worker["access_mode_override_justification"] == (
+        "Requires write access to reproduce the failure in place."
+    )
+
+    accepted_result = validate_patch(
+        accepted_patch,
+        current_position=0,
+        events_since_base=[],
+        projection=initial_projection(),
+        actor_role="planner",
+    )
+
+    assert accepted_result.accepted is True
+
+
 class _Ids:
     def __init__(self) -> None:
         self._next = 1

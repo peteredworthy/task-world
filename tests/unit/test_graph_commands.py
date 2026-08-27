@@ -4411,6 +4411,143 @@ def test_patch_accept_adds_default_worker_write_authority() -> None:
     ]
 
 
+def _discovery_read_only_worker_node(**overrides: Any) -> dict[str, Any]:
+    node: dict[str, Any] = {
+        "node_id": "worker-1",
+        "kind": "worker",
+        "role": "discovery",
+        "state": "planned",
+        "task_region_id": "region-1",
+        "candidate_id": "candidate-1",
+        "attempt_number": 1,
+        "objective": "Investigate root cause and report findings.",
+        "access_mode": "read_only",
+        "acceptance": ["root cause identified and documented"],
+    }
+    node.update(overrides)
+    return node
+
+
+def test_patch_accept_grants_read_authority_to_read_only_worker() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-worker-read-only",
+            "base_graph_position": -1,
+            "ops": [{"op": "create_node", "node": _discovery_read_only_worker_node()}],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
+    assert output[1].payload["authority"]["resource_claims"] == [
+        {"mode": "read", "scope": "repo", "paths": ["."]}
+    ]
+
+
+def test_patch_accept_grants_read_authority_when_read_only_worker_declares_empty_claims() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-worker-read-only-empty-claims",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": _discovery_read_only_worker_node(authority={"resource_claims": []}),
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
+    assert output[1].payload["authority"]["resource_claims"] == [
+        {"mode": "read", "scope": "repo", "paths": ["."]}
+    ]
+
+
+def test_read_only_worker_cannot_be_escalated_to_write_authority() -> None:
+    first_output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-worker-read-only-escalation",
+            "base_graph_position": -1,
+            "ops": [{"op": "create_node", "node": _discovery_read_only_worker_node()}],
+        },
+    )
+
+    current_position = max(event.position for event in first_output)
+    second_output = _apply(
+        [*first_output],
+        "submit_patch",
+        {
+            "patch_id": "patch-worker-escalate",
+            "base_graph_position": current_position,
+            "ops": [
+                {
+                    "op": "set_resource_claims",
+                    "node_id": "worker-1",
+                    "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in second_output] == ["graph_patch_rejected"]
+    assert second_output[0].payload["reason"] == "resource claim escalation for worker-1: write"
+
+
+def test_read_only_worker_with_external_claim_cannot_be_escalated_to_write() -> None:
+    external_claim = {
+        "mode": "external",
+        "scope": "web-search",
+        "external_resource_key": "web-search",
+    }
+    first_output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-worker-read-only-external-claim",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": _discovery_read_only_worker_node(
+                        authority={"resource_claims": [external_claim]}
+                    ),
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in first_output] == ["graph_patch_accepted", "node_created"]
+    materialized_claims = first_output[1].payload["authority"]["resource_claims"]
+    assert external_claim in materialized_claims
+    assert {"mode": "read", "scope": "repo", "paths": ["."]} in materialized_claims
+
+    current_position = max(event.position for event in first_output)
+    second_output = _apply(
+        [*first_output],
+        "submit_patch",
+        {
+            "patch_id": "patch-worker-external-claim-escalate",
+            "base_graph_position": current_position,
+            "ops": [
+                {
+                    "op": "set_resource_claims",
+                    "node_id": "worker-1",
+                    "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in second_output] == ["graph_patch_rejected"]
+    assert second_output[0].payload["reason"] == "resource claim escalation for worker-1: write"
+
+
 def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
     events = [
         _event(

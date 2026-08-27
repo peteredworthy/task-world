@@ -112,7 +112,11 @@ from orchestrator.graph.models import (
     normalize_record_selector,
     record_selector_matches,
 )
-from orchestrator.graph.patch_validator import validate_patch
+from orchestrator.graph.patch_validator import (
+    MODE_RANK,
+    resource_claim_dicts,
+    validate_patch,
+)
 from orchestrator.graph.projections import (
     GraphProjection,
     final_invariant_blockers_for_events,
@@ -5439,7 +5443,19 @@ def _ensure_default_node_authority(node_payload: dict[str, Any]) -> None:
         "allowed_actions",
         ["submit_records", "request_clarification", "raise_appeal"],
     )
-    if "resource_claims" not in authority:
+    if node_payload.get("access_mode") == "read_only":
+        existing_claims = authority.get("resource_claims")
+        has_ranked_claim = any(
+            isinstance(claim.get("mode"), str) and claim["mode"] in MODE_RANK
+            for claim in resource_claim_dicts(existing_claims)
+        )
+        if not has_ranked_claim:
+            claims_list: list[Any] = (
+                list(cast(list[Any], existing_claims)) if isinstance(existing_claims, list) else []
+            )
+            claims_list.append({"mode": "read", "scope": "repo", "paths": ["."]})
+            authority["resource_claims"] = claims_list
+    elif "resource_claims" not in authority:
         authority["resource_claims"] = [{"mode": "write", "scope": "repo", "paths": ["."]}]
     node_payload["authority"] = authority
 

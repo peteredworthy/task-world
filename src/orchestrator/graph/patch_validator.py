@@ -393,6 +393,39 @@ def _validate_worker_contract(node: dict[str, Any]) -> str | None:
     ):
         return f"worker node acceptance must be a list of non-empty strings: {node_id}"
 
+    override_justification = node.get("access_mode_override_justification")
+    has_override = override_justification is not None
+    if has_override and (
+        not isinstance(override_justification, str) or not override_justification.strip()
+    ):
+        return f"access_mode_override_justification must be a non-empty string: {node_id}"
+
+    role = node.get("role")
+    is_discovery_write = role == "discovery" and access_mode == "write"
+    if is_discovery_write and not has_override:
+        return (
+            "discovery worker cannot declare access_mode write; supply "
+            f"access_mode_override_justification: {node_id}"
+        )
+    if has_override and not is_discovery_write:
+        return (
+            "access_mode_override_justification is only valid for a discovery "
+            f"worker declaring access_mode write: {node_id}"
+        )
+
+    if access_mode == "read_only":
+        authority = node.get("authority")
+        raw_claims = (
+            cast(dict[str, Any], authority).get("resource_claims")
+            if isinstance(authority, dict)
+            else None
+        )
+        for claim in resource_claim_dicts(raw_claims):
+            mode = claim.get("mode")
+            rank = MODE_RANK.get(mode) if isinstance(mode, str) else None
+            if rank is not None and rank > MODE_RANK["read"]:
+                return f"read_only worker cannot claim {mode} authority: {node_id}"
+
     return None
 
 

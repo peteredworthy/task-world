@@ -1646,6 +1646,11 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     # Repository write authority declared for this node (Slice 1 worker
     # contract). Distinct from ``work_mode`` below.
     access_mode: Literal["read_only", "write"] | None = None
+    # Recorded escape hatch: the only way a ``role="discovery"`` worker may
+    # declare ``access_mode="write"``. Rejected when present on any node that
+    # does not need it, so its presence in the journal is a precise audit
+    # marker rather than boilerplate.
+    access_mode_override_justification: str | None = None
     acceptance: list[str] | None = None
     artifact_reference_record: dict[str, Any] | None = None
     artifacts: list[Any] | None = None

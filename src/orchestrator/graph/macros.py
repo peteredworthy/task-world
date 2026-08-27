@@ -43,6 +43,7 @@ class CreateWorkRegionArgs(MacroArgs):
     objective: str | None = None
     access_mode: Literal["read_only", "write"] | None = None
     acceptance: list[str] | None = None
+    access_mode_override_justification: str | None = None
 
 
 class AttachVerifierArgs(MacroArgs):
@@ -208,6 +209,7 @@ def _create_work_region(
             objective=_str(args, "objective"),
             access_mode=args.get("access_mode"),
             acceptance=args.get("acceptance"),
+            access_mode_override_justification=_str(args, "access_mode_override_justification"),
         ),
         _verifier_node(
             verifier_id,
@@ -470,6 +472,7 @@ def _worker_node(
     objective: str | None = None,
     access_mode: str | None = None,
     acceptance: list[str] | None = None,
+    access_mode_override_justification: str | None = None,
 ) -> dict[str, Any]:
     node: dict[str, Any] = {
         "node_id": node_id,
@@ -485,7 +488,11 @@ def _worker_node(
                 "request_clarification",
                 "raise_appeal",
             ],
-            "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+            "resource_claims": [
+                {"mode": "read", "scope": "repo", "paths": ["."]}
+                if access_mode == "read_only"
+                else {"mode": "write", "scope": "repo", "paths": ["."]}
+            ],
         },
     }
     if objective is not None:
@@ -494,6 +501,8 @@ def _worker_node(
         node["access_mode"] = access_mode
     if acceptance is not None:
         node["acceptance"] = acceptance
+    if access_mode_override_justification is not None:
+        node["access_mode_override_justification"] = access_mode_override_justification
     return {"op": "create_node", "node": node}
 
 
