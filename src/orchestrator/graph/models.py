@@ -1643,9 +1643,11 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     requirement: dict[str, Any] | None = None
     inputs: list[PortModel] = Field(default_factory=_empty_node_created_ports)
     outputs: list[PortModel] = Field(default_factory=_empty_node_created_ports)
+    acceptance: list[str] | None = None
     artifact_reference_record: dict[str, Any] | None = None
     artifacts: list[Any] | None = None
     available_tools: list[Any] | None = None
+    bound_requirement_ids: list[str] | None = None
     builder_agent: str | None = None
     candidate_record: dict[str, Any] | None = None
     check_index: StrictInt | None = None
@@ -1655,14 +1657,18 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     execution_id: str | None = None
     fan_out: dict[str, Any] | None = None
     gate: dict[str, Any] | None = None
+    invariants: list[str] | None = None
     max_attempts: StrictInt | None = None
     mcp_servers: list[Any] | None = None
+    objective: str | None = None
     profile: str | None = None
+    prohibited_actions: list[str] | None = None
     requirement_record: dict[str, Any] | None = None
     routine: dict[str, Any] | None = None
     routine_snapshot_record: dict[str, Any] | None = None
     rubric: list[Any] | None = None
     run_context_record: dict[str, Any] | None = None
+    scope: str | None = None
     snapshot: dict[str, Any] | None = None
     step_id: str | None = None
     step_index: StrictInt | None = None

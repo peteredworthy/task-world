@@ -15,6 +15,7 @@ from orchestrator.graph import (
     build_projection,
     compile_routine,
     projection_to_checkpoint,
+    node_payload_view,
 )
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph import event_factory
@@ -59,6 +60,7 @@ def test_node_created_event_factory_uses_aliases_and_excludes_none() -> None:
     [
         {"node_id": "worker-1", "kind": "worker", "future_field": True},
         {"node_id": "worker-1", "kind": "worker", "attempt_number": "1"},
+        {"node_id": "worker-1", "kind": "worker", "acceptance": "uv run pytest"},
     ],
 )
 def test_node_created_payload_rejects_unknown_and_wrong_typed_fields(
@@ -183,6 +185,54 @@ def test_explicit_empty_authority_change_controls_override_nested_authority() ->
         "worker-1"
     ] == []
     assert node_preconditions_view(projection)["worker-1"] == []
+
+
+def test_node_created_payload_carries_typed_worker_contract_fields() -> None:
+    raw = {
+        "node_id": "worker-1",
+        "kind": "worker",
+        "state": "planned",
+        "task_region_id": "task-1",
+        "attempt_number": 1,
+        "authority": {"resource_claims": []},
+        "resource_claims": [],
+        "allowed_actions": ["submit_output"],
+        "preconditions": ["inputs_bound"],
+        "acceptance": ["verify_implementation"],
+        "bound_requirement_ids": ["req-1", "req-2"],
+        "invariants": ["must_maintain_api_compat"],
+        "objective": "implement feature X",
+        "prohibited_actions": ["delete_files"],
+        "scope": "limited to src/ directory",
+    }
+    assert NodeCreatedPayload.model_validate(raw).model_dump(mode="json") == raw
+
+
+def test_worker_contract_fields_reach_the_dispatch_payload() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "acceptance": ["verify_implementation"],
+                    "bound_requirement_ids": ["req-1", "req-2"],
+                    "invariants": ["must_maintain_api_compat"],
+                    "objective": "implement feature X",
+                    "prohibited_actions": ["delete_files"],
+                    "scope": "limited to src/ directory",
+                },
+            )
+        ]
+    )
+    payload = node_payload_view(projection, "worker-1")
+    assert payload["acceptance"] == ["verify_implementation"]
+    assert payload["bound_requirement_ids"] == ["req-1", "req-2"]
+    assert payload["invariants"] == ["must_maintain_api_compat"]
+    assert payload["objective"] == "implement feature X"
+    assert payload["prohibited_actions"] == ["delete_files"]
+    assert payload["scope"] == "limited to src/ directory"
 
 
 def test_compiler_node_created_producer_matches_typed_payload_json() -> None:

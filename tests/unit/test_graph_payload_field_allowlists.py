@@ -108,3 +108,16 @@ def test_node_created_retains_typed_retry_limit_for_all_projection_reads() -> No
     assert "max_attempts" in spec.light
     assert "max_attempts" in spec.summary
     assert "max_attempts" in spec.node_detail
+
+
+def test_node_created_retains_worker_contract_fields_for_projection_replay() -> None:
+    spec = EVENT_PAYLOAD_SPECS["node_created"]
+    for field in (
+        "acceptance",
+        "bound_requirement_ids",
+        "invariants",
+        "objective",
+        "prohibited_actions",
+        "scope",
+    ):
+        assert field in spec.projection
