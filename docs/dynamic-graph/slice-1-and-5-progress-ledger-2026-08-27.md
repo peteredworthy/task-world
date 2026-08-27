@@ -7,10 +7,35 @@ Baseline at loop start: main `2553748e3`, full suite 5454 passed / 5 skipped
 
 ## Slice 1 — worker contracts and prompt hydration
 
-Status: chunks 1-5 of 6 verified and committed (`3ac034a7b`, `8565c24f9`,
-`4ee76eda8`, `9ca1f26c1`, `e0177275f`). Chunk 6 SPECIFIED (planning pass 6,
-2026-08-27), not built — see the chunk 6 section and the Slice 1 completion
-summary at the end of this Slice 1 area.
+Status: **all 6 chunks verified. Slice 1 complete**, pending final commit and
+merge to `main`. Commits: `3ac034a7b`, `8565c24f9`, `4ee76eda8`, `9ca1f26c1`,
+`e0177275f`, and chunk 6 pending commit below.
+
+- **Chunk 6 — Close the admission-to-prompt seam (test-only).** New
+  `tests/unit/test_plan_contract_regression_scenarios.py`, two tests, zero
+  production code. Independent Validator did a real non-vacuity experiment
+  (not just read the tests): monkeypatched `_node_payload` in
+  `graph_runtime/dispatch.py` to drop `bound_requirement_ids` from its
+  result, re-ran scenario #4's test in-process (`-n 0`, since xdist forks
+  don't see an in-process monkeypatch), confirmed it FAILED with the correct
+  diagnostic (`AssertionError` naming the missing key), then confirmed a
+  clean pass afterward since nothing was ever written to disk. **Correction
+  to this ledger's own verification-condition text**: the originally
+  suggested chain-break ("remove fields from `payload_registry.py`'s
+  `projection=` retention string") does NOT actually affect these tests —
+  that retention set only trims payloads for SQLite persistence
+  (`GRAPH_PROJECTION_PAYLOAD_FIELDS`, consumed by `graph_runtime/store.py`);
+  the in-memory chain these tests exercise
+  (`build_projection`→`NodeSpecProjection.dispatch_payload`→
+  `node_payload_view`→`_node_payload`→`_prompt_for_node`) reads the full
+  pydantic-validated payload directly and never touches that registry. Also
+  confirmed: scenario #1's read-authority assertion parses the actual
+  rendered prompt STRING (not the projection dict) and the escalation
+  rejection message matches source exactly; scenario #4's binding genuinely
+  requires a real `input_bound` event (not `edge_created` alone) with
+  selector schema `"Requirement"`. Full suite **5513 passed, 5 skipped**
+  (5511 + 2, zero regressions), schema version 15 unchanged, ruff/format/
+  pyright clean.
 
 - **Chunk 5 — Worker prompt hydration from typed fields.** New
   `_worker_contract_packet()` renders `objective`/`access_mode`/`acceptance`
