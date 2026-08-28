@@ -126,6 +126,17 @@ def test_runtime_commands_require_canonical_identity_fields() -> None:
         AgentDiedCommand.model_validate({})
 
 
+def test_agent_died_recovery_exhausted_is_strict_bool() -> None:
+    default = AgentDiedCommand.model_validate({"lease_id": "lease-1"})
+    assert default.recovery_exhausted is False
+
+    with pytest.raises(ValidationError):
+        AgentDiedCommand.model_validate({"lease_id": "lease-1", "recovery_exhausted": "true"})
+
+    coerced = AgentDiedCommand.model_validate({"lease_id": "lease-1", "recovery_exhausted": True})
+    assert coerced.recovery_exhausted is True
+
+
 @pytest.mark.parametrize(
     ("command_type", "field", "value"),
     [

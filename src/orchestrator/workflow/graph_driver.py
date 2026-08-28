@@ -59,7 +59,8 @@ logger = logging.getLogger(__name__)
 
 
 # How many times one drive_to_quiescence call will agent_died-recover the same
-# node before giving up and letting the run pause graph_blocked. Small on
+# node before conclusively giving up on it (revoke the lease, fail the node,
+# `error_class="recovery_budget_exhausted"`) rather than trying again. Small on
 # purpose: a transient orphaning cause (e.g. a one-off rejected submit)
 # resolves on the first re-dispatch, while a persistent cause fails the same
 # way every time — 3 attempts distinguishes the two without burning agent
@@ -778,10 +779,18 @@ class GraphRunDriver:
         # lease_id on every agent_died — defeating the lease_id dedup and,
         # for a persistent orphaning cause, spinning this loop hot forever.
         # Counting recoveries per node_id is immune to lease_id churn: once a
-        # node exceeds the budget the driver stops recovering it and the
-        # existing blocked-outcome return fires, restoring the pre-fix
-        # fail-safe (pause graph_blocked for an operator).
+        # node exceeds the budget the driver stops recovering it
+        # automatically and instead issues a terminal
+        # ``agent_died(recovery_exhausted=True)`` — the kernel revokes the
+        # lease and fails the node, and the run still pauses graph_blocked
+        # for an operator, but with zero active leases left unaccounted for.
         node_recovery_counts: dict[str, int] = {}
+        # Nodes the driver has terminally revoked (recovery_exhausted=True)
+        # during this drive call. A kernel or fake that hands out a fresh
+        # lease_id for the same node after the terminal command must not be
+        # re-recovered — the node is already concluded, and re-acting on it
+        # would spin the loop issuing terminal commands forever.
+        concluded_node_ids: set[str] = set()
         # A resumed run can have a ready node whose previous execution still
         # has a durable runner-recovery request.  schedule_tick deliberately
         # refuses to advance while that recovery is pending.  Deliver the
@@ -886,6 +895,7 @@ class GraphRunDriver:
                 projection,
                 recovered_lease_ids,
                 node_recovery_counts,
+                concluded_node_ids,
                 orphan_states=frozenset({"leased"}),
             ):
                 previous_position = None
@@ -945,6 +955,7 @@ class GraphRunDriver:
                     projection,
                     recovered_lease_ids,
                     node_recovery_counts,
+                    concluded_node_ids,
                 ):
                     previous_position = None
                     continue
@@ -1131,6 +1142,7 @@ async def _recover_orphaned_active_leases(
     projection: GraphProjectionSnapshot,
     recovered_lease_ids: set[str],
     node_recovery_counts: dict[str, int],
+    concluded_node_ids: set[str],
     *,
     orphan_states: frozenset[str] = frozenset({"running"}),
 ) -> bool:
@@ -1162,9 +1174,14 @@ async def _recover_orphaned_active_leases(
        other two. Required because bound 2 is opportunistic — dynamically
        created nodes (planner patch ops) carry no max_attempts, so the
        kernel's v1 policy requeues them with a FRESH lease_id every time,
-       defeating bound 1. Once a node exhausts this budget the driver stops
-       recovering it and the drive loop's blocked-outcome return fires,
-       restoring the pre-recovery fail-safe (pause graph_blocked).
+       defeating bound 1. Once a node exhausts this budget the driver issues
+       a terminal ``agent_died(recovery_exhausted=True)`` instead of another
+       recovery attempt: the kernel revokes the lease and fails the node, so
+       the run still pauses graph_blocked for an operator, but with the
+       lease conclusively resolved rather than left ``active`` with nothing
+       recorded. ``concluded_node_ids`` (owned by the caller, shared across
+       iterations) then prevents a fresh lease_id handed to that same node
+       from being recovered or concluded again during this drive call.
     """
     recovered = False
     for lease in projection.active_leases.values():
@@ -1187,10 +1204,16 @@ async def _recover_orphaned_active_leases(
             # Still genuinely running on this executor — not orphaned.
             continue
 
+        recovery_exhausted = False
         if isinstance(node_id, str):
-            if node_recovery_counts.get(node_id, 0) >= MAX_NODE_RECOVERIES_PER_DRIVE:
+            if node_id in concluded_node_ids:
+                # Already conclusively revoked for this node during this drive
+                # call; a fresh lease_id for it is the kernel's business now.
                 continue
-            node_recovery_counts[node_id] = node_recovery_counts.get(node_id, 0) + 1
+            if node_recovery_counts.get(node_id, 0) >= MAX_NODE_RECOVERIES_PER_DRIVE:
+                recovery_exhausted = True
+            else:
+                node_recovery_counts[node_id] = node_recovery_counts.get(node_id, 0) + 1
         recovered_lease_ids.add(lease_id)
         payload: dict[str, object] = {
             "lease_id": lease_id,
@@ -1203,21 +1226,48 @@ async def _recover_orphaned_active_leases(
             payload["max_attempts"] = max_attempts
         if isinstance(execution_id, str) and execution_id:
             payload["execution_id"] = execution_id
-        try:
-            result = await controller.handle_command(
+        if recovery_exhausted:
+            payload["recovery_exhausted"] = True
+            logger.warning(
+                "GraphRunDriver: node %s on %s exhausted its orphan-recovery "
+                "budget (%d); terminally revoking lease %s",
+                node_id,
                 run_id,
-                (position := await controller.current_position(run_id)),
-                "agent_died",
-                payload,
-                context=GraphCommandContext(
-                    run_id=run_id,
-                    current_graph_position=position,
-                ),
+                MAX_NODE_RECOVERIES_PER_DRIVE,
+                lease_id,
             )
-        except StaleProjectionError:
+        result = None
+        delay_seconds = 0.01
+        for attempt in range(3):
+            try:
+                result = await controller.handle_command(
+                    run_id,
+                    (position := await controller.current_position(run_id)),
+                    "agent_died",
+                    payload,
+                    context=GraphCommandContext(
+                        run_id=run_id,
+                        current_graph_position=position,
+                    ),
+                )
+            except StaleProjectionError:
+                # The append was rejected and nothing landed, so re-issuing is
+                # safe; if another actor resolved the lease meanwhile, the
+                # re-issue is rejected ("unknown lease" / "lease not active"),
+                # which is also fine.
+                result = None
+                if attempt == 2:
+                    break
+                await asyncio.sleep(delay_seconds)
+                delay_seconds *= 2
+                continue
+            break
+        if result is None:
             continue
         if any(event.event_type == "agent_died" for event in result.events):
             recovered = True
+            if recovery_exhausted and isinstance(node_id, str):
+                concluded_node_ids.add(node_id)
     return recovered
 
 

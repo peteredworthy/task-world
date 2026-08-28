@@ -15,6 +15,34 @@ uv run pytest tests/ -q -n auto --dist worksteal
 
 ## Verified chunks
 
+- **Chunk 3 — Conclusive lease revocation (the headline requirement).**
+  Budget-exhaustion in `_recover_orphaned_active_leases` no longer silently
+  `continue`s past an orphaned lease — it now always issues
+  `agent_died(recovery_exhausted=True)`, routed through a new kernel branch
+  (structural sibling of the existing terminal branches) that revokes the
+  lease, fails the node, and records a `FailureRecord`
+  (`error_class="recovery_budget_exhausted"`, correct `failure_class`).
+  `concluded_node_ids` prevents re-issuing terminal commands on lease_id
+  churn; a bounded 3-attempt stale-retry loop closes the stale-race hole.
+  Independent Validator traced every single `continue` in the function and
+  accounted for each one (all legitimate skips or bounded retries, none a
+  silent give-up on an orphan); checked a non-string-`node_id` adversarial
+  angle and confirmed it's structurally unreachable (required-`str` field
+  contract), not a live bypass; independently reproduced the "rewrite
+  tightens" proof by swapping in the pre-chunk-3 code and confirming the new
+  tests genuinely fail against it, then restoring byte-identical (self-
+  reported and corrected one process slip in that experiment — a stray
+  `git checkout --` on an uncommitted file, caught immediately via `git
+  status`, reconstructed byte-for-byte, re-verified green). One residual,
+  bounded risk noted (all 3 stale-retries failing leaves that one lease for
+  a later drive call) — symmetric with pre-existing accepted patterns
+  elsewhere in the same file, not a chunk-3 regression. This chunk's own
+  build hit a mid-stream API-limit crash; the surviving partial production
+  code was reviewed and found correct as-is, so a resume-Builder completed
+  tests on top of it rather than redoing it. Full suite **5533 passed, 5
+  skipped** (5524 + 9, zero regressions), schema version 15 unchanged,
+  `graph/projections.py` untouched as required, ruff/format/pyright clean.
+
 - **Chunk 1 — Typed `FailureClass` on the failure-record path.** Additive
   `failure_class: FailureClass | None` on `FailureRecordValue`; `error_class`
   untouched. `_failure_record_payload` gained a non-defaulted keyword-only

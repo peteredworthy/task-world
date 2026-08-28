@@ -4280,6 +4280,56 @@ def _apply_agent_died(
             ),
         ]
 
+    if payload.recovery_exhausted:
+        # The caller has exhausted its automatic-recovery budget for this node.
+        # Requeuing here would hand the lease straight back to a recoverer that
+        # has already said it will not act again — the state criterion 3
+        # forbids.  Conclude instead: revoke, classify, fail.
+        return [
+            make_event("agent_died", event_payload),
+            make_event(
+                "lease_revoked",
+                _typed_lease_event_payload(
+                    "lease_revoked",
+                    {
+                        "lease_id": lease_id,
+                        "node_id": node_id,
+                        "generation": generation,
+                        "reason": reason,
+                    },
+                ),
+            ),
+            make_event(
+                "output_record_accepted",
+                _failure_record_payload(
+                    node_id=node_id,
+                    phase="runtime",
+                    failure_class=failure_class,
+                    error_class="recovery_budget_exhausted",
+                    retryable=False,
+                    lease_id=lease_id,
+                    execution_id=event_payload.get("execution_id"),
+                    generation=generation,
+                    reason=reason,
+                    metadata={
+                        "attempt_number": attempt_number,
+                        **({"max_attempts": max_attempts} if max_attempts > 0 else {}),
+                    },
+                ),
+            ),
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "failed",
+                    "trigger": "recovery_budget_exhausted",
+                    "reason": "recovery_budget_exhausted",
+                    "attempt_number": attempt_number,
+                    **({"max_attempts": max_attempts} if max_attempts > 0 else {}),
+                },
+            ),
+        ]
+
     # V1 retry policy: runtime death before an accepted boundary requeues the
     # same executable node. No new retry node is created until output/file-state
     # acceptance semantics exist in the graph runtime slice.

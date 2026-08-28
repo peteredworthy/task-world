@@ -21,6 +21,8 @@ from orchestrator.graph import (
     input_bindings_view,
     leases_view,
     node_states_view,
+    project_graph_outcome,
+    project_graph_projection_snapshot,
     project_requirement_freshness_facts,
     project_task_states,
     projection_from_checkpoint,
@@ -8899,6 +8901,235 @@ def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
     assert output[2].payload["record_type"] == "failure_record"
     assert output[4].payload["record_type"] == "recovery_plan"
     assert output[5].payload["new_state"] == "ready"
+
+
+def _recovery_exhausted_events() -> list[EventEnvelope]:
+    return [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "dynamic-worker-1", "kind": "worker", "state": "running"},
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "dynamic-worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+
+def test_agent_died_recovery_exhausted_revokes_lease_and_fails_node() -> None:
+    events = _recovery_exhausted_events()
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "runtime_execution_missing_no_callback",
+            "recovery_exhausted": True,
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "output_record_accepted",
+        "node_state_changed",
+    ]
+    assert output[2].payload["record_type"] == "failure_record"
+    assert output[2].payload["value"] == {
+        "failed_node_id": "dynamic-worker-1",
+        "phase": "runtime",
+        "failure_class": "infrastructure_failure",
+        "error_class": "recovery_budget_exhausted",
+        "retryable": False,
+        "lease_id": "lease-1",
+        "execution_id": "exec-1",
+        "lease_generation": 1,
+        "reason": "runtime_execution_missing_no_callback",
+        "attempt_number": 0,
+    }
+    assert output[3].payload == {
+        "node_id": "dynamic-worker-1",
+        "new_state": "failed",
+        "trigger": "recovery_budget_exhausted",
+        "reason": "recovery_budget_exhausted",
+        "attempt_number": 0,
+    }
+    assert leases_view(projection)["lease-1"].state == "revoked"
+    assert node_state(projection, "dynamic-worker-1") == "failed"
+
+
+def test_agent_died_recovery_exhausted_schedules_no_retry() -> None:
+    events = _recovery_exhausted_events()
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "runtime_execution_missing_no_callback",
+            "recovery_exhausted": True,
+        },
+    )
+    projection = _project([*events, *output])
+
+    event_types = [event.event_type for event in output]
+    assert "runtime_retry_scheduled" not in event_types
+    assert not any(
+        event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "recovery_plan"
+        for event in output
+    )
+    # The direct negation of pre-chunk-3 behaviour: the node used to return to
+    # ready (or blocked, with a backoff) so the kernel would requeue it. Now it
+    # must be terminally failed instead. Against 7f5c96086, `recovery_exhausted`
+    # is not a recognized field on AgentDiedCommand (extra="forbid"), so the
+    # whole command is rejected and the node never leaves "running" — this
+    # assertion fails there.
+    assert node_state(projection, "dynamic-worker-1") == "failed"
+
+
+def test_agent_died_recovery_exhausted_leaves_no_active_lease() -> None:
+    events = _recovery_exhausted_events()
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "runtime_execution_missing_no_callback",
+            "recovery_exhausted": True,
+        },
+    )
+    all_events = [*events, *output]
+    projection = _project(all_events)
+    snapshot = project_graph_projection_snapshot(all_events, projection=projection)
+
+    # The criterion-3 invariant, checked through the real reduction path (not
+    # just "a FailureRecord exists"): zero active leases remain for the node.
+    assert snapshot.active_leases == {}
+    assert node_state(projection, "dynamic-worker-1") == "failed"
+    failure_records = [
+        record
+        for record in projection.records.by_id.values()
+        if record.record_type == "failure_record"
+    ]
+    assert len(failure_records) == 1
+    assert failure_records[0].value.error_class == "recovery_budget_exhausted"
+
+    outcome = project_graph_outcome("run-1", snapshot)
+    blocked_reason = outcome.blocked_reason
+    assert blocked_reason == "graph has failed node(s): dynamic-worker-1: recovery_budget_exhausted"
+    assert "active lease(s) without callback" not in blocked_reason
+
+
+def test_agent_died_max_attempts_takes_precedence_over_recovery_exhausted() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "running",
+                "attempt_number": 2,
+            },
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+            "max_attempts": 2,
+            "recovery_exhausted": True,
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert output[2].payload["value"]["error_class"] == "max_attempts_exhausted"
+    assert output[3].payload["trigger"] == "max_attempts_exhausted"
+    assert node_state(projection, "worker-1") == "failed"
+
+
+def test_agent_died_accepted_patch_takes_precedence_over_recovery_exhausted() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "role": "planner", "state": "running"},
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "planner-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-1",
+                "proposed_by_node_id": "planner-1",
+                "successor_planner_node_ids": ["planner-gap"],
+            },
+            3,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+            "recovery_exhausted": True,
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "node_state_changed",
+    ]
+    assert output[2].payload == {
+        "node_id": "planner-1",
+        "new_state": "completed",
+        "trigger": "accepted_graph_patch_before_agent_death",
+    }
+    assert node_state(projection, "planner-1") == "completed"
 
 
 def test_agent_died_rejects_unknown_or_inactive_lease() -> None:

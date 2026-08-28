@@ -31,6 +31,7 @@ from orchestrator.graph import (
     project_graph_projection_snapshot,
     project_node_max_attempts,
 )
+from orchestrator.graph_runtime import StaleProjectionError
 from orchestrator.workflow import GraphRunOutcome as WorkflowGraphRunOutcome
 from tests.unit.graph_test_utils import canonical_event_payload
 
@@ -1312,43 +1313,145 @@ async def test_driver_stops_retrying_a_lease_that_never_clears() -> None:
     assert outcome.completed is False
 
 
+def _dynamic_worker_orphan_snapshot(lease_id: str, execution_id: str) -> GraphProjectionSnapshot:
+    return GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            lease_id: {
+                "lease_id": lease_id,
+                "state": "active",
+                "node_id": "dynamic-worker-1",
+                "execution_id": execution_id,
+                "generation": 1,
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"s/t": "in_progress"},
+        node_states={"dynamic-worker-1": "running"},
+    )
+
+
 @pytest.mark.asyncio
-async def test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning() -> None:
+async def test_driver_terminally_revokes_lease_when_node_recovery_budget_is_exhausted() -> None:
     """Per-node recovery budget bounds dynamic nodes with no max_attempts.
 
     The kernel grants a fresh lease_id after each accepted agent_died when a node
     has no retry budget. A lease_id-only dedup would therefore keep recovering the
-    same chronically orphaned node forever. The driver must stop after the node
-    budget and return graph_blocked.
+    same chronically orphaned node forever. Once the node's recovery budget is
+    exhausted the driver must not silently give up on it: it issues one further,
+    flagged terminal ``agent_died(recovery_exhausted=True)`` instead of a plain
+    recovery attempt, so the kernel conclusively revokes the lease and fails the
+    node rather than leaving it ``active`` with nothing recorded (criterion 3).
     """
     controller = StablePositionAgentDiedRecordingController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor()
 
-    def snapshot(lease_id: str, execution_id: str) -> GraphProjectionSnapshot:
-        return GraphProjectionSnapshot(
-            run_state="active",
-            ready_nodes=[],
-            active_leases={
-                lease_id: {
-                    "lease_id": lease_id,
-                    "state": "active",
-                    "node_id": "dynamic-worker-1",
-                    "execution_id": execution_id,
-                    "generation": 1,
-                }
-            },
-            schedulable_nodes=[],
-            task_states={"s/t": "in_progress"},
-            node_states={"dynamic-worker-1": "running"},
-        )
-
     snapshots: list[GraphProjectionSnapshot] = []
     for index in range(MAX_NODE_RECOVERIES_PER_DRIVE + 1):
-        current = snapshot(f"lease-{index}", f"exec-{index}")
+        current = _dynamic_worker_orphan_snapshot(f"lease-{index}", f"exec-{index}")
         # Each drive iteration reads a preflight, wait, and post-wait
         # projection. Keep the same lease visible across two full iterations
         # so the no-progress recovery branch is exercised.
+        snapshots.extend([current] * 6)
+    # The terminal command lands, but this list never provides a post-
+    # conclusion snapshot (that is the next test's job) — the loop keeps
+    # seeing the same still-active lease, now skipped via concluded_node_ids,
+    # and needs a couple more no-progress iterations before it gives up.
+    reader = ScriptedProjectionReader(snapshots, max_calls=len(snapshots) + 10)
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    # One more command than the budget: the budget-th orphan still gets a
+    # plain recovery attempt; only the NEXT one is concluded terminally.
+    assert controller.commands.count("agent_died") == MAX_NODE_RECOVERIES_PER_DRIVE + 1
+    assert len(controller.agent_died_payloads) == MAX_NODE_RECOVERIES_PER_DRIVE + 1
+    recovering_payloads = controller.agent_died_payloads[:MAX_NODE_RECOVERIES_PER_DRIVE]
+    terminal_payload = controller.agent_died_payloads[-1]
+    assert {payload["lease_id"] for payload in recovering_payloads} == {
+        f"lease-{index}" for index in range(MAX_NODE_RECOVERIES_PER_DRIVE)
+    }
+    assert all(not payload.get("recovery_exhausted") for payload in recovering_payloads)
+    assert terminal_payload["recovery_exhausted"] is True
+    assert terminal_payload["lease_id"] == f"lease-{MAX_NODE_RECOVERIES_PER_DRIVE}"
+    assert terminal_payload["execution_id"] == f"exec-{MAX_NODE_RECOVERIES_PER_DRIVE}"
+    assert outcome.completed is False
+
+
+@pytest.mark.asyncio
+async def test_driver_reports_failed_node_after_terminal_revocation() -> None:
+    """The driver-level statement of criterion 3: once the budget is
+    exhausted and the terminal command lands, the run pauses graph_blocked
+    with the node failed and its lease revoked — never the forbidden "active
+    lease(s) without callback" state.
+    """
+    controller = StablePositionAgentDiedRecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+
+    concluded_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"s/t": "in_progress"},
+        node_states={"dynamic-worker-1": "failed"},
+        failed_node_reasons={"dynamic-worker-1": "recovery_budget_exhausted"},
+    )
+
+    snapshots: list[GraphProjectionSnapshot] = []
+    for index in range(MAX_NODE_RECOVERIES_PER_DRIVE + 1):
+        current = _dynamic_worker_orphan_snapshot(f"lease-{index}", f"exec-{index}")
+        snapshots.extend([current] * 6)
+    # After the terminal command is issued for the last orphan above, every
+    # subsequent read reflects the kernel's real post-conclusion projection
+    # (fact O): zero active leases, the node failed. ScriptedProjectionReader
+    # repeats this final entry for as many further reads as the loop needs.
+    snapshots.append(concluded_snapshot)
+    reader = ScriptedProjectionReader(snapshots, max_calls=len(snapshots) + 10)
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.commands.count("agent_died") == MAX_NODE_RECOVERIES_PER_DRIVE + 1
+    assert outcome.completed is False
+    assert (
+        outcome.blocked_reason
+        == "graph has failed node(s): dynamic-worker-1: recovery_budget_exhausted"
+    )
+    assert "active lease(s) without callback" not in (outcome.blocked_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_driver_concludes_a_node_only_once_per_drive_call() -> None:
+    """A kernel or fake that keeps handing out a fresh lease_id for the same
+    node even after the terminal command must not be re-recovered or
+    re-concluded. ``concluded_node_ids`` bounds the loop even when lease_id
+    churn never stops; without it this test hangs/asserts on the reader's
+    spin guard.
+    """
+    controller = StablePositionAgentDiedRecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+
+    total_iterations = MAX_NODE_RECOVERIES_PER_DRIVE + 5
+    snapshots: list[GraphProjectionSnapshot] = []
+    for index in range(total_iterations):
+        current = _dynamic_worker_orphan_snapshot(f"lease-{index}", f"exec-{index}")
         snapshots.extend([current] * 6)
     reader = ScriptedProjectionReader(snapshots, max_calls=len(snapshots) + 3)
 
@@ -1361,13 +1464,81 @@ async def test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning(
         read_projection=reader.read,
     )
 
-    assert controller.commands.count("agent_died") == MAX_NODE_RECOVERIES_PER_DRIVE
-    assert len(controller.agent_died_payloads) == MAX_NODE_RECOVERIES_PER_DRIVE
+    assert controller.commands.count("agent_died") == MAX_NODE_RECOVERIES_PER_DRIVE + 1
     assert {payload["lease_id"] for payload in controller.agent_died_payloads} == {
-        f"lease-{index}" for index in range(MAX_NODE_RECOVERIES_PER_DRIVE)
+        f"lease-{index}" for index in range(MAX_NODE_RECOVERIES_PER_DRIVE + 1)
     }
     assert outcome.completed is False
-    assert outcome.blocked_reason == "graph has active lease(s) without callback: dynamic-worker-1"
+
+
+class _StaleOnceThenAgentDiedController(StablePositionAgentDiedRecordingController):
+    """Raises StaleProjectionError on the first agent_died issue attempt,
+    then accepts it — modeling a concurrent append that rejected the driver's
+    read-then-append race (fact S1)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._raised_once = False
+
+    async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
+    ) -> object:
+        if command_type == "agent_died" and not self._raised_once:
+            self._raised_once = True
+            raise StaleProjectionError("stale run-local position")
+        return await super().handle_command(
+            run_id, expected_position, command_type, payload, context=context
+        )
+
+
+@pytest.mark.asyncio
+async def test_driver_reissues_orphan_recovery_after_stale_projection() -> None:
+    """A StaleProjectionError on the orphan-recovery command issue is
+    retried, not treated as abandonment: the append was rejected and nothing
+    landed, so re-issuing is safe (part C, fact S1)."""
+    controller = _StaleOnceThenAgentDiedController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+
+    stuck_lease_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            "lease-1": {
+                "lease_id": "lease-1",
+                "state": "active",
+                "node_id": "worker-1",
+                "execution_id": "exec-1",
+                "generation": 1,
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"s/t": "in_progress"},
+        node_states={"worker-1": "running"},
+    )
+    reader = ScriptedProjectionReader([stuck_lease_snapshot])
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    # The lease was recovered (agent_died accepted once) despite the first
+    # issue attempt being rejected as stale — it was not abandoned after a
+    # single failed append.
+    assert controller.commands.count("agent_died") == 1
+    assert len(controller.agent_died_payloads) == 1
+    assert outcome.completed is False
 
 
 def test_node_max_attempts_matches_dispatch_first_node_created_lookup() -> None:
