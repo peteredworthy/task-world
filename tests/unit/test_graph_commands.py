@@ -1323,6 +1323,58 @@ def test_schedule_tick_defers_node_without_base_snapshot() -> None:
     )
 
 
+def test_schedule_tick_snapshot_ineligible_writer_does_not_block_runnable_writer() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "writer-without-accepted-snapshot",
+                "kind": "worker",
+                "state": "ready",
+                "base_snapshot_selection": "latest_accepted",
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+            },
+            1,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "runnable-writer",
+                "kind": "worker",
+                "state": "ready",
+                "base_snapshot_selection": "run_baseline",
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
+
+    assert any(
+        event.event_type == "node_deferred"
+        and event.payload
+        == {
+            "node_id": "writer-without-accepted-snapshot",
+            "reason": "missing_latest_accepted_snapshot",
+        }
+        for event in output
+    )
+    assert any(
+        event.event_type == "lease_granted"
+        and event.payload["node_id"] == "runnable-writer"
+        and event.payload["base_snapshot_id"] == "S0"
+        for event in output
+    )
+    assert not any(
+        event.event_type == "node_deferred"
+        and event.payload.get("node_id") == "runnable-writer"
+        and str(event.payload.get("reason", "")).startswith("resource_conflict")
+        for event in output
+    )
+
+
 def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -> None:
     clock = FakeClock()
     expired_at = clock.now() - timedelta(seconds=1)

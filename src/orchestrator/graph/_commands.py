@@ -3106,6 +3106,7 @@ def _apply_schedule_tick(
     }
     nodes: list[NodeScheduleInfo] = []
     readied_node_ids: set[str] = set()
+    resolved_base_snapshot_ids: dict[str, str] = {}
     for node_id, node_state in node_states_view(projection).items():
         if node_id in retiring_node_ids:
             continue
@@ -3164,18 +3165,9 @@ def _apply_schedule_tick(
                 )
             )
             readied_node_ids.add(node_id)
-        nodes.append(replace(node, state="ready"))
-    decision = schedule(
-        nodes,
-        query_run_state(projection) or "draft",
-        active_claims,
-        current_graph_position,
-        max_grants=payload.max_grants,
-    )
-    lease_seconds = payload.lease_seconds
-    for node_id in decision.selected:
-        claims = node_resource_claims_view(projection).get(node_id, [])
-        lease_id = payload.lease_ids.get(node_id) or id_gen.next_id("lease")
+        if payload.max_grants == 0:
+            nodes.append(replace(node, state="ready"))
+            continue
         base_snapshot_id, snapshot_deferred_reason = _base_snapshot_id_for_node(
             projection, payload, node_id
         )
@@ -3188,6 +3180,20 @@ def _apply_schedule_tick(
                 make_event,
             )
             continue
+        resolved_base_snapshot_ids[node_id] = base_snapshot_id
+        nodes.append(replace(node, state="ready"))
+    decision = schedule(
+        nodes,
+        query_run_state(projection) or "draft",
+        active_claims,
+        current_graph_position,
+        max_grants=payload.max_grants,
+    )
+    lease_seconds = payload.lease_seconds
+    for node_id in decision.selected:
+        claims = node_resource_claims_view(projection).get(node_id, [])
+        lease_id = payload.lease_ids.get(node_id) or id_gen.next_id("lease")
+        base_snapshot_id = resolved_base_snapshot_ids[node_id]
         if node_id not in readied_node_ids:
             output.append(make_event("node_ready", {"node_id": node_id}))
         planner_session_id = _planner_session_id(projection, node_id, id_gen)

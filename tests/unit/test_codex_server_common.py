@@ -624,6 +624,10 @@ def test_planner_macros_are_exposed_with_typed_schemas() -> None:
         "create_join",
         "request_gate",
         "retire_or_supersede",
+        "create_discovery_region",
+        "create_plan_verification",
+        "create_successor_planner",
+        "create_effectful_batch",
     }.issubset(names)
 
     create_join = next(s for s in specs if s["name"] == "create_join")

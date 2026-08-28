@@ -29,29 +29,45 @@ grant, while caller-supplied qualification facts remain invalid.
    Server runner, run
    `tests/e2e/test_reliable_plan_live_evaluation.py`. The harness creates both
    graph arms plus the legacy baseline through `POST /api/runs`, starts them
-   through the normal run API, and waits at most 900 seconds for terminal state.
+   through the normal run API, and waits at most 3,600 seconds for terminal state.
    Before each run it requests a server-derived qualification grant from
    `POST /api/runs/reliable-plan-qualification` and submits only that opaque
    reference alongside the skeleton ID and model assignments. No enable boolean,
    qualification result, receipt payload, or scenario pass claim crosses the
    public JSON boundary.
-4. The harness extracts projection, topology, health, node-contract, usage,
-   hydration, and recovery facts through operator read APIs. Store a
+4. The harness extracts graph, health, node-contract, usage, hydration, and
+   recovery facts through operator read APIs. It pages the canonical bounded
+   graph-event API so terminal evidence remains extractable when a derived
+   topology or node-detail summary is temporarily stale. Store a
    `ReliablePlanComparisonArtifact` containing correctness, revisions, graph
    node/edge/batch/horizon shape, carrier token/action/duration totals,
    recovery facts, exact model profiles, and the legacy plan-then-execute arm.
 
-## Results template
+## Live results — 2026-08-28
 
 | Arm | Run ID | Evidence | Correct | Revisions | Nodes/edges | Batches/horizons | Tokens | Actions | Duration ms | Recovery | Models |
 |---|---|---|---:|---:|---|---|---:|---:|---:|---|---|
-| Luna bounded workers | _required_ | blocked | — | — | — | — | — | — | — | — | Luna workers; independent verifier |
-| Alternate workers/verifier | _required_ | blocked | — | — | — | — | — | — | — | — | alternate explicit assignments |
-| Legacy plan-then-execute | _required_ | blocked | — | — | — | — | — | — | — | — | recorded legacy profiles |
+| Luna bounded workers | `4ee15ff9-213a-424e-9fc7-82801f5dd16b` | complete readback; manually paused after a 15-minute live worker turn produced no callback | no | 0 | 26/25 | none | 10,823,845 | 145 | 1,390,772 | 1 active lease | Luna discovery/implementation/correction/successor; Sol planner/verifier |
+| Alternate workers/verifier | `7f55a7f1-fa13-4fce-8312-54b83309cd85` | complete readback; graph paused as quiescent with missing final corrective verification evidence | no | 0 | 26/30 | none | 8,579,453 | 211 | 1,581,992 | 3 revoked leases | Terra workers; Sol planner/verifier/successor |
+| Legacy plan-then-execute | `8fdde514-9720-4b21-8b33-717725f7aa2b` | completed with all three rubric grades A | yes | 0 | 0/0 | none | 2,094,915 | 49 | 476,686 | none | Terra implementation/verifier carrier |
 
-Current live evidence is explicitly **blocked**: this implementation session
-did not have an authorized running server plus the required live routine/repo
-registration, writable qualification evidence directory, and runner execution
-evidence. No server was started and no run IDs or model results are fabricated.
-The harness retains honest environment/server skips and requires all three arms
-to complete correctly with no active lease before constructing comparison deltas.
+The deterministic scenarios qualified 10/10 through the SQLite/controller
+product path. The live hypothesis did not pass: only the legacy arm completed,
+while neither dynamic-graph arm reached an accepted terminal state. Relative to
+legacy, the Luna arm used 8,728,930 more tokens, 96 more actions, and 914,086 ms
+more recorded model duration. The alternate arm used 2,244,392 fewer tokens than
+Luna but 66 more actions and 191,220 ms more duration.
+
+The trial exposed two implementation defects that were corrected during the
+same run: snapshot-ineligible writers could reserve resource claims before
+snapshot resolution and starve runnable writers, and the Codex Server planner
+tool list omitted the four reliable-plan macros. Reporting also observed a stale
+derived topology/node-detail summary at graph position 225 after the Luna pause;
+the canonical graph and bounded event APIs remained current, so the comparison
+artifact records exact evidence without treating the stale summary as success.
+
+The machine-readable artifact is
+`/private/tmp/reliable-plan-e2e-20260828-3/reliable-plan-comparison.json`.
+The harness writes it before asserting arm correctness, preserving failed-trial
+evidence. Environment/server skips remain honest, and a live run still fails its
+test unless all three arms complete correctly with no active leases.

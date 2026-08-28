@@ -889,6 +889,10 @@ def _contract_allowed_graph_tools(context: ExecutionContext) -> list[str]:
         "create_join",
         "request_gate",
         "retire_or_supersede",
+        "create_discovery_region",
+        "create_plan_verification",
+        "create_successor_planner",
+        "create_effectful_batch",
         "submit_graph_patch",
     ]
     return [tool_name for tool_name in ordered_names if tool_name in allowed_tools]
