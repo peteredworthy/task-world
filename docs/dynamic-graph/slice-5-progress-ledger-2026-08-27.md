@@ -429,13 +429,184 @@ untouched. Adding fields or emissions cannot perturb derived projection state.
 
 ---
 
+## Verified facts from planning pass 3 (2026-08-27, post-chunk-2)
+
+Established by reading `7f5c96086` (chunks 1-2 landed). Line numbers below are
+as of `7f5c96086` and **supersede** earlier numbers where they differ.
+
+### M. Citation drift from chunk 2 — `graph_driver.py` did not move
+
+Chunks 1-2 touched `_commands.py`/`models.py` only; every `graph_driver.py`
+line number in fact D is still exact. Re-confirmed by reading:
+
+| thing | line |
+|---|---|
+| `MAX_NODE_RECOVERIES_PER_DRIVE = 3` | `graph_driver.py:67` |
+| `_recover_orphaned_active_leases` | `graph_driver.py:1127` (docstring `:1137-1168`) |
+| budget check + `continue` | `graph_driver.py:1191-1193` |
+| `agent_died` payload build | `graph_driver.py:1195-1205` |
+| `handle_command` + `except StaleProjectionError: continue` | `graph_driver.py:1206-1218` |
+| `recovered = True` gate | `graph_driver.py:1219-1220` |
+| call site 1 (leased-state pass, `orphan_states={"leased"}`) | `graph_driver.py:882-892` |
+| call site 2 (no-progress pass, default `{"running"}`) | `graph_driver.py:941-950` |
+| `recovered_lease_ids` / `node_recovery_counts` declared | `graph_driver.py:772` / `:784` |
+| pause bridge `_apply_pause(run_id, "graph_blocked", ...)` | `graph_driver.py:693` |
+| driver's constant `"routine-snapshot"` | `graph_driver.py:837` (unchanged, D3) |
+
+In `_commands.py` after chunk 2: `_apply_agent_died` still `:4092`;
+`failure_class` hoist `:4124`; accepted-patch branch `:4133`; rate-limit
+`:4158`; non-retryable `:4198`; max-attempts `:4238-4281`; retry branch
+`:4283-4364`; `_failure_record_payload` `:4367` (`record_id` `:4399`);
+`_recovery_plan_record_payload` `:4411`. `AgentDiedCommand`
+`command_models.py:536-541`.
+
+### N. The budget branch is the ONLY silent give-up on a genuinely orphaned lease
+
+`_recover_orphaned_active_leases` has five `continue`s. Enumerated and
+classified:
+
+| line | condition | is it a forbidden give-up? |
+|---|---|---|
+| `:1173` | `lease_id` not a str, **or already in `recovered_lease_ids`** | No for the malformed case; **residual** for the second — see fact S. |
+| `:1184` | `node_state not in orphan_states` | No — the node is not orphaned by this pass's definition. |
+| `:1188` | `executor.is_running(execution_id)` | No — the execution is demonstrably live; the lease is legitimate. |
+| `:1192` | **per-node budget exhausted** | **YES. This is the whole of criterion 3's gap.** |
+| `:1218` | `StaleProjectionError` | **Residual** — see fact S. |
+
+So the fix has one primary site (`:1191-1193`) and one secondary site
+(`:1206-1218`). Nothing else in this function abandons an orphan.
+
+### O. Failing a node does NOT fail the run — R1 is resolved in favour of option (a)
+
+`project_run_state` (`projections.py:2939-2960`) derives the run state from
+`projection.lifecycle.run_state` (set only by `run_lifecycle_changed`,
+`projections.py:901-904`), final-invariant blockers, and task states. **No node
+state anywhere feeds it**; there is no `run_failed` emission in `graph/` at all.
+A `failed` node with `run_state == "active"` therefore falls through
+`project_graph_blocked_reason` to its `failed_nodes` branch
+(`projections.py:4980-4990`) and yields
+`"graph has failed node(s): <node>: <reason>"`, and the driver bridge
+(`graph_driver.py:690-693`) takes the `else` arm: **pause `graph_blocked`**, not
+`_apply_fail`.
+
+The reason text comes from `_project_failed_node_reasons`
+(`projections.py:5059-5076`), which reads `agent_died.reason` and then
+`node_state_changed.reason` for `new_state == "failed"` — last write wins, so
+the terminal branch's `node_state_changed` reason is what an operator sees.
+
+**Consequence: terminally failing the node produces exactly the outcome R1
+asked for — a pause whose lease is revoked and whose node carries a typed
+`infrastructure_failure` record — with no run-failure cascade and no new
+pause vocabulary.** This is the decisive evidence for decision D4 below.
+
+### P. What a NEW pause reason would cost (the option-(b) price)
+
+`pause_reason` is a free `str` on the run row (`state/models.py:384`), written
+by `apply_pause_run` (`service.py:990`). Three consumers branch on its value:
+
+1. **Startup auto-resume allow list.**
+   `_is_startup_recoverable_pause_reason` (`api/app.py:45-70`) returns `True`
+   only for `server_shutdown` and `executor_not_started` (after stripping a
+   `parent_` prefix); it is the `is_recoverable_pause` callable passed to
+   `select_graph_runs_to_recover` (`workflow/graph_recovery.py:21`, `:37`,
+   `:64`, wired at `api/app.py:301`). `graph_blocked` is deliberately **not**
+   in it — a blocked graph already means "an operator decides".
+2. **UI copy.** `ui/src/lib/pauseReason.ts` maps known reasons to sentences and
+   falls back to `` `Paused (${run.pause_reason})` `` (`:39`). A new value
+   renders as raw snake_case until someone adds a message.
+3. **Reason-keyed panels.** `RunDetail.tsx:318`, `:458`, `:651` special-case
+   `manual_pause` / `manual_gate` / `requirement_escalated`.
+
+So option (b) costs: a new string, a UI copy entry, an explicit decision about
+the startup allow list, plus — critically — it still needs a node-state
+transition, because revoking a lease without one leaves the node stuck in
+`leased` with no lease (the kernel only re-grants from `ready`), which is a
+*different* wedged state. **Option (b) is option (a) plus plumbing.**
+
+### Q. The flag must ride the COMMAND, never the emitted event
+
+- `AgentDiedCommand` is a `StrictCommandPayload`
+  (`command_models.py:46-47`, `extra="forbid"`, `strict=True`). Plain
+  `bool = False` fields are already the house pattern on command payloads
+  (`command_models.py:169`, `:170`, `:687`, `:701`), and `strict=True` means a
+  string `"true"` is a `ValidationError`, not a coercion.
+- The emitted `agent_died` **event** payload is `AgentDiedPayload`
+  (`models.py:945-950`), `extra="forbid"`, five fields, and
+  `payload_registry.py:114` retains exactly
+  `execution_id generation lease_id node_id reason`. **Adding the flag to the
+  event would need both a model field and a registry edit and would move the
+  checkpoint surface.** It is unnecessary: the conclusiveness is already
+  legible from the emitted `FailureRecord`'s `error_class` and the
+  `node_state_changed` trigger.
+- `NodeStateChangedPayload` (`models.py:1704-1719`) already declares
+  `trigger`, `reason`, `attempt_number`, `max_attempts` — the terminal branch
+  needs no new event fields at all.
+- No API/MCP route issues `agent_died` with a caller-supplied payload; the
+  three `"agent_died"` string hits outside the kernel
+  (`api/routers/graph.py:2886`, `graph_runtime/store.py:6814`,
+  `runners/runtime/monitor.py`) are event **readers**/emitters, not command
+  issuers with an open payload. So the new field has no public-API surface.
+
+### R. Correction to fact E — only ONE test pins the forbidden state
+
+Re-read both tests. Fact E overstated the second one:
+
+- `test_graph_driver_logic.py:1314`
+  `test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning`
+  ends with
+  `assert outcome.blocked_reason == "graph has active lease(s) without callback: dynamic-worker-1"`
+  (`:1370`). **This is the pin, and chunk 3 rewrites it.**
+- `test_graph_driver_logic.py:1240`
+  `test_driver_stops_retrying_a_lease_that_never_clears` asserts only
+  `commands.count("agent_died") == 1`, `len(agent_died_payloads) == 1` and
+  `outcome.completed is False` (`:1306-1310`). It pins **bound 1** (per-lease
+  dedup against a fake kernel that accepts the revocation but never changes
+  its projection), never the blocked reason. Under chunk 3 its node reaches a
+  recovery count of 1, far below the budget, so it takes no terminal action and
+  **passes unchanged**. Do not rewrite it; if a Builder finds it failing, the
+  change went wider than specified.
+
+### S. Two residual abandonment holes, both in the command-issue path
+
+Beyond the budget branch, a genuinely orphaned lease can still be abandoned for
+the rest of a drive call:
+
+1. **Stale race.** `recovered_lease_ids.add(lease_id)` happens at
+   `graph_driver.py:1194`, *before* the command; a `StaleProjectionError` at
+   `:1217` then `continue`s, so the lease is never retried this drive call even
+   though nothing landed (a `StaleProjectionError` means the append was
+   rejected, so the command had no effect). Contrast
+   `_renew_running_leases_near_expiry`, which retries the same class of failure
+   five times with backoff (`graph_driver.py:1100-1121`), and
+   `_handle_command_at_head` (`:729-753`), which does the same for loop
+   commands. **The orphan path is the only command issuer in this file with no
+   stale retry.**
+2. **Kernel rejection.** If the command returns `command_rejected`, `recovered`
+   stays `False` and the lease is skipped forever after. The four possible
+   rejections are `"unknown lease"` / `"lease not active"`
+   (`_commands.py:4102`, `:4104`) — in which case the lease is *already* gone,
+   so no forbidden state — and `"missing execution_id"` /
+   `"execution_incompatible"` (`:4112`, `:4114`), which cannot fire here
+   because the driver reads `execution_id` from the very lease dict it is
+   revoking (`graph_driver.py:1185`, `:1204-1205`). **Hole 2 is closed by
+   construction; hole 1 is real** and is closed by chunk 3 part C.
+
+`OperationalError` ("database is locked") is *not* caught in this function at
+all; it propagates to the crash bridge (`graph_driver.py:660-672`), which
+pauses `graph_driver_crashed` — a resumable pause whose resume runs
+`reconcile_runtime` (`graph_driver.py:615`) and converts gone-execution leases
+to `agent_died`. That is a *pending recovery action*, so it does not violate
+criterion 3; out of scope for chunk 3, recorded as R8.
+
+---
+
 ## Chunk queue
 
 | # | Name | One-line description | AC |
 |---|------|----------------------|----|
 | 1 | Typed `FailureClass` on the failure-record path | Add a `FailureClass` `Literal` alias + additive optional `failure_class` on `FailureRecordValue`; make the `_failure_record_payload` helper *require* it; classify all four existing sites `infrastructure_failure`. No behaviour change. | 1 |
 | 2 | Classify before retry, and state the retry basis | **Revised in pass 2 — kernel path only.** Hoist the classification to a single point above every branch in `_apply_agent_died`; emit a `retryable=True` classified `FailureRecord` on the retry branch (which emits none today); add `failure_class` / `retry_base_snapshot_id` / `retry_basis` / `attempt_number` / `max_attempts` to `RecoveryPlanValue` and populate them. | 1, 2 |
-| 3 | Conclusive lease revocation on missing callback | When the per-node orphan-recovery budget is exhausted, terminally revoke the lease and fail the node with a `retryable=False` `infrastructure_failure` record instead of pausing with an active lease; make `project_graph_blocked_reason`'s active-lease branch unreachable-by-construction and rewrite the two tests that pin it. | 3 |
+| 3 | Conclusive lease revocation on missing callback | **Revised in pass 3.** New typed `recovery_exhausted: bool` on `AgentDiedCommand` + a fifth terminal branch in `_apply_agent_died` (revoke lease, `retryable=False` `recovery_budget_exhausted` `FailureRecord`, node → `failed`); the driver *takes* that action instead of `continue`-ing past an exhausted budget, and retries the command on a stale race. `projections.py` is **not** touched (R2) and only the one test that pins the bad state (`test_graph_driver_logic.py:1370`) is rewritten (fact R). | 3 |
 | 4 | Boundary-path recovery symmetry | **New in pass 2 (split out of the old chunk 2).** `handle_complete_runner_recovery` (`boundary.py:580`) emits the same typed pair — a classified `FailureRecord` and a `RecoveryPlan` with `retry_basis="worktree_restored_to_baseline"` populated from the attempt's `baseline_tree_sha` / `restored_paths` / `removed_paths` (fact J). Ids namespaced by `recovery_id` (fact K). Events only, never command-payload fields (risk R3). **Deferrable.** | 2 |
 | 5 | Typed failure records at the verification and invalid-plan surfaces | Emit `verification_failure` / `invalid_plan_failure` records at `verification_failed` and `graph_patch_rejected`, so the enum's other two members have real producers. **Deferrable** — see note below. | 1 |
 | 6 | Scenario #9 regression coverage | End-to-end: a missing callback terminates in either a healthy classified retry or a conclusively revoked lease with typed recovery state — never a paused run with an active lease. | 4 |
@@ -1052,22 +1223,489 @@ the payload-level legacy path stays covered (mirroring what chunk 1 did for
 
 ---
 
+## Chunk 3 — Conclusive lease revocation on missing callback (SPECIFIED, not built)
+
+**Goal.** Make criterion 3 true: **after this chunk there is no reachable state
+in which the driver stops working on a run while an orphaned lease is still
+`active` and nothing has been recorded or scheduled about it.** Concretely, the
+`continue` at `graph_driver.py:1192` — the single silent give-up (fact N) —
+becomes a conclusive terminal action, and the one command-issue hole that can
+abandon a lease mid-flight (fact S1) is closed.
+
+The end state for the `fff4f6b7` shape becomes: three automatic recoveries, then
+`agent_died(recovery_exhausted=True)` → `lease_revoked` → a `retryable=False`
+`infrastructure_failure` `FailureRecord` with
+`error_class="recovery_budget_exhausted"` → `node_state_changed → failed` → the
+drive loop returns `blocked_reason="graph has failed node(s): dynamic-worker-1:
+recovery_budget_exhausted"` → the run pauses `graph_blocked` **with zero active
+leases**.
+
+### Decision D4 — option (a), fail the node; option (b) (a new typed pause state) is REJECTED
+
+The brief offered (a) revoke-and-fail-the-node with a typed record, or (b)
+revoke-and-pause with a new typed pause reason. Evidence, not preference:
+
+1. **(a) already produces the pause (b) wanted.** Fact O: no node state feeds
+   `project_run_state`, so a failed node leaves `run_state == "active"`, the
+   blocked reason becomes `"graph has failed node(s): …"`, and the bridge takes
+   the `else` arm → `_apply_pause(run_id, "graph_blocked", …)`. **The operator
+   still gets a pause and still decides.** The difference from today is only
+   that the lease is revoked, the node is terminal, and a typed record explains
+   why. This is exactly the outcome R1 said to prefer.
+2. **(b) is (a) plus plumbing.** Fact P: a new `pause_reason` costs a UI copy
+   entry (`ui/src/lib/pauseReason.ts:39` otherwise renders raw snake_case), an
+   explicit ruling on the startup auto-resume allow list
+   (`api/app.py:45-70`), and — because revoking a lease without a state change
+   leaves the node wedged in `leased` with no lease, which the scheduler will
+   never re-grant — it *still* needs the node transition (a) provides. It buys
+   nothing (a) does not already deliver.
+3. **(a) is the shape the kernel already has, three times over.** The new
+   branch is a byte-for-byte structural sibling of the rate-limit,
+   non-retryable and max-attempts branches (`_commands.py:4158`, `:4198`,
+   `:4238`): same four events, same order, same helper, same
+   `record_id` derivation. It introduces no new concept — it makes the
+   *driver's* budget behave exactly like the *kernel's* budget already does.
+   The contract doc's item 7 sanctions "create a recovery node or pause when
+   automatic recovery is exhausted"; this pauses, and does so through the
+   existing terminal vocabulary.
+4. **Blast radius.** (a) touches two production files and adds one command
+   field; (b) touches those plus `service.py`/`api/app.py`/UI and changes
+   resume semantics for a state that has none today.
+
+**Rejected sub-option — force the existing `max_attempts_exhausted` branch** by
+having the driver pass a synthetic `max_attempts` on the last recovery. It
+would be a lie in the durable record (the node's real budget is unbounded — the
+`fff4f6b7` pathology, fact H), it depends on `attempt_number` arithmetic the
+driver does not own, and it is precisely the reason-sniffing/implicit-signalling
+style chunk 2 removed. **Rejected — do not implement it this way.**
+
+**Rejected sub-option — signal terminality via a magic `reason` string** that
+`_is_non_retryable_runtime_death` (`_commands.py:4471`) would match. Same
+objection: it reintroduces string sniffing as a control channel and would
+mis-classify the death as `runtime_configuration_error`.
+
+### Decision D5 — branch precedence: the new branch goes LAST among the terminal branches
+
+Insert the new branch **after** the max-attempts block (ends `_commands.py:4281`)
+and **before** the retry-policy comment at `:4283`. Resulting order:
+
+1. `non_gap_planner_has_accepted_patch` → `completed` (`:4133`) — accepted work
+   is never discarded, even if the driver gave up on the process.
+2. `_is_rate_limit_death` → `agent_rate_limited` (`:4158`).
+3. `_is_non_retryable_runtime_death` → `runtime_configuration_error` (`:4198`).
+4. `max_attempts` exhausted → `max_attempts_exhausted` (`:4238`) — the kernel's
+   own budget is "the primary bound" per the driver's own docstring
+   (`graph_driver.py:1155-1159`); when it applies it is the truer cause.
+5. **NEW: `payload.recovery_exhausted` → `recovery_budget_exhausted`.**
+6. retry (`:4283`).
+
+This placement changes the outcome of **exactly one** input class — a death that
+would otherwise have taken the retry branch, with the flag set — so every
+existing `_apply_agent_died` test keeps its exact current behaviour and any
+regression is unambiguous.
+
+### Decision D6 — the invariant mechanism: never `continue` past an orphan without acting
+
+The guarantee is structural, not incidental. In
+`_recover_orphaned_active_leases`, for a lease that has passed all three
+"is it really orphaned" guards (`:1173` malformed, `:1184` wrong node state,
+`:1188` executor still running it), **exactly one of two things must happen
+before the loop moves on**: a recovery `agent_died` is issued, or a terminal
+`agent_died(recovery_exhausted=True)` is issued. The budget selects which; it no
+longer selects *whether*.
+
+One — and only one — new skip is added, and it is a skip *after* acting, not
+instead of acting: a node already terminally revoked in this drive call
+(`concluded_node_ids`) is not concluded twice. This bound is required, not
+optional: without it a kernel or fake that hands out a fresh `lease_id` for the
+same node after the terminal command (bound 1 keys on `lease_id`, which churns —
+the whole reason bound 3 exists) would spin the loop issuing terminal commands
+forever.
+
+### Decision D7 — `projections.py` is NOT touched; `MAX_NODE_RECOVERIES_PER_DRIVE` is NOT changed
+
+- **`project_graph_blocked_reason`'s active-lease branch stays** (R2). It is
+  reachable from paths chunk 3 does not own — an externally paused run whose
+  runner is genuinely alive, a `graph_driver_crashed` pause, a
+  `should_continue()` exit mid-execution — where it is a correct and useful
+  diagnostic. Deleting or narrowing it would degrade unrelated reporting and
+  would also *hide* any future regression of this chunk instead of surfacing
+  it. Chunk 3 makes the branch unreachable **from the orphan path** and proves
+  that by test, which is the property criterion 3 actually names. Editing
+  `projections.py` in this chunk is a signal the change went wider than
+  specified.
+- **The budget constant stays `3`** (`graph_driver.py:67`). The bug is the
+  after-behaviour, not the number: with D4 in place, `3` now means "three
+  automatic recoveries, then a conclusive terminal failure", which is a
+  coherent policy. Changing it would silently change how many recoveries every
+  existing driver test observes, for no criterion-3 benefit. Its *docstring*
+  must change, though — `graph_driver.py:1160-1167` and the block comment at
+  `:773-783` both currently promise "the driver stops recovering it and … pause
+  graph_blocked", which will be false.
+
+### Files touched (exactly these)
+
+Production (3):
+
+1. `src/orchestrator/graph/command_models.py` — one field.
+2. `src/orchestrator/graph/_commands.py` — one new branch.
+3. `src/orchestrator/workflow/graph_driver.py` — parts B and C below, plus the
+   two now-false comments.
+
+Tests (3):
+
+4. `tests/unit/test_callback_patch_command_payloads.py`
+5. `tests/unit/test_graph_commands.py`
+6. `tests/unit/test_graph_driver_logic.py`
+
+**Do not touch:** `graph/projections.py` (D7), `graph/models.py` (fact Q — the
+`agent_died` *event* payload does not change), `graph/payload_registry.py`
+(fact Q), `graph/projection_codec.py` (schema version stays **15**),
+`graph/commands/boundary.py` (chunk 4), `graph_runtime/dispatch.py`,
+`api/routers/graph.py` (its `lease_expired_without_callback` health row at
+`:2296` is fact D5's operator surface, not this chunk's), `api/app.py`,
+`workflow/service.py`, `workflow/graph_recovery.py`, `ui/` (all four are
+option-(b) territory, rejected by D4), `tests/unit/test_graph_driver_logic.py:1240`
+(fact R — that test must pass unchanged).
+
+### Exact production edits
+
+**A. `graph/command_models.py` — one field on `AgentDiedCommand`**
+(`:536-541`), placed after `retry_backoff_seconds`:
+
+```python
+    # Set by the driver when its per-node orphan-recovery budget
+    # (MAX_NODE_RECOVERIES_PER_DRIVE) is exhausted: the caller is stating that
+    # it will not attempt recovery for this node again, so the kernel must
+    # conclude the lease terminally rather than scheduling another retry.
+    recovery_exhausted: bool = False
+```
+
+`StrictCommandPayload` is `strict=True` (fact Q), so `"true"`/`1` are rejected —
+this is a real bool or a `ValidationError`. Default `False` keeps every existing
+caller (`graph_runtime/dispatch.py:1642`, `:2074`,
+`graph_driver.py:273`, callbacks, tests) byte-identical.
+
+**B. `graph/_commands.py` — the fifth terminal branch.** Insert immediately
+after the max-attempts `return` (`:4281`) and before the
+`# V1 retry policy:` comment (`:4283`):
+
+```python
+    if payload.recovery_exhausted:
+        # The caller has exhausted its automatic-recovery budget for this node.
+        # Requeuing here would hand the lease straight back to a recoverer that
+        # has already said it will not act again — the state criterion 3
+        # forbids.  Conclude instead: revoke, classify, fail.
+        return [
+            make_event("agent_died", event_payload),
+            make_event(
+                "lease_revoked",
+                _typed_lease_event_payload(
+                    "lease_revoked",
+                    {
+                        "lease_id": lease_id,
+                        "node_id": node_id,
+                        "generation": generation,
+                        "reason": reason,
+                    },
+                ),
+            ),
+            make_event(
+                "output_record_accepted",
+                _failure_record_payload(
+                    node_id=node_id,
+                    phase="runtime",
+                    failure_class=failure_class,
+                    error_class="recovery_budget_exhausted",
+                    retryable=False,
+                    lease_id=lease_id,
+                    execution_id=event_payload.get("execution_id"),
+                    generation=generation,
+                    reason=reason,
+                    metadata={
+                        "attempt_number": attempt_number,
+                        **({"max_attempts": max_attempts} if max_attempts > 0 else {}),
+                    },
+                ),
+            ),
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "failed",
+                    "trigger": "recovery_budget_exhausted",
+                    "reason": "recovery_budget_exhausted",
+                    "attempt_number": attempt_number,
+                    **({"max_attempts": max_attempts} if max_attempts > 0 else {}),
+                },
+            ),
+        ]
+```
+
+Notes the Builder must respect:
+
+- `error_class="recovery_budget_exhausted"` is a **new, fifth** free-form detail
+  code. It must not reuse any of the four existing ones nor chunk 2's
+  `runtime_death_retry_scheduled` — `record_id` is
+  `f"failure-{node_id}-{lease_id}"` (`:4399`) and reuse risks fact K.
+- `failure_class` is the **hoisted** variable from `:4124`, never a literal
+  (chunk 2's decision D1; verification condition 1 below re-tests the hoist
+  against this new site).
+- `node_state_changed.reason` is `"recovery_budget_exhausted"`, **not** the
+  death reason — mirroring the max-attempts branch (`:4276`), and because that
+  is the string an operator reads in the blocked reason (fact O). The death
+  reason (`runtime_execution_missing_no_callback`) is preserved in the
+  `agent_died` event and in the failure record's `reason`.
+- `max_attempts` is conditionally included so an unbounded budget yields an
+  **absent** key, not a misleading `0` — same rule chunk 2 established.
+- **No `RecoveryPlanRecord` is emitted.** Rejected deliberately: `action="cancel"`
+  would need a second helper (`_recovery_plan_record_payload` at `:4411` is
+  retry-shaped throughout — `action="retry"`, a `set_node_state` op, a
+  `retry_basis`), and nothing reads recovery plans (fact B7, risk R6). The typed
+  recovery state criterion 4 asks for is delivered by the `retryable=False`
+  classified `FailureRecord` plus the terminal node state. **Record any later
+  request for a cancel-plan here rather than adding it to this chunk.**
+
+**C. `workflow/graph_driver.py` — act instead of skipping.** Three edits to
+`_recover_orphaned_active_leases` (`:1127`) and one to its caller:
+
+1. New caller-owned parameter `concluded_node_ids: set[str]` (positional, after
+   `node_recovery_counts`), declared once in `drive_to_quiescence` beside
+   `node_recovery_counts` (`:784`) and passed at both call sites (`:882-892`,
+   `:941-950`). No test calls this function directly (verified), so the
+   signature change is confined to those two sites.
+2. Replace the budget `continue` (`:1190-1193`) with a *selection*, not a skip:
+
+```python
+        recovery_exhausted = False
+        if isinstance(node_id, str):
+            if node_id in concluded_node_ids:
+                # Already conclusively revoked for this node during this drive
+                # call; a fresh lease_id for it is the kernel's business now.
+                continue
+            if node_recovery_counts.get(node_id, 0) >= MAX_NODE_RECOVERIES_PER_DRIVE:
+                recovery_exhausted = True
+            else:
+                node_recovery_counts[node_id] = node_recovery_counts.get(node_id, 0) + 1
+```
+
+   and, after building `payload` (`:1195-1205`):
+
+```python
+        if recovery_exhausted:
+            payload["recovery_exhausted"] = True
+            logger.warning(
+                "GraphRunDriver: node %s on %s exhausted its orphan-recovery "
+                "budget (%d); terminally revoking lease %s",
+                node_id,
+                run_id,
+                MAX_NODE_RECOVERIES_PER_DRIVE,
+                lease_id,
+            )
+```
+
+   and, after the `if any(event.event_type == "agent_died" …)` gate
+   (`:1219-1220`):
+
+```python
+            if recovery_exhausted and isinstance(node_id, str):
+                concluded_node_ids.add(node_id)
+```
+
+   `recovered = True` on the terminal path is **correct and required**: the
+   graph head genuinely advanced, so the caller's `previous_position = None;
+   continue` re-reads and observes the failed node. The loop still terminates,
+   because the node is now `failed` and the scheduler grants no further lease.
+
+3. Close fact S1: wrap the `handle_command` call (`:1206-1218`) in a bounded
+   retry for `StaleProjectionError`, in the exact shape already used at
+   `:1100-1121` / `:729-753` — 3 attempts, 0.01s doubling backoff, re-reading
+   `current_position` each time, `continue` (abandon this lease for the drive
+   call) only after the last attempt. A `StaleProjectionError` means the append
+   was rejected and nothing landed, so re-issuing is safe; if another actor
+   resolved the lease meanwhile, the re-issue is rejected `"unknown lease"` /
+   `"lease not active"` (`_commands.py:4102-4104`), which is also fine.
+   **Do not** catch `OperationalError` here (out of scope, R8), and **do not**
+   move `recovered_lease_ids.add(lease_id)` (`:1194`) after the command — it is
+   the live-lock bound and must stay before it.
+
+4. Correct the two comments that this chunk makes false: the docstring's bound-3
+   paragraph (`:1160-1167`, "the driver stops recovering it and the drive loop's
+   blocked-outcome return fires, restoring the pre-recovery fail-safe (pause
+   graph_blocked)") and the block comment at `:773-783` (same claim). Both must
+   now describe the terminal revocation and say that the run still pauses —
+   `graph_blocked`, with the node failed and its lease revoked.
+
+### Exact test additions
+
+`tests/unit/test_callback_patch_command_payloads.py` (1 new test, beside
+`test_runtime_commands_require_canonical_identity_fields` at `:122`):
+
+- `test_agent_died_recovery_exhausted_is_strict_bool` — `recovery_exhausted`
+  defaults to `False`; `AgentDiedCommand.model_validate({"lease_id": "l-1",
+  "recovery_exhausted": "true"})` raises `ValidationError` (strict mode), and
+  `True` validates.
+
+`tests/unit/test_graph_commands.py` (5 new tests, beside the existing
+`agent_died` cluster at `:8236-8760`):
+
+- `test_agent_died_recovery_exhausted_revokes_lease_and_fails_node` — event
+  types are exactly `["agent_died", "lease_revoked", "output_record_accepted",
+  "node_state_changed"]`; the record's `value` asserted by **exact equality**
+  (matching the style of the existing recovery-plan assertions) with
+  `failure_class="infrastructure_failure"`,
+  `error_class="recovery_budget_exhausted"`, `retryable=False`,
+  `phase="runtime"`, `reason="runtime_execution_missing_no_callback"`,
+  `attempt_number`; `node_state_changed` carries `new_state="failed"`,
+  `trigger="recovery_budget_exhausted"`, `reason="recovery_budget_exhausted"`.
+- `test_agent_died_recovery_exhausted_schedules_no_retry` — the output contains
+  **no** `runtime_retry_scheduled` event and **no** `recovery_plan` record, and
+  the node does not return to `ready`/`blocked`. This is the direct negation of
+  the pre-chunk behaviour and must fail against `7f5c96086`.
+- `test_agent_died_recovery_exhausted_leaves_no_active_lease` — the criterion-3
+  invariant through the **real reduction path**, not the event list: drive
+  `lease_granted` → `agent_died(recovery_exhausted=True)` through
+  `apply_command`/`reduce_event`, then assert `projection.active_leases == {}`,
+  the node state is `failed`, and the failure record is in `state.records`. Pair
+  it with an assertion that
+  `project_graph_blocked_reason(snapshot)` returns the
+  `"graph has failed node(s): …"` string and **not** the
+  `"graph has active lease(s) without callback"` string — the exact sentence
+  criterion 3 forbids.
+- `test_agent_died_max_attempts_takes_precedence_over_recovery_exhausted` — with
+  both `max_attempts` exhausted and the flag set, `error_class ==
+  "max_attempts_exhausted"` (pins D5's ordering).
+- `test_agent_died_accepted_patch_takes_precedence_over_recovery_exhausted` —
+  a planner node with an accepted patch and the flag set still ends
+  `completed`, with no failure record (pins D5's first rule: accepted work is
+  never discarded).
+
+`tests/unit/test_graph_driver_logic.py` (1 rewrite + 3 new):
+
+- **REWRITE** `test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning`
+  (`:1314`), renamed
+  `test_driver_terminally_revokes_lease_when_node_recovery_budget_is_exhausted`.
+  Keep the fixture shape (fresh `lease_id`/`execution_id` per orphan, no
+  `max_attempts` — the `fff4f6b7` reproduction). New assertions:
+  `commands.count("agent_died") == MAX_NODE_RECOVERIES_PER_DRIVE + 1`; the first
+  `MAX_NODE_RECOVERIES_PER_DRIVE` payloads have no truthy `recovery_exhausted`;
+  the **last** payload has `recovery_exhausted is True` and carries the same
+  `lease_id`/`execution_id` as the lease it concludes. **Delete** the
+  `blocked_reason == "graph has active lease(s) without callback: …"` assertion
+  at `:1370` — it pinned the forbidden state — and replace it with an assertion
+  that the driver never returns while an orphan it gave up on is unaccounted
+  for (next test). The Validator must confirm this rewrite **tightens**: the
+  new test must fail against `7f5c96086` (which issues only
+  `MAX_NODE_RECOVERIES_PER_DRIVE` commands, none flagged).
+- New `test_driver_reports_failed_node_after_terminal_revocation` — script the
+  reader so that snapshots after the terminal command show
+  `active_leases={}`, `node_states={"dynamic-worker-1": "failed"}` and
+  `failed_node_reasons={"dynamic-worker-1": "recovery_budget_exhausted"}`
+  (the real kernel's post-conclusion projection, per fact O). Assert
+  `outcome.blocked_reason == "graph has failed node(s): dynamic-worker-1: recovery_budget_exhausted"`
+  and that `"active lease(s) without callback"` does **not** appear in it. This
+  is the driver-level statement of criterion 3.
+- New `test_driver_concludes_a_node_only_once_per_drive_call` — a fake that
+  keeps producing fresh `lease_id`s for the same node *after* the terminal
+  command: total `agent_died` commands stay at
+  `MAX_NODE_RECOVERIES_PER_DRIVE + 1` and the loop terminates within
+  `ScriptedProjectionReader.max_calls` (pins `concluded_node_ids`; without it
+  this test hangs/asserts on the reader's spin guard).
+- New `test_driver_reissues_orphan_recovery_after_stale_projection` — a
+  controller that raises `StaleProjectionError` on the first `agent_died` and
+  accepts the second: the lease is still recovered (`agent_died` accepted once),
+  the driver's recovery count advanced exactly once, and the lease is not
+  abandoned. Pins part C; must fail against `7f5c96086`.
+
+### Verification conditions (what a Validator must independently confirm)
+
+1. **The forbidden state is gone, by execution and through the real kernel.**
+   Drive the `fff4f6b7` sequence through `apply_command`/`reduce_event` (not a
+   fake): after the terminal `agent_died`, assert
+   `snapshot.active_leases == {}` **and** that
+   `project_graph_blocked_reason(snapshot)` does not contain
+   `"active lease(s) without callback"`. Reading the driver tests is not
+   sufficient — they use fake controllers whose projections never move.
+2. **Non-vacuity, by reverting.** Restore the `continue` at the budget branch
+   and confirm the rewritten driver test and
+   `test_agent_died_recovery_exhausted_schedules_no_retry` FAIL; restore.
+   Separately, delete the `if payload.recovery_exhausted:` branch and confirm
+   the kernel tests fail with a retry being scheduled, not with an import error.
+3. **The rewrite tightened, not loosened** (fact E's requirement). Diff
+   `test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning`'s old
+   body against the new one and confirm: the deleted `blocked_reason` assertion
+   is replaced by strictly stronger claims (a flagged terminal command plus a
+   failed-node blocked reason), no assertion about command counts or payload
+   identity was weakened, and the new test genuinely fails on `7f5c96086`.
+4. **Fact R holds.** `test_driver_stops_retrying_a_lease_that_never_clears`
+   (`:1240`) passes **unedited**. If the Builder changed it, the change went
+   wider than specified.
+5. **Precedence is real, by execution.** Confirm the max-attempts and
+   accepted-patch precedence tests fail if the new branch is moved above them.
+6. **The hoist still holds across the new site** (chunk 2 verification 1,
+   re-run): change the single `failure_class` assignment at `_commands.py:4124`
+   and confirm the new branch's record changes with the other four sites.
+7. **Record-id collision, empirically** (fact K). Drive
+   `lease_granted → agent_died(retry) → schedule_tick → … → agent_died(recovery_exhausted=True)`
+   and confirm no `ProjectionReplayConflictError` from `insert_record`
+   (`projections.py:1257`) — i.e. the retry records and the terminal record have
+   genuinely distinct `failure-{node}-{lease}` ids.
+8. **No event-payload or checkpoint change.** The emitted `agent_died` payload
+   still has exactly its five registry fields (`payload_registry.py:114`);
+   `recovery_exhausted` appears **only** in command payloads, never in an event;
+   `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still `15`; no edit to
+   `projections.py`, `models.py`, `payload_registry.py`, `projection_codec.py`
+   (any such edit means the chunk exceeded D7/fact Q and must be justified or
+   reverted).
+9. **Anti-weakening audit.** No existing assertion about event ordering, event
+   counts, `error_class`, `retryable`, `phase`, or the chunk-2 exact-equality
+   recovery-plan `value`s was relaxed. `MAX_NODE_RECOVERIES_PER_DRIVE` is still
+   `3`.
+10. **Comment truth.** The docstring bound-3 paragraph and the
+    `drive_to_quiescence` block comment no longer claim the driver "stops
+    recovering" and leaves the lease; they describe the terminal revocation.
+    (A code change that leaves a now-false comment is a defect in this repo's
+    house style — chunks 1-2 were both held to it.)
+11. **Suite.** Full suite ≥ **5524 passed, 5 skipped** with zero regressions
+    (expect 5524 + the new test IDs). `ruff check`, `ruff format --check`, and
+    `pyright` clean.
+
+### Explicitly out of scope for chunk 3
+
+- Any new `pause_reason` value, and any change to `service.py`, `api/app.py`,
+  `workflow/graph_recovery.py`, or the UI (decision D4, option (b) rejected).
+- Any edit to `project_graph_blocked_reason` or anything else in
+  `projections.py` (decision D7 / R2).
+- Changing `MAX_NODE_RECOVERIES_PER_DRIVE` (decision D7).
+- Emitting a `RecoveryPlanRecord` with `action="cancel"` from the terminal
+  branch (edit B's last note).
+- Catching `OperationalError` in `_recover_orphaned_active_leases` (R8).
+- `api/routers/graph.py:2296`'s `lease_expired_without_callback` health row —
+  the operator surface of fact D5; a reporting change, not a state change.
+- The end-to-end scenario-#9 regression (chunk 6) — chunk 3 proves the
+  mechanism at the kernel and driver levels; chunk 6 proves the composition.
+- `boundary.py` / `handle_complete_runner_recovery` (chunk 4).
+
+---
+
 ## Open risks carried into later chunks
 
-- **R1 (chunk 3, high).** Terminally failing a node when the orphan-recovery
-  budget is exhausted changes a *pause* into a *node failure*, which may
-  cascade into run failure for graphs with no recovery node. The chunk must
-  decide, and record, whether the run outcome becomes `failed` or stays a
-  pause with a **revoked** lease and a typed failure record. Criterion 3 only
-  forbids "active lease + no pending recovery action" — a pause whose lease is
-  revoked and whose node carries an `infrastructure_failure` record satisfies
-  it. Prefer that (smaller blast radius) unless evidence says otherwise.
-- **R2 (chunk 3, medium).** `project_graph_blocked_reason`'s active-lease
-  branch (`projections.py:4964-4970`) is reachable from paths other than
-  orphan-budget exhaustion (e.g. an externally paused run mid-execution).
-  Deleting the branch outright would degrade an unrelated diagnostic. Prefer
-  narrowing it and adding an assertion/invariant test that the *orphan*
-  path can no longer reach it.
+- **R1 — RESOLVED in pass 3 by fact O and decision D4.** The feared cascade does
+  not exist: no node state feeds `project_run_state`
+  (`projections.py:2939-2960`) and `graph/` emits no run-failure event at all,
+  so a terminally failed node leaves `run_state == "active"` and the driver
+  bridge pauses `graph_blocked` with the node failed and its lease revoked —
+  precisely the outcome R1 said to prefer, reached without any new pause
+  vocabulary. Chunk 3 takes option (a).
+- **R2 — RESOLVED in pass 3 as decision D7.** `project_graph_blocked_reason`'s
+  active-lease branch (`projections.py:4964-4970`) is kept **untouched**: it is
+  a correct diagnostic for paths chunk 3 does not own (externally paused runs
+  with a live runner, `graph_driver_crashed`, `should_continue()` exits), and
+  keeping it means a future regression of this chunk surfaces as that string
+  rather than being hidden. Criterion 3 is discharged by making the branch
+  unreachable *from the orphan path* and pinning that by test
+  (chunk 3 verification condition 1). `projections.py` is on chunk 3's
+  do-not-touch list.
 - **R3 (now chunk 4, medium).** `handle_complete_runner_recovery`
   (`boundary.py:580`) is guarded by an exact-match idempotency comparison
   (`:592-634`) and a `recovery_proof_hash` (`:617-633`). Adding emitted
@@ -1094,6 +1732,23 @@ the payload-level legacy path stays covered (mirroring what chunk 1 did for
   *stated*, so this is acceptable at the criterion level — but if chunks 3-4
   are deferred, that fact must be recorded here explicitly rather than left
   implied.
+- **R7 (chunk 6, low — new in pass 3).** Chunk 3 closes the two abandonment
+  holes it owns (fact S): the budget give-up and the stale-race skip. It does
+  **not** close the case where the kernel *rejects* the terminal command — but
+  fact S2 shows the only reachable rejections (`"unknown lease"` /
+  `"lease not active"`) mean the lease is already inactive, so no forbidden
+  state survives. Chunk 6's scenario-#9 test should nonetheless assert the
+  final projection has zero active leases rather than asserting a particular
+  command sequence, so a future rejection path cannot regress the invariant
+  silently.
+- **R8 (out of scope, low — new in pass 3).** `OperationalError`
+  ("database is locked") is not caught in `_recover_orphaned_active_leases`; it
+  escapes to the crash bridge (`graph_driver.py:660-672`), which pauses
+  `graph_driver_crashed` with the lease still active. This is **not** a
+  criterion-3 violation: that pause is resumable and a resume runs
+  `reconcile_runtime` (`graph_driver.py:615`), which converts gone-execution
+  leases into `agent_died` — a pending recovery action. Recorded so a later
+  reader does not mistake it for a gap chunk 3 missed.
 - **R5 (chunk 4, low).** `_planner_outstanding_failures`
   (`prompts.py:914`) does not read `FailureRecord`s at all (fact B7). If a
   later chunk wants classified failures to reach the planner, that is
