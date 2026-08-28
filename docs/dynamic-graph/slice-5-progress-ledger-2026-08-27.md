@@ -628,6 +628,203 @@ criterion 3; out of scope for chunk 3, recorded as R8.
 
 ---
 
+## Verified facts from planning pass 4 (2026-08-28, post-chunk-3) — closing scope
+
+Established by reading `ed2ce698e` (chunks 1-3 all landed and validated). This
+is the **closing-scope pass**: its job is to decide, chunk by chunk, what the
+four acceptance criteria genuinely still require versus what is completeness
+beyond their text. Same discipline as Slice 1's chunk 6, which checked what was
+already covered before adding tests. Line numbers are as of `ed2ce698e`.
+
+### T. `failure_class` is still read by nothing, and so is `error_class`
+
+Repo-wide grep for `failure_class|retry_basis|recovery_exhausted` in `src/`
+returns 24 hits, every one of which is a **declaration or a producer**:
+`models.py:2465` / `:2523` / `:2529` (the three fields), `command_models.py:546`
+(the flag), `_commands.py:4124` (the hoisted classification), `:4178` `:4218`
+`:4260` `:4307` `:4381` `:4404` (the six `failure_class=` producer arguments),
+`:4421` `:4433` `:4466` `:4483` `:4486` (the two payload helpers),
+`:5611` (`_expired_lease_events`' own literal), and
+`graph_driver.py:784` `:788` `:1178` `:1207-1270` (the driver's flag plumbing
+and comments). **No `if`, no `match`, no dict lookup anywhere reads any of
+them.**
+
+Independently: `error_class` appears in `src/` **outside** `_commands.py` and
+`models.py` exactly once — `graph_driver.py:63`, and that is a *comment*. So
+chunk 1's framing ("criterion 1 is satisfied as the decision surface — after
+chunk 3 no recovery decision reads `error_class`") is now literally true and
+verified by execution-free but exhaustive grep: there is no decision surface
+reading `error_class` at all, because there is no decision surface reading
+either field.
+
+**Consequence for the AC1 judgment (see disposition below): wiring producers
+for `verification_failure` / `invalid_plan_failure` today cannot fix any
+misbehaviour, because no behaviour depends on the value.** It would add a
+second and third write-only field family rather than correcting a wrong one.
+
+### U. `handle_complete_runner_recovery` has NO ghost-lease gap — re-checked post-chunk-3
+
+The pass-2 "deferrable" tag on chunk 4 was taken on file/blast-radius grounds
+(fact J). Re-derived here on *correctness* grounds, reading the function in its
+current state:
+
+1. **The lease is revoked unconditionally, above every branch.**
+   `boundary.py:635-647` builds `lifecycle_events` starting with a
+   `lease_revoked` (`trigger="runner_recovery_completed"`) **before** the
+   `if attempt.recovery_reason in {"boundary_mismatch", "runner_died"}` test at
+   `:648`. Every non-conflict return path (`:703-707`) emits it. There is no
+   reachable completion in which this handler leaves the lease `active`. This
+   is the structural opposite of the pre-chunk-3 driver, whose budget branch
+   returned *without* issuing any command at all (fact N).
+2. **The guards above it are all conflicts, not silent skips.**
+   `:592` unknown recovery, `:594-608` already-`recovered` (exact-match
+   idempotent no-op, or a conflict), `:609-610` not pending, `:611-634` proof
+   mismatch. Each returns a `command_rejected`; none returns `[]` while leaving
+   an orphaned lease unaccounted for. The idempotent `return []` at `:607` is
+   reached only when the lease was **already** revoked by the identical earlier
+   completion.
+3. **The one boundary-path state that does leave an active lease is not in this
+   function, and chunk 3 already covers it.** If `complete_runner_recovery` is
+   never issued — the restore raised (`RecoveryRestoreError`,
+   `dispatch.py:1976-1977`), or recovery was never requested at all because the
+   exception was a `CompromisedFileStateError` (`dispatch.py:1009-1010`) — the
+   lease stays `active` with a gone execution. That is precisely the input to
+   `_recover_orphaned_active_leases`, which since chunk 3 always ends in a
+   recovery `agent_died` or a terminal `agent_died(recovery_exhausted=True)`
+   (fact N + decision D6). **So the boundary path's failure modes drain into the
+   path Slice 5 hardened**; they are not a second, uncovered hole.
+4. **The reasons this handler serves are not the missing-callback trigger.**
+   `RequestRunnerRecoveryCommand.reason` is
+   `Literal["runner_died", "cancelled"]` (`command_models.py:390`) and
+   `boundary_mismatch` is synthesized by `handle_finalize_runner_execution`
+   (`boundary.py:328`, `:339`). All three are *dispatch-observed* terminations
+   with a live reporting path — the opposite of "the execution disappeared and
+   nobody told us". Criterion 2 scopes itself to "missing-callback /
+   disappeared-execution handling"; this is a different trigger, as the pass-2
+   ordering rationale already argued.
+
+**Conclusion: chunk 4 is a consistency/observability improvement — typed records
+on a path that currently emits none — and not a correctness fix. It closes no
+criterion-3 hole because that path has none.**
+
+### V. The boundary retry branch is unbounded for dynamic nodes — checked, and out of scope
+
+Recorded so a future reader does not mistake it for a gap this pass missed.
+`boundary.py:650` reads `max_attempts = attempt.recovery_max_attempts or 0` and
+`:664` only fails the node when `max_attempts > 0 and attempt_number >=
+max_attempts`; the producer passes
+`_runtime_death_max_attempts(context) or 0` (`dispatch.py:1471`, `:1513`). So a
+dynamically created node with no compiled budget retries **forever** on the
+managed path, exactly as the kernel path did before the driver's
+`MAX_NODE_RECOVERIES_PER_DRIVE` bounded it. The drive loop is a bare
+`while True` (`graph_driver.py:804`) whose only exits are quiescence, a blocked
+outcome, and `should_continue()`.
+
+This is **not** a criterion-3 violation and **not** chunk 4's job: every
+iteration conclusively revokes the lease (fact U1) and every iteration requires
+a real dispatch and a real runner death, so it is a livelock on genuine
+progress, not a paused run holding a ghost lease. It is the same
+"`max_attempts=0` means unbounded" pathology fact H named on the kernel side —
+a policy gap, not a recovery-semantics gap. Recorded as R11.
+
+### W. Fact B4's `graph_patch_rejected` site count was low, and the surface is awkward
+
+Chunk 5's `invalid_plan_failure` producer would not be one edit. `_commands.py`
+emits `graph_patch_rejected` at **five** sites — `:2389` (validator rejection),
+`:2403` (multiple successor planners), `:2420` (planner generation budget, which
+additionally creates a gate node and a `node_state_changed`), `:2459` (request
+record validation), `:2485` (carryover binding) — not the two fact B4 listed
+(`:2388`, `:2402`, pre-chunk-1 numbering; the third, fourth and fifth were
+missed). `verification_failed` has one site, `_commands.py:1755`.
+
+Three concrete design problems a chunk-5 Builder would have to solve, none of
+them mechanical:
+
+1. **No lease.** `_failure_record_payload`'s `record_id` is
+   `f"failure-{node_id}-{lease_id or error_class}"` (`_commands.py:4449`). A
+   patch rejection has no lease, so two rejections of the same node for the same
+   reason would derive the **same** `record_id` with a different `reason` /
+   position — a non-identical reuse, which `insert_record`
+   (`projections.py:1257-1278`) raises `ProjectionReplayConflictError` on
+   (fact K). A planner that submits two bad patches is not an edge case; it is
+   the normal correction loop. The id scheme would need extending first.
+2. **A rejected patch is feedback, not a node failure.** The planner keeps its
+   lease and submits a corrected patch; the budget-rejection site even builds an
+   operator gate rather than failing anything. Recording a `FailureRecord`
+   against `proposed_by_node_id` would assert terminal-ish semantics on a
+   recoverable path.
+3. **Blast radius.** `graph_patch_rejected` is referenced 43 times across 21
+   test files; `verification_failed` 34 times across 12. Both are ordinary
+   graph-flow events with exact event-list assertions around them (compare
+   chunk 2, where inserting **one** event into **one** branch already shifted
+   indices in three integration tests).
+
+### X. What chunks 1-3 already prove about scenario #9, and the one seam they do not
+
+Checked test by test, so chunk 6 tests the gap and not the covered part:
+
+| property scenario #9 names | already covered? | where |
+|---|---|---|
+| a missing callback ends in a **healthy classified retry** | **yes, end to end** | `tests/integration/test_graph_fr16_acceptance.py:470-540` `test_fr16_terminal_exhausted_failure_record_callback_readbacks` — real driver `.run()`, real agents, API readback: asserts `runtime_retry_scheduled`, a `retryable=True` record with `failure_class="infrastructure_failure"` and `error_class="runtime_death_retry_scheduled"`, then a terminal record, `run.pause_reason == "graph_blocked"`, node `failed`, and `scheduler["leases"] == {"active": [], "suspended": []}`. Extended by chunk 2 (`7f5c96086`). |
+| the kernel really produces zero active leases + a typed record from `agent_died(recovery_exhausted=True)` | **yes, real reduction path** | `tests/unit/test_graph_commands.py:9003` `test_agent_died_recovery_exhausted_leaves_no_active_lease` — drives `apply_command`/`reduce_event`, asserts `snapshot.active_leases == {}`, node `failed`, one `recovery_budget_exhausted` record, and `project_graph_outcome(...).blocked_reason` is the failed-node string, not the forbidden one. |
+| the driver really issues the flagged terminal command once the budget is out | **yes, fake kernel** | `tests/unit/test_graph_driver_logic.py:1336` (+ `:1440` conclude-once, `:1501` stale re-issue). |
+| the driver's blocked outcome is the failed-node string | **yes, but the input is hand-written** | `tests/unit/test_graph_driver_logic.py:1390` `test_driver_reports_failed_node_after_terminal_revocation` builds `concluded_snapshot` **by hand** (`:1400-1408`: `active_leases={}`, `node_states={"dynamic-worker-1": "failed"}`, `failed_node_reasons={…: "recovery_budget_exhausted"}`) and feeds it to a `ScriptedProjectionReader` (`:255`). |
+
+**The seam.** The last two rows are joined by an assumption, not by code: the
+driver tests use `StablePositionAgentDiedRecordingController`
+(`test_graph_driver_logic.py:329`), a fake kernel whose projections never move,
+so the "what the kernel does with the flagged command" half is *asserted* by the
+hand-written snapshot rather than *produced*. The kernel test proves the kernel
+produces it, from a hand-built event list rather than from the driver. **No
+single test drives the real driver loop against the real kernel and reads the
+real projection.** That is exactly the shape of Slice 1's fact 53 (the
+admission → projection → prompt seam), and it is the whole of chunk 6's genuine
+remaining work.
+
+Confirming the gap is real: `_recover_orphaned_active_leases` and
+`runtime_execution_missing_no_callback` appear in `tests/` only at
+`test_graph_driver_logic.py:1062` `:1129` and `test_graph_commands.py:8936`
+`:8958` `:8981` `:9012` — all unit-level, all with fakes on one side or the
+other. **Zero integration tests exercise the orphan sweep.**
+
+### Y. The harness chunk 6 needs already exists, and so does the trap that would make it vacuous
+
+- **Harness.** `tests/integration/test_graph_run_driver.py:993-1014` is the
+  proven pattern: a real `GraphController(session_factory, clock, ids,
+  auto_dispatch=False)`, a real `GraphDispatchExecutor`, a
+  `GraphRunDriver.__new__(GraphRunDriver)` driven through
+  `drive_to_quiescence(...)` with `read_projection` reading the real event log
+  (`project_graph_projection_snapshot(await _events(...))`). The file also has
+  the `file_db` fixture (`:246`), `_create_graph_run` (`:350`), `seed_run`, the
+  `_graph_event` direct-append helper (`:439`) and a precedent for appending
+  hand-built `node_created`/`edge_created`/`input_bound` events straight into
+  the store (`:940-991`).
+- **Why a real agent cannot produce the orphan.** In this harness a
+  *non-managed* dispatch always concludes: `dispatch.py:972-974` calls
+  `_agent_died(context, "agent exited without submit")` when the runner returns
+  without a callback, and the `except Exception` arm (`:1011-1012`) does the
+  same. A *managed* one routes to `request_runner_recovery`
+  (`:976`, `:978`, `:991`, `:1010`) — the boundary path, not the orphan sweep.
+  **The orphan sweep only ever sees a lease whose outbox item was delivered by
+  an executor this driver does not own** (its own docstring,
+  `graph_driver.py:1153-1159`). The faithful way to model that in a test is a
+  dispatcher that delivers nothing while the kernel, driver, executor and
+  projection are all real — not a fake kernel.
+- **The trap.** A compiled worker node carries
+  `task.retry.max_attempts` (`compiler.py:532`, `:767`), whose default is
+  **3** (`config/models.py:187 RetryConfig.max_attempts`), and
+  `MAX_NODE_RECOVERIES_PER_DRIVE` is also **3**. Decision D5 puts the kernel's
+  max-attempts branch (`_commands.py:4240`) *above* the `recovery_exhausted`
+  branch (`:4283`), so on a default compiled node the run terminates via
+  `max_attempts_exhausted` and **chunk 3's new branch never executes**. A
+  chunk-6 test written against a default routine would be green, would look like
+  it proved scenario #9, and would prove nothing chunk 2 had not already proved.
+  The node under test must therefore be unbounded (a directly appended
+  `node_created` with no `max_attempts` — the `fff4f6b7` shape, fact H) or
+  carry a budget well above 3, and the test must assert **which** branch ran.
+
+---
+
 ## Chunk queue
 
 | # | Name | One-line description | AC |
@@ -635,9 +832,74 @@ criterion 3; out of scope for chunk 3, recorded as R8.
 | 1 | Typed `FailureClass` on the failure-record path | Add a `FailureClass` `Literal` alias + additive optional `failure_class` on `FailureRecordValue`; make the `_failure_record_payload` helper *require* it; classify all four existing sites `infrastructure_failure`. No behaviour change. | 1 |
 | 2 | Classify before retry, and state the retry basis | **Revised in pass 2 — kernel path only.** Hoist the classification to a single point above every branch in `_apply_agent_died`; emit a `retryable=True` classified `FailureRecord` on the retry branch (which emits none today); add `failure_class` / `retry_base_snapshot_id` / `retry_basis` / `attempt_number` / `max_attempts` to `RecoveryPlanValue` and populate them. | 1, 2 |
 | 3 | Conclusive lease revocation on missing callback | **Revised in pass 3.** New typed `recovery_exhausted: bool` on `AgentDiedCommand` + a fifth terminal branch in `_apply_agent_died` (revoke lease, `retryable=False` `recovery_budget_exhausted` `FailureRecord`, node → `failed`); the driver *takes* that action instead of `continue`-ing past an exhausted budget, and retries the command on a stale race. `projections.py` is **not** touched (R2) and only the one test that pins the bad state (`test_graph_driver_logic.py:1370`) is rewritten (fact R). | 3 |
-| 4 | Boundary-path recovery symmetry | **New in pass 2 (split out of the old chunk 2).** `handle_complete_runner_recovery` (`boundary.py:580`) emits the same typed pair — a classified `FailureRecord` and a `RecoveryPlan` with `retry_basis="worktree_restored_to_baseline"` populated from the attempt's `baseline_tree_sha` / `restored_paths` / `removed_paths` (fact J). Ids namespaced by `recovery_id` (fact K). Events only, never command-payload fields (risk R3). **Deferrable.** | 2 |
-| 5 | Typed failure records at the verification and invalid-plan surfaces | Emit `verification_failure` / `invalid_plan_failure` records at `verification_failed` and `graph_patch_rejected`, so the enum's other two members have real producers. **Deferrable** — see note below. | 1 |
-| 6 | Scenario #9 regression coverage | End-to-end: a missing callback terminates in either a healthy classified retry or a conclusively revoked lease with typed recovery state — never a paused run with an active lease. | 4 |
+| 4 | Boundary-path recovery symmetry | **New in pass 2 (split out of the old chunk 2).** `handle_complete_runner_recovery` (`boundary.py:580`) emits the same typed pair — a classified `FailureRecord` and a `RecoveryPlan` with `retry_basis="worktree_restored_to_baseline"` populated from the attempt's `baseline_tree_sha` / `restored_paths` / `removed_paths` (fact J). Ids namespaced by `recovery_id` (fact K). Events only, never command-payload fields (risk R3). **DEFERRED in pass 4 — R9.** | 2 |
+| 5 | Typed failure records at the verification and invalid-plan surfaces | Emit `verification_failure` / `invalid_plan_failure` records at `verification_failed` and `graph_patch_rejected`, so the enum's other two members have real producers. **DEFERRED in pass 4 — R10.** | 1 |
+| 6 | Scenario #9 regression coverage | End-to-end: a missing callback terminates in either a healthy classified retry or a conclusively revoked lease with typed recovery state — never a paused run with an active lease. **REQUIRED; specified in pass 4 and scoped down to the one uncovered seam (fact X).** | 4 |
+
+### Closing-scope dispositions (pass 4, 2026-08-28)
+
+The queue's pass-2 "Deferrable" tags were labels, not rulings. Pass 4 re-derived
+each from the code at `ed2ce698e` and rules as follows.
+
+**Chunk 4 — DEFER (R9). Grounded in fact U, not in the pre-existing label.**
+`handle_complete_runner_recovery` was re-read in its current, post-chunk-3
+state. It emits `lease_revoked` **unconditionally, above every branch**
+(`boundary.py:635-647`, before the `:648` reason test), on every non-conflict
+return; its four guards all return `command_rejected` rather than skipping an
+orphan; and the one boundary state that *does* leave a lease active — a restore
+that raised (`dispatch.py:1976-1977`) or a `CompromisedFileStateError` that
+skipped recovery entirely (`dispatch.py:1009-1010`) — produces exactly the
+input `_recover_orphaned_active_leases` now terminates conclusively. **This
+path has none of the ghost-lease or unclassified-failure defects chunks 1-3
+fixed.** Wiring `failure_class`/`retry_basis` onto it is therefore a
+consistency and observability improvement, not a correctness fix, and it is on
+a trigger (`runner_died`/`boundary_mismatch`/`cancelled` — all
+dispatch-observed) that criterion 2 does not name. No acceptance criterion goes
+unmet by deferring it. It stays desirable for one honest reason, recorded in
+R9: `worktree_restored_to_baseline` is the only `RetryBasis` member describing
+a real differentiating action, and it has no producer.
+
+**Chunk 5 — DEFER (R10), including the "partial build to make AC1 literally
+true" option, which was considered and rejected on evidence.** AC1 asks for
+"a typed `FailureClass` (or equivalent) distinguishing at least
+`infrastructure_failure`, `verification_failure`, and `invalid_plan_failure` —
+replacing the single untyped `error_class` string". Read as written, it is a
+requirement about the **type and the decision surface**, both delivered: chunk 1
+declared the three-member `Literal` with the AC's own glosses as its
+discriminant docstring, and after chunk 3 no decision in the system reads
+`error_class` — because, per fact T, no decision reads *any* of it. The
+producer question is the honest one, so it was tested against the standard the
+brief set: *is there a real, currently-broken thing that motivates wiring these
+producers now?* **No.** Fact T establishes by exhaustive grep that not one
+branch, dict lookup or comparison anywhere in `src/` reads `failure_class`; a
+record classified `verification_failure` today would change no behaviour, reach
+no prompt (fact B7 / R5), and appear on no operator surface. Wiring producers
+now would be "make the enum feel complete" work whose *only* observable effect
+is new rows in a write-only record family — while costing the three real
+problems fact W documents: a `record_id` scheme with no `lease_id` to
+disambiguate repeated planner rejections (a `ProjectionReplayConflictError`
+hazard on the normal correction loop), failure semantics asserted on a
+recoverable feedback path, and 43 + 34 existing test references across 33 files
+around events with exact-list assertions. The narrower half-measure — wire only
+the single `verification_failed` site (`_commands.py:1755`) so two of three
+members have producers — was rejected too: it carries the same zero payoff, the
+same 34-reference blast radius, and would leave the enum equally "incomplete"
+while pretending otherwise. This is the same call Slice 1's chunk 6 made when it
+declined a redundant integration test: **the correct time to add these producers
+is when a consumer needs to tell the classes apart**, and R10 records the exact
+insertion points so that session does not re-derive them.
+
+**Chunk 6 — BUILD, scoped down (fact X).** Required by AC4 and not deferrable.
+But three of the four properties scenario #9 names are already solidly covered
+(fact X's table), including the "healthy classified retry" disjunct end to end
+through the real driver and the API
+(`test_graph_fr16_acceptance.py:470-540`). The single uncovered thing is the
+**seam**: the driver tests join "the driver issues the flagged terminal command"
+to "the run reports a failed node with no lease" through a *hand-written*
+snapshot fed to a fake kernel (`test_graph_driver_logic.py:1390-1436`), and the
+kernel test proves the kernel produces that snapshot from a *hand-built* event
+list. Chunk 6 therefore builds **one** integration test closing that one chain,
+plus one small negative pin — not a re-test of chunks 1-3.
 
 **Ordering rationale (revised in pass 2).** Chunk 1 is the only chunk with no
 prerequisite and is a pure serialize/replay property, so a failed validation is
@@ -1716,6 +1978,206 @@ Notes the Builder must respect:
 
 ---
 
+## Chunk 6 — Scenario #9 regression coverage (SPECIFIED, not built)
+
+**Goal.** Close the one seam chunks 1-3 leave open (fact X): drive a missing
+callback through the **real driver loop, the real kernel and the real
+projection read path in a single chain**, and assert the scenario-#9 invariant
+on the state that chain actually produces — never on a hand-written snapshot.
+
+**This chunk is test-only.** It touches no production file. If a Builder finds
+itself editing `src/`, the change went wider than specified and must be
+justified or reverted.
+
+### Scope decision — what this chunk does NOT re-test
+
+Fact X's table lists what is already proved and where. Chunk 6 must not
+duplicate any of it:
+
+- **Not** the retry disjunct of scenario #9. `test_graph_fr16_acceptance.py`'s
+  `test_fr16_terminal_exhausted_failure_record_callback_readbacks` already
+  drives a real runner death end to end through the real driver and reads the
+  result back through the API, asserting the classified `retryable=True` record,
+  `runtime_retry_scheduled`, the terminal record, `pause_reason ==
+  "graph_blocked"`, the failed node, and empty leases. Adding a second such test
+  would be the redundancy Slice 1's chunk 6 declined.
+- **Not** the kernel's response to `agent_died(recovery_exhausted=True)`
+  (`test_graph_commands.py:9003` drives the real reduction path already).
+- **Not** the driver's command sequencing, conclude-once bound, or stale
+  re-issue (`test_graph_driver_logic.py:1336`, `:1440`, `:1501`).
+
+What is left is the join, and one negative pin.
+
+### Decision D8 — the orphan must come from an undelivered outbox item, not a fake kernel
+
+Fact Y establishes that no real agent in this harness can produce an orphaned
+lease: every non-managed dispatch concludes with `agent_died`
+(`dispatch.py:972-974`, `:1011-1012`) and every managed one routes to
+`request_runner_recovery` (`:976`-`:1010`). The orphan sweep exists for exactly
+one production shape, named in its own docstring
+(`graph_driver.py:1153-1159`): **the outbox item was delivered by an executor
+this driver instance does not own, and that execution vanished without a
+callback.**
+
+So the test models that shape and nothing else: **the controller, the driver,
+the executor and the projection reader are all real; only outbox delivery is
+suppressed.** Concretely, pass `drive_to_quiescence` a dispatcher whose
+`dispatch_pending` is a no-op (the shape `RecordingDispatcher` already has in
+`tests/unit/test_graph_driver_logic.py`) together with a real
+`GraphDispatchExecutor` built over an empty `AgentFactory({}, [])`, so
+`executor.is_running(execution_id)` is honestly `False` for the lease the real
+kernel granted. Nothing about the kernel, the driver's decision logic, or the
+projection is faked.
+
+**Do not** substitute a fake controller — that is the very thing this chunk
+exists to stop doing. **Do not** monkeypatch (repo rule: forbidden in committed
+tests); inject the no-op dispatcher through `drive_to_quiescence`'s existing
+`dispatcher=` parameter, exactly as `test_graph_run_driver.py:1008-1014` does.
+
+### Decision D9 — the node under test must be unbounded, and the test must say which branch ran
+
+Fact Y's trap: a compiled worker carries `task.retry.max_attempts` (default
+**3**, `config/models.py:187`), `MAX_NODE_RECOVERIES_PER_DRIVE` is also **3**,
+and D5 puts the kernel's max-attempts branch above the `recovery_exhausted`
+branch. A test on a default routine terminates via `max_attempts_exhausted`,
+never executes chunk 3's branch, and proves nothing new while looking green.
+
+Therefore:
+
+- **Preferred:** append a `node_created` for a dynamic worker with **no**
+  `max_attempts` directly into the event store — the `fff4f6b7` shape (fact H),
+  using the `_graph_event` helper and the direct-append precedent already in
+  this file (`test_graph_run_driver.py:439`, `:940-991`) — so the kernel's
+  budget cannot fire and the driver's budget is the only bound.
+- **Sanctioned fallback** if wiring a dynamic node into a schedulable state
+  proves disproportionate: give the routine's task
+  `"retry": {"max_attempts": 10}` (the knob `test_graph_fr16_acceptance.py:163`
+  already parameterises) so the driver budget is reached first. Record which
+  route was taken in the verified-chunk entry.
+- **Mandatory either way:** assert
+  `error_class == "recovery_budget_exhausted"` on the terminal record. Without
+  that assertion the test cannot distinguish "chunk 3's branch ran" from "the
+  pre-chunk-3 kernel budget ran", and R7's advice to assert the invariant rather
+  than a command sequence must not be read as licence to omit it.
+
+### Files touched (exactly these)
+
+Tests (1, possibly 2):
+
+1. `tests/integration/test_graph_run_driver.py` — both new tests.
+2. *(only if the fallback of D9 is taken)* a local `_routine(...)` keyword in
+   the same file. No other test file, and **no production file.**
+
+**Do not touch:** anything under `src/`; `tests/unit/test_graph_driver_logic.py`
+and `tests/unit/test_graph_commands.py` (their chunk-3 tests are the covered
+half — fact X — and must pass unedited); `tests/integration/test_graph_fr16_acceptance.py`
+(already covers the retry disjunct; editing it would signal duplication);
+`tests/graph_fr17_fixture.py` (legacy-replay pins).
+
+### Exact test additions
+
+**1. `test_missing_callback_ends_with_a_conclusively_revoked_lease`** — the
+chunk's whole point. In `tests/integration/test_graph_run_driver.py`, on the
+`file_db` fixture, following the harness at `:993-1014`:
+
+Setup:
+- `_init_repo(repo)`, `_create_graph_run(...)`, `seed_run(...)`, real
+  `GraphController(session_factory, clock, ids, auto_dispatch=False)`,
+  `accept_run` + `start` (the pattern at `:479-483`).
+- Put an unbounded, schedulable worker node in the graph per D9.
+- Real `GraphDispatchExecutor(session_factory, controller,
+  AgentFactory({}, dispatch_order), worktree_path=repo, artifact_store=...)`.
+- A no-op dispatcher (D8).
+- `read_projection = lambda run_id: project_graph_projection_snapshot(await
+  _events(session_factory, run_id))` — the real event log, re-read every call.
+- `driver = GraphRunDriver.__new__(GraphRunDriver)`;
+  `outcome = await driver.drive_to_quiescence(run_id, controller=..., dispatcher=..., executor=..., read_projection=...)`.
+
+Assertions, **all against state the chain produced**, none hand-written:
+- `dispatch_order == []` — nothing was ever executed, so the lease really was
+  orphaned rather than concluded by a runner.
+- Re-project from the real event log after the drive returns:
+  `projection.active_leases == {}`. **This is criterion 3, end to end.**
+- The node's state is `failed`.
+- Exactly one `failure_record` for that node, with
+  `value["failure_class"] == "infrastructure_failure"`,
+  `value["error_class"] == "recovery_budget_exhausted"` (D9),
+  `value["retryable"] is False`.
+- The event log contains `MAX_NODE_RECOVERIES_PER_DRIVE + 1` `agent_died`
+  events, the last one preceded by a `lease_revoked` for the same lease and
+  followed by `node_state_changed → failed` — i.e. the kernel took the terminal
+  branch, not a retry.
+- `outcome.completed is False` and
+  `outcome.blocked_reason == "graph has failed node(s): <node>: recovery_budget_exhausted"`.
+- **The forbidden sentence never appears:** `"active lease(s) without callback"
+  not in (outcome.blocked_reason or "")`.
+
+**2. `test_missing_callback_never_pauses_with_an_active_lease`** — the negative
+pin R7 asks for, cheap because it reuses test 1's setup (factor the setup into a
+module-level helper rather than duplicating it). Rather than asserting a command
+sequence, assert the **invariant over the whole drive**: capture the projection
+after the drive and assert that for every lease in the final event log there is
+a corresponding `lease_revoked`, so no lease is left `active`; and that the run
+row is `paused` with `pause_reason == "graph_blocked"` (read through
+`_run_status` / the run repository, the pattern at `:459-464`) while the
+projection holds **zero** active leases. This is the property that must survive
+even if a future change alters *how* the driver concludes — including the
+kernel-rejection path fact S2/R7 leaves open.
+
+If the Builder judges that test 2 adds nothing over test 1's assertions once
+written (a real possibility — say so rather than padding), it may be folded into
+test 1 as additional assertions, with that judgement recorded in the
+verified-chunk entry. **What may not be dropped is the run-row pause assertion**:
+no existing test connects the terminal revocation to the actual paused run row.
+
+### Verification conditions (what a Validator must independently confirm)
+
+1. **The chain is genuinely real.** Read the new test and confirm: the
+   controller is a real `GraphController` (not `RecordingController` or any
+   `*AgentDiedRecordingController`), the projection comes from
+   `project_graph_projection_snapshot` over the real event store on every read,
+   and **no `GraphProjectionSnapshot` is constructed by hand** anywhere in the
+   test. A hand-built snapshot anywhere in the assertion path means the seam was
+   not closed and the chunk failed.
+2. **Non-vacuity, by reverting.** Restore the pre-chunk-3 `continue` at the
+   driver's budget branch (`graph_driver.py:1213-1216`) and confirm the new test
+   FAILS — and fails on the lease/blocked-reason assertions, not on an import or
+   a timeout. Restore. Separately, delete the kernel's
+   `if payload.recovery_exhausted:` branch (`_commands.py:4283`) and confirm the
+   new test fails with a retry having been scheduled.
+3. **D9's trap was avoided, by execution.** Confirm the terminal record's
+   `error_class` really is `recovery_budget_exhausted` and **not**
+   `max_attempts_exhausted`. If it is the latter, the node under test was
+   bounded, chunk 3's branch never ran, and the test is vacuous regardless of
+   whether it passes.
+4. **No production change.** `git diff --stat` for the chunk touches only
+   `tests/`. `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still `15`.
+5. **No duplication and no weakening.** The chunk-3 unit tests
+   (`test_graph_driver_logic.py:1336`, `:1390`, `:1440`, `:1501`) and
+   `test_graph_commands.py:9003` pass **unedited**; the fr16 acceptance test is
+   unedited. Any edit to them is a signal the Builder re-tested the covered half
+   instead of the seam.
+6. **The test is not flaky by construction.** It must not depend on wall-clock
+   sleeps or on `asyncio` task interleaving: the drive loop's `sleep` is
+   injectable (`_driver`'s `advance_clock`, `:380`) and the executor runs
+   nothing. Confirm by running the new test 5 times in a row.
+7. **Suite.** Full suite ≥ **5533 passed, 5 skipped** with zero regressions
+   (expect 5533 + the new test IDs). `ruff check`, `ruff format --check`, and
+   `pyright` clean.
+
+### Explicitly out of scope for chunk 6
+
+- Any production edit (this chunk is test-only).
+- A second end-to-end test of the retry disjunct (already covered — fact X).
+- Converting the `fff4f6b7` dogfood run into a fixture-driven replay: that is
+  **Slice 6**, explicitly a non-goal of this pass.
+- `boundary.py` coverage (chunk 4, deferred — R9).
+- `verification_failure` / `invalid_plan_failure` coverage (chunk 5, deferred —
+  R10).
+- Bounding the boundary path's unbounded retry (R11).
+
+---
+
 ## Open risks carried into later chunks
 
 - **R1 — RESOLVED in pass 3 by fact O and decision D4.** The feared cascade does
@@ -1781,6 +2243,215 @@ Notes the Builder must respect:
   (`prompts.py:914`) does not read `FailureRecord`s at all (fact B7). If a
   later chunk wants classified failures to reach the planner, that is
   additional wiring, not a free consequence.
+- **R9 — chunk 4 DEFERRED (pass 4, low). Boundary-path recovery emits no typed
+  records.** `handle_complete_runner_recovery` (`boundary.py:580`) still leaves
+  behind no `FailureRecord` and no `RecoveryPlan`, so the one recovery path in
+  the system that takes a genuinely differentiating action — restoring the
+  worktree to a durable baseline (fact J) — is also the one that records
+  nothing about it, and `RetryBasis`'s `worktree_restored_to_baseline` member
+  (declared by chunk 2) still has **no producer**. *Why this is a deferral and
+  not a gap:* fact U establishes that this path revokes its lease
+  unconditionally above every branch (`boundary.py:635-647`) and that its only
+  lease-leaving failure modes (`RecoveryRestoreError` at `dispatch.py:1976`,
+  `CompromisedFileStateError` at `dispatch.py:1009`) drain into the orphan
+  sweep chunk 3 made conclusive. **No acceptance criterion is unmet.**
+  Criterion 2 scopes itself to missing-callback handling; this path's triggers
+  (`runner_died`, `boundary_mismatch`, `cancelled`) are all dispatch-observed.
+  *When to build it:* alongside the first consumer of `retry_basis`, or the
+  first operator surface that renders recovery provenance. *What it needs:*
+  events only, never command-payload fields (R3 — the `recovery_proof_hash` at
+  `boundary.py:617-633` would break in-flight recoveries across a restart), and
+  record ids namespaced by `recovery_id` (`boundary.py:534`) to avoid the fact-K
+  collision with `_apply_agent_died`'s `failure-{node}-{lease}` ids. The
+  `ExecutionAttemptValue` fields it would read (`baseline_tree_sha`,
+  `restored_paths`, `removed_paths`, `recovery_scope`) are listed in fact J.
+- **R10 — chunk 5 DEFERRED (pass 4, low). `verification_failure` and
+  `invalid_plan_failure` have no producers.** The `FailureClass` alias declares
+  three members; only `infrastructure_failure` is ever emitted. *Why this is a
+  deferral and not an unmet AC1:* AC1 asks for a **type** that distinguishes the
+  three classes and for it to replace `error_class` **as the decision surface**;
+  chunk 1 delivered the type with the AC's own glosses as its discriminant, and
+  fact T shows by exhaustive grep that no decision anywhere reads `error_class`
+  — or `failure_class`. So there is nothing today that behaves incorrectly
+  because every record says `infrastructure_failure`; adding producers would
+  change no behaviour, reach no prompt (R5), and appear on no operator surface.
+  *What it would cost now, per fact W:* five `graph_patch_rejected` sites
+  (`_commands.py:2389`, `:2403`, `:2420`, `:2459`, `:2485`) that have **no
+  `lease_id`**, so the existing `record_id` scheme
+  (`f"failure-{node_id}-{lease_id or error_class}"`, `_commands.py:4449`) would
+  derive colliding ids for a planner's repeated rejections and raise
+  `ProjectionReplayConflictError` (fact K) on the *normal* correction loop; plus
+  failure semantics asserted on a recoverable feedback path; plus 43 + 34
+  existing references across 33 test files. *When to build it:* when a consumer
+  needs to tell the classes apart — the two realistic first consumers are
+  `_planner_outstanding_failures` (`prompts.py:914`, R5) and the operator
+  read model. *Where:* `verification_failed` at `_commands.py:1755` (has a lease
+  and a node; the cheaper of the two), `graph_patch_rejected` at the five sites
+  above (needs an id scheme extension first). Building only the first half was
+  considered in pass 4 and rejected: same zero payoff, same blast radius, and it
+  would leave the enum equally unproduced while appearing to close the item.
+- **R11 — out of scope, low (new in pass 4). The managed boundary path retries
+  unbounded for dynamic nodes.** `boundary.py:650` reads
+  `attempt.recovery_max_attempts or 0` and `:664` only fails the node when
+  `max_attempts > 0`, while the producer passes
+  `_runtime_death_max_attempts(context) or 0` (`dispatch.py:1471`, `:1513`). A
+  dynamically created node with no compiled budget therefore retries forever on
+  the managed path, and the drive loop is a bare `while True`
+  (`graph_driver.py:804`) bounded only by quiescence, a blocked outcome, and
+  `should_continue()`. Recorded so a later reader does not mistake it for a
+  criterion-3 hole this pass missed: **it is not one.** Every iteration revokes
+  the lease conclusively (fact U1) and every iteration requires a real dispatch
+  and a real runner death, so it is a livelock on genuine progress, not a paused
+  run holding a ghost lease. It is the same `max_attempts == 0` policy gap fact
+  H named on the kernel side, which the driver's
+  `MAX_NODE_RECOVERIES_PER_DRIVE` bounds only for the *orphan* path. Fixing it
+  means deciding a default budget for planner-created nodes — a policy question
+  for the compiler/planner contract, not for recovery semantics.
+
+---
+
+## Slice 5 — completion summary
+
+Written at chunk-6 specification time (pass 4, 2026-08-28). **Chunks 1-3 are
+built and validated unconditionally; flip the status line and confirm the final
+count after chunk 6 is built and validated.** Merge to `main` when the
+conditions at the bottom hold.
+
+### What Slice 5 achieved
+
+Recovery went from *unclassified and inconclusive* to *typed, decided before the
+fact, and terminal*:
+
+1. **Typed** (chunk 1, `a42c27c97`). A three-member `FailureClass` `Literal`
+   (`models.py`, following the house `LeaseProjectionState` pattern) plus an
+   additive `failure_class` on `FailureRecordValue`, with the producer helper
+   `_failure_record_payload` taking it as a **non-defaulted keyword-only**
+   parameter — so the model stays widening-only for replay while no new call
+   site can exist without naming a class. `error_class` stays a free string,
+   demoted by docstring to a detail code, because every historical
+   `output_record_accepted` payload is re-validated on every projection rebuild
+   (`projections.py:1473-1479`) and journals already carry `agent_error`,
+   `process_exit`, `lease_expired` (fact B5). Same additive call Slice 1 chunk 2
+   made for `access_mode`.
+2. **Decided before the fact** (chunk 2, `7f5c96086`). The classification moved
+   to a single assignment above every branch in `_apply_agent_died` — it was
+   previously four hardcoded literals *inside* branches already taken, making
+   criterion 2's "classify before deciding on retry" a structurally false
+   statement about the code (fact G). The retry branch, the single most common
+   infrastructure failure in the system, went from emitting **no
+   `FailureRecord` at all** to emitting the system's first `retryable=True` one.
+3. **Stated honestly** (chunk 2). `RecoveryPlanValue` gained `failure_class`,
+   `retry_base_snapshot_id`, `retry_basis`, `attempt_number` and `max_attempts`.
+   The typed `RetryBasis` exists so the kernel can say the true and damning
+   thing rather than a canned reassurance: on this path
+   `retry_basis="no_differentiating_action"` with a `retry_base_snapshot_id`
+   byte-identical to the lease that just died — which is precisely what
+   `reliable-plan-execution-contract.md` §7 calls "not recovery". A free-text
+   `retry_rationale` was rejected (D2); changing the constant
+   `"routine-snapshot"` was ruled Slice 4 territory (D3). `max_attempts` is
+   **omitted, not `0`**, when unbounded, so the `fff4f6b7` pathology is visible
+   in the record instead of disguised as a budget of zero.
+4. **Conclusive** (chunk 3, `ed2ce698e`) — the headline requirement. The
+   driver's per-node orphan-recovery budget no longer `continue`s silently past
+   an orphaned lease: it issues `agent_died(recovery_exhausted=True)`, and a
+   fifth kernel branch (a structural sibling of the three existing terminal
+   branches, placed last among them so exactly one input class changes outcome)
+   revokes the lease, records a `retryable=False`
+   `recovery_budget_exhausted` failure, and fails the node. `concluded_node_ids`
+   bounds the lease_id churn that defeated the older per-lease dedup, and a
+   bounded 3-attempt stale retry closes the one command-issue hole that could
+   still abandon a lease mid-flight (fact S1). The run still pauses
+   `graph_blocked` for an operator (fact O) — but with zero active leases and a
+   typed explanation, instead of the string
+   `"graph has active lease(s) without callback"` that an existing test had
+   pinned as expected behaviour (fact E).
+5. **Pinned end to end** (chunk 6). One integration test closing the single seam
+   chunks 1-3 leave: the real driver loop against the real kernel with the real
+   projection read path in one chain, where today the two halves are joined by a
+   hand-written snapshot fed to a fake kernel (fact X).
+
+Target-doc criteria 1-4 are met. Two recorded framings a reader should not
+mistake for shortfalls: criterion 1's "replacing the single untyped
+`error_class` string" is satisfied **as the decision surface** — `error_class`
+remains in the durable record for replay, and after chunk 3 nothing anywhere
+reads it (fact T); criterion 2's "why a repeat attempt is expected to behave
+differently" is satisfied by **recording that nothing differs**, which fact I
+shows is the honest answer on this path, and which is exactly the machine-
+readable evidence a future Slice 4 would need to justify itself.
+
+### What was deliberately deferred
+
+Each with a reason recorded above, not silently skipped:
+
+- **R9 — chunk 4, boundary-path recovery symmetry.**
+  `handle_complete_runner_recovery` still emits no typed records, so
+  `RetryBasis`'s `worktree_restored_to_baseline` has no producer. Deferred on
+  evidence, not on the pass-2 label: fact U re-read the function post-chunk-3
+  and found it revokes its lease **unconditionally above every branch**, so it
+  has none of the ghost-lease defects chunks 1-3 fixed, and its only
+  lease-leaving failure modes drain into the sweep chunk 3 made conclusive.
+  Consistency improvement, not correctness fix.
+- **R10 — chunk 5, producers for `verification_failure` /
+  `invalid_plan_failure`.** Deferred because fact T shows nothing reads
+  `failure_class`, so no behaviour is wrong today, while fact W shows the cost
+  is real: a `record_id` scheme with no `lease_id` at five patch-rejection
+  sites (a replay-conflict hazard on the planner's normal correction loop),
+  failure semantics on a recoverable feedback path, and 77 references across 33
+  test files. The half-measure of wiring only the verification site was
+  considered and rejected for the same reasons.
+- **R11 — the managed boundary path retries unbounded for nodes with no
+  compiled budget.** Checked this pass and confirmed **not** a criterion-3
+  violation (the lease is conclusively revoked every iteration); it is the same
+  `max_attempts == 0` policy gap on a different path, and fixing it is a
+  compiler/planner-contract decision.
+- **Health-check-based runner probing before retry** (contract doc §7.3) — the
+  target doc's own carve-out, deferred with the reason already recorded in the
+  chunk queue: it needs a runner-capability contract that does not exist yet.
+- **R6 stands, and must be stated plainly at merge:** Slice 5 ships
+  `failure_class` and `retry_basis` as a **write-only field family**. No branch
+  reads them (fact T). Criterion 2 as written only requires the decision to be
+  *stated*, and criterion 3's behaviour change is carried by the
+  `recovery_exhausted` command flag rather than by reading the new fields — so
+  this is acceptable at the criterion level, but it is the honest description of
+  what merged.
+- **R8** — `OperationalError` in `_recover_orphaned_active_leases` still escapes
+  to the crash bridge. Not a criterion-3 violation: that pause is resumable and
+  its resume runs `reconcile_runtime`, a pending recovery action.
+- **Slice 6** (converting `fff4f6b7` itself into a replay regression) remains
+  not started, as intended — an explicit non-goal of this pass.
+
+None of these is a regression: every one is a surface that was equally open
+before this branch, now named with an insertion point.
+
+### Expected final state at merge
+
+- Full suite **5533 passed, 5 skipped** after chunk 3 (verified: 5538 collected
+  at `ed2ce698e`). Expect **5533 + chunk 6's new test IDs** — 2 if both chunk-6
+  tests are written as specified, 1 if test 2 is folded into test 1 per D9's
+  allowance. Loop-start baseline on this branch was 5513 passed / 5 skipped.
+- `PROJECTION_CHECKPOINT_SCHEMA_VERSION` still **15**. Every payload change in
+  the slice was a purely additive optional field inside a record `value`
+  (retained wholesale by `payload_registry.py:298-305`, fact B8) or a
+  command-only field that never reaches an event (fact Q), so no persisted
+  checkpoint and no historical event changes shape, and no replay migration is
+  needed.
+- Ruff, ruff format, and pyright clean.
+- Production files touched across the whole slice: `graph/models.py`,
+  `graph/_commands.py`, `graph/command_models.py`,
+  `workflow/graph_driver.py` — four. **`graph/projections.py` untouched**
+  (D7/R2): the `"active lease(s) without callback"` diagnostic is kept
+  deliberately, made unreachable from the orphan path rather than deleted, so a
+  future regression of chunk 3 surfaces as that string instead of being hidden.
+- Exactly one existing test rewritten across the slice
+  (`test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning` →
+  `test_driver_terminally_revokes_lease_when_node_recovery_budget_is_exhausted`,
+  chunk 3), because it pinned the state criterion 3 forbids; the Validator
+  confirmed the rewrite **tightens**. Everything else was additive assertions
+  and index shifts, audited for weakening in all three chunks.
+- `.orchestrator/state/*.jsonl` unmodified.
+
+The slice touches no runner, no UI, no API route, and no persisted-event shape.
+Merge is safe once chunk 6 is validated and the above hold.
 
 ---
 
