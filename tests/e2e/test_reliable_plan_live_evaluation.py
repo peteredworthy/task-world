@@ -175,7 +175,9 @@ async def test_live_reliable_plan_comparison_uses_terminal_operator_readbacks() 
             pytest.skip(f"live reliable-plan evidence blocked: server unavailable: {exc}")
         assert runners_response.status_code == 200
         available = {
-            item["type"] for item in runners_response.json() if item.get("available") is True
+            item["agent_runner_type"]
+            for item in runners_response.json()
+            if item.get("available") is True
         }
         if "codex_server" not in available:
             pytest.skip("live reliable-plan evidence blocked: codex_server unavailable")

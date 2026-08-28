@@ -22,6 +22,7 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     GraphProjection,
+    MAX_EVENT_ENVELOPE_BYTES,
     SequentialIdGenerator,
     compile_routine,
     edges_view,
@@ -577,12 +578,57 @@ def test_dynamic_graph_feature_run_inputs_seed_planner_context() -> None:
     }
     assert "Dynamic feature inputs:" in planner["task_context"]
     assert "docs/graph-approach/dynamic-smoke-feature-spec.md" in planner["task_context"]
-    assert "Build the dynamic-smoke artifact." in planner["task_context"]
+    assert (
+        "feature_spec_content: available through the bound routine snapshot"
+        in planner["task_context"]
+    )
+    assert "Build the dynamic-smoke artifact." not in planner["task_context"]
     assert "uv run pytest tests/oracle -q" not in planner["task_context"]
     assert "hidden_oracle_binding: dynamic_feature_hidden_oracle" in planner["task_context"]
 
     snapshot = _node_event(events, "routine-snapshot").payload["snapshot"]
     assert snapshot["dynamic_feature"] == dynamic_feature
+
+
+def test_dynamic_graph_feature_large_spec_keeps_seed_events_bounded() -> None:
+    routine = RoutineConfig(
+        id="dynamic-graph-feature",
+        name="Dynamic Feature",
+        steps=[
+            StepConfig(
+                id="S-01",
+                kind="planner",
+                title="Plan dynamic feature execution graph",
+                step_context="Use submit_graph_patch only.",
+            )
+        ],
+    )
+    events = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        run_id="run-large-spec",
+        run_config={
+            "feature_spec_path": "docs/large-contract.md",
+            "feature_spec_content": "bounded contract evidence " * 2_000,
+            "acceptance_command": "uv run pytest -q",
+            "reliable_plan_skeleton_id": "reliable-plan-fff4f6b7-v1",
+            "reliable_plan_model_assignments": {
+                "planner": {"model": "gpt-5.6-sol", "profile": "architect"},
+                "successor_planner": {"model": "gpt-5.6-luna", "profile": "architect"},
+            },
+            "reliable_plan_one_horizon_authorized": True,
+            "reliable_plan_qualification_evidence_hash": "sha256:" + "a" * 64,
+        },
+    )
+
+    event_sizes = {
+        f"{event.event_type}:{event.payload.get('node_id', event.payload.get('record_id', ''))}": len(
+            event.model_dump_json().encode("utf-8")
+        )
+        for event in events
+    }
+    assert max(event_sizes.values()) < (MAX_EVENT_ENVELOPE_BYTES - 256), event_sizes
 
 
 def test_dynamic_feature_inputs_compile_canonical_acceptance_requirement() -> None:

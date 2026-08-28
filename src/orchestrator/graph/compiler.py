@@ -1165,10 +1165,13 @@ def _dynamic_feature_inputs(
 
 def _dynamic_feature_acceptance_text(dynamic_feature: dict[str, Any]) -> str:
     parts: list[str] = []
+    path = dynamic_feature.get("feature_spec_path")
     content = dynamic_feature.get("feature_spec_content")
     command = dynamic_feature.get("acceptance_command")
-    if isinstance(content, str) and content.strip():
-        parts.append(content.strip())
+    if isinstance(path, str) and path.strip():
+        parts.append(f"Feature specification at {path.strip()} must be satisfied.")
+    elif isinstance(content, str) and content.strip():
+        parts.append(_compact_text(content.strip(), max_chars=4000))
     if isinstance(command, str) and command.strip():
         parts.append(f"Acceptance command: {command.strip()}")
     return " ".join(parts) or "Dynamic feature acceptance criteria must be satisfied."
@@ -1240,8 +1243,7 @@ def _planner_task_context(
                 [
                     "Dynamic feature inputs:",
                     f"- feature_spec_path: {dynamic_feature_inputs.get('feature_spec_path', '')}",
-                    "- feature_spec_content: "
-                    f"{dynamic_feature_inputs.get('feature_spec_content', '')}",
+                    "- feature_spec_content: available through the bound routine snapshot",
                     f"- acceptance_command: {dynamic_feature_inputs.get('acceptance_command', '')}",
                     "- hidden_oracle_binding: dynamic_feature_hidden_oracle"
                     if dynamic_feature_inputs.get("hidden_oracle_command")
