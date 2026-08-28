@@ -478,6 +478,8 @@ def _dynamic_input_port(contract: NodeContract, port: str) -> PortContract | Non
         return _port(port, "requirement_record", schemas=("Requirement", "RequirementRecord"))
     if port.startswith("context_") and contract.node_type in {"worker", "planner", "gap_planner"}:
         return _port(port, "artifact_reference", schemas=("ContextArtifact",))
+    if port.startswith("check_result_") and contract.node_type == "verifier":
+        return _port(port, "check_result", schemas=("CheckResult",))
     if port.startswith("source_record_") and contract.node_type == "join":
         return _port(
             port,
@@ -595,6 +597,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 _port("snapshot", "routine_snapshot", schemas=("RoutineSnapshot",)),
                 _port("routine_snapshot", "routine_snapshot", schemas=("RoutineSnapshot",)),
                 _port("artifact", "artifact_reference", schemas=("ContextArtifact",)),
+                _port(
+                    "semantic_schema_declaration",
+                    "semantic_schema_declaration",
+                    schemas=("SemanticSchemaDeclaration",),
+                    required=False,
+                ),
             ),
             aliases=("artifact",),
         ),
@@ -659,6 +667,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     required=False,
                 ),
                 _port("reader_outputs", "fan_out_inputs", schemas=("FanOutInputs",)),
+                _port(
+                    "semantic_artifact",
+                    "semantic_artifact",
+                    schemas=("SemanticArtifact",),
+                    required=False,
+                ),
             ),
             outputs=(
                 _port(
@@ -710,6 +724,18 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     schemas=("FanOutJoinedInputs",),
                     required=False,
                 ),
+                _port(
+                    "semantic_schema_declaration",
+                    "semantic_schema_declaration",
+                    schemas=("SemanticSchemaDeclaration",),
+                    required=False,
+                ),
+                _port(
+                    "semantic_artifact",
+                    "semantic_artifact",
+                    schemas=("SemanticArtifact",),
+                    required=False,
+                ),
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
             tools=(
@@ -720,6 +746,10 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 "create_join",
                 "request_gate",
                 "retire_or_supersede",
+                "create_discovery_region",
+                "create_plan_verification",
+                "create_successor_planner",
+                "create_effectful_batch",
                 "submit_graph_patch",
             ),
         ),
@@ -834,6 +864,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     required=False,
                 ),
                 _port("artifact_reference", "artifact_reference", required=False),
+                _port(
+                    "semantic_artifact",
+                    "semantic_artifact",
+                    schemas=("SemanticArtifact",),
+                    required=False,
+                ),
             ),
             outputs=(
                 _port(
@@ -875,6 +911,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     required=False,
                 ),
                 _port("artifact_reference", "artifact_reference", required=False),
+                _port(
+                    "semantic_artifact",
+                    "semantic_artifact",
+                    schemas=("SemanticArtifact",),
+                    required=False,
+                ),
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
             fulfillment="task_acceptance",
@@ -891,6 +933,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 _port("requirement_record", "requirement_record", schemas=("Requirement",)),
                 _port("check_result", "check_result", schemas=("CheckResult",), required=False),
                 _port("artifact_reference", "artifact_reference", required=False),
+                _port(
+                    "semantic_artifact",
+                    "semantic_artifact",
+                    schemas=("SemanticArtifact",),
+                    required=False,
+                ),
             ),
             outputs=(
                 _port(

@@ -1,6 +1,6 @@
 """Pure command applier for execution graph fixtures."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 import posixpath
@@ -107,11 +107,17 @@ from orchestrator.graph.models import (
     RecoveryPlanRecord,
     RequirementRecord,
     RequirementRevisionPayload,
+    SemanticArtifactRecord,
+    SemanticSchemaDeclarationRecord,
     SupportEvidencePayload,
     VerificationResultProjection,
     VerificationReportRecord,
     normalize_record_selector,
     record_selector_matches,
+)
+from orchestrator.graph.semantic_artifacts import (
+    semantic_declaration_conflict,
+    validate_semantic_artifact_content,
 )
 from orchestrator.graph.patch_validator import (
     MODE_RANK,
@@ -119,6 +125,7 @@ from orchestrator.graph.patch_validator import (
     validate_patch,
 )
 from orchestrator.graph.projections import (
+    FinalInvariantBlocker,
     GraphProjection,
     final_invariant_blockers_for_events,
     reduce_event,
@@ -160,12 +167,15 @@ from orchestrator.graph.projection_queries import (
     node_cache_authority_hash,
     node_gate_decisions_view,
     node_kinds_view,
+    node_base_snapshot_selections_view,
+    node_payload_view,
     non_gap_planner_has_accepted_patch,
     node_resource_claims_view,
     node_roles_view,
     node_states_view,
     node_task_regions_view,
     output_record_payloads_view,
+    semantic_schema_declarations_view,
     output_records_by_node_port_view,
     passed_verification_candidate_ids_view,
     passed_verification_results_by_record_id_view,
@@ -175,9 +185,11 @@ from orchestrator.graph.projection_queries import (
     ready_nodes_view,
     recorded_node_usage_keys_view,
     recovery_nodes_by_record_id_view,
+    recovery_blockers_by_node_view,
     retry_not_before_by_node_view,
     run_state as query_run_state,
     task_candidates_view,
+    task_region_snapshot_authority_view,
     task_states_view,
     verifier_verdicts_view,
 )
@@ -594,6 +606,7 @@ def _apply_evaluate_final_gate(
         projection,
         include_completion_decision=False,
     )
+    blockers.extend(_semantic_final_gate_blockers(projection, node_id))
     status = "blocked" if blockers else "passed"
     record_id = payload.record_id or id_gen.next_id("completion-decision")
     decision = {
@@ -626,6 +639,189 @@ def _apply_evaluate_final_gate(
         ),
         *_maybe_release_lease(payload, make_event, node_id),
     ]
+
+
+def _semantic_final_gate_blockers(
+    projection: GraphProjection, final_gate_node_id: str
+) -> list[FinalInvariantBlocker]:
+    declared_batches: set[str] = set()
+    for record in output_record_payloads_view(projection).values():
+        if not isinstance(record, SemanticArtifactRecord):
+            continue
+        if record.value.authority_status != "accepted" or record.value.content is None:
+            continue
+        raw_batches = record.value.content.get("batches")
+        if not isinstance(raw_batches, Sequence) or isinstance(raw_batches, (str, bytes)):
+            continue
+        for raw_batch in cast(Sequence[Any], raw_batches):
+            if isinstance(raw_batch, str):
+                declared_batches.add(raw_batch)
+            elif isinstance(raw_batch, Mapping):
+                batch_id = cast(Mapping[str, Any], raw_batch).get("batch_id")
+                if isinstance(batch_id, str):
+                    declared_batches.add(batch_id)
+    if not declared_batches:
+        return []
+    gate_payload = node_payload_view(projection, final_gate_node_id) or {}
+    configured = gate_payload.get("declared_batch_ids")
+    configured_batches: set[str] = (
+        {item for item in cast(list[Any], configured) if isinstance(item, str)}
+        if isinstance(configured, list)
+        else set()
+    )
+    if configured_batches != declared_batches:
+        return [{"kind": "final_gate_batch_contract_mismatch", "node_id": final_gate_node_id}]
+
+    records = output_record_payloads_view(projection)
+    bindings = input_bindings_view(projection)
+    gate_record_ids = {
+        record_id
+        for binding in bindings.get(final_gate_node_id, {}).values()
+        for record_id in binding.record_ids
+    }
+    payloads = {
+        node_id: payload
+        for node_id in node_kinds_view(projection)
+        if (payload := node_payload_view(projection, node_id)) is not None
+    }
+    edges = [edge.model_dump(mode="json") for edge in edges_view(projection).values()]
+
+    passed_batches: set[str] = set()
+    batch_report_ids: set[str] = set()
+    for record_id in gate_record_ids:
+        record = records.get(record_id)
+        if not isinstance(record, VerificationReportRecord) or record.outcome != "passed":
+            continue
+        producer = payloads.get(record.producer_node_id, {})
+        batch_id = producer.get("declared_batch_id")
+        if (
+            producer.get("semantic_stage") == "effectful_batch"
+            and isinstance(batch_id, str)
+            and batch_id in declared_batches
+            and _runtime_batch_report_topology_valid(
+                projection, record, batch_id, payloads, edges, records
+            )
+        ):
+            passed_batches.add(batch_id)
+            batch_report_ids.add(record_id)
+
+    final_audit_passed = any(
+        isinstance(record := records.get(record_id), VerificationReportRecord)
+        and record.outcome == "passed"
+        and payloads.get(record.producer_node_id, {}).get("semantic_stage") == "final_audit"
+        and batch_report_ids.issubset(set(record.evaluated_record_ids))
+        and _runtime_audit_topology_valid(
+            projection, record.producer_node_id, batch_report_ids, records, edges
+        )
+        for record_id in gate_record_ids
+    )
+    blockers: list[FinalInvariantBlocker] = [
+        {
+            "kind": "missing_declared_batch_verification",
+            "batch_id": batch_id,
+        }
+        for batch_id in sorted(declared_batches - passed_batches)
+    ]
+    if not final_audit_passed:
+        blockers.append({"kind": "missing_final_independent_audit"})
+    return blockers
+
+
+def _runtime_batch_report_topology_valid(
+    projection: GraphProjection,
+    report: VerificationReportRecord,
+    batch_id: str,
+    payloads: dict[str, dict[str, Any]],
+    edges: list[dict[str, Any]],
+    records: dict[str, Any],
+) -> bool:
+    verifier_id = report.producer_node_id
+    verifier = payloads.get(verifier_id, {})
+    region_id = verifier.get("task_region_id")
+    incoming = [edge for edge in edges if edge.get("to_node_id") == verifier_id]
+    worker_ids = {
+        cast(str, edge.get("from_node_id"))
+        for edge in incoming
+        if edge.get("to_port") == "candidate_under_test"
+        and isinstance(edge.get("from_node_id"), str)
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("kind") == "worker"
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("declared_batch_id")
+        == batch_id
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("task_region_id") == region_id
+    }
+    if not worker_ids:
+        return False
+    candidate_ids = set(report.candidate_record_ids)
+    if report.candidate_record_id is not None:
+        candidate_ids.add(report.candidate_record_id)
+    if not any(
+        (candidate := records.get(record_id)) is not None
+        and candidate.producer_node_id in worker_ids
+        for record_id in candidate_ids
+    ):
+        return False
+    check_sources = {
+        cast(str, edge.get("from_node_id"))
+        for edge in incoming
+        if str(edge.get("to_port", "")).startswith("check_result")
+        and isinstance(edge.get("from_node_id"), str)
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("kind") == "check"
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("declared_batch_id")
+        == batch_id
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("task_region_id") == region_id
+    }
+    if not check_sources:
+        return False
+    verifier_bindings = input_bindings_view(projection).get(verifier_id, {})
+    bound_check_ids = {
+        record_id
+        for port, binding in verifier_bindings.items()
+        if port.startswith("check_result")
+        for record_id in binding.record_ids
+    }
+    return all(
+        any(
+            (check := records.get(record_id)) is not None
+            and check.producer_node_id == check_source
+            and _record_terminal_value(check.model_dump(mode="json"), "status") == "passed"
+            and record_id in report.evaluated_record_ids
+            for record_id in bound_check_ids
+        )
+        for check_source in check_sources
+    )
+
+
+def _runtime_audit_topology_valid(
+    projection: GraphProjection,
+    audit_node_id: str,
+    batch_report_ids: set[str],
+    records: dict[str, Any],
+    edges: list[dict[str, Any]],
+) -> bool:
+    audit_bindings = input_bindings_view(projection).get(audit_node_id, {})
+    bound_ids = {
+        record_id for binding in audit_bindings.values() for record_id in binding.record_ids
+    }
+    if not batch_report_ids.issubset(bound_ids):
+        return False
+    incoming_sources = {
+        cast(str, edge.get("from_node_id"))
+        for edge in edges
+        if edge.get("to_node_id") == audit_node_id and isinstance(edge.get("from_node_id"), str)
+    }
+    return all(
+        isinstance(report := records.get(record_id), VerificationReportRecord)
+        and report.producer_node_id in incoming_sources
+        for record_id in batch_report_ids
+    )
+
+
+def _record_terminal_value(payload: dict[str, Any], field: str) -> Any:
+    direct = payload.get(field)
+    if direct is not None:
+        return direct
+    value = payload.get("value")
+    return cast(dict[str, Any], value).get(field) if isinstance(value, dict) else None
 
 
 def _apply_evaluate_join(
@@ -1288,6 +1484,14 @@ def _output_record_contract_conflict(
                     message=f"check_result record at index {index} is invalid",
                 )
         if _is_verification_report_record_payload(record_payload):
+            citation_conflict = _evaluated_record_citation_conflict(
+                projection,
+                expected_producer_node_id,
+                record_payload,
+                index,
+            )
+            if citation_conflict is not None:
+                return citation_conflict
             try:
                 _parse_verification_report_record(record_payload)
             except ValueError as exc:
@@ -1348,6 +1552,49 @@ def _output_record_contract_conflict(
                     code="invalid_artifact_reference_record",
                     message=f"artifact_reference record at index {index} is invalid",
                 )
+        if _is_semantic_schema_declaration_payload(record_payload):
+            try:
+                declaration = SemanticSchemaDeclarationRecord.model_validate(record_payload)
+            except ValueError as exc:
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_semantic_schema_declaration",
+                    message=f"semantic schema declaration at index {index} is invalid",
+                )
+            authority_error = _semantic_declaration_authority_error(
+                declaration, node_kind, typed_role
+            )
+            if authority_error is not None:
+                return authority_error
+            conflict = semantic_declaration_conflict(
+                declaration,
+                semantic_schema_declarations_view(projection),
+            )
+            if conflict is not None:
+                return conflict
+        if _is_semantic_artifact_payload(record_payload):
+            try:
+                artifact = SemanticArtifactRecord.model_validate(record_payload)
+            except ValueError as exc:
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_semantic_artifact",
+                    message=f"semantic artifact at index {index} is invalid",
+                )
+            authority_error = _semantic_artifact_authority_error(
+                artifact,
+                node_kind,
+                typed_role,
+                projection,
+            )
+            if authority_error is not None:
+                return authority_error
+            content_error = validate_semantic_artifact_content(
+                artifact,
+                semantic_schema_declarations_view(projection),
+            )
+            if content_error is not None:
+                return content_error
     return None
 
 
@@ -1565,6 +1812,42 @@ def _accepted_output_record_events(
                 )
             )
             continue
+        if _is_semantic_schema_declaration_payload(record_payload):
+            try:
+                record = SemanticSchemaDeclarationRecord.model_validate(record_payload)
+            except ValueError:
+                continue
+            payload = record.model_dump(mode="json")
+            output.append(make_event("output_record_accepted", payload))
+            output.extend(
+                _input_bound_events_for_record(
+                    projection,
+                    record.producer_node_id,
+                    record.port,
+                    record.record_id,
+                    payload,
+                    make_event,
+                )
+            )
+            continue
+        if _is_semantic_artifact_payload(record_payload):
+            try:
+                record = SemanticArtifactRecord.model_validate(record_payload)
+            except ValueError:
+                continue
+            payload = record.model_dump(mode="json")
+            output.append(make_event("output_record_accepted", payload))
+            output.extend(
+                _input_bound_events_for_record(
+                    projection,
+                    record.producer_node_id,
+                    record.port,
+                    record.record_id,
+                    payload,
+                    make_event,
+                )
+            )
+            continue
         try:
             record = OutputRecord.model_validate(record_payload)
         except ValueError:
@@ -1694,6 +1977,16 @@ def _required_output_record_conflict(
         return f"output records produced by unknown node type: {node_kind}"
 
     required_ports = {port.name for port in contract.output_ports.values() if port.required}
+    payload = node_payload_view(projection, expected_producer_node_id) or {}
+    declared_outputs = payload.get("outputs")
+    if isinstance(declared_outputs, list):
+        for raw_item in cast(list[Any], declared_outputs):
+            if not isinstance(raw_item, dict):
+                continue
+            item = cast(dict[str, Any], raw_item)
+            port = item.get("port")
+            if item.get("required") is True and isinstance(port, str):
+                required_ports.add(port)
     if not required_ports:
         return None
 
@@ -1791,10 +2084,12 @@ def _candidate_is_bound_to_verifier(
     verifier_node_id: str,
     candidate_id: str,
 ) -> bool:
-    binding = input_bindings_view(projection).get(verifier_node_id, {}).get("candidate_under_test")
-    if binding is None:
-        return False
-    return candidate_id in binding.record_ids
+    bindings = input_bindings_view(projection).get(verifier_node_id, {})
+    for port in ("candidate_under_test", "semantic_artifact"):
+        binding = bindings.get(port)
+        if binding is not None and candidate_id in binding.record_ids:
+            return True
+    return False
 
 
 def _candidate_id_from_payload(payload: dict[str, Any] | FileStateRecord) -> str | None:
@@ -1986,6 +2281,72 @@ def _artifact_reference_record_payload_for_validation(
     return output
 
 
+def _is_semantic_schema_declaration_payload(payload: dict[str, Any]) -> bool:
+    return payload.get("record_type") == "semantic_schema_declaration"
+
+
+def _is_semantic_artifact_payload(payload: dict[str, Any]) -> bool:
+    return payload.get("record_type") == "semantic_artifact"
+
+
+def _semantic_declaration_authority_error(
+    declaration: SemanticSchemaDeclarationRecord,
+    node_kind: str,
+    node_role: str | None,
+) -> str | None:
+    authority = declaration.value.authority
+    if authority == "routine_snapshot" and not (
+        node_kind in {"artifact", "routine_snapshot"} and node_role == "routine_snapshot"
+    ):
+        return "routine_snapshot semantic schemas must be produced by the routine snapshot"
+    if authority == "planner_amendment" and not (node_kind == "planner" and node_role == "planner"):
+        return "planner semantic schema amendments must be produced by an authorized planner"
+    return None
+
+
+def _semantic_artifact_authority_error(
+    artifact: SemanticArtifactRecord,
+    node_kind: str,
+    node_role: str | None,
+    projection: GraphProjection,
+) -> str | None:
+    """Require planner authority and accepted, verified lineage for amendments."""
+    if artifact.value.semantic_role != "plan_amendment":
+        return None
+    if node_kind != "planner" or node_role not in {"planner", "gap_planner"}:
+        return "plan amendments must be produced by an authorized planner"
+    content = artifact.value.content
+    if content is None:
+        return "plan amendment authority requires inline lineage content"
+    plan_record_id = content.get("amends_plan_record_id")
+    if not isinstance(plan_record_id, str):
+        return "plan amendment must identify its exact source plan record"
+    records = output_record_payloads_view(projection)
+    plan = records.get(plan_record_id)
+    if not isinstance(plan, SemanticArtifactRecord) or plan.value.authority_status != "accepted":
+        return "plan amendment source must be an accepted semantic plan artifact"
+    provenance = artifact.value.provenance
+    if plan_record_id not in artifact.value.source_record_ids or (
+        provenance.get("source_plan_record_id") != plan_record_id
+    ):
+        return "plan amendment must preserve exact source-plan lineage and provenance"
+    verification_ids = [
+        record.record_id
+        for record in records.values()
+        if isinstance(record, VerificationReportRecord)
+        and record.outcome == "passed"
+        and plan_record_id in record.evaluated_record_ids
+    ]
+    cited_verification_id = provenance.get("plan_verification_record_id")
+    if (
+        not isinstance(cited_verification_id, str)
+        or cited_verification_id not in verification_ids
+        or cited_verification_id not in artifact.value.source_record_ids
+    ):
+        return "plan amendment must cite the exact passing verification of its source plan"
+    return None
+
+
 def _same_callback_file_state_records(
     raw_records: list[Any],
     expected_producer_node_id: str,
@@ -2135,13 +2496,16 @@ def _add_evaluated_record_citations(
     citations = _evaluated_record_citations(projection, node_id)
     if not citations:
         return
+    verification_report = _is_verification_report_record_payload(record_payload)
     for key, value in citations.items():
+        if key == "verification_report_record_ids" and verification_report:
+            continue
         record_payload.setdefault(key, list(value))
     candidate_ids = citations.get("candidate_record_ids")
     if candidate_ids is not None and len(candidate_ids) == 1:
         record_payload.setdefault("candidate_record_id", candidate_ids[0])
     _merge_record_citations(record_payload, "provenance", citations)
-    if _is_verification_report_record_payload(record_payload):
+    if verification_report:
         _merge_record_citations(record_payload, "evidence", citations)
     if _is_check_result_record_payload(record_payload):
         _merge_record_citations(record_payload, "value", citations)
@@ -2171,7 +2535,7 @@ def _evaluated_record_citations(
     candidate_record_ids = _bound_record_ids_for_ports(
         projection,
         node_id,
-        ("candidate_under_test", "candidate"),
+        ("candidate_under_test", "candidate", "semantic_artifact"),
     )
     file_state_record_ids = _bound_record_ids_for_ports(
         projection,
@@ -2189,8 +2553,28 @@ def _evaluated_record_citations(
         output["candidate_record_ids"] = unique_candidate_record_ids
     if unique_file_state_record_ids:
         output["file_state_record_ids"] = unique_file_state_record_ids
+    evidence_record_ids = _bound_record_ids_for_ports(
+        projection,
+        node_id,
+        (
+            "verification_evidence",
+            "verification_report",
+            "verifier_check_results",
+            *tuple(
+                port
+                for port in sorted(input_bindings_view(projection).get(node_id, {}))
+                if port.startswith("check_result_") or port.startswith("requirement_")
+            ),
+        ),
+    )
+    if evidence_record_ids:
+        output["verification_report_record_ids"] = evidence_record_ids
     evaluated_record_ids = _unique_record_ids(
-        [*unique_candidate_record_ids, *unique_file_state_record_ids]
+        [
+            *unique_candidate_record_ids,
+            *unique_file_state_record_ids,
+            *evidence_record_ids,
+        ]
     )
     if evaluated_record_ids:
         output["evaluated_record_ids"] = evaluated_record_ids
@@ -2346,6 +2730,11 @@ def _apply_patch_command(
             payload.macro_invocations,
             context.proposed_by_node_id,
         )
+        ops = _stamp_reliable_plan_successor_authority(
+            projection,
+            context.proposed_by_node_id,
+            ops,
+        )
         patch = PatchEnvelope.model_validate(
             {
                 "patch_id": payload.patch_id,
@@ -2397,6 +2786,23 @@ def _apply_patch_command(
         ]
 
     successor_planner_node_ids = _successor_planner_node_ids(patch)
+    reliable_plan_rejection = _reliable_plan_successor_authority_rejection(
+        projection,
+        patch,
+        successor_planner_node_ids,
+    )
+    if reliable_plan_rejection is not None:
+        return [
+            make_event(
+                "graph_patch_rejected",
+                _patch_rejected_payload(
+                    patch,
+                    actor_role,
+                    reason=reliable_plan_rejection,
+                    read_set_diff=None,
+                ),
+            )
+        ]
     if actor_role == "planner" and len(successor_planner_node_ids) > 1:
         return [
             make_event(
@@ -2588,6 +2994,68 @@ def _successor_planner_node_ids(patch: PatchEnvelope) -> list[str]:
     return node_ids
 
 
+def _stamp_reliable_plan_successor_authority(
+    projection: GraphProjection,
+    proposed_by_node_id: str,
+    ops: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Propagate skeleton identity while consuming the one-horizon capability."""
+    parent = node_payload_view(projection, proposed_by_node_id) or {}
+    skeleton_id = parent.get("reliable_plan_skeleton_id")
+    stamped: list[dict[str, Any]] = []
+    for op in ops:
+        copied: dict[str, Any] = dict(op)
+        raw_node = copied.get("node")
+        if copied.get("op") == "create_node" and isinstance(raw_node, dict):
+            node = cast(dict[str, Any], raw_node)
+        else:
+            node = None
+        if node is not None and node.get("kind") == "planner" and node.get("role") == "planner":
+            stamped_node: dict[str, Any] = dict(node)
+            for field_name in (
+                "reliable_plan_skeleton_id",
+                "reliable_plan_one_horizon_authorized",
+                "reliable_plan_qualification_evidence_hash",
+                "reliable_plan_successor_model",
+                "reliable_plan_successor_profile",
+                "runner_model_override",
+            ):
+                stamped_node.pop(field_name, None)
+            if isinstance(skeleton_id, str):
+                stamped_node["reliable_plan_skeleton_id"] = skeleton_id
+                stamped_node["reliable_plan_one_horizon_authorized"] = False
+                stamped_node["reliable_plan_qualification_evidence_hash"] = parent.get(
+                    "reliable_plan_qualification_evidence_hash"
+                )
+                stamped_node["runner_model_override"] = parent.get("reliable_plan_successor_model")
+                stamped_node["profile"] = parent.get("reliable_plan_successor_profile")
+            copied["node"] = stamped_node
+        stamped.append(copied)
+    return stamped
+
+
+def _reliable_plan_successor_authority_rejection(
+    projection: GraphProjection,
+    patch: PatchEnvelope,
+    successor_node_ids: list[str],
+) -> str | None:
+    if not successor_node_ids:
+        return None
+    parent = node_payload_view(projection, patch.proposed_by_node_id) or {}
+    if not isinstance(parent.get("reliable_plan_skeleton_id"), str):
+        return None
+    if parent.get("reliable_plan_one_horizon_authorized") is not True:
+        return "reliable_plan_successor_planning_not_authorized"
+    for op in patch.ops:
+        if op.op != "create_node" or not isinstance(op.node, dict):
+            continue
+        if op.node.get("node_id") not in successor_node_ids:
+            continue
+        if op.node.get("planning_horizon") != 1:
+            return "reliable_plan_authority_allows_only_horizon_one"
+    return None
+
+
 def _planner_budget_rejection(
     projection: GraphProjection,
     patch: PatchEnvelope,
@@ -2708,13 +3176,15 @@ def _apply_schedule_tick(
     for node_id in decision.selected:
         claims = node_resource_claims_view(projection).get(node_id, [])
         lease_id = payload.lease_ids.get(node_id) or id_gen.next_id("lease")
-        base_snapshot_id = _base_snapshot_id_for_node(projection, payload, node_id)
+        base_snapshot_id, snapshot_deferred_reason = _base_snapshot_id_for_node(
+            projection, payload, node_id
+        )
         if base_snapshot_id is None:
             _append_node_deferred_if_changed(
                 output,
                 projection,
                 node_id,
-                "missing_base_snapshot",
+                snapshot_deferred_reason,
                 make_event,
             )
             continue
@@ -3947,16 +4417,67 @@ def _base_snapshot_id_for_node(
     projection: GraphProjection,
     payload: ScheduleTickCommand,
     node_id: str,
-) -> str | None:
-    """Resolve a node's base snapshot from command override or input bindings.
+) -> tuple[str | None, str]:
+    """Resolve a node's semantic base snapshot to a real file-state snapshot ID.
 
     Returns None when no snapshot identity exists — the scheduler defers the
     node rather than fabricating an identity (PRD §19: every lease carries a
     real base snapshot).
     """
-    if payload.base_snapshot_id:
-        return payload.base_snapshot_id
+    selection_contract = node_base_snapshot_selections_view(projection).get(node_id)
+    selection = selection_contract.get("selection") if selection_contract is not None else None
+    authority = task_region_snapshot_authority_view(projection)
 
+    if selection == "run_baseline":
+        if payload.base_snapshot_id:
+            return payload.base_snapshot_id, ""
+        return _legacy_bound_snapshot_id(projection, node_id), "missing_run_baseline_snapshot"
+
+    if selection == "latest_accepted":
+        accepted = [
+            item.accepted_snapshot
+            for item in authority.values()
+            if item.accepted_snapshot is not None
+        ]
+        if not accepted:
+            return None, "missing_latest_accepted_snapshot"
+        latest = max(accepted, key=lambda item: (item.position, item.candidate_id))
+        return latest.snapshot_id, ""
+
+    if selection == "accepted_region":
+        region_id = selection_contract.get("region_id") if selection_contract is not None else None
+        region = authority.get(region_id or "")
+        if region is None or region.accepted_snapshot is None:
+            return None, f"missing_accepted_region_snapshot:{region_id or 'unspecified'}"
+        return region.accepted_snapshot.snapshot_id, ""
+
+    if selection == "rejected_candidate":
+        candidate_id = (
+            selection_contract.get("candidate_id") if selection_contract is not None else None
+        )
+        for region in authority.values():
+            for rejected in region.rejected_snapshots:
+                if rejected.candidate_id == candidate_id:
+                    return rejected.snapshot_id, ""
+        return None, f"missing_rejected_candidate_snapshot:{candidate_id or 'unspecified'}"
+
+    if selection == "candidate_under_test":
+        candidate_id = _bound_candidate_under_test_id(projection, node_id)
+        if candidate_id is None:
+            return None, "missing_candidate_under_test_binding"
+        snapshot_id = _snapshot_id_for_candidate(projection, candidate_id)
+        if snapshot_id is None:
+            return None, f"missing_candidate_snapshot:{candidate_id}"
+        return snapshot_id, ""
+
+    # Historical nodes predate semantic selection. Preserve replay/runtime
+    # compatibility while all newly compiled executable nodes declare a mode.
+    if payload.base_snapshot_id:
+        return payload.base_snapshot_id, ""
+    return _legacy_bound_snapshot_id(projection, node_id), "missing_base_snapshot"
+
+
+def _legacy_bound_snapshot_id(projection: GraphProjection, node_id: str) -> str | None:
     bindings = input_bindings_view(projection).get(node_id, {})
     for port in ("base_snapshot", "root_snapshot", "routine_snapshot"):
         binding = bindings.get(port)
@@ -3964,7 +4485,33 @@ def _base_snapshot_id_for_node(
         if isinstance(record_ids, list) and record_ids:
             first_record_id = cast(list[Any], record_ids)[0]
             if isinstance(first_record_id, str) and first_record_id:
-                return first_record_id
+                record = file_state_records_view(projection).get(first_record_id)
+                return record.snapshot_id if record is not None else first_record_id
+    return None
+
+
+def _bound_candidate_under_test_id(projection: GraphProjection, node_id: str) -> str | None:
+    binding = input_bindings_view(projection).get(node_id, {}).get("candidate_under_test")
+    if binding is None or not binding.record_ids:
+        return None
+    record_id = binding.record_ids[0]
+    record = output_record_payloads_view(projection).get(record_id)
+    if record is None:
+        return record_id
+    candidate_id = getattr(record, "candidate_id", None)
+    return candidate_id if isinstance(candidate_id, str) else record_id
+
+
+def _snapshot_id_for_candidate(projection: GraphProjection, candidate_id: str) -> str | None:
+    file_states = file_state_records_view(projection)
+    for candidates in task_candidates_view(projection).values():
+        for candidate in candidates:
+            if candidate.candidate_id != candidate_id:
+                continue
+            for record_id in candidate.file_state_record_ids:
+                record = file_states.get(record_id)
+                if record is not None and record.snapshot_id is not None and not record.compromised:
+                    return record.snapshot_id
     return None
 
 
@@ -4330,6 +4877,75 @@ def _apply_agent_died(
             ),
         ]
 
+    health_evidence = (
+        output_record_payloads_view(projection).get(payload.health_evidence_record_id)
+        if payload.health_evidence_record_id is not None
+        else None
+    )
+    has_persisted_health_evidence = (
+        isinstance(health_evidence, CheckResultRecord)
+        and health_evidence.value.status == "passed"
+        and health_evidence.value.classification == "passed"
+    )
+    if payload.retry_backoff_seconds <= 0 and not has_persisted_health_evidence:
+        # Recreating an identical execution immediately is not recovery.  Keep
+        # the failure retryable, but require an operator/runtime recovery fact
+        # before this node can be made ready again.
+        return [
+            make_event("agent_died", event_payload),
+            make_event(
+                "lease_revoked",
+                _typed_lease_event_payload(
+                    "lease_revoked",
+                    {
+                        "lease_id": lease_id,
+                        "node_id": node_id,
+                        "generation": generation,
+                        "reason": reason,
+                    },
+                ),
+            ),
+            make_event(
+                "output_record_accepted",
+                _failure_record_payload(
+                    node_id=node_id,
+                    phase="runtime",
+                    failure_class=failure_class,
+                    error_class="runtime_death_recovery_required",
+                    retryable=True,
+                    lease_id=lease_id,
+                    execution_id=event_payload.get("execution_id"),
+                    generation=generation,
+                    reason=reason,
+                    metadata={
+                        "attempt_number": attempt_number,
+                        **({"max_attempts": max_attempts} if max_attempts > 0 else {}),
+                    },
+                ),
+            ),
+            make_event(
+                "output_record_accepted",
+                _paused_recovery_plan_record_payload(
+                    node_id=node_id,
+                    lease_id=lease_id,
+                    reason=reason,
+                    base_snapshot_id=lease.base_snapshot_id,
+                    attempt_number=attempt_number,
+                    max_attempts=max_attempts,
+                ),
+            ),
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "blocked",
+                    "trigger": "agent_died_recovery_required",
+                    "reason": "missing_health_evidence_or_changed_recovery_action",
+                    "attempt_number": attempt_number,
+                },
+            ),
+        ]
+
     # V1 retry policy: runtime death before an accepted boundary requeues the
     # same executable node. No new retry node is created until output/file-state
     # acceptance semantics exist in the graph runtime slice.
@@ -4341,6 +4957,8 @@ def _apply_agent_died(
         "policy": "v1_requeue_same_node_after_agent_death",
         "reason": reason,
     }
+    if has_persisted_health_evidence and payload.health_evidence_record_id is not None:
+        retry_payload["health_evidence_record_id"] = payload.health_evidence_record_id
     next_attempt_number = attempt_number + 1
     node_state_payload = {
         "node_id": node_id,
@@ -4506,6 +5124,41 @@ def _recovery_plan_record_payload(
         }
     )
     return record.model_dump(mode="json")
+
+
+def _paused_recovery_plan_record_payload(
+    *,
+    node_id: str,
+    lease_id: str,
+    reason: str,
+    base_snapshot_id: str | None,
+    attempt_number: int,
+    max_attempts: int,
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "action": "pause",
+        "responsible_actor": "controller",
+        "graph_changes": [{"op": "set_node_state", "node_id": node_id, "state": "blocked"}],
+        "reason": reason,
+        "failure_class": "infrastructure_failure",
+        "retry_basis": "no_differentiating_action",
+        "attempt_number": attempt_number,
+    }
+    if base_snapshot_id is not None:
+        value["retry_base_snapshot_id"] = base_snapshot_id
+    if max_attempts > 0:
+        value["max_attempts"] = max_attempts
+    return RecoveryPlanRecord.model_validate(
+        {
+            "record_id": f"recovery-plan-{node_id}-{lease_id}",
+            "record_kind": "output",
+            "record_type": "recovery_plan",
+            "producer_node_id": node_id,
+            "port": "recovery_plan",
+            "schema": "RecoveryPlan",
+            "value": value,
+        }
+    ).model_dump(mode="json")
 
 
 def _is_rate_limit_death(reason: str) -> bool:
@@ -5693,6 +6346,7 @@ def _node_schedule_info(
         failed_candidate_id=node_failed_candidates_view(projection).get(node_id),
         preconditions=node_preconditions_view(projection).get(node_id, []),
         command_definition_present=node_id in node_command_definitions_view(projection),
+        recovery_blocker_record_id=recovery_blockers_by_node_view(projection).get(node_id),
     )
 
 

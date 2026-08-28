@@ -1758,12 +1758,12 @@ def test_create_node_rejects_discovery_worker_declaring_write_access_mode() -> N
 
     assert result.accepted is False
     assert result.rejection_reason == (
-        "discovery worker cannot declare access_mode write; supply "
-        "access_mode_override_justification: worker-1"
+        "discovery worker cannot declare access_mode write; use a separate "
+        "effectful artifact-writer region: worker-1"
     )
 
 
-def test_create_node_accepts_discovery_worker_write_access_mode_with_override() -> None:
+def test_create_node_rejects_discovery_worker_write_access_mode_with_override() -> None:
     result = _validate(
         _patch(
             [
@@ -1779,7 +1779,11 @@ def test_create_node_accepts_discovery_worker_write_access_mode_with_override() 
         )
     )
 
-    assert result.accepted is True
+    assert result.accepted is False
+    assert result.rejection_reason == (
+        "discovery worker cannot declare access_mode write; use a separate "
+        "effectful artifact-writer region: worker-1"
+    )
 
 
 def test_create_node_rejects_blank_access_mode_override_justification() -> None:
@@ -1824,8 +1828,7 @@ def test_create_node_rejects_unnecessary_access_mode_override_justification(
 
     assert result.accepted is False
     assert result.rejection_reason == (
-        "access_mode_override_justification is only valid for a discovery worker "
-        "declaring access_mode write: worker-1"
+        "access_mode_override_justification cannot grant repository write authority: worker-1"
     )
 
 

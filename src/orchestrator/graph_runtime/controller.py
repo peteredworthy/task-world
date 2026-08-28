@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -23,7 +24,11 @@ from orchestrator.graph import (
     apply_command,
     build_projection,
     serialize_event_payload,
+    StoredArtifactRef,
+    semantic_schema_declarations_view,
 )
+from orchestrator.artifacts import ArtifactStore
+from orchestrator.artifacts import ArtifactIntegrityError, ArtifactNotFoundError
 from orchestrator.state import ModelTokenUsage
 from orchestrator.db import (
     CommittedSecondaryOutputError,
@@ -80,6 +85,7 @@ class GraphController:
         auto_dispatch: bool = True,
         journal_max_bytes: int = 64 * 1024 * 1024,
         runtime_boundary_capability: RuntimeBoundaryCapability | None = None,
+        artifact_store: ArtifactStore | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._clock = clock
@@ -90,6 +96,7 @@ class GraphController:
         self._runtime_boundary_capability = (
             runtime_boundary_capability or RuntimeBoundaryCapability()
         )
+        self._artifact_store = artifact_store
 
     async def handle_command(
         self,
@@ -172,6 +179,10 @@ class GraphController:
                 f"expected {expected_position}, found {current_position}"
             )
             raise StaleProjectionError(msg)
+
+        command_payload = await self._validate_semantic_artifact_references(
+            command_type, command_payload, projection
+        )
 
         command_context = context or GraphCommandContext(
             run_id=run_id,
@@ -259,6 +270,93 @@ class GraphController:
             outbox_items=outbox_items,
             projection_position=expected_position + len(stored_events),
         )
+
+    async def _validate_semantic_artifact_references(
+        self,
+        command_type: str,
+        command_payload: dict[str, object],
+        projection: GraphProjection,
+    ) -> dict[str, object]:
+        """Replace caller-supplied evidence with controller-derived artifact proof."""
+        if command_type not in {
+            "submit_callback",
+            "stage_runner_submission",
+            "finalize_runner_execution",
+        }:
+            return command_payload
+        output = dict(command_payload)
+        container_key = (
+            "callback_payload" if command_type == "finalize_runner_execution" else "payload"
+        )
+        raw_container = output.get(container_key)
+        if not isinstance(raw_container, dict):
+            return output
+        container = dict(cast(dict[str, object], raw_container))
+        raw_records = container.get("output_records")
+        if not isinstance(raw_records, list):
+            return output
+        declarations = semantic_schema_declarations_view(projection)
+        records: list[object] = []
+        for raw_record in cast(list[object], raw_records):
+            if not isinstance(raw_record, dict):
+                records.append(raw_record)
+                continue
+            typed_raw_record = cast(dict[str, object], raw_record)
+            if typed_raw_record.get("record_type") != "semantic_artifact":
+                records.append(typed_raw_record)
+                continue
+            record = dict(typed_raw_record)
+            raw_value = record.get("value")
+            if not isinstance(raw_value, dict):
+                records.append(record)
+                continue
+            value = dict(cast(dict[str, object], raw_value))
+            # Validation evidence is controller-owned. Never trust a runner's
+            # structurally similar object, even when no artifact store exists.
+            value.pop("artifact_validation", None)
+            raw_ref = value.get("artifact_ref")
+            if not isinstance(raw_ref, dict) or self._artifact_store is None:
+                record["value"] = value
+                records.append(record)
+                continue
+            try:
+                ref = StoredArtifactRef.model_validate(raw_ref)
+                if ref.media_type != "application/json":
+                    raise ValueError("referenced semantic artifact must use application/json")
+                content = await self._artifact_store.read(ref)
+                decoded = json.loads(content.decode(ref.encoding or "utf-8"))
+                if not isinstance(decoded, dict):
+                    raise ValueError("referenced semantic artifact JSON must contain an object")
+            except (
+                ArtifactIntegrityError,
+                ArtifactNotFoundError,
+                UnicodeDecodeError,
+                json.JSONDecodeError,
+                ValueError,
+            ):
+                record["value"] = value
+                records.append(record)
+                continue
+            schema_id = value.get("schema_id")
+            schema_version = value.get("schema_version")
+            declaration = (
+                declarations.get((schema_id, schema_version))
+                if isinstance(schema_id, str)
+                and isinstance(schema_version, int)
+                and not isinstance(schema_version, bool)
+                else None
+            )
+            if declaration is not None:
+                value["artifact_validation"] = {
+                    "declaration_record_id": declaration.record_id,
+                    "content_hash": ref.content_hash,
+                    "validated_json": decoded,
+                }
+            record["value"] = value
+            records.append(record)
+        container["output_records"] = records
+        output[container_key] = container
+        return output
 
     async def current_position(self, run_id: str) -> int:
         """Return the current durable graph position for a run."""

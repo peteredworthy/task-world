@@ -55,7 +55,6 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from orchestrator.workflow.graph_driver import (
     GRAPH_OPERATOR_REOPEN_PAUSE_REASON,
-    MAX_NODE_RECOVERIES_PER_DRIVE,
     GraphRunDriver,
     _renew_running_leases_near_expiry,
 )
@@ -1826,16 +1825,17 @@ async def _drive_missing_callback_scenario(
 
 
 @pytest.mark.asyncio
-async def test_missing_callback_ends_with_a_conclusively_revoked_lease(
+async def test_missing_callback_blocks_with_a_conclusively_revoked_lease(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
     """Scenario #9, closed end to end (facts X/Y, chunk 6).
 
     A missing callback that only the driver's own orphan-lease sweep can
-    recover must terminate as a conclusively revoked lease with a classified
-    terminal failure record — never a paused run with an active lease left
-    unaccounted for. This drives the REAL controller, kernel, driver and
+    observe must stop at a conclusively revoked lease with a classified,
+    retryable failure and paused recovery plan. It must never repeat an
+    indistinguishable attempt or leave an active lease unaccounted for. This
+    drives the REAL controller, kernel, driver and
     projection read path with real event-log reads on every call; no
     ``GraphProjectionSnapshot`` is constructed by hand anywhere in this test.
     """
@@ -1849,11 +1849,8 @@ async def test_missing_callback_ends_with_a_conclusively_revoked_lease(
     projection = project_graph_projection_snapshot(events)
     assert projection.active_leases == {}  # criterion 3, end to end
 
-    failed_nodes = [
-        node_id for node_id, state in projection.node_states.items() if state == "failed"
-    ]
-    assert failed_nodes == ["worker-step-1-task-1"]
-    node_id = failed_nodes[0]
+    node_id = "worker-step-1-task-1"
+    assert projection.node_states[node_id] == "blocked"
 
     node_failure_records = [
         event.payload["value"]
@@ -1863,46 +1860,42 @@ async def test_missing_callback_ends_with_a_conclusively_revoked_lease(
         and event.payload.get("producer_node_id") == node_id
     ]
     error_classes_seen = {value["error_class"] for value in node_failure_records}
-    # D9's trap, defused: the node's compiled budget (10) is far above the
-    # driver's recovery budget (3), so the kernel's max-attempts branch must
-    # never have fired — only the driver's own recovery_exhausted branch
-    # (chunk 3) may conclude this node.
+    # Neither the compiled nor driver recovery budget authorizes an identical
+    # retry. A differentiating recovery fact is required first.
     assert "max_attempts_exhausted" not in error_classes_seen
-
-    terminal_records = [
+    assert "recovery_budget_exhausted" not in error_classes_seen
+    recovery_required_records = [
         value
         for value in node_failure_records
-        if value["error_class"] == "recovery_budget_exhausted"
+        if value["error_class"] == "runtime_death_recovery_required"
     ]
-    assert len(terminal_records) == 1
-    (terminal_value,) = terminal_records
-    assert terminal_value["failure_class"] == "infrastructure_failure"
-    assert terminal_value["retryable"] is False
+    assert len(recovery_required_records) == 1
+    (failure_value,) = recovery_required_records
+    assert failure_value["failure_class"] == "infrastructure_failure"
+    assert failure_value["retryable"] is True
 
     agent_died_indices = [i for i, event in enumerate(events) if event.event_type == "agent_died"]
-    assert len(agent_died_indices) == MAX_NODE_RECOVERIES_PER_DRIVE + 1
-    last_agent_died = events[agent_died_indices[-1]]
-    terminal_lease_id = last_agent_died.payload.get("lease_id")
-    # The terminal command's events (agent_died, lease_revoked, the failure
-    # record, node_state_changed -> failed) all land atomically in one
-    # append, immediately after the last agent_died -- i.e. the kernel took
-    # the terminal branch here, not another retry.
-    trailing = events[agent_died_indices[-1] + 1 : agent_died_indices[-1] + 4]
+    assert len(agent_died_indices) == 1
+    died = events[agent_died_indices[0]]
+    revoked_lease_id = died.payload.get("lease_id")
+    trailing = events[agent_died_indices[0] + 1 : agent_died_indices[0] + 5]
     assert any(
-        event.event_type == "lease_revoked" and event.payload.get("lease_id") == terminal_lease_id
+        event.event_type == "lease_revoked" and event.payload.get("lease_id") == revoked_lease_id
         for event in trailing
     )
     assert any(
-        event.event_type == "node_state_changed"
-        and event.payload.get("node_id") == node_id
-        and event.payload.get("new_state") == "failed"
+        event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "recovery_plan"
+        and event.payload.get("value", {}).get("action") == "pause"
         for event in trailing
     )
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in events)
+    assert len([event for event in events if event.event_type == "lease_granted"]) == 1
 
     assert outcome.completed is False
-    assert (
-        outcome.blocked_reason == f"graph has failed node(s): {node_id}: recovery_budget_exhausted"
-    )
+    assert outcome.blocked_reason is not None
+    assert "worker-step-1-task-1=blocked" in outcome.blocked_reason
+    assert "missing_required_input:candidate_under_test" in outcome.blocked_reason
     assert "active lease(s) without callback" not in (outcome.blocked_reason or "")
 
 

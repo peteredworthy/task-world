@@ -1,5 +1,7 @@
 """Pydantic configuration models for routines, steps, and tasks."""
 
+from __future__ import annotations
+
 import logging
 import posixpath
 import re
@@ -16,6 +18,7 @@ from orchestrator.config.enums import (
     Priority,
     StepType,
 )
+from orchestrator.config.json_schema import json_schema_declaration_error
 
 logger = logging.getLogger(__name__)
 
@@ -533,6 +536,30 @@ class RoutineInputConfig(BaseModel):
     description: str | None = None
 
 
+class SemanticArtifactSchemaConfig(BaseModel):
+    """One immutable, run-scoped semantic artifact schema declaration."""
+
+    model_config = {"extra": "forbid", "strict": True}
+
+    schema_id: str = Field(min_length=1, pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")
+    version: int = Field(ge=1)
+    semantic_role: str = Field(min_length=1)
+    json_schema: dict[str, Any]
+
+    @model_validator(mode="after")
+    def _requires_object_schema(self) -> "SemanticArtifactSchemaConfig":
+        if self.json_schema.get("type") != "object":
+            raise ValueError("semantic artifact json_schema type must be object")
+        schema_error = json_schema_declaration_error(self.json_schema)
+        if schema_error is not None:
+            raise ValueError(f"semantic artifact json_schema is invalid: {schema_error}")
+        return self
+
+
+def _empty_semantic_artifact_schemas() -> list[SemanticArtifactSchemaConfig]:
+    return []
+
+
 _FILE_STATE_CLASSIFICATIONS = {
     "declared",
     "tool_cache",
@@ -628,6 +655,9 @@ class RoutineConfig(BaseModel):
     strict_validation: bool = False
     planner_generation_budget: int = Field(default=8, ge=0)
     file_state_policy: FileStatePolicyConfig | None = None
+    semantic_artifact_schemas: list[SemanticArtifactSchemaConfig] = Field(
+        default_factory=_empty_semantic_artifact_schemas
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -639,6 +669,12 @@ class RoutineConfig(BaseModel):
     @model_validator(mode="after")
     def _enforce_strict_validation(self) -> "RoutineConfig":
         """When strict_validation=True, reject any task with no verification."""
+        identities = [
+            (declaration.schema_id, declaration.version)
+            for declaration in self.semantic_artifact_schemas
+        ]
+        if len(identities) != len(set(identities)):
+            raise ValueError("semantic_artifact_schemas must have unique schema_id/version pairs")
         if not self.strict_validation:
             return self
         unverified: list[str] = []

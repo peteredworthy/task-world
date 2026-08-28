@@ -29,10 +29,15 @@ from orchestrator.db.orm.models import (  # noqa: F401
     GraphOutboxModel,
     InteractionLogArtifactModel,
     ProjectionCheckpointModel,
+    ReliablePlanQualificationModel,
     RunModel,
     RoutineMetaModel,
     StepModel,
     TaskModel,
+)
+from orchestrator.db.access.reliable_plan_qualifications import (
+    ReliablePlanQualificationReferenceError,
+    ReliablePlanQualificationRepository,
 )
 
 # Connection management
@@ -211,6 +216,7 @@ __all__ = [
     "GraphOutboxModel",
     "InteractionLogArtifactModel",
     "ProjectionCheckpointModel",
+    "ReliablePlanQualificationModel",
     "RunModel",
     "AgentRunnerModelProfileDefaultModel",
     "RoutineMetaModel",
@@ -222,6 +228,8 @@ __all__ = [
     "init_db",
     "RunRepository",
     "RunLivenessRecord",
+    "ReliablePlanQualificationReferenceError",
+    "ReliablePlanQualificationRepository",
     "create_clarification_request",
     "delete_run",
     "merge_token_usage_into_run",

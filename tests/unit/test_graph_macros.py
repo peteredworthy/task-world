@@ -86,7 +86,14 @@ def test_create_work_region_macro_expands_to_valid_patch() -> None:
 
 def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
     projection = _projection_with_nodes(
-        {"node_id": "planner-gap", "kind": "planner", "role": "gap_planner", "state": "running"}
+        {"node_id": "planner-gap", "kind": "planner", "role": "gap_planner", "state": "running"},
+        {
+            "node_id": "verifier-failed",
+            "kind": "verifier",
+            "role": "verifier",
+            "state": "completed",
+        },
+        {"node_id": "check-failed", "kind": "check", "role": "batch_check", "state": "completed"},
     )
     patch = _patch(
         {
@@ -103,6 +110,13 @@ def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
                         "objective": "Produce a corrective candidate that resolves the classified gap.",
                         "access_mode": "write",
                         "acceptance": ["corrective candidate resolves the classified gap"],
+                        "failed_verification_source_node_id": "verifier-failed",
+                        "failed_check_source_node_ids": ["check-failed"],
+                        "failed_verification_record_id": "verification-failed-1",
+                        "failed_check_record_ids": ["check-result-failed-1"],
+                        "classified_gap_record_id": "classified-gap-1",
+                        "base_snapshot_selection": "accepted_region",
+                        "base_snapshot_region_id": "feature-region",
                     },
                 }
             ],
@@ -118,10 +132,20 @@ def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
         actor_role="gap_planner",
     )
 
-    assert result.accepted is True
-    edge_ports = {(op.from_port, op.to_port) for op in patch.ops if op.op == "create_edge"}
-    assert ("classified_gap", "classified_gap") in edge_ports
-    assert ("candidate", "candidate_under_test") in edge_ports
+    assert result.accepted is False
+    assert result.rejection_reason == (
+        "corrective worker classified_gap record must exist and match its edge producer"
+    )
+    selectors = {
+        str(op.to_port): op.accepted_record_selector.model_dump()["record_id"]
+        for op in patch.ops
+        if op.to_node_id == "worker-fix" and op.accepted_record_selector is not None
+    }
+    assert selectors == {
+        "classified_gap": "classified-gap-1",
+        "verification_report": "verification-failed-1",
+        "check_result": "check-result-failed-1",
+    }
 
 
 def test_create_join_macro_uses_distinct_source_record_ports() -> None:
@@ -454,7 +478,7 @@ def test_create_work_region_macro_grants_read_claim_for_read_only_worker() -> No
     assert result.accepted is True
 
 
-def test_create_work_region_macro_discovery_write_requires_override() -> None:
+def test_create_work_region_macro_discovery_write_requires_separate_effectful_writer() -> None:
     base_args = {
         "region_id": "feature-region",
         "worker_role": "discovery",
@@ -480,8 +504,8 @@ def test_create_work_region_macro_discovery_write_requires_override() -> None:
 
     assert rejected_result.accepted is False
     assert rejected_result.rejection_reason == (
-        "discovery worker cannot declare access_mode write; supply "
-        "access_mode_override_justification: worker-feature-region"
+        "discovery worker cannot declare access_mode write; use a separate "
+        "effectful artifact-writer region: worker-feature-region"
     )
 
     accepted_patch = _patch(
@@ -501,13 +525,7 @@ def test_create_work_region_macro_discovery_write_requires_override() -> None:
             ],
         }
     )
-    worker = accepted_patch.ops[0].node
-    assert worker is not None
-    assert worker["access_mode_override_justification"] == (
-        "Requires write access to reproduce the failure in place."
-    )
-
-    accepted_result = validate_patch(
+    override_result = validate_patch(
         accepted_patch,
         current_position=0,
         events_since_base=[],
@@ -515,7 +533,8 @@ def test_create_work_region_macro_discovery_write_requires_override() -> None:
         actor_role="planner",
     )
 
-    assert accepted_result.accepted is True
+    assert override_result.accepted is False
+    assert override_result.rejection_reason == rejected_result.rejection_reason
 
 
 class _Ids:

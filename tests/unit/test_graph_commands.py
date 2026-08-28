@@ -651,6 +651,101 @@ def test_evaluate_final_gate_releases_runtime_lease_when_present() -> None:
     }
 
 
+def test_evaluate_final_gate_rejects_unbound_globally_tagged_semantic_reports() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "gate-final",
+                "kind": "final_gate",
+                "state": "ready",
+                "declared_batch_ids": ["batch-1"],
+            },
+            1,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "tagged-batch-verifier",
+                "kind": "verifier",
+                "state": "completed",
+                "semantic_stage": "effectful_batch",
+                "declared_batch_id": "batch-1",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "tagged-final-audit",
+                "kind": "verifier",
+                "state": "completed",
+                "semantic_stage": "final_audit",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "accepted-plan",
+                "record_kind": "graph_record",
+                "record_type": "semantic_artifact",
+                "schema_version": 1,
+                "producer_node_id": "planner-plan",
+                "port": "semantic_artifact",
+                "schema": "SemanticArtifact",
+                "value": {
+                    "semantic_role": "implementation_plan",
+                    "schema_id": "plan",
+                    "schema_version": 1,
+                    "content": {"batches": [{"batch_id": "batch-1"}]},
+                    "authority_status": "accepted",
+                },
+            },
+            4,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "tagged-batch-report",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "tagged-batch-verifier",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-1",
+                "outcome": "passed",
+                "value": {"outcome": "passed"},
+            },
+            5,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "tagged-audit-report",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "tagged-final-audit",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "audit-1",
+                "outcome": "passed",
+                "value": {"outcome": "passed"},
+            },
+            6,
+        ),
+    ]
+
+    output = _apply(events, "evaluate_final_gate", {"node_id": "gate-final"})
+    blockers = output[0].payload["value"]["blockers"]
+
+    assert {blocker["kind"] for blocker in blockers} >= {
+        "missing_declared_batch_verification",
+        "missing_final_independent_audit",
+    }
+
+
 def test_evaluate_join_emits_join_result_and_releases_lease() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -8209,7 +8304,7 @@ def test_acknowledge_start_rejects_wrong_execution_id() -> None:
     assert output[0].payload["reason"] == "execution_incompatible"
 
 
-def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
+def test_agent_died_revokes_active_lease_and_requires_differentiating_recovery() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
@@ -8240,7 +8335,6 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "agent_died",
         "lease_revoked",
         "output_record_accepted",
-        "runtime_retry_scheduled",
         "output_record_accepted",
         "node_state_changed",
     ]
@@ -8256,7 +8350,7 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "failed_node_id": "worker-1",
         "phase": "runtime",
         "failure_class": "infrastructure_failure",
-        "error_class": "runtime_death_retry_scheduled",
+        "error_class": "runtime_death_recovery_required",
         "retryable": True,
         "lease_id": "lease-1",
         "execution_id": "exec-1",
@@ -8264,8 +8358,7 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "reason": "process_exit",
         "attempt_number": 0,
     }
-    assert output[3].payload["policy"] == "v1_requeue_same_node_after_agent_death"
-    assert output[4].payload == {
+    assert output[3].payload == {
         "record_id": "recovery-plan-worker-1-lease-1",
         "record_kind": "output",
         "record_type": "recovery_plan",
@@ -8273,24 +8366,25 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "port": "recovery_plan",
         "schema": "RecoveryPlan",
         "value": {
-            "action": "retry",
+            "action": "pause",
             "responsible_actor": "controller",
-            "graph_changes": [{"op": "set_node_state", "node_id": "worker-1", "state": "ready"}],
+            "graph_changes": [{"op": "set_node_state", "node_id": "worker-1", "state": "blocked"}],
             "reason": "process_exit",
             "failure_class": "infrastructure_failure",
             "retry_basis": "no_differentiating_action",
-            "attempt_number": 1,
+            "attempt_number": 0,
         },
     }
-    assert "retry_base_snapshot_id" not in output[4].payload["value"]
-    assert output[5].payload == {
+    assert "retry_base_snapshot_id" not in output[3].payload["value"]
+    assert output[4].payload == {
         "node_id": "worker-1",
-        "new_state": "ready",
-        "trigger": "agent_died_retry_scheduled",
-        "attempt_number": 1,
+        "new_state": "blocked",
+        "trigger": "agent_died_recovery_required",
+        "reason": "missing_health_evidence_or_changed_recovery_action",
+        "attempt_number": 0,
     }
     assert leases_view(projection)["lease-1"].state == "revoked"
-    assert node_state(projection, "worker-1") == "ready"
+    assert node_state(projection, "worker-1") == "blocked"
 
 
 def test_agent_died_check_missing_command_fails_without_retry() -> None:
@@ -8534,7 +8628,7 @@ def test_agent_died_retry_records_classified_failure_before_scheduling_retry() -
         if event.event_type == "output_record_accepted"
         and event.payload.get("record_type") == "failure_record"
     )
-    retry_index = event_types.index("runtime_retry_scheduled")
+    assert "runtime_retry_scheduled" not in event_types
     recovery_index = next(
         index
         for index, event in enumerate(output)
@@ -8542,12 +8636,12 @@ def test_agent_died_retry_records_classified_failure_before_scheduling_retry() -
         and event.payload.get("record_type") == "recovery_plan"
     )
 
-    assert failure_index < retry_index
+    assert failure_index < recovery_index
 
     failure_value = output[failure_index].payload["value"]
     assert failure_value["failure_class"] == "infrastructure_failure"
     assert failure_value["retryable"] is True
-    assert failure_value["error_class"] == "runtime_death_retry_scheduled"
+    assert failure_value["error_class"] == "runtime_death_recovery_required"
     assert failure_value["attempt_number"] == 0
 
     recovery_value = output[recovery_index].payload["value"]
@@ -8894,13 +8988,12 @@ def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
         "agent_died",
         "lease_revoked",
         "output_record_accepted",
-        "runtime_retry_scheduled",
         "output_record_accepted",
         "node_state_changed",
     ]
     assert output[2].payload["record_type"] == "failure_record"
-    assert output[4].payload["record_type"] == "recovery_plan"
-    assert output[5].payload["new_state"] == "ready"
+    assert output[3].payload["record_type"] == "recovery_plan"
+    assert output[4].payload["new_state"] == "blocked"
 
 
 def _recovery_exhausted_events() -> list[EventEnvelope]:

@@ -539,6 +539,7 @@ class AgentDiedCommand(StrictCommandPayload):
     reason: str = "runtime_process_died"
     max_attempts: int = Field(default=0, ge=0)
     retry_backoff_seconds: int = Field(default=0, ge=0)
+    health_evidence_record_id: CommandIdentifier | None = None
     # Set by the driver when its per-node orphan-recovery budget
     # (MAX_NODE_RECOVERIES_PER_DRIVE) is exhausted: the caller is stating that
     # it will not attempt recovery for this node again, so the kernel must

@@ -997,7 +997,7 @@ async def test_current_partial_projection_checkpoint_is_rebuilt_and_rewritten(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-snapshot-partial-rebuild"
-    assert PROJECTION_SCHEMA_VERSION == 15
+    assert PROJECTION_SCHEMA_VERSION == 17
     clock = FakeClock()
     ids = SequentialIdGenerator()
     controller = GraphController(session_factory, clock, ids, auto_dispatch=False)

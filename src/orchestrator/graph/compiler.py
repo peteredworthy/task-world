@@ -19,7 +19,7 @@ import hashlib
 import json
 import posixpath
 import re
-from typing import Any
+from typing import Any, cast
 
 from orchestrator.config.models import (
     AutoVerifyItemConfig,
@@ -49,6 +49,7 @@ from orchestrator.graph.models import (
     RequirementRecord,
     RoutineSnapshotRecord,
     RunContextRecord,
+    SemanticSchemaDeclarationRecord,
 )
 
 
@@ -235,13 +236,40 @@ class _Compiler:
                         "direction": "output",
                         "schema": "RoutineSnapshot",
                         "record_layers": ["graph_record"],
-                    }
+                    },
+                    {
+                        "port": "semantic_schema_declaration",
+                        "direction": "output",
+                        "schema": "SemanticSchemaDeclaration",
+                        "record_layers": ["graph_record"],
+                        "required": False,
+                    },
                 ],
                 "snapshot": snapshot_record.value.model_dump(mode="json"),
                 "routine_snapshot_record": snapshot_record.model_dump(mode="json"),
             }
         )
         self._accept_record(snapshot_record.model_dump(mode="json"))
+        for declaration in self._routine.semantic_artifact_schemas:
+            record = SemanticSchemaDeclarationRecord.model_validate(
+                {
+                    "record_id": (
+                        f"semantic-schema-{declaration.schema_id}-v{declaration.version}"
+                    ),
+                    "record_kind": "graph_record",
+                    "record_type": "semantic_schema_declaration",
+                    "schema_version": declaration.version,
+                    "producer_node_id": _ROUTINE_SNAPSHOT_NODE_ID,
+                    "producer_port": "semantic_schema_declaration",
+                    "port": "semantic_schema_declaration",
+                    "schema": "SemanticSchemaDeclaration",
+                    "value": {
+                        **declaration.model_dump(mode="json"),
+                        "authority": "routine_snapshot",
+                    },
+                }
+            )
+            self._accept_record(record.model_dump(mode="json"))
 
     def _compile_dynamic_feature_acceptance_requirement(self) -> None:
         if self._dynamic_feature_inputs is None:
@@ -378,6 +406,41 @@ class _Compiler:
                 },
             ],
         }
+        skeleton_id = self._run_config.get("reliable_plan_skeleton_id")
+        if isinstance(skeleton_id, str):
+            raw_assignments = self._run_config.get("reliable_plan_model_assignments")
+            assignments = (
+                cast(dict[str, object], raw_assignments)
+                if isinstance(raw_assignments, dict)
+                else {}
+            )
+            raw_planner_assignment = assignments.get("planner")
+            planner_assignment = (
+                cast(dict[str, object], raw_planner_assignment)
+                if isinstance(raw_planner_assignment, dict)
+                else {}
+            )
+            raw_successor_assignment = assignments.get("successor_planner")
+            successor_assignment = (
+                cast(dict[str, object], raw_successor_assignment)
+                if isinstance(raw_successor_assignment, dict)
+                else {}
+            )
+            payload.update(
+                {
+                    "reliable_plan_skeleton_id": skeleton_id,
+                    "reliable_plan_one_horizon_authorized": bool(
+                        self._run_config.get("reliable_plan_one_horizon_authorized")
+                    ),
+                    "reliable_plan_qualification_evidence_hash": self._run_config.get(
+                        "reliable_plan_qualification_evidence_hash"
+                    ),
+                    "runner_model_override": (planner_assignment.get("model")),
+                    "profile": (planner_assignment.get("profile")),
+                    "reliable_plan_successor_model": (successor_assignment.get("model")),
+                    "reliable_plan_successor_profile": (successor_assignment.get("profile")),
+                }
+            )
         if self._dynamic_feature_inputs is not None:
             payload["dynamic_feature"] = self._dynamic_feature_inputs
         if step.child_routines:
@@ -522,6 +585,7 @@ class _Compiler:
                 "task_region_id": task_region_id,
                 "attempt_number": 1,
                 "candidate_id": candidate_id,
+                "base_snapshot_selection": "run_baseline",
                 "execution_id": f"exec-{worker_id}-1",
                 "step_id": step.id,
                 "step_index": step_index,
@@ -763,6 +827,7 @@ class _Compiler:
                 "task_region_id": task_region_id,
                 "attempt_number": 1,
                 "candidate_id": candidate_id,
+                "base_snapshot_selection": "candidate_under_test",
                 "execution_id": f"exec-{verifier_id}-1",
                 "max_attempts": task.retry.max_attempts,
                 "verifier_agent": task.verifier_agent or self._routine.verifier_agent,
@@ -833,6 +898,7 @@ class _Compiler:
                     "task_region_id": task_region_id,
                     "attempt_number": 1,
                     "candidate_id": candidate_id,
+                    "base_snapshot_selection": "candidate_under_test",
                     "execution_id": f"exec-{check_id}-1",
                     "max_attempts": max_attempts,
                     "check_index": index,
@@ -953,6 +1019,8 @@ class _Compiler:
     def _node(self, payload: dict[str, Any]) -> None:
         payload.setdefault("run_id", self._run_id)
         payload.setdefault("cache_authority_hash", self._cache_authority_hash)
+        if payload.get("kind") in {"worker", "verifier", "check", "planner", "join"}:
+            payload.setdefault("base_snapshot_selection", "run_baseline")
         self._event(
             "node_created",
             NodeCreatedPayload.model_validate(payload).model_dump(mode="json"),

@@ -16,7 +16,15 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import RunStatus
-from orchestrator.graph import project_run_state, project_task_states
+from orchestrator.db import GraphOutboxModel
+from orchestrator.graph import (
+    FailureRecord,
+    RecoveryPlanRecord,
+    leases_view,
+    node_states_view,
+    project_run_state,
+    project_task_states,
+)
 from orchestrator.graph_runtime import GraphController, GraphDispatchExecutor, seed_run
 from orchestrator.runners import AgentRunner
 
@@ -98,7 +106,7 @@ async def _seed_active_worker_lease(
     )
     await controller.handle_command(run_id, await controller.current_position(run_id), "accept_run")
     await controller.handle_command(run_id, await controller.current_position(run_id), "start")
-    await controller.handle_command(
+    scheduled = await controller.handle_command(
         run_id,
         await controller.current_position(run_id),
         "schedule_tick",
@@ -108,17 +116,37 @@ async def _seed_active_worker_lease(
             "base_snapshot_id": "routine-snapshot",
         },
     )
+    lease = next(event.payload for event in scheduled.events if event.event_type == "lease_granted")
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "acknowledge_start",
+        {
+            "node_id": lease["node_id"],
+            "lease_id": lease["lease_id"],
+            "lease_generation": lease["generation"],
+            "execution_id": lease["execution_id"],
+        },
+    )
+    dispatch = next(item for item in scheduled.outbox_items if item.kind == "agent_dispatch")
+    async with session_factory() as session:
+        async with session.begin():
+            row = await session.get(GraphOutboxModel, dispatch.outbox_id)
+            assert row is not None
+            row.status = "completed"
 
 
 @pytest.mark.asyncio
-async def test_resume_reschedules_dead_lease_to_completed(
+async def test_resume_blocks_dead_lease_until_recovery_is_differentiated(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    """First drive leaves the worker lease active (execution 'died' after start
-    ack). A second drive over the same DB with a fresh runtime recovers: the
-    dead lease becomes agent_died, the node reschedules, a clean worker submits,
-    the verifier grades A, the task is accepted and the run completes."""
+    """A restart revokes a dead lease without repeating an identical attempt.
+
+    The durable failure and recovery-plan records keep the node recoverable,
+    but a health fact or changed recovery action must differentiate the retry
+    before another runner can be dispatched.
+    """
     _, session_factory = file_db
     repo = tmp_path / "repo-dead-lease"
     _init_repo(repo)
@@ -132,7 +160,8 @@ async def test_resume_reschedules_dead_lease_to_completed(
     assert project_run_state(events_after_first) != "completed"
 
     # "Restart": fresh driver/runtime over the same DB. recover()+reconcile in
-    # run() must agent_died the dead lease, reschedule, and drive to completion.
+    # run() must classify the missing runtime and revoke its lease, but must not
+    # hand the same work straight back to an indistinguishable runner attempt.
     order2: list[str] = []
     driver2 = _build_driver(
         session_factory,
@@ -143,12 +172,51 @@ async def test_resume_reschedules_dead_lease_to_completed(
     outcome2 = await driver2.run(run_id)
 
     events = await _events(session_factory, run_id)
-    assert project_task_states(events) == {"step-1/task-1": "accepted"}
-    assert project_run_state(events) == "completed"
-    assert outcome2.completed is True
-    assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
-    # The recovered worker and the verifier both ran on the second drive.
-    assert "worker" in order2 and "verifier" in order2
+    event_types = [event.event_type for event in events]
+    projection = await GraphController(
+        session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
+    ).read_projection(run_id)
+    recovery_required_failures = [
+        event
+        for event in events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+        and isinstance(event.payload.get("value"), dict)
+        and event.payload["value"].get("error_class") == "runtime_death_recovery_required"
+    ]
+    assert len(recovery_required_failures) == 1, [
+        (event.event_type, event.payload) for event in events
+    ]
+    failure = FailureRecord.model_validate(recovery_required_failures[0].payload)
+    recovery = RecoveryPlanRecord.model_validate(
+        next(
+            event.payload
+            for event in events
+            if event.event_type == "output_record_accepted"
+            and event.payload.get("record_type") == "recovery_plan"
+        )
+    )
+
+    assert project_task_states(events) == {"step-1/task-1": "pending"}
+    assert project_run_state(events) == "active"
+    assert outcome2.completed is False
+    assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
+    assert order2 == []
+    assert "runtime_retry_scheduled" not in event_types
+    assert any(
+        event.event_type == "lease_revoked"
+        and event.payload.get("reason") == "runtime_process_missing_after_restart"
+        for event in events
+    )
+    assert all(lease.state == "revoked" for lease in leases_view(projection).values())
+    assert node_states_view(projection)[failure.value.failed_node_id] == "blocked"
+    assert failure.value.failure_class == "infrastructure_failure"
+    assert failure.value.retryable is True
+    assert failure.value.reason == "runtime_process_missing_after_restart"
+    assert recovery.producer_node_id == failure.value.failed_node_id
+    assert recovery.value.action == "pause"
+    assert recovery.value.retry_basis == "no_differentiating_action"
+    assert recovery.value.retry_base_snapshot_id == "routine-snapshot"
 
 
 @pytest.mark.asyncio

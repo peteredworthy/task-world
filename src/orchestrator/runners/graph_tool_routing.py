@@ -34,6 +34,10 @@ GRAPH_MACRO_TOOL_NAMES: frozenset[str] = frozenset(
         "create_join",
         "request_gate",
         "retire_or_supersede",
+        "create_discovery_region",
+        "create_plan_verification",
+        "create_successor_planner",
+        "create_effectful_batch",
     }
 )
 

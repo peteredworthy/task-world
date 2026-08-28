@@ -297,13 +297,21 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
     await competing_task
     completed_items = await dispatch_task
 
-    assert [item.kind for item in completed_items] == [
-        "runner_recovery",
+    assert [item.kind for item in completed_items] == ["runner_recovery"]
+    assert completed_items[0].outbox_id == recovery_item.outbox_id
+    pending_cleanups = await dispatcher.pending_items(run_id="runner-recovery")
+    assert [item.kind for item in pending_cleanups] == [
         "snapshot_cleanup",
         "snapshot_cleanup",
         "snapshot_cleanup",
     ]
-    assert completed_items[0].outbox_id == recovery_item.outbox_id
+    completed_cleanups = await dispatcher.dispatch_pending(run_id="runner-recovery")
+    assert [item.kind for item in completed_cleanups] == [
+        "snapshot_cleanup",
+        "snapshot_cleanup",
+        "snapshot_cleanup",
+    ]
+    assert await dispatcher.pending_items(run_id="runner-recovery") == []
     assert competing_observations == [
         ("changed by execution\n", True),
         ("changed by execution\n", True),
@@ -396,18 +404,23 @@ async def test_runner_recovery_dispatching_outbox_is_redelivered_after_restart(
     await _set_outbox_status(session_factory, fixture.item.outbox_id, "dispatching")
     executor = _executor(session_factory, fixture.controller, fixture.repo, tmp_path)
 
-    report = await recover(
-        session_factory,
-        OutboxDispatcher(session_factory, executor, FixedClock()),
-        run_id="recovery-restart",
-    )
+    dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
+    report = await recover(session_factory, dispatcher, run_id="recovery-restart")
 
-    assert [item.kind for item in report.redispatched] == [
-        "runner_recovery",
+    assert [item.kind for item in report.redispatched] == ["runner_recovery"]
+    pending_cleanups = await dispatcher.pending_items(run_id="recovery-restart")
+    assert [item.kind for item in pending_cleanups] == [
         "snapshot_cleanup",
         "snapshot_cleanup",
         "snapshot_cleanup",
     ]
+    completed_cleanups = await dispatcher.dispatch_pending(run_id="recovery-restart")
+    assert [item.kind for item in completed_cleanups] == [
+        "snapshot_cleanup",
+        "snapshot_cleanup",
+        "snapshot_cleanup",
+    ]
+    assert await dispatcher.pending_items(run_id="recovery-restart") == []
     assert report.redispatched[0].outbox_id == fixture.item.outbox_id
     assert await _outbox_status(session_factory, fixture.item.outbox_id) == "completed"
     assert (fixture.repo / "README.md").read_text() == "baseline\n"

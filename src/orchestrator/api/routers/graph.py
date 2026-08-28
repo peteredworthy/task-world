@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import Annotated, Any, Iterable, Literal, NoReturn, TypedDict, cast
+from typing import Annotated, Any, Iterable, Literal, Mapping, NoReturn, TypedDict, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -59,6 +59,11 @@ from orchestrator.graph import (
     project_run_state,
     project_scheduler_view,
     project_task_states,
+    node_base_snapshot_selections_view,
+    node_payload_view,
+    last_deferred_reasons_view,
+    usage_metrics_view,
+    task_region_snapshot_authority_view,
 )
 from orchestrator.graph_runtime import (
     GRAPH_READ_CONTRACTS,
@@ -456,6 +461,10 @@ def _empty_str_items() -> list[str]:
     return []
 
 
+def _empty_verifier_items() -> list[str | dict[str, Any]]:
+    return []
+
+
 class NodeDetailResponse(ApiModel):
     run_id: str
     node_id: str
@@ -463,6 +472,9 @@ class NodeDetailResponse(ApiModel):
     role: str | None
     state: str | None
     task_region_id: str | None = None
+    base_snapshot_selection: dict[str, str | None] | None = None
+    resolved_base_snapshot_id: str | None = None
+    snapshot_authority: dict[str, Any] | None = None
     contract: dict[str, Any] | None = None
     resource_claims: list[dict[str, Any]] = Field(default_factory=_empty_dict_items)
     allowed_actions: list[str] = Field(default_factory=_empty_str_items)
@@ -475,6 +487,20 @@ class NodeDetailResponse(ApiModel):
     callback_history: list[GraphEventResponse]
     events: list[GraphEventResponse]
     prompt_summary: dict[str, Any] | None = None
+    semantic_stage: str | None = None
+    objective: str | None = None
+    work_mode: str | None = None
+    scope: str | None = None
+    bound_requirement_ids: list[str] = Field(default_factory=_empty_str_items)
+    correction_reason: str | None = None
+    planning_horizon: int | None = None
+    declared_artifacts: list[dict[str, Any]] = Field(default_factory=_empty_dict_items)
+    declared_batch_ids: list[str] = Field(default_factory=_empty_str_items)
+    deterministic_checks: list[dict[str, Any]] = Field(default_factory=_empty_dict_items)
+    verifier_obligations: list[str | dict[str, Any]] = Field(default_factory=_empty_verifier_items)
+    readiness_reason: str | None = None
+    usage_summary: dict[str, Any] = Field(default_factory=dict)
+    hydration_summary: dict[str, Any] | None = None
     truncated: bool = False
     total_known: int = 0
     next_cursor: str | int | None = None
@@ -679,6 +705,9 @@ class GraphRegionResponse(ApiModel):
     task_region_id: str
     state: str
     blockers: list[FinalInvariantBlockerResponse]
+    accepted_snapshot: dict[str, Any] | None = None
+    current_candidate_snapshot: dict[str, Any] | None = None
+    rejected_snapshots: list[dict[str, Any]] = Field(default_factory=_empty_dict_items)
 
 
 class GraphRegionsResponse(ApiModel):
@@ -1857,6 +1886,7 @@ def build_graph_regions_response(
     task_states = project_task_states(events, projection=projection)
     blockers = project_final_invariant_blockers(events, projection=projection)
     blockers_by_region: dict[str, list[FinalInvariantBlockerResponse]] = {}
+    snapshot_authority = task_region_snapshot_authority_view(projection)
     for blocker in blockers:
         task_region_id = blocker.get("task_region_id")
         if not isinstance(task_region_id, str) or not task_region_id:
@@ -1873,6 +1903,7 @@ def build_graph_regions_response(
                 task_region_id=region_id,
                 state=task_states.get(region_id, "blocked"),
                 blockers=blockers_by_region.get(region_id, []),
+                **_region_snapshot_response_fields(snapshot_authority.get(region_id)),
             )
             for region_id in region_ids
         ],
@@ -1891,6 +1922,7 @@ def build_graph_regions_response_from_projection(
     task_states = project_task_states([], projection=projection)
     blockers = project_final_invariant_blockers([], projection=projection)
     blockers_by_region: dict[str, list[FinalInvariantBlockerResponse]] = {}
+    snapshot_authority = task_region_snapshot_authority_view(projection)
     for blocker in blockers:
         task_region_id = blocker.get("task_region_id")
         if isinstance(task_region_id, str) and task_region_id:
@@ -1908,6 +1940,7 @@ def build_graph_regions_response_from_projection(
                 task_region_id=region_id,
                 state=task_states.get(region_id, "blocked"),
                 blockers=blockers_by_region.get(region_id, []),
+                **_region_snapshot_response_fields(snapshot_authority.get(region_id)),
             )
             for region_id in page_ids
         ],
@@ -1933,6 +1966,30 @@ def build_graph_regions_response_from_view(
         total_known=len(regions),
         next_cursor=next_cursor,
     )
+
+
+def _region_snapshot_response_fields(authority: Any) -> dict[str, Any]:
+    if authority is None:
+        return {
+            "accepted_snapshot": None,
+            "current_candidate_snapshot": None,
+            "rejected_snapshots": [],
+        }
+    return {
+        "accepted_snapshot": (
+            authority.accepted_snapshot.model_dump(mode="json")
+            if authority.accepted_snapshot is not None
+            else None
+        ),
+        "current_candidate_snapshot": (
+            authority.current_candidate_snapshot.model_dump(mode="json")
+            if authority.current_candidate_snapshot is not None
+            else None
+        ),
+        "rejected_snapshots": [
+            item.model_dump(mode="json") for item in authority.rejected_snapshots
+        ],
+    }
 
 
 def build_scheduler_view_response(
@@ -2927,7 +2984,19 @@ def build_node_detail_response(
     output_records = _pick_output_records(events, node_id)
     file_state_records = _pick_file_state_records(events, node_id)
     active_lease = _active_lease_for_node(leases, node_id)
+    selection = node_base_snapshot_selections_view(projection).get(node_id)
+    task_region_id = cast(str | None, metadata.get("task_region_id"))
+    region_authority = task_region_snapshot_authority_view(projection).get(task_region_id or "")
     callback_history = [event for event in node_events if _is_callback_history_event(event)]
+    semantic_fields = _node_semantic_fields(
+        node_payload_view(projection, node_id) or {},
+        state=state,
+        readiness_reason=last_deferred_reasons_view(projection).get(node_id),
+        prompt_summary=_latest_prompt_summary(node_events),
+        usage=usage_metrics_view(projection),
+        kind=cast(str | None, metadata.get("kind")),
+        node_id=node_id,
+    )
 
     return NodeDetailResponse(
         run_id=run_id,
@@ -2935,7 +3004,18 @@ def build_node_detail_response(
         kind=cast(str | None, metadata.get("kind")),
         role=cast(str | None, metadata.get("role")),
         state=state,
-        task_region_id=cast(str | None, metadata.get("task_region_id")),
+        task_region_id=task_region_id,
+        base_snapshot_selection=selection,
+        resolved_base_snapshot_id=(
+            cast(str, active_lease["base_snapshot_id"])
+            if active_lease is not None and isinstance(active_lease.get("base_snapshot_id"), str)
+            else None
+        ),
+        snapshot_authority=(
+            _region_snapshot_response_fields(region_authority)
+            if region_authority is not None
+            else None
+        ),
         contract=cast(dict[str, Any] | None, metadata.get("contract")),
         resource_claims=cast(list[dict[str, Any]], metadata.get("resource_claims", [])),
         allowed_actions=cast(list[str], metadata.get("allowed_actions", [])),
@@ -2950,6 +3030,7 @@ def build_node_detail_response(
         ],
         events=[_event_to_response(event, payload_mode=payload_mode) for event in node_events],
         prompt_summary=_latest_prompt_summary(node_events),
+        **semantic_fields,
     )
 
 
@@ -3035,6 +3116,15 @@ def build_node_detail_response_from_summary(
         for value in (output_records, file_state_records, callback_history, response_events)
     )
     next_cursor = _route_metadata_cursor(collection_meta)
+    semantic_fields = _node_semantic_fields(
+        summary.semantic_contract,
+        state=summary.state,
+        readiness_reason=summary.readiness_reason,
+        prompt_summary=prompt_summary,
+        usage=summary.usage_summary,
+        kind=summary.kind,
+        node_id=summary.node_id,
+    )
     return NodeDetailResponse(
         run_id=summary.run_id,
         node_id=summary.node_id,
@@ -3042,6 +3132,15 @@ def build_node_detail_response_from_summary(
         role=summary.role,
         state=summary.state,
         task_region_id=summary.task_region_id,
+        base_snapshot_selection=_snapshot_selection_from_compact_events(summary.events),
+        resolved_base_snapshot_id=(
+            cast(str, active_lease["base_snapshot_id"])
+            if active_lease is not None and isinstance(active_lease.get("base_snapshot_id"), str)
+            else None
+        ),
+        snapshot_authority=(
+            dict(summary.snapshot_authority) if summary.snapshot_authority is not None else None
+        ),
         contract=node_contract_summary(summary.kind, summary.role),
         resource_claims=controls["resource_claims"],
         allowed_actions=controls["allowed_actions"],
@@ -3054,11 +3153,120 @@ def build_node_detail_response_from_summary(
         callback_history=callback_history,
         events=response_events,
         prompt_summary=prompt_summary,
+        **semantic_fields,
         truncated=truncated,
         total_known=max((item.total_known for item in collection_meta.values()), default=0),
         next_cursor=next_cursor,
         collection_meta=collection_meta,
     )
+
+
+def _node_semantic_fields(
+    payload: dict[str, Any],
+    *,
+    state: str | None,
+    readiness_reason: str | None,
+    prompt_summary: dict[str, Any] | None,
+    usage: Mapping[str, object],
+    kind: str | None,
+    node_id: str,
+) -> dict[str, Any]:
+    declared_artifacts: list[dict[str, Any]] = []
+    schema_id = payload.get("semantic_schema_id")
+    if isinstance(schema_id, str):
+        artifact: dict[str, Any] = {"schema_id": schema_id}
+        version = payload.get("semantic_schema_version")
+        if isinstance(version, int):
+            artifact["schema_version"] = version
+        declared_artifacts.append(artifact)
+    outputs = payload.get("outputs")
+    if isinstance(outputs, list):
+        for output in cast(list[Any], outputs):
+            if isinstance(output, dict):
+                declared_artifacts.append(dict(cast(dict[str, Any], output)))
+    batch_ids: list[str] = []
+    batch_id = payload.get("declared_batch_id")
+    if isinstance(batch_id, str):
+        batch_ids.append(batch_id)
+    raw_batch_ids = payload.get("declared_batch_ids")
+    if isinstance(raw_batch_ids, list):
+        typed_batch_ids = cast(list[Any], raw_batch_ids)
+        batch_ids.extend(str(value) for value in typed_batch_ids if isinstance(value, str))
+    deterministic_checks: list[dict[str, Any]] = []
+    check_fact: dict[str, Any] = {}
+    for source, destination in (
+        ("command_binding", "command_binding"),
+        ("hidden_oracle_command", "command"),
+    ):
+        value = payload.get(source)
+        if isinstance(value, str):
+            check_fact[destination] = value
+    command_definition = payload.get("command_definition")
+    if isinstance(command_definition, dict):
+        check_fact["command_definition"] = dict(cast(dict[str, Any], command_definition))
+    if check_fact:
+        deterministic_checks.append(check_fact)
+    verifier_obligations: list[str | dict[str, Any]] = []
+    rubric = payload.get("rubric")
+    if isinstance(rubric, list):
+        typed_rubric = cast(list[Any], rubric)
+        verifier_obligations.extend(
+            str(value) if isinstance(value, str) else dict(cast(dict[str, Any], value))
+            for value in typed_rubric
+            if isinstance(value, (str, dict))
+        )
+    node_tokens = usage.get("tokens_by_node")
+    if isinstance(node_tokens, dict):
+        tokens = int(cast(dict[str, Any], node_tokens).get(node_id, 0))
+        action_kinds = cast(dict[str, Any], usage.get("action_count_by_node_kind", {}))
+        latency_kinds = cast(dict[str, Any], usage.get("latency_ms_by_node_kind", {}))
+        usage_summary = {
+            "tokens": tokens,
+            "actions_for_node_kind": int(action_kinds.get(kind or "", 0)),
+            "duration_ms_for_node_kind": int(latency_kinds.get(kind or "", 0)),
+        }
+    else:
+        usage_summary = dict(usage)
+    return {
+        "semantic_stage": payload.get("semantic_stage"),
+        "objective": payload.get("objective"),
+        "work_mode": payload.get("work_mode"),
+        "scope": payload.get("scope"),
+        "bound_requirement_ids": [
+            str(value)
+            for value in cast(list[Any], payload.get("bound_requirement_ids", []))
+            if isinstance(value, str)
+        ],
+        "correction_reason": payload.get("recovery_reason"),
+        "planning_horizon": payload.get("planning_horizon"),
+        "declared_artifacts": declared_artifacts,
+        "declared_batch_ids": sorted(set(batch_ids)),
+        "deterministic_checks": deterministic_checks,
+        "verifier_obligations": verifier_obligations,
+        "readiness_reason": (readiness_reason if state in {"planned", "blocked"} else state),
+        "usage_summary": usage_summary,
+        "hydration_summary": prompt_summary,
+    }
+
+
+def _snapshot_selection_from_compact_events(
+    events: list[dict[str, Any]],
+) -> dict[str, str | None] | None:
+    for event in events:
+        if event.get("event_type") != "node_created":
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        typed_payload = cast(dict[str, Any], payload)
+        if not isinstance(typed_payload.get("base_snapshot_selection"), str):
+            continue
+        return {
+            "selection": cast(str, typed_payload["base_snapshot_selection"]),
+            "region_id": cast(str | None, typed_payload.get("base_snapshot_region_id")),
+            "candidate_id": cast(str | None, typed_payload.get("base_snapshot_candidate_id")),
+        }
+    return None
 
 
 def _full_node_event_responses(

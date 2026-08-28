@@ -65,6 +65,7 @@ class NodeScheduleInfo:
     failed_candidate_id: str | None = None
     preconditions: list[str] = field(default_factory=_empty_preconditions)
     command_definition_present: bool = False
+    recovery_blocker_record_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,8 @@ def evaluate_readiness(
         return False, f"node_state_not_eligible:{node.state}"
     if node.node_id in active_lease_node_ids:
         return False, "node_already_leased"
+    if node.recovery_blocker_record_id is not None:
+        return False, f"recovery_authorization_required:{node.recovery_blocker_record_id}"
     for edge in node.required_edges:
         if not edge.required:
             continue

@@ -470,6 +470,24 @@ steps:
     assert routine.id == "legacy-routine"
 
 
+def test_routine_rejects_malformed_semantic_artifact_json_schema() -> None:
+    data = _make_routine()
+    data["semantic_artifact_schemas"] = [
+        {
+            "schema_id": "implementation-plan",
+            "version": 1,
+            "semantic_role": "implementation_plan",
+            "json_schema": {
+                "type": "object",
+                "properties": {"batch_id": {"type": "not-a-json-schema-type"}},
+            },
+        }
+    ]
+
+    with pytest.raises(ValueError, match="semantic artifact json_schema is invalid"):
+        RoutineConfig.model_validate(data)
+
+
 def test_auto_grade_blocked_when_no_verification() -> None:
     """transition_after_verification blocks auto-grade when task has no verification."""
     from datetime import datetime, timezone

@@ -275,6 +275,9 @@ def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
     }
     if context.node_kind == "worker":
         packet["work_contract"] = _worker_contract_packet(context)
+        packet["bound_records"] = _planner_evidence(context, context.graph_projection)[
+            "bound_records"
+        ]
     return packet
 
 
@@ -303,7 +306,7 @@ def _prompt_sections_for_context(context: GraphDispatchContext) -> list[str]:
     if context.node_kind == "check":
         return ["check_command", "bound_evidence"]
     if context.node_kind == "worker":
-        return ["worker_instruction", "work_contract", "worker_authority"]
+        return ["worker_instruction", "work_contract", "bound_evidence", "worker_authority"]
     return ["worker_instruction", "worker_authority"]
 
 
@@ -317,13 +320,17 @@ def _prompt_summary_input_ports(context: GraphDispatchContext) -> dict[str, list
 
 def _prompt_summary_bound_records(context: GraphDispatchContext) -> dict[str, list[dict[str, Any]]]:
     evidence = _planner_evidence(context, context.graph_projection)
+    rendered_prompt = _prompt_for_node(context)
     compact: dict[str, list[dict[str, Any]]] = {}
     for port, records in evidence["bound_records"].items():
-        compact[port] = [_compact_prompt_bound_record(record) for record in records[:10]]
+        compact[port] = [
+            _compact_prompt_bound_record(record, rendered_prompt=rendered_prompt)
+            for record in records
+        ]
     return compact
 
 
-def _compact_prompt_bound_record(record: dict[str, Any]) -> dict[str, Any]:
+def _compact_prompt_bound_record(record: dict[str, Any], *, rendered_prompt: str) -> dict[str, Any]:
     compact = {
         key: record[key]
         for key in ("record_id", "record_kind", "hydration_policy", "status")
@@ -342,9 +349,48 @@ def _compact_prompt_bound_record(record: dict[str, Any]) -> dict[str, Any]:
     summary = record.get("record_summary")
     if isinstance(summary, dict):
         compact["record_summary"] = dict(cast(dict[str, Any], summary))
-    if record.get("omitted_from_prompt") is True:
+    if record.get("status") == "missing":
+        compact["prompt_disposition"] = "missing"
+    elif record.get("omitted_from_prompt") is True:
         compact["omitted_from_prompt"] = True
+        compact["prompt_disposition"] = "omitted"
+    else:
+        full_record = json.dumps(record, sort_keys=True)
+        if _json_fragment_is_visible(full_record, rendered_prompt):
+            if "record_summary" in record:
+                compact["prompt_disposition"] = "summarized"
+            elif "record_reference" in record:
+                compact["prompt_disposition"] = "referenced"
+            elif "record_payload" in record:
+                compact["prompt_disposition"] = "hydrated"
+            else:
+                compact["prompt_disposition"] = "missing"
+        elif _record_prefix_is_visible(record, full_record, rendered_prompt):
+            compact["prompt_disposition"] = "truncated"
+        else:
+            compact["omitted_from_prompt"] = True
+            compact["prompt_disposition"] = "omitted"
     return compact
+
+
+def _json_fragment_is_visible(fragment: str, prompt: str) -> bool:
+    return fragment in prompt or _escaped_json_fragment(fragment) in prompt
+
+
+def _record_prefix_is_visible(record: dict[str, Any], encoded_record: str, prompt: str) -> bool:
+    record_id = record.get("record_id")
+    if not isinstance(record_id, str):
+        return False
+    record_id_field = f'"record_id": {json.dumps(record_id)}'
+    field_end = encoded_record.find(record_id_field)
+    if field_end < 0:
+        return False
+    prefix = encoded_record[: field_end + len(record_id_field)]
+    return _json_fragment_is_visible(prefix, prompt)
+
+
+def _escaped_json_fragment(fragment: str) -> str:
+    return json.dumps(fragment)[1:-1]
 
 
 def _worker_like_prompt(context: GraphDispatchContext) -> str:
@@ -355,6 +401,10 @@ def _worker_like_prompt(context: GraphDispatchContext) -> str:
 
     if context.node_kind == "worker":
         context_lines.append(f"work_contract: {_bounded_json(_worker_contract_packet(context))}")
+        context_lines.append(
+            "bound_evidence: "
+            + _bounded_json(_planner_evidence(context, context.graph_projection)["bound_records"])
+        )
 
     authority_packet = _worker_authority_packet(context)
     if authority_packet:
@@ -1203,7 +1253,7 @@ def _graph_patch_feedback_accepted(feedback: str) -> bool:
 def _candidate_id_for_verifier(context: GraphDispatchContext) -> str:
     bound_candidate_ids = _bound_record_ids_for_ports(
         context,
-        ("candidate_under_test", "candidate"),
+        ("candidate_under_test", "candidate", "semantic_artifact"),
     )
     if bound_candidate_ids:
         return bound_candidate_ids[0]
@@ -1230,7 +1280,7 @@ def _patch_payload_has_ops(patch_payload: dict[str, Any]) -> bool:
 def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list[str]]:
     candidate_record_ids = _bound_record_ids_for_ports(
         context,
-        ("candidate_under_test", "candidate"),
+        ("candidate_under_test", "candidate", "semantic_artifact"),
     )
     file_state_record_ids = _bound_record_ids_for_ports(
         context,
@@ -1238,7 +1288,18 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
     )
     evidence_record_ids = _bound_record_ids_for_ports(
         context,
-        ("verification_evidence", "verification_report", "verifier_check_results"),
+        (
+            "verification_evidence",
+            "verification_report",
+            "verifier_check_results",
+            *tuple(
+                port
+                for port in sorted(
+                    input_bindings_view(context.graph_projection).get(context.node_id, {})
+                )
+                if port.startswith("check_result_") or port.startswith("requirement_")
+            ),
+        ),
     )
     for record in _record_payloads_for_ids(context.graph_projection, candidate_record_ids):
         file_state_record_ids.extend(_citation_record_ids(record, "file_state_record_ids"))
@@ -1258,7 +1319,7 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
     if unique_evidence_record_ids:
         citations["verification_report_record_ids"] = unique_evidence_record_ids
     evaluated_record_ids = _unique_record_ids(
-        [*evidence_record_ids, *unique_candidate_record_ids, *unique_file_state_record_ids]
+        [*unique_candidate_record_ids, *unique_file_state_record_ids, *evidence_record_ids]
     )
     if evaluated_record_ids:
         citations["evaluated_record_ids"] = evaluated_record_ids
@@ -1341,11 +1402,14 @@ def _add_evaluated_record_citations(
     *,
     evidence: bool = False,
     value: bool = False,
+    verification_reports_at_top_level: bool = True,
 ) -> dict[str, Any]:
     if not citations:
         return record
     output = dict(record)
     for key, record_ids in citations.items():
+        if key == "verification_report_record_ids" and not verification_reports_at_top_level:
+            continue
         output.setdefault(key, list(record_ids))
     candidate_ids = citations.get("candidate_record_ids")
     if candidate_ids is not None and len(candidate_ids) == 1:
@@ -1476,6 +1540,7 @@ def _output_records_for_submit(
                 },
                 citations,
                 evidence=True,
+                verification_reports_at_top_level=False,
             )
         ]
     return [
@@ -1559,6 +1624,20 @@ def _grades_pass(grades: list[tuple[str, str, str | None]]) -> bool:
 
 prompt_for_node = _prompt_for_node
 prompt_summary_for_node = _prompt_summary_for_node
+
+
+def render_graph_node_prompt(context: GraphDispatchContext) -> str:
+    """Render the production prompt packet for an assembled dispatch context."""
+
+    return _prompt_for_node(context)
+
+
+def summarize_graph_node_prompt(context: GraphDispatchContext) -> dict[str, Any]:
+    """Return the production prompt-summary packet for a dispatch context."""
+
+    return _prompt_summary_for_node(context)
+
+
 planner_evidence = _planner_evidence
 planner_packet = _planner_packet
 can_submit_graph_patch = _can_submit_graph_patch

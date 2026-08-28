@@ -172,6 +172,7 @@ task-world/
 │   │   ├── access/            # Data access layer
 │   │   │   ├── connection.py  # Async engine + session factory
 │   │   │   ├── repositories.py # RunRepository, locked JSON merge mechanics, etc.
+│   │   │   ├── reliable_plan_qualifications.py # Single-use durable qualification grants
 │   │   │   ├── event_store.py # Legacy event persistence + paginated queries (events table)
 │   │   │   ├── event_store_v2.py # SqliteEventStore: event sourcing via events_v2
 │   │   │   └── jsonl_outbox.py # JsonlOutboxObserver: post-append JSONL writer
@@ -225,6 +226,8 @@ task-world/
 │   │   ├── dispatch.py        # Outbox-to-runner/controller execution bridge
 │   │   ├── prompts.py         # Bounded prompt packets and explicit artifact excerpts
 │   │   ├── outbox.py          # Durable side-effect outbox mapping/dispatcher
+│   │   ├── reliable_plan_qualification.py # Grant issuance, consumption, runtime binding
+│   │   ├── reliable_plan_scenarios.py # Canonical ten-scenario product-path qualification
 │   │   └── store.py           # Graph event store and summary read models
 │   │
 │   ├── runners/               # Agent execution: all runner types, detection, profiles
@@ -484,6 +487,31 @@ model-derived flexible-JSON checkpoint coverage, and direct performance tests.
 The direct performance gate replays each 10,000-event scenario after one warmup,
 uses three samples, asserts exact behavior cardinality, and requires a median
 under one second.
+
+Reliable-plan dogfood uses the public `usage_metrics_view` carrier query and
+the `ReliablePlanEvaluationConfig`, qualification, result, and comparison
+artifact models exported by `orchestrator.graph`. The incident-derived
+`reliable-plan-fff4f6b7-v1` fixture is a strict typed manifest, not a passing
+attestation. `run_reliable_plan_scenarios` executes every manifest entry and a
+qualification can be built only from its returned product-path results; all ten
+must pass before Luna successor planning may be enabled. Production issuance
+runs those scenarios server-side and stores an opaque, single-use qualification
+reference in `reliable_plan_qualifications`; `POST /api/runs` atomically binds
+that reference to one run, and the graph driver revalidates the binding before
+seeding the one-horizon capability into the initial planner. The created
+successor inherits the skeleton identity without the capability, so a second
+successor horizon is rejected by the controller. Caller-supplied authorization
+facts and copied, unknown, or already-consumed references cannot enable the
+gate. The validated arm assignments are also compiled into the trusted planner
+payload: the first planner receives its planner model and the authorized child
+receives the declared successor-planner model, which the graph runner factory
+uses as its per-node model override. Node-detail rows
+durably own objective, work mode, scope, bound requirements, correction and
+current-readiness reasons, actual check bindings/definitions, verifier rubrics,
+usage, and hydration facts independently of the bounded event tail. Live evaluation is a
+credential/server-gated API harness documented in
+`docs/dynamic-graph/dogfood-reliable-plan-evaluation.md`; it does not start a
+server or manufacture missing model evidence.
 
 ---
 
@@ -756,6 +784,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/runs` | Create a new run |
+| POST | `/api/runs/reliable-plan-qualification` | Execute the canonical ten reliable-plan regressions server-side and issue one opaque, single-use qualification reference |
 | GET | `/api/runs` | List runs (filterable) |
 | GET | `/api/runs/cost-rollup` | Aggregate canonical graph `node_usage_recorded` facts by day, node kind, model, profile, and/or run |
 | GET | `/api/runs/{id}` | Get run details |
@@ -780,7 +809,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/graph/final-blockers` | Byte- and count-bounded final-invariant blocker page |
 | GET | `/api/runs/{id}/graph/regions` | Byte- and count-bounded task-region and blocker page |
 | GET | `/api/runs/{id}/graph/file-state` | Bounded, cursor-paged graph file-state boundary report (`from_position`, `limit`, `path_limit`) |
-| GET | `/api/runs/{id}/graph/nodes/{node_id}` | Graph node detail with inputs, outputs, callbacks, and file-state facts |
+| GET | `/api/runs/{id}/graph/nodes/{node_id}` | Graph node detail with inputs, outputs, callbacks, file-state, semantic stage/horizon, declared artifact/batch/check/verifier obligations, readiness, usage, and hydration facts |
 | GET | `/api/runs/{id}/branch-status` | Branch ahead/behind status |
 | POST | `/api/runs/{id}/back-merge` | Pull source branch into run |
 | POST | `/api/runs/{id}/merge-back` | Merge run branch into source |

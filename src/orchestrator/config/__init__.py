@@ -23,6 +23,7 @@ from orchestrator.config.global_config import (
     JournalConfig,
     PathsConfig,
 )
+from orchestrator.config.json_schema import json_schema_declaration_error
 from orchestrator.config.models import (
     AutoVerifyConfig,
     AutoVerifyItemConfig,
@@ -31,6 +32,7 @@ from orchestrator.config.models import (
     RetryConfig,
     RoutineConfig,
     RoutineInputConfig,
+    SemanticArtifactSchemaConfig,
     RubricItemConfig,
     StepConfig,
     StepTransitions,
@@ -77,6 +79,7 @@ __all__ = [
     "ProjectRoutine",
     "RoutineError",
     "RoutineInputConfig",
+    "SemanticArtifactSchemaConfig",
     "RoutineNotFoundError",
     "RoutineParseError",
     "RoutineSource",
@@ -100,6 +103,7 @@ __all__ = [
     "get_routine_from_repo",
     "get_routine_version",
     "is_selectable_agent_runner_type",
+    "json_schema_declaration_error",
     "load_routine_from_path",
     "normalize_persisted_agent_runner_type",
 ]

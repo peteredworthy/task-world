@@ -80,6 +80,10 @@ def test_allowlist_contains_expected_tools() -> None:
             "create_join",
             "request_gate",
             "retire_or_supersede",
+            "create_discovery_region",
+            "create_plan_verification",
+            "create_successor_planner",
+            "create_effectful_batch",
         }
     )
     assert CodexServerAgent.TOOL_ALLOWLIST == expected

@@ -34,6 +34,15 @@ from orchestrator.graph.cache_authority import (
 from orchestrator.graph.projection_collections import FrozenMap
 
 
+BaseSnapshotSelection: TypeAlias = Literal[
+    "run_baseline",
+    "latest_accepted",
+    "accepted_region",
+    "rejected_candidate",
+    "candidate_under_test",
+]
+
+
 def _freeze_canonical_record_value(value: object) -> object:
     """Freeze a validated record without introducing a projection schema."""
     if isinstance(value, BaseModel):
@@ -307,6 +316,8 @@ class SelectorBaseModel(BaseModel):
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    record_id: str | None = Field(default=None, min_length=1)
+
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         kwargs.setdefault("by_alias", True)
         kwargs.setdefault("exclude_none", True)
@@ -362,8 +373,13 @@ class SimpleRecordSelector(SelectorBaseModel):
         "requirement_record",
         "routine_snapshot",
         "run_context",
+        "semantic_artifact",
+        "semantic_schema_declaration",
     ]
     schema_: str | None = Field(default=None, alias="schema")
+    semantic_schema_id: str | None = None
+    semantic_schema_version: StrictInt | None = Field(default=None, ge=1)
+    authority_status: Literal["candidate", "accepted", "superseded", "rejected"] | None = None
 
 
 class AnyOfRecordSelector(SelectorBaseModel):
@@ -433,6 +449,9 @@ def _selector_matches_payload(
             _selector_matches_payload(part, record_payload, aliases) for part in selector.selectors
         )
 
+    if selector.record_id is not None and record_payload.get("record_id") != selector.record_id:
+        return False
+
     record_types = _payload_record_types(record_payload, aliases)
     if selector.record_type not in record_types:
         return False
@@ -440,6 +459,20 @@ def _selector_matches_payload(
     payload_schema = record_payload.get("schema")
     if isinstance(schema, str) and isinstance(payload_schema, str) and schema != payload_schema:
         return False
+    semantic_schema_id = getattr(selector, "semantic_schema_id", None)
+    semantic_schema_version = getattr(selector, "semantic_schema_version", None)
+    value = record_payload.get("value")
+    typed_value = cast(dict[str, Any], value) if isinstance(value, dict) else None
+    if semantic_schema_id is not None:
+        if typed_value is None or typed_value.get("schema_id") != semantic_schema_id:
+            return False
+    if semantic_schema_version is not None:
+        if typed_value is None or typed_value.get("schema_version") != semantic_schema_version:
+            return False
+    authority_status = getattr(selector, "authority_status", None)
+    if authority_status is not None:
+        if typed_value is None or typed_value.get("authority_status") != authority_status:
+            return False
     if isinstance(selector, VerificationReportSelector):
         return (
             selector.outcome is None
@@ -683,6 +716,98 @@ class StoredArtifactRef(StrictNestedModel):
         return self
 
 
+class SemanticSchemaDeclarationValue(StrictNestedModel):
+    schema_id: str = Field(min_length=1, pattern=r"^[A-Za-z][A-Za-z0-9_.-]*$")
+    version: StrictInt = Field(ge=1)
+    semantic_role: str = Field(min_length=1)
+    json_schema: dict[str, Any]
+    authority: Literal["routine_snapshot", "planner_amendment"]
+    supersedes_declaration_record_id: str | None = None
+
+    @model_validator(mode="after")
+    def declaration_is_an_object_schema(self) -> "SemanticSchemaDeclarationValue":
+        if self.json_schema.get("type") != "object":
+            raise ValueError("semantic artifact json_schema type must be object")
+        if self.authority == "routine_snapshot" and self.supersedes_declaration_record_id:
+            raise ValueError("routine snapshot declarations cannot supersede planner declarations")
+        return self
+
+
+class SemanticSchemaDeclarationRecord(TypedRecordBase):
+    record_id: str
+    record_kind: Literal["graph_record"]
+    producer_node_id: str
+    port: Literal["semantic_schema_declaration"]
+    schema_: Literal["SemanticSchemaDeclaration"] = Field(alias="schema")
+    value: SemanticSchemaDeclarationValue
+
+    @model_validator(mode="after")
+    def declaration_fields_are_consistent(self) -> "SemanticSchemaDeclarationRecord":
+        if self.record_type != "semantic_schema_declaration":
+            raise ValueError("record_type must be semantic_schema_declaration")
+        if self.schema_version is not None and self.schema_version != self.value.version:
+            raise ValueError("schema_version must match declared version")
+        return self
+
+
+class SemanticArtifactValidation(StrictNestedModel):
+    """Controller evidence that referenced bytes were resolved and schema-validated."""
+
+    declaration_record_id: str = Field(min_length=1)
+    content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    validated_json: dict[str, Any]
+
+
+class SemanticArtifactValue(StrictNestedModel):
+    semantic_role: str = Field(min_length=1)
+    schema_id: str = Field(min_length=1)
+    schema_version: StrictInt = Field(ge=1)
+    content: dict[str, Any] | None = None
+    artifact_ref: StoredArtifactRef | None = None
+    artifact_validation: SemanticArtifactValidation | None = None
+    provenance: dict[str, Any] = Field(default_factory=dict)
+    source_record_ids: list[str] = Field(default_factory=list)
+    requirement_ids: list[str] = Field(default_factory=list)
+    task_region_id: str | None = None
+    validation_status: Literal["declared", "validated", "rejected"] = "validated"
+    authority_status: Literal["candidate", "accepted", "superseded", "rejected"]
+    supersedes_record_id: str | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_content_carrier(self) -> "SemanticArtifactValue":
+        if (self.content is None) == (self.artifact_ref is None):
+            raise ValueError("semantic artifact requires exactly one of content or artifact_ref")
+        if self.authority_status == "superseded" and self.supersedes_record_id is None:
+            raise ValueError("superseded semantic artifact requires supersedes_record_id")
+        if self.content is not None and self.artifact_validation is not None:
+            raise ValueError("inline semantic artifacts cannot carry artifact_validation")
+        if self.artifact_ref is not None:
+            if self.artifact_validation is None:
+                raise ValueError(
+                    "referenced semantic artifact requires controller validation evidence"
+                )
+            if self.artifact_validation.content_hash != self.artifact_ref.content_hash:
+                raise ValueError("semantic artifact validation hash must match artifact_ref")
+        return self
+
+
+class SemanticArtifactRecord(TypedRecordBase):
+    record_id: str
+    record_kind: Literal["graph_record"]
+    producer_node_id: str
+    port: Literal["semantic_artifact"]
+    schema_: Literal["SemanticArtifact"] = Field(alias="schema")
+    value: SemanticArtifactValue
+
+    @model_validator(mode="after")
+    def artifact_fields_are_consistent(self) -> "SemanticArtifactRecord":
+        if self.record_type != "semantic_artifact":
+            raise ValueError("record_type must be semantic_artifact")
+        if self.schema_version is not None and self.schema_version != self.value.schema_version:
+            raise ValueError("schema_version must match semantic artifact schema version")
+        return self
+
+
 class ArtifactReferenceRecord(TypedRecordBase):
     record_id: str
     record_kind: Literal["graph_record"]
@@ -761,6 +886,27 @@ class CandidateProjection(GraphBaseModel):
     position: int
     file_state_record_ids: list[str] = Field(default_factory=list)
     supersedes_task_region_ids: list[str] = Field(default_factory=list)
+
+
+class RegionSnapshotProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
+    candidate_id: str
+    snapshot_id: str
+    base_snapshot_id: str | None = None
+    file_state_record_id: str
+    verification_record_id: str | None = None
+    verification_outcome: Literal["passed", "failed"] | None = None
+    position: int
+
+
+class TaskRegionSnapshotAuthorityProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
+    task_region_id: str
+    accepted_snapshot: RegionSnapshotProjection | None = None
+    current_candidate_snapshot: RegionSnapshotProjection | None = None
+    rejected_snapshots: list[RegionSnapshotProjection] = Field(
+        default_factory=lambda: list[RegionSnapshotProjection]()
+    )
 
 
 class VerifierVerdictProjection(GraphBaseModel):
@@ -931,6 +1077,7 @@ class RuntimeRetryScheduledPayload(StrictEventPayload):
     reason: str
     retry_after_seconds: StrictInt | None = None
     retry_not_before: str | None = None
+    health_evidence_record_id: str | None = None
 
 
 class HeartbeatRecordedPayload(StrictEventPayload):
@@ -1595,6 +1742,9 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     attempt_number: StrictInt | None = None
     candidate_id: str | None = None
     failed_candidate_id: str | None = None
+    base_snapshot_selection: BaseSnapshotSelection | None = None
+    base_snapshot_region_id: str | None = None
+    base_snapshot_candidate_id: str | None = None
     predecessor_node_ids: list[str] = Field(default_factory=list)
     appealed_node_id: str | None = None
     membership: dict[str, Any] | None = None
@@ -1693,6 +1843,46 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     # ``access_mode``.
     work_mode: str | None = None
     cache_authority_hash: str | None = None
+    semantic_stage: (
+        Literal[
+            "discovery",
+            "plan_verification",
+            "successor_planning",
+            "effectful_batch",
+            "final_audit",
+            "final_gate",
+            "corrective_work",
+        ]
+        | None
+    ) = None
+    planning_horizon: StrictInt | None = Field(default=None, ge=0)
+    semantic_schema_id: str | None = None
+    semantic_schema_version: StrictInt | None = Field(default=None, ge=1)
+    declared_batch_id: str | None = None
+    declared_batch_ids: list[str] | None = None
+    accepted_plan_amendment_record_id: str | None = None
+    final_audit_required: StrictBool | None = None
+    reliable_plan_skeleton_id: str | None = None
+    reliable_plan_one_horizon_authorized: StrictBool | None = None
+    reliable_plan_qualification_evidence_hash: str | None = None
+    reliable_plan_successor_model: str | None = None
+    reliable_plan_successor_profile: str | None = None
+    runner_model_override: str | None = None
+
+    @model_validator(mode="after")
+    def snapshot_selection_is_explicit_and_complete(self) -> "NodeCreatedPayload":
+        selection = self.base_snapshot_selection
+        if selection == "accepted_region" and not self.base_snapshot_region_id:
+            raise ValueError("accepted_region snapshot selection requires base_snapshot_region_id")
+        if selection == "rejected_candidate" and not self.base_snapshot_candidate_id:
+            raise ValueError(
+                "rejected_candidate snapshot selection requires base_snapshot_candidate_id"
+            )
+        if selection != "accepted_region" and self.base_snapshot_region_id is not None:
+            raise ValueError("base_snapshot_region_id is only valid with accepted_region")
+        if selection != "rejected_candidate" and self.base_snapshot_candidate_id is not None:
+            raise ValueError("base_snapshot_candidate_id is only valid with rejected_candidate")
+        return self
 
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         kwargs.setdefault("exclude_unset", True)
@@ -2511,7 +2701,7 @@ RetryBasis: TypeAlias = Literal[
 
 
 class RecoveryPlanValue(StrictNestedModel):
-    action: Literal["retry", "supersede", "cancel", "cleanup"]
+    action: Literal["retry", "supersede", "cancel", "cleanup", "pause"]
     responsible_actor: str
     graph_changes: list[dict[str, Any]]
     reason: str | None = None
@@ -2569,6 +2759,8 @@ OutputRecordPayload = (
     | AuthorityRequestRecord
     | FailureRecord
     | RecoveryPlanRecord
+    | SemanticSchemaDeclarationRecord
+    | SemanticArtifactRecord
 )
 
 
@@ -2772,6 +2964,8 @@ OUTPUT_RECORD_MODELS_BY_TYPE: MappingProxyType[str, type[GraphBaseModel]] = Mapp
         "requirement_record": RequirementRecord,
         "routine_snapshot": RoutineSnapshotRecord,
         "run_context": RunContextRecord,
+        "semantic_artifact": SemanticArtifactRecord,
+        "semantic_schema_declaration": SemanticSchemaDeclarationRecord,
         "verification_report": VerificationReportRecord,
     }
 )

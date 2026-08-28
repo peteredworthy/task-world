@@ -4,7 +4,7 @@ Each query owns the physical projection access and returns values that cannot
 mutate projection containers.
 """
 
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
@@ -22,7 +22,10 @@ from orchestrator.graph.models import (
     OutputRecordAcceptedPayload,
     RequirementRecord,
     RoutineSnapshotRecord,
+    SemanticSchemaDeclarationRecord,
     ResourceClaimProjection,
+    RegionSnapshotProjection,
+    TaskRegionSnapshotAuthorityProjection,
     VerificationResultProjection,
     VerifierVerdictProjection,
 )
@@ -51,6 +54,14 @@ from orchestrator.graph.projections import (
     RecoveryNodeIndexEntry,
     requirement_freshness_facts_from_projection,
 )
+from orchestrator.graph.semantic_artifacts import semantic_schema_declarations
+
+
+def semantic_schema_declarations_view(
+    projection: GraphProjection,
+) -> dict[tuple[str, int], SemanticSchemaDeclarationRecord]:
+    """Return accepted semantic declarations without exposing record storage."""
+    return dict(semantic_schema_declarations(projection.records.by_id))
 
 
 def non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str) -> bool:
@@ -509,6 +520,21 @@ def node_task_regions_view(projection: GraphProjection) -> dict[str, str]:
     }
 
 
+def node_base_snapshot_selections_view(
+    projection: GraphProjection,
+) -> dict[str, dict[str, str | None]]:
+    """Return each node's declared semantic snapshot selection contract."""
+    return {
+        node_id: {
+            "selection": node.spec.base_snapshot_selection,
+            "region_id": node.spec.base_snapshot_region_id,
+            "candidate_id": node.spec.base_snapshot_candidate_id,
+        }
+        for node_id, node in projection.nodes.items()
+        if node.spec.base_snapshot_selection is not None
+    }
+
+
 def output_records_by_node_port_view(
     projection: GraphProjection,
 ) -> dict[str, dict[str, list[AcceptedOutputRecordPayload]]]:
@@ -570,6 +596,31 @@ def recorded_node_usage_keys_view(projection: GraphProjection) -> dict[str, bool
     return dict(projection.usage.recorded_keys)
 
 
+class UsageMetricsView(TypedDict):
+    tokens_by_node: dict[str, int]
+    tokens_by_node_kind: dict[str, int]
+    latency_ms_by_node_kind: dict[str, int]
+    execution_count_by_node_kind: dict[str, int]
+    action_count_by_node_kind: dict[str, int]
+
+
+def usage_metrics_view(projection: GraphProjection) -> UsageMetricsView:
+    """Return the public, carrier-owned graph usage aggregates.
+
+    Reliable-plan evaluation consumes this query rather than reaching into the
+    grouped projection.  The values are additive carrier facts; callers decide
+    how to label or compare an evaluation arm.
+    """
+    usage = projection.usage
+    return {
+        "tokens_by_node": dict(usage.tokens_by_node),
+        "tokens_by_node_kind": dict(usage.tokens_by_node_kind),
+        "latency_ms_by_node_kind": dict(usage.latency_ms_by_node_kind),
+        "execution_count_by_node_kind": dict(usage.execution_count_by_node_kind),
+        "action_count_by_node_kind": dict(usage.action_count_by_node_kind),
+    }
+
+
 def recovery_nodes_by_record_id_view(
     projection: GraphProjection,
 ) -> dict[str, list[RecoveryNodeIndexEntry]]:
@@ -590,6 +641,15 @@ def retry_not_before_by_node_view(projection: GraphProjection) -> dict[str, str 
     }
 
 
+def recovery_blockers_by_node_view(projection: GraphProjection) -> dict[str, str]:
+    """Return durable recovery-required blockers keyed by executable node."""
+    return {
+        node_id: node.scheduling.recovery_blocker_record_id
+        for node_id, node in projection.nodes.items()
+        if node.scheduling.recovery_blocker_record_id is not None
+    }
+
+
 def task_candidates_view(
     projection: GraphProjection,
 ) -> dict[str, list[CandidateProjection]]:
@@ -607,6 +667,36 @@ def task_states_view(projection: GraphProjection) -> dict[str, str]:
     return {
         task_id: task.state for task_id, task in projection.tasks.items() if task.state is not None
     }
+
+
+def task_region_snapshot_authority_view(
+    projection: GraphProjection,
+) -> dict[str, TaskRegionSnapshotAuthorityProjection]:
+    """Return immutable accepted/current/rejected filesystem authority by region."""
+    output: dict[str, TaskRegionSnapshotAuthorityProjection] = {}
+    for task_region_id, task in projection.tasks.items():
+        accepted = (
+            RegionSnapshotProjection.model_validate(task.accepted_snapshot.model_dump(mode="json"))
+            if task.accepted_snapshot is not None
+            else None
+        )
+        current = (
+            RegionSnapshotProjection.model_validate(
+                task.current_candidate_snapshot.model_dump(mode="json")
+            )
+            if task.current_candidate_snapshot is not None
+            else None
+        )
+        output[task_region_id] = TaskRegionSnapshotAuthorityProjection(
+            task_region_id=task_region_id,
+            accepted_snapshot=accepted,
+            current_candidate_snapshot=current,
+            rejected_snapshots=[
+                RegionSnapshotProjection.model_validate(item.model_dump(mode="json"))
+                for item in task.rejected_snapshots
+            ],
+        )
+    return output
 
 
 def verifier_verdicts_view(

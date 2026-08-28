@@ -83,6 +83,7 @@ from orchestrator.graph import (
     thaw_json,
     safe_validation_diagnostics,
     safe_validation_path,
+    semantic_schema_declarations_view,
 )
 from orchestrator.graph_runtime import prompts as _prompts
 from orchestrator.graph_runtime.controller import (
@@ -128,6 +129,53 @@ MANAGED_LEASE_TTL_SECONDS = 3600
 MAX_GRAPH_JSON_SECTION_CHARS = _prompts.MAX_GRAPH_JSON_SECTION_CHARS
 MAX_GRAPH_PROMPT_FIELD_CHARS = _prompts.MAX_GRAPH_PROMPT_FIELD_CHARS
 MAX_CHECK_OUTPUT_CHARS = 20_000
+
+
+async def _controller_ready_semantic_artifact_records(
+    records: list[dict[str, object]],
+    projection: GraphProjection,
+    store: ArtifactStore,
+) -> list[dict[str, object]]:
+    """Resolve references before the callback envelope is content-addressed."""
+    declarations = semantic_schema_declarations_view(projection)
+    output: list[dict[str, object]] = []
+    for raw_record in records:
+        record = dict(raw_record)
+        raw_value = record.get("value")
+        if record.get("record_type") != "semantic_artifact" or not isinstance(raw_value, dict):
+            output.append(record)
+            continue
+        value = dict(cast(dict[str, Any], raw_value))
+        raw_ref = value.get("artifact_ref")
+        if not isinstance(raw_ref, dict):
+            output.append(record)
+            continue
+        ref = StoredArtifactRef.model_validate(raw_ref)
+        content = await store.read(ref)
+        decoded = json.loads(content.decode(ref.encoding or "utf-8"))
+        if not isinstance(decoded, dict):
+            raise ValueError("referenced semantic artifact JSON must contain an object")
+        schema_id = value.get("schema_id")
+        schema_version = value.get("schema_version")
+        declaration = (
+            declarations.get((schema_id, schema_version))
+            if isinstance(schema_id, str)
+            and isinstance(schema_version, int)
+            and not isinstance(schema_version, bool)
+            else None
+        )
+        if declaration is None:
+            raise ValueError("referenced semantic artifact schema is undeclared")
+        value["artifact_validation"] = {
+            "declaration_record_id": declaration.record_id,
+            "content_hash": ref.content_hash,
+            "validated_json": decoded,
+        }
+        record["value"] = value
+        output.append(record)
+    return output
+
+
 CHECK_OUTPUT_EXTERNALIZE_BYTES = 16_384
 CHECK_OUTPUT_TAIL_CHARS = 4_000
 DEFAULT_CHECK_TIMEOUT_SECONDS = 300
@@ -310,6 +358,66 @@ class GraphDispatchContext:
             )
 
 
+async def assemble_graph_dispatch_context(
+    session_factory: async_sessionmaker[AsyncSession],
+    item: OutboxItem,
+    *,
+    worktree_path: str,
+) -> GraphDispatchContext:
+    """Assemble the production dispatch context from durable graph facts."""
+
+    payload = item.payload
+    node_id = str(payload["node_id"])
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        projection, events, graph_position = await store.load_projection_with_tail(item.run_id)
+
+    _guard_no_pending_compromised_file_state_bindings(projection, node_id)
+    node_payload = _node_payload(events, node_id, projection=projection)
+    binding = cache_authority_binding(projection)
+    lease = leases_view(projection).get(str(payload["lease_id"]))
+    dispatch_hash = payload.get("cache_authority_hash")
+    node_hash = node_payload.get("cache_authority_hash")
+    lease_hash = lease.cache_authority_hash if lease is not None else None
+    if cache_authority_is_new_format(projection) and (
+        not isinstance(dispatch_hash, str)
+        or not isinstance(node_hash, str)
+        or not isinstance(lease_hash, str)
+    ):
+        raise ValueError(
+            "new-format dispatch requires cache authority hashes on dispatch, lease, and node"
+        )
+    if any(
+        value is not None and value != binding.hash
+        for value in (dispatch_hash, lease_hash, node_hash)
+    ):
+        raise ValueError(
+            "cache authority mismatch between dispatch, lease, node, and routine snapshot"
+        )
+    node_kind = str(node_payload.get("kind", "worker"))
+    base_snapshot_id = payload.get("base_snapshot_id")
+    if not isinstance(base_snapshot_id, str) or not base_snapshot_id:
+        raise ValueError("agent dispatch payload missing base_snapshot_id")
+    return GraphDispatchContext(
+        run_id=item.run_id,
+        node_id=node_id,
+        node_kind=node_kind,
+        node_role=_node_role(node_kind, node_payload),
+        node_payload=node_payload,
+        requirements=_requirements_for_node(projection, node_id, events),
+        worktree_path=worktree_path,
+        lease_id=str(payload["lease_id"]),
+        lease_generation=_payload_int(payload, "generation"),
+        execution_id=str(payload["execution_id"]),
+        base_snapshot_id=base_snapshot_id,
+        dispatch_event_id=item.event_id,
+        cache_authority_hash=binding.hash,
+        graph_projection=projection,
+        graph_events=list(events),
+        graph_position=graph_position,
+    )
+
+
 @dataclass(frozen=True)
 class CheckExecutionWorktree:
     path: str
@@ -471,9 +579,15 @@ class StaticGraphAgentFactory:
 
     def create_runner(self, context: GraphDispatchContext) -> AgentRunner:
         phase = "verifying" if context.node_kind == "verifier" else "building"
+        runner_config = dict(self._runner_config)
+        if isinstance(context.node_payload.get("reliable_plan_skeleton_id"), str) and isinstance(
+            (model_override := context.node_payload.get("runner_model_override")),
+            str,
+        ):
+            runner_config["model"] = model_override
         return create_agent_runner(
             self._runner_type,
-            self._runner_config,
+            runner_config,
             run_id=context.run_id,
             phase=phase,
         )
@@ -1083,56 +1197,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
             await self._agent_died(context, str(exc))
 
     async def _build_dispatch_context(self, item: OutboxItem) -> GraphDispatchContext:
-        payload = item.payload
-        node_id = str(payload["node_id"])
-        async with self._session_factory() as session:
-            store = GraphEventStore(session)
-            projection, events, graph_position = await store.load_projection_with_tail(item.run_id)
-
-        _guard_no_pending_compromised_file_state_bindings(projection, node_id)
-        node_payload = _node_payload(events, node_id, projection=projection)
-        binding = cache_authority_binding(projection)
-        lease = leases_view(projection).get(str(payload["lease_id"]))
-        dispatch_hash = payload.get("cache_authority_hash")
-        node_hash = node_payload.get("cache_authority_hash")
-        lease_hash = lease.cache_authority_hash if lease is not None else None
-        if cache_authority_is_new_format(projection) and (
-            not isinstance(dispatch_hash, str)
-            or not isinstance(node_hash, str)
-            or not isinstance(lease_hash, str)
-        ):
-            raise ValueError(
-                "new-format dispatch requires cache authority hashes on dispatch, lease, and node"
-            )
-        if any(
-            value is not None and value != binding.hash
-            for value in (dispatch_hash, lease_hash, node_hash)
-        ):
-            raise ValueError(
-                "cache authority mismatch between dispatch, lease, node, and routine snapshot"
-            )
-        node_kind = str(node_payload.get("kind", "worker"))
-        base_snapshot_id = payload.get("base_snapshot_id")
-        if not isinstance(base_snapshot_id, str) or not base_snapshot_id:
-            msg = "agent dispatch payload missing base_snapshot_id"
-            raise ValueError(msg)
-        return GraphDispatchContext(
-            run_id=item.run_id,
-            node_id=node_id,
-            node_kind=node_kind,
-            node_role=_node_role(node_kind, node_payload),
-            node_payload=node_payload,
-            requirements=_requirements_for_node(projection, node_id, events),
+        return await assemble_graph_dispatch_context(
+            self._session_factory,
+            item,
             worktree_path=self._worktree_path,
-            lease_id=str(payload["lease_id"]),
-            lease_generation=_payload_int(payload, "generation"),
-            execution_id=str(payload["execution_id"]),
-            base_snapshot_id=base_snapshot_id,
-            dispatch_event_id=item.event_id,
-            cache_authority_hash=binding.hash,
-            graph_projection=projection,
-            graph_events=list(events),
-            graph_position=graph_position,
         )
 
     def _execution_context(
@@ -1211,6 +1279,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
             list(output_records)
             if output_records is not None
             else _output_records_for_submit(context, grades)
+        )
+        submitted_records = await _controller_ready_semantic_artifact_records(
+            submitted_records, context.graph_projection, self._artifact_store
         )
         boundary = capture_file_state_boundary(
             worktree_path=context.worktree_path,
@@ -2146,6 +2217,7 @@ def build_graph_runtime(
         auto_dispatch=False,
         journal_max_bytes=journal_max_bytes,
         runtime_boundary_capability=capability,
+        artifact_store=artifact_store,
     )
     executor = GraphDispatchExecutor(
         session_factory,
@@ -2592,7 +2664,7 @@ async def _execute_check_command(
             "attempt_number": attempt_number,
             "value": value,
         },
-        _evaluated_record_citations(context),
+        _check_record_citations(_evaluated_record_citations(context)),
         value=True,
     )
     return CheckResultRecord.model_validate(record_payload).model_dump(mode="json")
@@ -2610,7 +2682,7 @@ def _check_result_from_bound_verification_if_redundant(
         projection=context.graph_projection,
     ):
         return None
-    citations = _evaluated_record_citations(context)
+    citations = _check_record_citations(_evaluated_record_citations(context))
     verification_record = _latest_passed_verification_citation(
         context.graph_projection,
         citations.get("verification_report_record_ids", []),
@@ -2665,6 +2737,24 @@ def _check_result_from_bound_verification_if_redundant(
         value=True,
     )
     return CheckResultRecord.model_validate(record_payload).model_dump(mode="json")
+
+
+def _check_record_citations(citations: dict[str, list[str]]) -> dict[str, list[str]]:
+    """Order a check's oracle evidence before the candidate it substantiates."""
+    ordered = {key: list(record_ids) for key, record_ids in citations.items()}
+    evaluated_record_ids = list(
+        dict.fromkeys(
+            [
+                *ordered.get("verification_report_record_ids", []),
+                *ordered.get("candidate_record_ids", []),
+                *ordered.get("file_state_record_ids", []),
+                *ordered.get("evaluated_record_ids", []),
+            ]
+        )
+    )
+    if evaluated_record_ids:
+        ordered["evaluated_record_ids"] = evaluated_record_ids
+    return ordered
 
 
 async def _externalize_check_output(

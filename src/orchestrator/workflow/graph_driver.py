@@ -47,7 +47,9 @@ from orchestrator.graph_runtime import (
     recover,
     reconcile_graph,
     reconcile_runtime,
+    require_reliable_plan_qualification_for_run,
     seed_run,
+    verified_reliable_plan_seed_config,
 )
 from orchestrator.runners import get_graph_capable_agent_runner_types
 from orchestrator.workflow.engine.errors import RunFinalizationError
@@ -516,6 +518,25 @@ class GraphRunDriver:
                 blocked_reason=message,
             )
 
+        reliable_plan_facts = None
+        if "reliable_plan_skeleton_id" in run.config:
+            try:
+                async with self._session_factory() as session:
+                    reliable_plan_facts = await require_reliable_plan_qualification_for_run(
+                        session,
+                        run_id=run_id,
+                        run_config=run.config,
+                    )
+            except ValueError as exc:
+                message = f"Reliable-plan authorization rejected: {exc}"
+                await self._apply_pause(run_id, "reliable_plan_unauthorized", message)
+                return GraphRunOutcome(
+                    run_id=run_id,
+                    run_state=None,
+                    completed=False,
+                    blocked_reason=message,
+                )
+
         controller_position = await self._current_position(run_id)
         is_fresh = controller_position == 0
         if controller_position == 0:
@@ -536,6 +557,11 @@ class GraphRunDriver:
                 run.config,
                 Path(run.worktree_path),
             )
+            if reliable_plan_facts is not None:
+                seed_run_config = verified_reliable_plan_seed_config(
+                    seed_run_config,
+                    reliable_plan_facts,
+                )
             await seed_run(
                 self._session_factory,
                 routine,

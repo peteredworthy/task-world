@@ -69,6 +69,8 @@ def test_accepted_record_models_are_the_canonical_record_contracts() -> None:
         "requirement_record",
         "routine_snapshot",
         "run_context",
+        "semantic_artifact",
+        "semantic_schema_declaration",
         "verification_report",
     }
     for record_type, payload in OUTPUT_RECORD_CASES.items():

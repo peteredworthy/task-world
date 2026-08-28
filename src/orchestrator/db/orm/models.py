@@ -20,6 +20,16 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from orchestrator.db.orm.base import Base
 
 
+class ReliablePlanQualificationModel(Base):
+    """Opaque, single-use authorization derived from server-run qualification."""
+
+    __tablename__ = "reliable_plan_qualifications"
+
+    reference: Mapped[str] = mapped_column(String, primary_key=True)
+    facts: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    consumed_by_run_id: Mapped[str | None] = mapped_column(String, nullable=True, unique=True)
+
+
 class RunModel(Base):
     __tablename__ = "runs"
 
@@ -495,6 +505,10 @@ class GraphNodeDetailSummaryModel(Base):
     role: Mapped[str | None] = mapped_column(String, nullable=True)
     state: Mapped[str | None] = mapped_column(String, nullable=True)
     task_region_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    semantic_contract: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    readiness_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    usage_summary: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    snapshot_authority: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     input_ports: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     output_records: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     file_state_records: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)

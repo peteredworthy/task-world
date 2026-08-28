@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field as dataclass_field, replace
 from datetime import datetime
 from hashlib import sha256
 from types import MappingProxyType
@@ -23,6 +23,7 @@ from sqlalchemy import (
     select,
     true,
     union_all,
+    update,
 )
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +50,7 @@ from orchestrator.graph import (
     node_states_view,
     ready_nodes_view,
     task_states_view,
+    task_region_snapshot_authority_view,
     run_state as query_run_state,
     Actor,
     ActorKind,
@@ -116,6 +118,32 @@ _READ_CONTRACT_KEY = "_graph_read_contract"
 # archival view tables.  No public route reads this adjunct.
 _MATERIALIZED_VIEWS_KEY = "_materialized_views"
 _ARCHIVAL_READ_CONTRACT_KEY = "_graph_archival_read_contract"
+
+
+def _region_snapshot_payload(authority: Any) -> dict[str, Any]:
+    if authority is None:
+        return {
+            "accepted_snapshot": None,
+            "current_candidate_snapshot": None,
+            "rejected_snapshots": [],
+        }
+    return {
+        "accepted_snapshot": (
+            authority.accepted_snapshot.model_dump(mode="json")
+            if authority.accepted_snapshot is not None
+            else None
+        ),
+        "current_candidate_snapshot": (
+            authority.current_candidate_snapshot.model_dump(mode="json")
+            if authority.current_candidate_snapshot is not None
+            else None
+        ),
+        "rejected_snapshots": [
+            item.model_dump(mode="json") for item in authority.rejected_snapshots
+        ],
+    }
+
+
 HEAVY_GRAPH_EVENT_TYPES = frozenset(
     {
         "callback_accepted",
@@ -151,6 +179,9 @@ SUMMARY_PAYLOAD_FIELDS = (
     "command_definition",
     "command_type",
     "candidate_id",
+    "base_snapshot_selection",
+    "base_snapshot_region_id",
+    "base_snapshot_candidate_id",
     "execution_id",
     "evidence",
     "generation",
@@ -207,10 +238,12 @@ BOOLEAN_PAYLOAD_FIELDS = frozenset(
         "deleted_snapshot_ref",
         "explicit_authority_required",
         "complete_node",
+        "final_audit_required",
         "is_mutating",
         "new_behavior",
         "owns_file_state_snapshot",
         "rate_missing",
+        "reliable_plan_one_horizon_authorized",
         "required",
         "requires_authority",
         "semantic_change",
@@ -2207,6 +2240,10 @@ class GraphPatchAttemptPage:
     partial: bool
 
 
+def _empty_any_dict() -> dict[str, Any]:
+    return {}
+
+
 @dataclass(frozen=True)
 class GraphNodeDetailSummary:
     run_id: str
@@ -2225,6 +2262,10 @@ class GraphNodeDetailSummary:
     events: list[dict[str, Any]]
     prompt_summary: dict[str, Any] | None = None
     read_contract: dict[str, Any] | None = None
+    snapshot_authority: dict[str, Any] | None = None
+    semantic_contract: dict[str, Any] = dataclass_field(default_factory=_empty_any_dict)
+    readiness_reason: str | None = None
+    usage_summary: dict[str, Any] = dataclass_field(default_factory=_empty_any_dict)
 
 
 @dataclass(frozen=True)
@@ -2381,6 +2422,7 @@ class GraphEventStore:
             run_id,
             stored_events,
             expected_position=expected_position,
+            projection=projection,
         )
         await self.advance_projection_snapshot(
             run_id,
@@ -4983,6 +5025,7 @@ class GraphEventStore:
         events: list[EventEnvelope],
         *,
         expected_position: int,
+        projection: GraphProjection | None = None,
     ) -> None:
         """Incrementally maintain compact node-detail rows for newly appended events."""
         if not events:
@@ -5054,6 +5097,8 @@ class GraphEventStore:
                     collection_names=collection_names,
                     position=current_position,
                 )
+        if projection is not None:
+            await self._sync_node_detail_snapshot_authority(run_id, events, projection)
         if checkpoint is None:
             checkpoint = GraphNodeDetailSummaryCheckpointModel(
                 run_id=run_id,
@@ -5063,6 +5108,39 @@ class GraphEventStore:
         else:
             checkpoint.position = current_position
         await self._session.flush()
+
+    async def _sync_node_detail_snapshot_authority(
+        self,
+        run_id: str,
+        events: list[EventEnvelope],
+        projection: GraphProjection,
+    ) -> None:
+        """Publish changed region authority into its node-detail owner rows.
+
+        The reducer remains the sole derivation of accepted/candidate/rejected
+        authority. A set-based update copies only regions named by this bounded
+        append batch, so serving one node never decodes the complete projection
+        checkpoint or replays graph history.
+        """
+        region_ids = {
+            task_region_id
+            for event in events
+            if isinstance((task_region_id := event.payload.get("task_region_id")), str)
+        }
+        if not region_ids:
+            return
+        authority_by_region = task_region_snapshot_authority_view(projection)
+        for task_region_id in sorted(region_ids):
+            await self._session.execute(
+                update(GraphNodeDetailSummaryModel)
+                .where(GraphNodeDetailSummaryModel.run_id == run_id)
+                .where(GraphNodeDetailSummaryModel.task_region_id == task_region_id)
+                .values(
+                    snapshot_authority=_region_snapshot_payload(
+                        authority_by_region.get(task_region_id)
+                    )
+                )
+            )
 
     async def advance_projection_snapshot(
         self,
@@ -5298,6 +5376,7 @@ class GraphEventStore:
             await flush_batch()
 
             task_states = task_states_view(projection)
+            snapshot_authority = task_region_snapshot_authority_view(projection)
             task_region_ids = sorted(str(region_id) for region_id in task_states)
             task_index = 0
             blocker_region_page: list[str] = []
@@ -5428,6 +5507,7 @@ class GraphEventStore:
                         "task_region_id": region_id,
                         "state": str(task_states.get(region_id, "blocked")),
                         "blockers": retained,
+                        **_region_snapshot_payload(snapshot_authority.get(region_id)),
                     },
                 )
                 if blocker_count > len(retained):
@@ -5588,13 +5668,14 @@ class GraphEventStore:
 
             await self.append_event_summaries(run_id, summary_events)
             await self.append_artifact_references(run_id, summary_events)
+            for event in projection_events:
+                projection = reduce_event(projection, event, enforce_relationships=True)
             await self.append_node_detail_summaries(
                 run_id,
                 node_detail_events,
                 expected_position=position,
+                projection=projection,
             )
-            for event in projection_events:
-                projection = reduce_event(projection, event, enforce_relationships=True)
             await self.apply_run_usage_events(run_id, summary_events)
             position = batch_end
             from_position = batch_end + 1
@@ -5706,6 +5787,16 @@ class GraphEventStore:
         if batch_size < 1:
             raise ValueError("batch_size must be positive")
         await self.delete_node_detail_summaries(run_id)
+        projection_checkpoint = await self.read_projection_checkpoint(run_id)
+        current_position = await self.current_position(run_id)
+        if projection_checkpoint is None or projection_checkpoint.position != current_position:
+            raise GraphReadModelUnavailable(
+                run_id,
+                GRAPH_READ_CONTRACTS["node_detail"].owner_read_model_name,
+                "missing_or_stale_projection_checkpoint",
+                current_position=current_position,
+            )
+        projection = projection_checkpoint.projection
         from_position = 1
         checkpoint_position = 0
         while True:
@@ -5720,6 +5811,7 @@ class GraphEventStore:
                 run_id,
                 events,
                 expected_position=checkpoint_position,
+                projection=projection,
             )
             checkpoint_position = events[-1].position
             from_position = checkpoint_position + 1
@@ -6597,6 +6689,8 @@ def _node_detail_field_updates(
                 if isinstance(payload.get("task_region_id"), str)
                 else summary.task_region_id
             ),
+            semantic_contract=_node_semantic_contract(payload),
+            readiness_reason=(state if isinstance(state, str) else summary.readiness_reason),
         )
     elif event.event_type == "node_state_changed":
         node_id = payload.get("node_id")
@@ -6608,10 +6702,40 @@ def _node_detail_field_updates(
                 position,
             )
             prompt_summary = payload.get("prompt_summary")
-            update_fields: dict[str, Any] = {"position": position, "state": new_state}
+            update_fields: dict[str, Any] = {
+                "position": position,
+                "state": new_state,
+                "readiness_reason": new_state,
+            }
             if isinstance(prompt_summary, dict):
                 update_fields["prompt_summary"] = dict(cast(dict[str, Any], prompt_summary))
             updates[node_id] = _replace_summary(summary, **update_fields)
+    elif event.event_type == "node_deferred":
+        node_id = payload.get("node_id")
+        reason = payload.get("reason")
+        if isinstance(node_id, str) and isinstance(reason, str):
+            summary = summaries.get(node_id) or _empty_node_detail_summary(
+                event.run_id, node_id, position
+            )
+            updates[node_id] = _replace_summary(summary, position=position, readiness_reason=reason)
+    elif event.event_type == "node_usage_recorded":
+        node_id = payload.get("node_id")
+        if isinstance(node_id, str):
+            summary = summaries.get(node_id) or _empty_node_detail_summary(
+                event.run_id, node_id, position
+            )
+            usage = dict(summary.usage_summary)
+            usage["tokens"] = (
+                int(usage.get("tokens", 0))
+                + int(payload.get("gen_ai_usage_input_tokens", 0))
+                + int(payload.get("gen_ai_usage_output_tokens", 0))
+            )
+            if payload.get("usage_index", 0) == 0:
+                usage["actions"] = int(usage.get("actions", 0)) + int(payload.get("num_actions", 0))
+                usage["duration_ms"] = int(usage.get("duration_ms", 0)) + int(
+                    payload.get("latency_ms", 0)
+                )
+            updates[node_id] = _replace_summary(summary, position=position, usage_summary=usage)
     elif event.event_type == "node_retired":
         node_id = payload.get("node_id")
         if isinstance(node_id, str):
@@ -6762,6 +6886,31 @@ def _replace_summary(
     return replace(summary, **updates)
 
 
+def _node_semantic_contract(payload: dict[str, Any]) -> dict[str, Any]:
+    """Durable scalar owner facts, independent of the retained event tail."""
+    keys = (
+        "objective",
+        "work_mode",
+        "scope",
+        "bound_requirement_ids",
+        "inputs",
+        "outputs",
+        "acceptance",
+        "command_binding",
+        "command_definition",
+        "hidden_oracle_command",
+        "rubric",
+        "recovery_reason",
+        "semantic_stage",
+        "planning_horizon",
+        "semantic_schema_id",
+        "semantic_schema_version",
+        "declared_batch_id",
+        "declared_batch_ids",
+    )
+    return {key: payload[key] for key in keys if key in payload and payload[key] is not None}
+
+
 def _empty_node_detail_summary(
     run_id: str,
     node_id: str,
@@ -6775,6 +6924,10 @@ def _empty_node_detail_summary(
         role=None,
         state=None,
         task_region_id=None,
+        semantic_contract={},
+        readiness_reason=None,
+        usage_summary={},
+        snapshot_authority=None,
         input_ports={},
         output_records=[],
         file_state_records=[],
@@ -7029,6 +7182,12 @@ def _node_detail_summary_from_row(
         role=row.role,
         state=row.state,
         task_region_id=row.task_region_id,
+        semantic_contract=dict(row.semantic_contract),
+        readiness_reason=row.readiness_reason,
+        usage_summary=dict(row.usage_summary),
+        snapshot_authority=(
+            dict(row.snapshot_authority) if row.snapshot_authority is not None else None
+        ),
         input_ports=cast(dict[str, list[str]], dict(row.input_ports)),
         output_records=[dict(record) for record in row.output_records],
         file_state_records=[dict(record) for record in row.file_state_records],
@@ -7050,6 +7209,12 @@ def _assign_node_detail_summary(
     row.role = summary.role
     row.state = summary.state
     row.task_region_id = summary.task_region_id
+    row.semantic_contract = dict(summary.semantic_contract)
+    row.readiness_reason = summary.readiness_reason
+    row.usage_summary = dict(summary.usage_summary)
+    row.snapshot_authority = (
+        dict(summary.snapshot_authority) if summary.snapshot_authority is not None else None
+    )
     bounded, metadata = bound_node_detail_owner(
         {
             "input_ports": {key: list(value) for key, value in summary.input_ports.items()},

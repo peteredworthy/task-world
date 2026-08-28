@@ -68,6 +68,10 @@ EXPECTED_FLEXIBLE_JSON_FIELDS = frozenset(
         ("TypedRecordBase", "provenance"),
         ("RecoveryPlanValue", "graph_changes"),
         ("RoutineSnapshotValue", "dynamic_feature"),
+        ("SemanticArtifactValidation", "validated_json"),
+        ("SemanticArtifactValue", "content"),
+        ("SemanticArtifactValue", "provenance"),
+        ("SemanticSchemaDeclarationValue", "json_schema"),
         ("VerificationReportRecord", "evidence"),
     }
 )
@@ -223,7 +227,7 @@ def _record(
         "verification"
         if record_type == "verification_report"
         else "graph_record"
-        if record_type == "routine_snapshot"
+        if record_type in {"routine_snapshot", "semantic_schema_declaration", "semantic_artifact"}
         else "output"
     )
     prerequisites: tuple[EventEnvelope, ...] = ()
@@ -748,6 +752,108 @@ def _cases() -> dict[tuple[str, str], FlexibleJsonCase]:
         lambda c: c["state"]["records"]["by_id"]["file-state"]["git"]["diff_summary"],
         "map-value",
     )  # type: ignore[index]
+
+    def semantic_declaration_events(probe: object) -> tuple[EventEnvelope, ...]:
+        return _record(
+            "semantic-schema-flex",
+            "semantic_schema_declaration",
+            "semantic_schema_declaration",
+            "SemanticSchemaDeclaration",
+            {
+                "schema_id": "flexible-schema",
+                "version": 1,
+                "semantic_role": "flexible",
+                "json_schema": {"type": "object", "probe": probe},
+                "authority": "routine_snapshot",
+            },
+            schema_version=1,
+        )
+
+    cases[("SemanticSchemaDeclarationValue", "json_schema")] = FlexibleJsonCase(
+        "SemanticSchemaDeclarationValue",
+        "json_schema",
+        semantic_declaration_events,
+        lambda p: getattr(_required_record(p, "semantic-schema-flex").value, "json_schema")[
+            "probe"
+        ],
+        lambda c: c["state"]["records"]["by_id"]["semantic-schema-flex"]["value"]["json_schema"][
+            "probe"
+        ],
+        "direct",
+    )
+
+    def semantic_artifact_events(
+        probe: object, *, field: str, referenced: bool = False
+    ) -> tuple[EventEnvelope, ...]:
+        value: dict[str, object] = {
+            "semantic_role": "flexible",
+            "schema_id": "flexible-schema",
+            "schema_version": 1,
+            "provenance": {"probe": probe} if field == "provenance" else {},
+            "authority_status": "accepted",
+        }
+        if referenced:
+            digest = "sha256:" + "0" * 64
+            value.update(
+                {
+                    "artifact_ref": {
+                        "artifact_id": digest,
+                        "content_hash": digest,
+                        "size_bytes": 1,
+                        "media_type": "application/json",
+                        "encoding": "utf-8",
+                        "storage_uri": "artifact://sha256/" + "0" * 64,
+                    },
+                    "artifact_validation": {
+                        "declaration_record_id": "semantic-schema-flex",
+                        "content_hash": digest,
+                        "validated_json": {"probe": probe},
+                    },
+                }
+            )
+        else:
+            value["content"] = {"probe": probe}
+        return _record(
+            f"semantic-artifact-{field}",
+            "semantic_artifact",
+            "semantic_artifact",
+            "SemanticArtifact",
+            value,
+            schema_version=1,
+        )
+
+    for owner, field, referenced in (
+        ("SemanticArtifactValue", "content", False),
+        ("SemanticArtifactValue", "provenance", False),
+        ("SemanticArtifactValidation", "validated_json", True),
+    ):
+        record_id = f"semantic-artifact-{field}"
+        cases[(owner, field)] = FlexibleJsonCase(
+            owner,
+            field,
+            lambda probe, field=field, referenced=referenced: semantic_artifact_events(
+                probe, field=field, referenced=referenced
+            ),
+            (
+                lambda p, field=field, referenced=referenced: (
+                    getattr(_required_record(p, f"semantic-artifact-{field}").value, field)["probe"]
+                    if not referenced
+                    else _required_record(
+                        p, f"semantic-artifact-{field}"
+                    ).value.artifact_validation.validated_json["probe"]
+                )
+            ),
+            (
+                lambda c, record_id=record_id, field=field, referenced=referenced: (
+                    c["state"]["records"]["by_id"][record_id]["value"][field]["probe"]
+                    if not referenced
+                    else c["state"]["records"]["by_id"][record_id]["value"]["artifact_validation"][
+                        "validated_json"
+                    ]["probe"]
+                )
+            ),
+            "direct",
+        )
     return cases
 
 

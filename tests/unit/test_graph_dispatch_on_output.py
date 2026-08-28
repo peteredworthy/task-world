@@ -33,6 +33,7 @@ from orchestrator.graph_runtime.dispatch import (
     _execute_check_command,
     _output_records_for_submit,
     _planner_evidence,
+    _prompt_for_node,
     _prompt_summary_for_node,
     _requirements_for_node,
     _runtime_death_max_attempts,
@@ -160,6 +161,18 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
                 "prompt_hydration_policy": "tool_only",
             },
             4,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-later",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "planner-1",
+                "to_port": "later_evidence",
+                "prompt_hydration_policy": "structured_json",
+            },
+            2,
         ),
         _event(
             "output_record_accepted",
@@ -310,6 +323,90 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
         "status": "accepted",
         "omitted_from_prompt": True,
     }
+
+
+def test_prompt_summary_reports_final_truncated_and_omitted_record_dispositions() -> None:
+    events = [
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-large",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "planner-1",
+                "to_port": "evidence",
+                "prompt_hydration_policy": "structured_json",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "aaa-large-record",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "aaa-large-record",
+                "task_region_id": "region-1",
+                "attempt_number": 1,
+                "value": {"summary": "x" * 50_000},
+            },
+            2,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "zzz-later-record",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "zzz-later-record",
+                "task_region_id": "region-1",
+                "attempt_number": 1,
+                "value": {"summary": "later"},
+            },
+            3,
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-large",
+                "to_node_id": "planner-1",
+                "to_port": "evidence",
+                "record_ids": ["aaa-large-record", "zzz-later-record"],
+            },
+            4,
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-later",
+                "to_node_id": "planner-1",
+                "to_port": "later_evidence",
+                "record_ids": ["zzz-later-record"],
+            },
+            5,
+        ),
+    ]
+    context = _context(
+        node_id="planner-1",
+        node_kind="planner",
+        node_role="planner",
+        graph_events=events,
+    )
+
+    prompt = _prompt_for_node(context)
+    records = _prompt_summary_for_node(context)["bound_records"]
+
+    assert "aaa-large-record" in prompt
+    assert "zzz-later-record" not in prompt
+    assert records["evidence"][0]["prompt_disposition"] == "truncated"
+    assert records["later_evidence"][0]["prompt_disposition"] == "omitted"
+    assert records["later_evidence"][0]["omitted_from_prompt"] is True
 
 
 def test_requirements_for_node_prefers_typed_requirement_record() -> None:
@@ -1552,7 +1649,12 @@ def test_worker_prompt_summary_reports_the_work_contract_section() -> None:
     summary = _prompt_summary_for_node(context)
 
     assert "work_contract" in summary["packet_keys"]
-    assert summary["prompt_sections"] == ["worker_instruction", "work_contract", "worker_authority"]
+    assert summary["prompt_sections"] == [
+        "worker_instruction",
+        "work_contract",
+        "bound_evidence",
+        "worker_authority",
+    ]
 
 
 def test_worker_prompt_summary_does_not_embed_work_contract_values() -> None:

@@ -165,6 +165,18 @@ class NodeSpecProjection(ProjectionModel):
     kind: StrictStr | None = None
     role: StrictStr | None = None
     task_region_id: StrictStr | None = None
+    base_snapshot_selection: (
+        Literal[
+            "run_baseline",
+            "latest_accepted",
+            "accepted_region",
+            "rejected_candidate",
+            "candidate_under_test",
+        ]
+        | None
+    ) = None
+    base_snapshot_region_id: StrictStr | None = None
+    base_snapshot_candidate_id: StrictStr | None = None
     resource_claims: tuple[ResourceClaimValue, ...] = ()
     allowed_actions: tuple[StrictStr, ...] = ()
     preconditions: tuple[StrictStr, ...] = ()
@@ -225,6 +237,7 @@ class NodeRuntimeProjection(ProjectionModel):
 class NodeSchedulingProjection(ProjectionModel):
     last_deferred_reason: StrictStr | None = None
     retry_not_before: StrictStr | None = None
+    recovery_blocker_record_id: StrictStr | None = None
 
 
 class NodeProjection(ProjectionModel):
@@ -249,11 +262,24 @@ class CandidateValue(ProjectionModel):
 class TaskProjection(ProjectionModel):
     state: StrictStr | None = None
     candidates: tuple[CandidateValue, ...] = ()
+    accepted_snapshot: "RegionSnapshotValue | None" = None
+    current_candidate_snapshot: "RegionSnapshotValue | None" = None
+    rejected_snapshots: tuple["RegionSnapshotValue", ...] = ()
 
-    @field_validator("candidates", mode="before")
+    @field_validator("candidates", "rejected_snapshots", mode="before")
     @classmethod
     def freeze_candidates(cls, value: object) -> tuple[object, ...]:
         return _freeze_sequence(value, "candidates must be a sequence")
+
+
+class RegionSnapshotValue(ProjectionModel):
+    candidate_id: StrictStr
+    snapshot_id: StrictStr
+    base_snapshot_id: StrictStr | None = None
+    file_state_record_id: StrictStr
+    verification_record_id: StrictStr | None = None
+    verification_outcome: Literal["passed", "failed"] | None = None
+    position: StrictInt
 
 
 class EdgeValue(ProjectionModel):

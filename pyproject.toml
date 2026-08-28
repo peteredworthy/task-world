@@ -24,6 +24,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "graphifyy>=0.4.2",
     "immutables>=0.21,<1",
+    "jsonschema>=4.26",
 ]
 
 [project.optional-dependencies]

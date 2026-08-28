@@ -16,6 +16,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     output_records_by_node_port_view,
     run_state,
+    task_region_snapshot_authority_view,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
 from tests.unit.graph_projection_behavior_cases import behavior_cases, case_projection, fold_events
@@ -171,6 +172,120 @@ def test_accepted_output_record_view_hides_file_state_acceptance_identity() -> N
     ][0]["payload"]
 
     assert "acceptance_identity" not in record.model_dump(mode="json")
+
+
+def test_task_region_snapshot_authority_preserves_rejected_and_advances_only_passed() -> None:
+    events = (
+        _query_event(
+            1,
+            "node_created",
+            {
+                "node_id": "worker-snapshots",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "region-snapshots",
+            },
+        ),
+        _query_event(
+            2,
+            "node_created",
+            {
+                "node_id": "verifier-snapshots",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "region-snapshots",
+            },
+        ),
+        *_candidate_snapshot_events(3, "one", "failed"),
+        *_candidate_snapshot_events(7, "two", "passed"),
+    )
+
+    rejected_only = task_region_snapshot_authority_view(build_projection(events[:6]))[
+        "region-snapshots"
+    ]
+    authority = task_region_snapshot_authority_view(build_projection(events))["region-snapshots"]
+
+    assert rejected_only.accepted_snapshot is None
+    assert rejected_only.current_candidate_snapshot is not None
+    assert rejected_only.current_candidate_snapshot.snapshot_id == "snapshot-one"
+    assert [item.snapshot_id for item in rejected_only.rejected_snapshots] == ["snapshot-one"]
+    assert authority.accepted_snapshot is not None
+    assert authority.accepted_snapshot.snapshot_id == "snapshot-two"
+    assert authority.accepted_snapshot.file_state_record_id == "file-state-two"
+    assert authority.accepted_snapshot.verification_record_id == "verification-two"
+    assert [item.snapshot_id for item in authority.rejected_snapshots] == ["snapshot-one"]
+
+
+def _candidate_snapshot_events(
+    position: int, suffix: str, outcome: str
+) -> tuple[EventEnvelope, ...]:
+    candidate_id = f"candidate-{suffix}"
+    verification_id = f"verification-{suffix}"
+    return (
+        _query_event(
+            position,
+            "file_state_accepted",
+            {
+                "record_id": f"file-state-{suffix}",
+                "record_kind": "file_state",
+                "record_type": "file_state",
+                "producer_node_id": "worker-snapshots",
+                "snapshot_id": f"snapshot-{suffix}",
+                "base_snapshot_id": "run-baseline" if suffix == "one" else "snapshot-one",
+                "task_region_id": "region-snapshots",
+                "candidate_id": candidate_id,
+            },
+        ),
+        _query_event(
+            position + 1,
+            "output_record_accepted",
+            {
+                "record_id": candidate_id,
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-snapshots",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": candidate_id,
+                "task_region_id": "region-snapshots",
+                "attempt_number": 1,
+                "file_state_record_ids": [f"file-state-{suffix}"],
+                "value": {
+                    "summary": suffix,
+                    "file_state_record_ids": [f"file-state-{suffix}"],
+                },
+            },
+        ),
+        _query_event(
+            position + 2,
+            "output_record_accepted",
+            {
+                "record_id": verification_id,
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-snapshots",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": candidate_id,
+                "task_region_id": "region-snapshots",
+                "outcome": outcome,
+                "value": {"outcome": outcome, "grades": []},
+            },
+        ),
+        _query_event(
+            position + 3,
+            f"verification_{outcome}",
+            {
+                "node_id": "verifier-snapshots",
+                "verifier_node_id": "verifier-snapshots",
+                "candidate_id": candidate_id,
+                "task_region_id": "region-snapshots",
+                "record_id": verification_id,
+                "outcome": outcome,
+                "value": {"outcome": outcome, "grades": []},
+            },
+        ),
+    )
 
 
 def _event(event_id: str, event_type: str, payload: dict[str, object]) -> EventEnvelope:

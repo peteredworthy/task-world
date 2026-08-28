@@ -4,6 +4,7 @@ import json
 
 import pytest
 from collections.abc import AsyncGenerator
+from dataclasses import replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Literal
@@ -245,7 +246,7 @@ async def test_projection_snapshot_packs_the_entire_owner_row_deterministically(
                         "mode": "read",
                         "scope": f"claim-{claim_index:02d}-" + ("y" * 4_080),
                     }
-                    for claim_index in range(32)
+                    for claim_index in range(7)
                 ],
             },
             index=101 + index,
@@ -328,7 +329,8 @@ async def test_node_detail_packs_the_entire_owner_row_deterministically(
             index=0,
         )
     ]
-    for record_index in reversed(range(3)):
+    record_count = 30
+    for record_index in reversed(range(record_count)):
         events.append(
             _event(
                 "output_record_accepted",
@@ -348,7 +350,7 @@ async def test_node_detail_packs_the_entire_owner_row_deterministically(
                                 "grade": "A",
                                 "reason": f"{record_index:03d}-{grade_index:03d}-" + ("x" * 4_080),
                             }
-                            for grade_index in range(50)
+                            for grade_index in range(3)
                         ],
                     },
                 },
@@ -374,7 +376,7 @@ async def test_node_detail_packs_the_entire_owner_row_deterministically(
             f"record-{index:03d}" for index in range(len(retained_record_ids))
         ]
         assert metadata["truncated"] is True
-        assert metadata["total_known"] == 3
+        assert metadata["total_known"] == record_count
         assert metadata["next_cursor"] == retained_record_ids[-1]
         assert metadata["original_bytes"] is None
         assert metadata["sha256"] is None
@@ -492,11 +494,6 @@ async def test_node_detail_packs_large_prompt_summary_after_event_lists_empty(
             },
             index=1,
         ),
-        _event(
-            "node_state_changed",
-            {"node_id": node_id, "new_state": "running", "prompt_summary": prompt_summary},
-            index=2,
-        ),
     ]
     assert len(_json_bytes(prompt_summary)) > 4_000_000
 
@@ -510,9 +507,17 @@ async def test_node_detail_packs_large_prompt_summary_after_event_lists_empty(
         assert row is not None
         active_lease = dict(row.active_lease or {})
         assert active_lease["lease_id"] == "lease-prompt"
-        row.events = []
-        row.callback_history = []
-        store._pack_node_detail_row(row)
+        # This exercises defensive packing of an oversized legacy read-model
+        # value without violating the current 32 KiB event-envelope boundary.
+        summary = await graph_store.read_current_node_detail_summary(run_id, node_id)
+        assert summary is not None
+        oversized_summary = replace(
+            summary,
+            events=[],
+            callback_history=[],
+            prompt_summary=prompt_summary,
+        )
+        store._assign_node_detail_summary(row, oversized_summary)
         live = (await _compact_bytes(session, run_id))["node_detail"][0]
         contract = row.prompt_summary["_graph_read_contract"]
         metadata = contract["collections"]["prompt_summary"]

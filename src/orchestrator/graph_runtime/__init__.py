@@ -11,6 +11,7 @@ from orchestrator.graph_runtime.dispatch import (
     MANAGED_LEASE_TTL_SECONDS,
     RunnerOwnedProcessRegistry,
     StaticGraphAgentFactory,
+    assemble_graph_dispatch_context,
     build_graph_runtime,
     reconcile_runtime,
 )
@@ -55,8 +56,27 @@ from orchestrator.graph_runtime.outbox import (
     OutboxItem,
     SideEffectExecutor,
 )
-from orchestrator.graph_runtime.prompts import hydrate_artifact_excerpt, planner_evidence
+from orchestrator.graph_runtime.prompts import (
+    hydrate_artifact_excerpt,
+    planner_evidence,
+    render_graph_node_prompt,
+    summarize_graph_node_prompt,
+)
 from orchestrator.graph_runtime.recovery import RecoveryReport, recover, reconcile_graph
+from orchestrator.graph_runtime.reliable_plan_scenarios import (
+    ReliablePlanProductPathRunner,
+    ReliablePlanQualificationRun,
+    ReliablePlanScenarioAssertionError,
+    run_reliable_plan_product_path_scenarios,
+)
+from orchestrator.graph_runtime.reliable_plan_qualification import (
+    consume_reliable_plan_qualification,
+    has_caller_supplied_reliable_plan_authorization,
+    issue_reliable_plan_qualification,
+    require_reliable_plan_qualification_for_run,
+    sealed_reliable_plan_run_authorization,
+    verified_reliable_plan_seed_config,
+)
 from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
 from orchestrator.graph_runtime.store import (
     BoundedGraphPage,
@@ -112,6 +132,9 @@ __all__ = [
     "OutboxDispatcher",
     "OutboxItem",
     "RecoveryReport",
+    "ReliablePlanProductPathRunner",
+    "ReliablePlanQualificationRun",
+    "ReliablePlanScenarioAssertionError",
     "RunnerOwnedProcessRegistry",
     "ResidueClassifier",
     "ResidueMetadata",
@@ -119,6 +142,7 @@ __all__ = [
     "SideEffectExecutor",
     "StaleProjectionError",
     "StaticGraphAgentFactory",
+    "assemble_graph_dispatch_context",
     "build_graph_runtime",
     "apply_cleanup_requested",
     "capture_file_state_boundary",
@@ -130,9 +154,18 @@ __all__ = [
     "instantiate_horizon_template",
     "metadata_from_file_state_record",
     "planner_evidence",
+    "render_graph_node_prompt",
+    "summarize_graph_node_prompt",
     "policy_with_pattern_library",
     "recover",
     "reconcile_graph",
     "reconcile_runtime",
+    "run_reliable_plan_product_path_scenarios",
+    "consume_reliable_plan_qualification",
+    "has_caller_supplied_reliable_plan_authorization",
+    "issue_reliable_plan_qualification",
+    "require_reliable_plan_qualification_for_run",
+    "sealed_reliable_plan_run_authorization",
+    "verified_reliable_plan_seed_config",
     "seed_run",
 ]

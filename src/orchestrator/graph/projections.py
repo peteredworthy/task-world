@@ -41,6 +41,7 @@ from orchestrator.graph.models import (
     ExternalFileEntry,
     FileEntry,
     FileStateRecord,
+    FailureRecord,
     freeze_canonical_record,
     GatekeeperCostRecordedPayload,
     GatekeeperVerdictRecordedPayload,
@@ -76,6 +77,7 @@ from orchestrator.graph.models import (
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
     ResourceClaimProjection,
+    RecoveryPlanRecord,
     SupportEvidencePayload,
     RoutineSnapshotRecord,
     StoredArtifactRef,
@@ -113,6 +115,7 @@ from orchestrator.graph.projection_models import (
     PlannerPatchDecisionValue,
     RecoveryNodeIndexValue,
     RecordStore,
+    RegionSnapshotValue,
     ResourceClaimValue,
     RequirementRevisionValue,
     SupportEvidenceValue,
@@ -332,6 +335,7 @@ class FinalInvariantBlocker(TypedDict, total=False):
     requirement_id: str
     revision_id: str
     task_region_id: str
+    batch_id: str
     state: str
     classification: str
     command_text: str
@@ -744,7 +748,7 @@ def _finalize_projection(state: GraphProjection, event: EventEnvelope) -> GraphP
 
 
 def _with_derived_task_states(state: GraphProjection) -> FrozenMap[str, TaskProjection]:
-    """Install changed task-state facts without copying unchanged task entities."""
+    """Install changed task and snapshot-authority facts immutably."""
     derived = _derive_task_states(state)
     current = state.tasks
     task_ids = set(current) | set(derived)
@@ -753,10 +757,95 @@ def _with_derived_task_states(state: GraphProjection) -> FrozenMap[str, TaskProj
     for task_id in sorted(task_ids):
         existing = current.get(task_id, TaskProjection())
         next_state = derived.get(task_id)
+        accepted, current_candidate, rejected = _task_snapshot_authority(state, task_id)
+        updates: dict[str, object] = {}
         if existing.state != next_state:
-            tasks = map_set(tasks, task_id, existing.model_copy(update={"state": next_state}))
+            updates["state"] = next_state
+        if existing.accepted_snapshot != accepted:
+            updates["accepted_snapshot"] = accepted
+        if existing.current_candidate_snapshot != current_candidate:
+            updates["current_candidate_snapshot"] = current_candidate
+        if existing.rejected_snapshots != rejected:
+            updates["rejected_snapshots"] = rejected
+        if updates:
+            tasks = map_set(tasks, task_id, existing.model_copy(update=updates))
             changed = True
     return tasks if changed else current
+
+
+def _task_snapshot_authority(
+    state: GraphProjection,
+    task_region_id: str,
+) -> tuple[RegionSnapshotValue | None, RegionSnapshotValue | None, tuple[RegionSnapshotValue, ...]]:
+    task = state.tasks.get(task_region_id)
+    if task is None:
+        return None, None, ()
+    snapshots: list[RegionSnapshotValue] = []
+    for candidate in task.candidates:
+        file_state = next(
+            (
+                record
+                for record_id in candidate.file_state_record_ids
+                if isinstance((record := state.records.by_id.get(record_id)), FileStateRecord)
+                and record.snapshot_id is not None
+                and record.compromised is not True
+            ),
+            None,
+        )
+        if file_state is None or file_state.snapshot_id is None:
+            continue
+        outcome: Literal["passed", "failed"] | None = None
+        verification_record_id: str | None = None
+        verification_position = candidate.position
+        for record_id, result in state.verification.passed_results_by_record_id.items():
+            if result.candidate_id == candidate.candidate_id:
+                outcome = "passed"
+                verification_record_id = record_id
+                verdict = next(
+                    (
+                        value
+                        for value in state.verification.verdicts_by_node.values()
+                        if value.candidate_id == candidate.candidate_id
+                        and value.verdict == "passed"
+                    ),
+                    None,
+                )
+                verification_position = (
+                    verdict.position if verdict is not None else candidate.position
+                )
+        for record_id, result in state.verification.failed_results_by_record_id.items():
+            if result.candidate_id == candidate.candidate_id:
+                outcome = "failed"
+                verification_record_id = record_id
+                verdict = next(
+                    (
+                        value
+                        for value in state.verification.verdicts_by_node.values()
+                        if value.candidate_id == candidate.candidate_id
+                        and value.verdict == "failed"
+                    ),
+                    None,
+                )
+                verification_position = (
+                    verdict.position if verdict is not None else candidate.position
+                )
+        snapshots.append(
+            RegionSnapshotValue(
+                candidate_id=candidate.candidate_id,
+                snapshot_id=file_state.snapshot_id,
+                base_snapshot_id=file_state.base_snapshot_id,
+                file_state_record_id=file_state.record_id,
+                verification_record_id=verification_record_id,
+                verification_outcome=outcome,
+                position=verification_position,
+            )
+        )
+    ordered = tuple(sorted(snapshots, key=lambda item: (item.position, item.candidate_id)))
+    accepted_items = tuple(item for item in ordered if item.verification_outcome == "passed")
+    rejected = tuple(item for item in ordered if item.verification_outcome == "failed")
+    accepted = accepted_items[-1] if accepted_items else None
+    current = ordered[-1] if ordered else None
+    return accepted, current, rejected
 
 
 def _node_spec_from_created(payload: NodeCreatedPayload, position: int) -> NodeSpecProjection:
@@ -765,6 +854,9 @@ def _node_spec_from_created(payload: NodeCreatedPayload, position: int) -> NodeS
         "kind",
         "role",
         "task_region_id",
+        "base_snapshot_selection",
+        "base_snapshot_region_id",
+        "base_snapshot_candidate_id",
         "resource_claims",
         "allowed_actions",
         "preconditions",
@@ -1086,7 +1178,12 @@ def _reduce_slice_a_node_update(state: GraphProjection, event: EventEnvelope) ->
             _node_from_parts(
                 node.spec,
                 node.runtime,
-                node.scheduling.model_copy(update={"retry_not_before": payload.retry_not_before}),
+                node.scheduling.model_copy(
+                    update={
+                        "retry_not_before": payload.retry_not_before,
+                        "recovery_blocker_record_id": None,
+                    }
+                ),
             ),
         )
     payload = NodeAuthorityChangedPayload.model_validate(event.payload)
@@ -1319,7 +1416,40 @@ def _apply_record_side_effects(
 ) -> GraphProjection:
     """Apply only facts directly entailed by a newly accepted canonical record."""
     next_state = state
-    if isinstance(record, RoutineSnapshotRecord):
+    if isinstance(record, FailureRecord):
+        node = state.nodes.get(record.value.failed_node_id)
+        if (
+            node is not None
+            and record.value.error_class == "runtime_death_recovery_required"
+            and record.value.retryable
+        ):
+            next_state = _replace_node(
+                next_state,
+                _node_from_parts(
+                    node.spec,
+                    node.runtime,
+                    node.scheduling.model_copy(
+                        update={"recovery_blocker_record_id": record.record_id}
+                    ),
+                ),
+            )
+    elif isinstance(record, RecoveryPlanRecord):
+        node = state.nodes.get(record.producer_node_id)
+        if (
+            node is not None
+            and node.scheduling.recovery_blocker_record_id is not None
+            and record.value.action == "retry"
+            and record.value.retry_basis != "no_differentiating_action"
+        ):
+            next_state = _replace_node(
+                next_state,
+                _node_from_parts(
+                    node.spec,
+                    node.runtime,
+                    node.scheduling.model_copy(update={"recovery_blocker_record_id": None}),
+                ),
+            )
+    elif isinstance(record, RoutineSnapshotRecord):
         planning = state.planning.model_copy(
             update={
                 "latest_routine_snapshot": LatestRoutineSnapshotProjection(

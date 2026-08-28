@@ -1,6 +1,6 @@
 """Pure graph patch validation helpers."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import posixpath
 from typing import Any, cast
@@ -11,16 +11,25 @@ from orchestrator.graph.models import (
     EdgeProjection,
     EventEnvelope,
     PatchEnvelope,
+    SemanticArtifactRecord,
+    VerificationReportRecord,
     normalize_record_selector,
 )
 from orchestrator.graph.projection_queries import (
     edges_view,
     node_kinds_view,
+    node_payload_view,
     node_roles_view,
     node_states_view,
+    record_payloads_view,
     resource_claims_for_node,
+    semantic_schema_declarations_view,
+    output_record_payloads_view,
 )
 from orchestrator.graph.projections import GraphProjection
+from orchestrator.graph.semantic_artifacts import (
+    accepted_semantic_declaration,
+)
 
 
 @dataclass(frozen=True)
@@ -67,6 +76,8 @@ PLANNER_SUCCESSOR_PORTS = {
     "accepted_file_state",
     "outstanding_failures",
     "session_carryover",
+    "semantic_artifact",
+    "verification_report",
 }
 
 
@@ -221,6 +232,10 @@ def validate_patch(
     dynamic_region_error = _validate_dynamic_region_dependencies(ops, actor_role)
     if dynamic_region_error is not None:
         return PatchValidationResult(accepted=False, rejection_reason=dynamic_region_error)
+
+    semantic_stage_error = _validate_semantic_stage_invariants(ops, projection)
+    if semantic_stage_error is not None:
+        return PatchValidationResult(accepted=False, rejection_reason=semantic_stage_error)
 
     return PatchValidationResult(accepted=True)
 
@@ -402,15 +417,14 @@ def _validate_worker_contract(node: dict[str, Any]) -> str | None:
 
     role = node.get("role")
     is_discovery_write = role == "discovery" and access_mode == "write"
-    if is_discovery_write and not has_override:
+    if is_discovery_write:
         return (
-            "discovery worker cannot declare access_mode write; supply "
-            f"access_mode_override_justification: {node_id}"
+            "discovery worker cannot declare access_mode write; "
+            f"use a separate effectful artifact-writer region: {node_id}"
         )
-    if has_override and not is_discovery_write:
+    if has_override:
         return (
-            "access_mode_override_justification is only valid for a discovery "
-            f"worker declaring access_mode write: {node_id}"
+            f"access_mode_override_justification cannot grant repository write authority: {node_id}"
         )
 
     if access_mode == "read_only":
@@ -578,6 +592,11 @@ def _validate_dynamic_region_dependencies(
             and "classified_gap" not in ports
         ):
             return "corrective worker requires classified_gap input edge"
+        if node.get("semantic_stage") == "corrective_work":
+            if "verification_report" not in ports:
+                return "corrective worker requires exact failed verification_report input edge"
+            if "check_result" not in ports:
+                return "corrective worker requires exact failed check_result input edge"
         if (
             kind == "check"
             and role == "invariant_gate"
@@ -585,6 +604,518 @@ def _validate_dynamic_region_dependencies(
         ):
             return "invariant check requires verification input edge"
     return None
+
+
+def _validate_semantic_stage_invariants(
+    ops: list[dict[str, Any]],
+    projection: GraphProjection,
+) -> str | None:
+    """Enforce reliable-plan semantics on staged nodes, not merely prompts."""
+    created = _created_nodes_by_id(ops)
+    edge_ops = [op for op in ops if op.get("op") == "create_edge"]
+    all_edges = [edge.model_dump(mode="json") for edge in edges_view(projection).values()]
+    all_edges.extend(edge_ops)
+    declared_batches = _accepted_declared_batch_ids(projection)
+    known_payloads = {
+        node_id: payload
+        for node_id in node_kinds_view(projection)
+        if (payload := node_payload_view(projection, node_id)) is not None
+    }
+    all_payloads = {**known_payloads, **created}
+    declarations = semantic_schema_declarations_view(projection)
+
+    existing_batch_regions: dict[str, str] = {}
+    for payload in known_payloads.values():
+        batch_id = payload.get("declared_batch_id")
+        region_id = payload.get("task_region_id")
+        if isinstance(batch_id, str) and isinstance(region_id, str):
+            existing_batch_regions.setdefault(batch_id, region_id)
+
+    region_batches: dict[str, set[str]] = {}
+    for payload in all_payloads.values():
+        if payload.get("semantic_stage") != "effectful_batch":
+            continue
+        batch_id = payload.get("declared_batch_id")
+        region_id = payload.get("task_region_id")
+        if isinstance(batch_id, str) and isinstance(region_id, str):
+            region_batches.setdefault(region_id, set()).add(batch_id)
+    collapsed = next(
+        ((region_id, batches) for region_id, batches in region_batches.items() if len(batches) > 1),
+        None,
+    )
+    if collapsed is not None:
+        return (
+            f"declared batches must use distinct task regions: {collapsed[0]} contains "
+            + ", ".join(sorted(collapsed[1]))
+        )
+
+    for node_id, node in created.items():
+        kind = node.get("kind")
+        stage = node.get("semantic_stage")
+        if stage == "discovery":
+            if kind != "worker" or node.get("role") != "discovery":
+                return "semantic discovery stage must be a discovery worker"
+            if node.get("access_mode") != "read_only":
+                return "semantic discovery stage must be read_only"
+            if not _declares_semantic_artifact_output(node):
+                return "semantic discovery stage must declare a semantic_artifact output"
+            schema_id = node.get("semantic_schema_id")
+            schema_version = node.get("semantic_schema_version")
+            if (
+                not isinstance(schema_id, str)
+                or not isinstance(schema_version, int)
+                or (accepted_semantic_declaration(declarations, schema_id, schema_version) is None)
+            ):
+                return "semantic discovery stage requires an accepted exact schema declaration"
+
+        if stage == "plan_verification":
+            if kind != "verifier":
+                return "plan verification stage must be an independent verifier"
+            incoming = [edge for edge in all_edges if edge.get("to_node_id") == node_id]
+            semantic_edges = [
+                edge for edge in incoming if edge.get("to_port") == "semantic_artifact"
+            ]
+            if len(semantic_edges) != 1:
+                return "plan verification requires exactly one declared semantic artifact input"
+            if semantic_edges[0].get("from_node_id") == node_id:
+                return "plan verification must be independent from artifact production"
+            if not any(
+                str(edge.get("to_port", "")).startswith("requirement_") for edge in incoming
+            ):
+                return "plan verification requires bound requirement evidence"
+            schema_id = node.get("semantic_schema_id")
+            schema_version = node.get("semantic_schema_version")
+            if (
+                not isinstance(schema_id, str)
+                or not isinstance(schema_version, int)
+                or (accepted_semantic_declaration(declarations, schema_id, schema_version) is None)
+            ):
+                return "plan verification requires an accepted exact schema declaration"
+
+        if stage == "corrective_work":
+            correction_error = _corrective_evidence_error(node_id, node, all_edges, projection)
+            if correction_error is not None:
+                return correction_error
+
+        if kind == "worker" and node.get("access_mode") == "write" and declared_batches:
+            if stage != "effectful_batch":
+                return "implementation against a declared batch plan must use effectful_batch semantics"
+
+        if stage == "effectful_batch" and kind == "worker":
+            batch_id = node.get("declared_batch_id")
+            region_id = node.get("task_region_id")
+            amendment = node.get("accepted_plan_amendment_record_id")
+            if not isinstance(batch_id, str) or not isinstance(region_id, str):
+                return "effectful batch requires declared_batch_id and distinct task_region_id"
+            if declared_batches and batch_id not in declared_batches:
+                amendment_error = _plan_amendment_error(projection, amendment, batch_id)
+                if amendment_error is not None:
+                    return amendment_error
+            existing_region = existing_batch_regions.get(batch_id)
+            if (
+                existing_region is not None
+                and existing_region != region_id
+                and not isinstance(amendment, str)
+            ):
+                return f"batch {batch_id} is already represented by region {existing_region}"
+            error = _effectful_batch_shape_error(
+                node_id,
+                batch_id,
+                region_id,
+                all_edges,
+                all_payloads,
+            )
+            if error is not None:
+                return error
+
+    if declared_batches:
+        final_gates = {
+            node_id: node
+            for node_id, node in all_payloads.items()
+            if node.get("kind") == "final_gate"
+        }
+        for node_id, node in final_gates.items():
+            error = _final_gate_semantic_error(
+                node_id, node, all_edges, all_payloads, declared_batches
+            )
+            if error is not None:
+                return error
+    return None
+
+
+def _corrective_evidence_error(
+    node_id: str,
+    node: dict[str, Any],
+    edges: list[dict[str, Any]],
+    projection: GraphProjection,
+) -> str | None:
+    incoming = [edge for edge in edges if edge.get("to_node_id") == node_id]
+    records = record_payloads_view(projection)
+
+    exact: dict[str, list[dict[str, Any]]] = {
+        "verification_report": [],
+        "check_result": [],
+        "classified_gap": [],
+    }
+    for edge in incoming:
+        to_port = edge.get("to_port")
+        if to_port not in exact:
+            continue
+        source = edge.get("from_node_id")
+        record_id = _selector_field(edge, "record_id")
+        if not isinstance(source, str) or not isinstance(record_id, str):
+            return f"corrective worker {to_port} edge requires an exact immutable record_id"
+        payload = records.get(record_id)
+        if payload is None or payload.get("producer_node_id") != source:
+            return f"corrective worker {to_port} record must exist and match its edge producer"
+        exact[cast(str, to_port)].append(payload)
+
+    failed_reports = exact["verification_report"]
+    failed_checks = exact["check_result"]
+    gap_records = exact["classified_gap"]
+    if len(failed_reports) != 1:
+        return "corrective worker requires one exact failed verification record"
+    if not failed_checks:
+        return "corrective worker requires exact failed check records"
+    if len(gap_records) != 1:
+        return "corrective worker requires one accepted gap analysis record"
+    expected_report_id = node.get("failed_verification_record_id")
+    expected_check_ids = node.get("failed_check_record_ids")
+    expected_gap_id = node.get("classified_gap_record_id")
+    if expected_report_id != failed_reports[0].get("record_id"):
+        return "corrective worker verification binding does not match its immutable record ID"
+    typed_expected_check_ids: set[str] = (
+        {item for item in cast(list[Any], expected_check_ids) if isinstance(item, str)}
+        if isinstance(expected_check_ids, list)
+        else set()
+    )
+    if not isinstance(expected_check_ids, list) or typed_expected_check_ids != {
+        check.get("record_id") for check in failed_checks
+    }:
+        return "corrective worker check bindings do not match their immutable record IDs"
+    if expected_gap_id != gap_records[0].get("record_id"):
+        return "corrective worker gap binding does not match its immutable record ID"
+    if (
+        failed_reports[0].get("record_type") != "verification_report"
+        or _terminal_value(failed_reports[0], "outcome") != "failed"
+    ):
+        return "corrective verification record must be failed"
+    if any(
+        check.get("record_type") != "check_result" or _terminal_value(check, "status") != "failed"
+        for check in failed_checks
+    ):
+        return "corrective check records must be failed"
+    if gap_records[0].get("record_type") not in {"gap_classification", "classified_gap"} or (
+        _terminal_value(gap_records[0], "classification") != "corrective_work_required"
+    ):
+        return "corrective gap analysis must be accepted corrective_work_required evidence"
+    candidate_id = failed_reports[0].get("candidate_id")
+    if not isinstance(candidate_id, str) or any(
+        check.get("candidate_id") != candidate_id for check in failed_checks
+    ):
+        return "corrective verification and checks must cite the same failed candidate"
+    required_ids = {
+        cast(str, record["record_id"])
+        for record in [*failed_reports, *failed_checks]
+        if isinstance(record.get("record_id"), str)
+    }
+    provenance = gap_records[0].get("provenance")
+    cited_ids: set[str] = (
+        {
+            item
+            for item in cast(
+                list[Any], cast(dict[str, Any], provenance).get("evaluated_record_ids", [])
+            )
+            if isinstance(item, str)
+        }
+        if isinstance(provenance, dict)
+        else set()
+    )
+    if not required_ids.issubset(cited_ids):
+        return "corrective gap analysis must cite exact failed verification and check records"
+    return None
+
+
+def _terminal_value(payload: dict[str, Any], field: str) -> Any:
+    direct = payload.get(field)
+    if direct is not None:
+        return direct
+    value = payload.get("value")
+    return cast(dict[str, Any], value).get(field) if isinstance(value, dict) else None
+
+
+def _plan_amendment_error(projection: GraphProjection, record_id: Any, batch_id: str) -> str | None:
+    if not isinstance(record_id, str):
+        return f"batch {batch_id} is not declared by the accepted plan"
+    records = output_record_payloads_view(projection)
+    record = records.get(record_id)
+    if not isinstance(record, SemanticArtifactRecord):
+        return "accepted_plan_amendment_record_id must resolve to a semantic artifact"
+    if (
+        record.value.authority_status != "accepted"
+        or record.value.semantic_role != "plan_amendment"
+        or record.value.content is None
+    ):
+        return "plan amendment must be an accepted typed plan_amendment artifact"
+    if node_kinds_view(projection).get(record.producer_node_id) != "planner" or (
+        node_roles_view(projection).get(record.producer_node_id) not in {"planner", "gap_planner"}
+    ):
+        return "plan amendment must be produced by an authorized planner"
+    amended_plan_id = record.value.content.get("amends_plan_record_id")
+    amended_plan = records.get(amended_plan_id) if isinstance(amended_plan_id, str) else None
+    if not isinstance(amended_plan, SemanticArtifactRecord) or (
+        amended_plan.value.authority_status != "accepted"
+    ):
+        return "plan amendment must relate to an accepted plan artifact"
+    provenance = record.value.provenance
+    if amended_plan_id not in record.value.source_record_ids or (
+        provenance.get("source_plan_record_id") != amended_plan_id
+    ):
+        return "plan amendment must preserve exact source-plan lineage and provenance"
+    cited_verification_id = provenance.get("plan_verification_record_id")
+    verification = (
+        records.get(cited_verification_id) if isinstance(cited_verification_id, str) else None
+    )
+    if (
+        cited_verification_id not in record.value.source_record_ids
+        or not isinstance(verification, VerificationReportRecord)
+        or verification.outcome != "passed"
+        or amended_plan_id not in verification.evaluated_record_ids
+    ):
+        return "plan amendment must cite the exact passing verification of its source plan"
+    raw_batches = record.value.content.get("batch_ids")
+    if (
+        not isinstance(raw_batches, Sequence)
+        or isinstance(raw_batches, (str, bytes))
+        or batch_id not in raw_batches
+    ):
+        return f"accepted plan amendment does not declare batch {batch_id}"
+    return None
+
+
+def _effectful_batch_shape_error(
+    worker_id: str,
+    batch_id: str,
+    region_id: str,
+    edges: list[dict[str, Any]],
+    payloads: dict[str, dict[str, Any]],
+) -> str | None:
+    incoming = [edge for edge in edges if edge.get("to_node_id") == worker_id]
+    if not any(
+        edge.get("to_port") == "semantic_artifact"
+        and _selector_field(edge, "record_type") == "semantic_artifact"
+        and _selector_field(edge, "authority_status") == "accepted"
+        for edge in incoming
+    ):
+        return f"effectful batch {batch_id} requires its accepted plan artifact"
+    verification_edges = [
+        edge
+        for edge in incoming
+        if edge.get("to_port") == "verification_report"
+        and _selector_field(edge, "outcome") == "passed"
+    ]
+    if not verification_edges:
+        return f"effectful batch {batch_id} requires accepted plan verification"
+    if not all(
+        payloads.get(cast(str, edge.get("from_node_id")), {}).get("semantic_stage")
+        == "plan_verification"
+        for edge in verification_edges
+        if isinstance(edge.get("from_node_id"), str)
+    ):
+        return f"effectful batch {batch_id} plan verification source is not semantic"
+
+    verifier_ids = {
+        node_id
+        for node_id, payload in payloads.items()
+        if payload.get("kind") == "verifier"
+        and payload.get("task_region_id") == region_id
+        and payload.get("declared_batch_id") == batch_id
+    }
+    if not verifier_ids:
+        return f"effectful batch {batch_id} requires an independent verifier"
+    check_ids = {
+        node_id
+        for node_id, payload in payloads.items()
+        if payload.get("kind") == "check"
+        and payload.get("task_region_id") == region_id
+        and payload.get("declared_batch_id") == batch_id
+    }
+    if not check_ids:
+        return f"effectful batch {batch_id} requires deterministic checks"
+    for verifier_id in verifier_ids:
+        verifier_incoming = [edge for edge in edges if edge.get("to_node_id") == verifier_id]
+        if not any(
+            edge.get("from_node_id") == worker_id and edge.get("to_port") == "candidate_under_test"
+            for edge in verifier_incoming
+        ):
+            return f"batch verifier {verifier_id} is not bound to its candidate"
+        missing_checks = sorted(
+            check_id
+            for check_id in check_ids
+            if not any(
+                edge.get("from_node_id") == check_id
+                and str(edge.get("to_port", "")).startswith("check_result")
+                and _selector_accepts_terminal_check(edge)
+                for edge in verifier_incoming
+            )
+        )
+        if missing_checks:
+            return f"batch verifier {verifier_id} is missing passed check evidence"
+    return None
+
+
+def _selector_accepts_terminal_check(edge: dict[str, Any]) -> bool:
+    selector = edge.get("accepted_record_selector")
+    if not isinstance(selector, dict):
+        return False
+    typed_selector = cast(dict[str, Any], selector)
+    statuses: set[str] = set()
+    if typed_selector.get("record_type") == "check_result" and isinstance(
+        typed_selector.get("status"), str
+    ):
+        statuses.add(cast(str, typed_selector["status"]))
+    raw_selectors = typed_selector.get("selectors")
+    if isinstance(raw_selectors, list):
+        for raw_item in cast(list[Any], raw_selectors):
+            if not isinstance(raw_item, dict):
+                continue
+            item = cast(dict[str, Any], raw_item)
+            status = item.get("status")
+            if item.get("record_type") == "check_result" and isinstance(status, str):
+                statuses.add(status)
+    return {"passed", "failed"}.issubset(statuses)
+
+
+def _final_gate_semantic_error(
+    node_id: str,
+    node: dict[str, Any],
+    edges: list[dict[str, Any]],
+    payloads: dict[str, dict[str, Any]],
+    declared_batches: set[str],
+) -> str | None:
+    configured = node.get("declared_batch_ids")
+    configured_ids: set[str] = (
+        {item for item in cast(list[Any], configured) if isinstance(item, str)}
+        if isinstance(configured, list)
+        else set()
+    )
+    if configured_ids != declared_batches:
+        return "final gate declared_batch_ids must exactly match the accepted plan"
+    incoming = [edge for edge in edges if edge.get("to_node_id") == node_id]
+    passed_sources = {
+        cast(str, edge.get("from_node_id"))
+        for edge in incoming
+        if isinstance(edge.get("from_node_id"), str)
+        and _selector_field(edge, "outcome") == "passed"
+    }
+    verified_batches = {
+        cast(str, payloads[source].get("declared_batch_id"))
+        for source in passed_sources
+        if source in payloads
+        and payloads[source].get("semantic_stage") == "effectful_batch"
+        and isinstance(payloads[source].get("declared_batch_id"), str)
+    }
+    if verified_batches != declared_batches:
+        return "final gate requires passed verification from every declared batch"
+    batch_sources = {
+        source
+        for source in passed_sources
+        if payloads.get(source, {}).get("semantic_stage") == "effectful_batch"
+    }
+    for source in batch_sources:
+        error = _batch_verifier_topology_error(source, edges, payloads)
+        if error is not None:
+            return error
+    audit_sources = {
+        source
+        for source in passed_sources
+        if payloads.get(source, {}).get("semantic_stage") == "final_audit"
+    }
+    if not audit_sources:
+        return "final gate requires a passed final independent audit"
+    for audit_source in audit_sources:
+        audit_incoming_sources = {
+            cast(str, edge.get("from_node_id"))
+            for edge in edges
+            if edge.get("to_node_id") == audit_source
+            and isinstance(edge.get("from_node_id"), str)
+            and _selector_field(edge, "outcome") == "passed"
+        }
+        if not batch_sources.issubset(audit_incoming_sources):
+            return "final audit must consume passed verification from every batch verifier"
+    return None
+
+
+def _batch_verifier_topology_error(
+    verifier_id: str,
+    edges: list[dict[str, Any]],
+    payloads: dict[str, dict[str, Any]],
+) -> str | None:
+    verifier = payloads.get(verifier_id, {})
+    if verifier.get("kind") != "verifier":
+        return "final gate batch evidence must come from a verifier"
+    batch_id = verifier.get("declared_batch_id")
+    region_id = verifier.get("task_region_id")
+    incoming = [edge for edge in edges if edge.get("to_node_id") == verifier_id]
+    worker_sources = {
+        cast(str, edge.get("from_node_id"))
+        for edge in incoming
+        if edge.get("to_port") == "candidate_under_test"
+        and isinstance(edge.get("from_node_id"), str)
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("kind") == "worker"
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("declared_batch_id")
+        == batch_id
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("task_region_id") == region_id
+    }
+    if not worker_sources:
+        return f"batch verifier {verifier_id} lacks its bound batch worker candidate"
+    check_sources = {
+        cast(str, edge.get("from_node_id"))
+        for edge in incoming
+        if str(edge.get("to_port", "")).startswith("check_result")
+        and isinstance(edge.get("from_node_id"), str)
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("kind") == "check"
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("declared_batch_id")
+        == batch_id
+        and payloads.get(cast(str, edge.get("from_node_id")), {}).get("task_region_id") == region_id
+        and _selector_accepts_terminal_check(edge)
+    }
+    if not check_sources:
+        return f"batch verifier {verifier_id} lacks bound deterministic check evidence"
+    return None
+
+
+def _accepted_declared_batch_ids(projection: GraphProjection) -> set[str]:
+    batch_ids: set[str] = set()
+    for record in output_record_payloads_view(projection).values():
+        if not isinstance(record, SemanticArtifactRecord):
+            continue
+        if record.value.authority_status != "accepted" or record.value.content is None:
+            continue
+        raw_batches = record.value.content.get("batches")
+        if not isinstance(raw_batches, Sequence) or isinstance(raw_batches, (str, bytes)):
+            continue
+        for raw_batch in cast(Sequence[Any], raw_batches):
+            if isinstance(raw_batch, str):
+                batch_ids.add(raw_batch)
+            elif isinstance(raw_batch, Mapping):
+                typed_batch = cast(Mapping[str, Any], raw_batch)
+                batch_id = typed_batch.get("batch_id", typed_batch.get("id"))
+                if isinstance(batch_id, str):
+                    batch_ids.add(batch_id)
+    return batch_ids
+
+
+def _selector_field(edge: dict[str, Any], field: str) -> Any:
+    selector = edge.get("accepted_record_selector")
+    return cast(dict[str, Any], selector).get(field) if isinstance(selector, dict) else None
+
+
+def _declares_semantic_artifact_output(node: dict[str, Any]) -> bool:
+    return any(
+        port.get("port") == "semantic_artifact" and port.get("schema") == "SemanticArtifact"
+        for port in _port_dicts(node.get("outputs"))
+    )
 
 
 def _validate_no_poisoned_final_invariant_edges(

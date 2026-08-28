@@ -3,6 +3,8 @@
 import asyncio
 import json
 import logging
+import secrets
+from tempfile import TemporaryDirectory
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,7 +82,21 @@ from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import EventV2Model, RunRepository, create_wired_event_store_v2
 from orchestrator.db import SqliteEventStore
-from orchestrator.graph import EventEnvelope
+from orchestrator.graph import (
+    EventEnvelope,
+    RELIABLE_PLAN_SCENARIO_ID,
+    ReliablePlanEvaluationArm,
+    ReliablePlanQualificationGrant,
+    canonical_reliable_plan_scenario_manifest,
+)
+from orchestrator.graph_runtime import (
+    consume_reliable_plan_qualification,
+    has_caller_supplied_reliable_plan_authorization,
+    issue_reliable_plan_qualification,
+    run_reliable_plan_product_path_scenarios,
+    sealed_reliable_plan_run_authorization,
+)
+from orchestrator.db import ReliablePlanQualificationReferenceError
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, graph_aggregate_id
 from orchestrator.db import commit_with_event_outbox
 from orchestrator.config import RoutineNotFoundError, discover_routines
@@ -637,16 +653,96 @@ def _build_run_from_request(
     return run, routine_config
 
 
+@router.post(
+    "/reliable-plan-qualification",
+    response_model=ReliablePlanQualificationGrant,
+    status_code=201,
+)
+async def create_reliable_plan_qualification(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> ReliablePlanQualificationGrant:
+    """Run the canonical controller scenarios and issue a single-use server grant."""
+    manifest = canonical_reliable_plan_scenario_manifest()
+    with TemporaryDirectory(prefix="orchestrator-reliable-plan-") as temp_dir:
+        qualification_run = await run_reliable_plan_product_path_scenarios(
+            manifest,
+            root=Path(temp_dir),
+        )
+    grant = await issue_reliable_plan_qualification(
+        session,
+        manifest,
+        qualification_run.projection,
+        qualification_run.accepted_receipt_record_id,
+        reference_factory=lambda: secrets.token_urlsafe(32),
+    )
+    await commit_with_event_outbox(session)
+    return grant
+
+
 @router.post("", response_model=RunResponse, status_code=201)
 async def create_run(
     request: CreateRunRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    session: Annotated[AsyncSession, Depends(get_session)],
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
     codex_models_fn: Annotated[Callable[[], list[str]], Depends(get_codex_models_fn)],
 ) -> RunResponse:
     """Create a new run from a routine (by ID or embedded inline)."""
+    if has_caller_supplied_reliable_plan_authorization(request.config):
+        raise HTTPException(
+            status_code=422,
+            detail="reliable-plan authorization is server-owned",
+        )
     run, _ = _build_run_from_request(request, routine_dirs, config)
+
+    skeleton_id = run.config.get("reliable_plan_skeleton_id")
+    reference = request.reliable_plan_qualification_reference
+    if skeleton_id is not None:
+        if skeleton_id != RELIABLE_PLAN_SCENARIO_ID:
+            raise HTTPException(status_code=422, detail="unknown reliable-plan skeleton_id")
+        if reference is None:
+            raise HTTPException(
+                status_code=422,
+                detail="reliable-plan skeleton requires a qualification reference",
+            )
+        try:
+            assignments = ReliablePlanEvaluationArm.model_validate(
+                run.config.get("reliable_plan_model_assignments")
+            )
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail="invalid reliable-plan model assignments",
+            ) from exc
+        run.config = {
+            **run.config,
+            "reliable_plan_model_assignments": assignments.model_dump(mode="json"),
+        }
+        try:
+            facts = await consume_reliable_plan_qualification(
+                session,
+                reference=reference,
+                run_id=run.id,
+                skeleton_id=skeleton_id,
+            )
+        except ReliablePlanQualificationReferenceError as exc:
+            status_code = 409 if "consumed" in str(exc) else 422
+            raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        run.config = {
+            **run.config,
+            "_reliable_plan_authorization": sealed_reliable_plan_run_authorization(
+                reference,
+                facts,
+            ),
+        }
+    elif reference is not None:
+        raise HTTPException(
+            status_code=422,
+            detail="qualification reference requires a reliable-plan skeleton",
+        )
 
     # Validate Codex model selection before persisting the run.
     if run.agent_runner_type is not None and run.agent_runner_config:

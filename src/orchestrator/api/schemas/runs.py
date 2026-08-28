@@ -39,6 +39,10 @@ class CreateRunRequest(ApiModel):
     env_files: EnvFileRequestConfig | None = None
     merge_strategy: str | None = None
     execution_mode: str | None = None
+    reliable_plan_qualification_reference: str | None = Field(
+        default=None,
+        pattern=r"^rpq_[A-Za-z0-9_-]{32,128}$",
+    )
 
     @field_validator("merge_strategy", mode="before")
     @classmethod

@@ -133,6 +133,43 @@ def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
     )
 
 
+def _verifier_node_created(node_id: str) -> EventEnvelope:
+    return _event(
+        "node_created",
+        {
+            "node_id": node_id,
+            "kind": "verifier",
+            "role": "verifier",
+            "state": "completed",
+            "task_region_id": "step-1/task-1",
+        },
+    )
+
+
+def _verification_report_accepted(
+    *,
+    node_id: str,
+    candidate_id: str,
+    record_id: str,
+    outcome: str,
+    value: dict[str, Any] | None = None,
+) -> EventEnvelope:
+    return _event(
+        "output_record_accepted",
+        {
+            "record_id": record_id,
+            "record_kind": "verification",
+            "record_type": "verification_report",
+            "producer_node_id": node_id,
+            "port": "verification_report",
+            "schema": "VerificationReport",
+            "candidate_id": candidate_id,
+            "outcome": outcome,
+            "value": value or {"outcome": outcome, "grades": []},
+        },
+    )
+
+
 class _RunSeedIdGenerator:
     def __init__(self, run_id: str) -> None:
         self._run_id = run_id.replace("-", "")
@@ -458,51 +495,23 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
             "execution_id": worker_lease.payload["execution_id"],
         },
     )
-    completed_worker = await controller.handle_command(
-        run_id,
-        acknowledged.projection_position,
-        "submit_callback",
-        {
-            "node_id": worker_node,
-            "execution_id": worker_lease.payload["execution_id"],
-            "lease_id": worker_lease.payload["lease_id"],
-            "lease_generation": worker_lease.payload["generation"],
-            "base_snapshot_id": worker_lease.payload["base_snapshot_id"],
-            "observed_graph_position": acknowledged.projection_position,
-            "idempotency_key": f"callback-{worker_node}",
-            "complete_node": False,
-            "payload": {
-                "payload_hash": f"hash-{worker_node}",
-                "output_records": [
-                    {
-                        "record_id": candidate_id,
-                        "record_kind": "output",
-                        "record_type": "candidate",
-                        "producer_node_id": worker_node,
-                        "port": "candidate",
-                        "schema": "ImplementationCandidate",
-                        "candidate_id": candidate_id,
-                        "task_region_id": task_region_id,
-                        "attempt_number": attempt_number,
-                        "value": {"summary": "worker output"},
-                    },
-                ],
-            },
-        },
-    )
+    file_state_record_id = f"fs-{worker_node}"
     async with session_factory() as session:
-        stored_events = await GraphEventStore(session).append_events(
+        file_state_events = await GraphEventStore(session).append_events(
             run_id,
-            completed_worker.projection_position,
+            acknowledged.projection_position,
             [
                 _event(
                     "file_state_accepted",
                     {
-                        "record_id": f"fs-{worker_node}",
+                        "record_id": file_state_record_id,
                         "record_kind": "file_state",
                         "record_type": "file_state",
                         "snapshot_id": f"snapshot-{worker_node}",
+                        "base_snapshot_id": worker_lease.payload["base_snapshot_id"],
                         "producer_node_id": worker_node,
+                        "candidate_id": candidate_id,
+                        "task_region_id": task_region_id,
                         "verdict": "captured",
                         "tracked": [
                             {
@@ -519,7 +528,51 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
                             }
                         ],
                     },
-                ),
+                )
+            ],
+        )
+        await session.commit()
+    completed_worker = await controller.handle_command(
+        run_id,
+        file_state_events[-1].position,
+        "submit_callback",
+        {
+            "node_id": worker_node,
+            "execution_id": worker_lease.payload["execution_id"],
+            "lease_id": worker_lease.payload["lease_id"],
+            "lease_generation": worker_lease.payload["generation"],
+            "base_snapshot_id": worker_lease.payload["base_snapshot_id"],
+            "observed_graph_position": file_state_events[-1].position,
+            "idempotency_key": f"callback-{worker_node}",
+            "complete_node": False,
+            "payload": {
+                "payload_hash": f"hash-{worker_node}",
+                "output_records": [
+                    {
+                        "record_id": candidate_id,
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": worker_node,
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": candidate_id,
+                        "task_region_id": task_region_id,
+                        "attempt_number": attempt_number,
+                        "file_state_record_ids": [file_state_record_id],
+                        "value": {
+                            "summary": "worker output",
+                            "file_state_record_ids": [file_state_record_id],
+                        },
+                    },
+                ],
+            },
+        },
+    )
+    async with session_factory() as session:
+        stored_events = await GraphEventStore(session).append_events(
+            run_id,
+            completed_worker.projection_position,
+            [
                 _event(
                     "node_state_changed",
                     {
@@ -671,6 +724,7 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
                 "task_region_id": "step-1/task-1",
             },
         ),
+        _verifier_node_created("verifier-pass"),
         _event(
             "node_created",
             {
@@ -713,6 +767,16 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
                 "reason": "lease_expired_without_callback",
             },
         ),
+        _verification_report_accepted(
+            node_id="verifier-pass",
+            candidate_id="candidate-1",
+            record_id="verification-pass",
+            outcome="passed",
+            value={
+                "outcome": "passed",
+                "grades": [{"requirement_id": "req-1", "grade": "A", "reason": "met"}],
+            },
+        ),
         _event(
             "verification_passed",
             {
@@ -724,6 +788,16 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
                     "outcome": "passed",
                     "grades": [{"requirement_id": "req-1", "grade": "A", "reason": "met"}],
                 },
+            },
+        ),
+        _verification_report_accepted(
+            node_id="verifier-expired",
+            candidate_id="candidate-1",
+            record_id="verification-failed",
+            outcome="failed",
+            value={
+                "outcome": "failed",
+                "grades": [{"requirement_id": "req-2", "grade": "C", "reason": "not met"}],
             },
         ),
         _event(
@@ -827,6 +901,13 @@ async def test_graph_health_compacts_over_budget_candidate_identities(
             run_id,
             0,
             [
+                _verifier_node_created("verifier-1"),
+                _verification_report_accepted(
+                    node_id="verifier-1",
+                    candidate_id=candidate_id,
+                    record_id="verification-1",
+                    outcome="passed",
+                ),
                 _event(
                     "verification_passed",
                     {
@@ -835,14 +916,15 @@ async def test_graph_health_compacts_over_budget_candidate_identities(
                         "task_region_id": "step-1/task-1",
                         "record_id": "verification-1",
                     },
-                )
+                ),
             ],
         )
         await session.commit()
         live_summary = (
             await session.execute(
                 select(GraphEventSummaryModel.payload).where(
-                    GraphEventSummaryModel.run_id == run_id
+                    GraphEventSummaryModel.run_id == run_id,
+                    GraphEventSummaryModel.event_type == "verification_passed",
                 )
             )
         ).scalar_one()
@@ -861,7 +943,8 @@ async def test_graph_health_compacts_over_budget_candidate_identities(
         rebuilt_summary = (
             await session.execute(
                 select(GraphEventSummaryModel.payload).where(
-                    GraphEventSummaryModel.run_id == run_id
+                    GraphEventSummaryModel.run_id == run_id,
+                    GraphEventSummaryModel.event_type == "verification_passed",
                 )
             )
         ).scalar_one()
@@ -902,6 +985,13 @@ async def test_graph_summary_event_preserves_compact_candidate_identity_metadata
             run_id,
             0,
             [
+                _verifier_node_created("verifier-1"),
+                _verification_report_accepted(
+                    node_id="verifier-1",
+                    candidate_id=candidate_id,
+                    record_id="verification-1",
+                    outcome="passed",
+                ),
                 _event(
                     "verification_passed",
                     {
@@ -910,7 +1000,7 @@ async def test_graph_summary_event_preserves_compact_candidate_identity_metadata
                         "task_region_id": "step-1/task-1",
                         "record_id": "verification-1",
                     },
-                )
+                ),
             ],
         )
         await session.commit()
@@ -918,7 +1008,11 @@ async def test_graph_summary_event_preserves_compact_candidate_identity_metadata
     response = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=summary")
 
     assert response.status_code == 200
-    payload = response.json()[0]["payload"]
+    payload = next(
+        event["payload"]
+        for event in response.json()
+        if event["event_type"] == "verification_passed"
+    )
     assert payload["candidate_id"] == f"sha256:{candidate_sha256}"
     assert payload["candidate_id_hashed"] is True
     assert payload["candidate_id_original_chars"] == len(candidate_id)
@@ -946,6 +1040,13 @@ async def test_graph_summary_event_keeps_persisted_depth_bounded_payload_opaque(
             run_id,
             0,
             [
+                _verifier_node_created("verifier-opaque"),
+                _verification_report_accepted(
+                    node_id="verifier-opaque",
+                    candidate_id="candidate-opaque",
+                    record_id="verification-opaque",
+                    outcome="passed",
+                ),
                 _event(
                     "verification_passed",
                     {
@@ -955,14 +1056,15 @@ async def test_graph_summary_event_keeps_persisted_depth_bounded_payload_opaque(
                         "record_id": "verification-opaque",
                         "evidence": [nested_evidence],
                     },
-                )
+                ),
             ],
         )
         await session.commit()
         persisted = (
             await session.execute(
                 select(GraphEventSummaryModel.payload).where(
-                    GraphEventSummaryModel.run_id == run_id
+                    GraphEventSummaryModel.run_id == run_id,
+                    GraphEventSummaryModel.event_type == "verification_passed",
                 )
             )
         ).scalar_one()
@@ -971,7 +1073,12 @@ async def test_graph_summary_event_keeps_persisted_depth_bounded_payload_opaque(
     response = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=summary")
 
     assert response.status_code == 200
-    assert response.json()[0]["payload"] == expected
+    payload = next(
+        event["payload"]
+        for event in response.json()
+        if event["event_type"] == "verification_passed"
+    )
+    assert payload == expected
 
 
 async def test_graph_health_keeps_hashed_and_literal_candidate_identities_distinct(
@@ -989,6 +1096,13 @@ async def test_graph_health_keeps_hashed_and_literal_candidate_identities_distin
             run_id,
             0,
             [
+                _verifier_node_created("verifier-1"),
+                _verification_report_accepted(
+                    node_id="verifier-1",
+                    candidate_id=long_candidate_id,
+                    record_id="verification-long",
+                    outcome="passed",
+                ),
                 _event(
                     "verification_passed",
                     {
@@ -997,6 +1111,12 @@ async def test_graph_health_keeps_hashed_and_literal_candidate_identities_distin
                         "task_region_id": "step-1/task-1",
                         "record_id": "verification-long",
                     },
+                ),
+                _verification_report_accepted(
+                    node_id="verifier-1",
+                    candidate_id=compact_candidate_id,
+                    record_id="verification-literal",
+                    outcome="failed",
                 ),
                 _event(
                     "verification_failed",
@@ -1052,6 +1172,13 @@ async def test_graph_health_rejects_complete_legacy_summary_with_raw_over_budget
             run_id,
             0,
             [
+                _verifier_node_created("verifier-1"),
+                _verification_report_accepted(
+                    node_id="verifier-1",
+                    candidate_id=candidate_id,
+                    record_id="verification-1",
+                    outcome="passed",
+                ),
                 _event(
                     "verification_passed",
                     {
@@ -1060,12 +1187,15 @@ async def test_graph_health_rejects_complete_legacy_summary_with_raw_over_budget
                         "task_region_id": "step-1/task-1",
                         "record_id": "verification-1",
                     },
-                )
+                ),
             ],
         )
         await session.execute(
             update(GraphEventSummaryModel)
-            .where(GraphEventSummaryModel.run_id == run_id)
+            .where(
+                GraphEventSummaryModel.run_id == run_id,
+                GraphEventSummaryModel.event_type == "verification_passed",
+            )
             .values(
                 payload={
                     "verifier_node_id": "verifier-1",
@@ -2608,6 +2738,9 @@ async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
     assert "value" not in summary_worker["output_records"][0]
     assert summary_worker["file_state_records"]
     assert summary_worker["file_state_records"][0]["classification_summary"]["total_paths"] == 0
+    assert summary_worker["snapshot_authority"]["accepted_snapshot"]["snapshot_id"] == (
+        f"snapshot-{worker_node}"
+    )
 
     summary_verifier_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{verifier_node}")
     assert summary_verifier_resp.status_code == 200
@@ -2615,6 +2748,7 @@ async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
     assert summary_verifier["input_ports"]["candidate_under_test"] == [
         summary_worker["output_records"][0]["record_id"]
     ]
+    assert summary_verifier["snapshot_authority"] == summary_worker["snapshot_authority"]
 
     worker_resp = await client.get(
         f"/api/runs/{run_id}/graph/nodes/{worker_node}?payload_mode=full"
@@ -2842,10 +2976,7 @@ async def test_full_node_detail_uses_summary_owner_contract_for_nested_collectio
     summary_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{node_id}")
     full_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{node_id}?payload_mode=full")
     assert summary_resp.status_code == 200
-    assert full_resp.status_code == 503
-    unavailable = full_resp.json()["detail"]
-    assert unavailable["code"] == "read_model_unavailable"
-    assert unavailable["reason"] == "full_event_payload_exceeds_byte_cap"
+    assert full_resp.status_code == 200
     summary = summary_resp.json()
     summary_value = summary["output_records"][0]["value"]
     assert "__truncated_fields" not in summary_value
@@ -2859,6 +2990,22 @@ async def test_full_node_detail_uses_summary_owner_contract_for_nested_collectio
     assert value_meta["next_cursor"].startswith("sha256:")
     assert value_meta["original_bytes"] > 0
     assert len(value_meta["sha256"]) == 64
+
+    full = full_resp.json()
+    full_record = full["output_records"][0]
+    assert full_record["record_id"] == "verification-shared-owner"
+    assert full_record["record_type"] == "verification_report"
+    assert full_record["candidate_id"] == "candidate-shared-owner"
+    assert full_record["outcome"] == "passed"
+    assert len(full_record["value"]["grades"]["value"]) == 50
+    assert full["truncated"] is True
+    full_value_meta = full["collection_meta"]["output_records"]["fields"][
+        "verification-shared-owner.value"
+    ]
+    assert full_value_meta["truncated"] is True
+    assert full_value_meta["next_cursor"].startswith("sha256:")
+    assert full_value_meta["original_bytes"] > 0
+    assert len(full_value_meta["sha256"]) == 64
     assert len(full_resp.content) <= 262_144
 
 
@@ -3269,7 +3416,7 @@ async def test_graph_events_have_bounded_consistent_pagination(
 
 
 @pytest.mark.asyncio
-async def test_graph_full_events_do_not_decode_payloads_above_the_public_byte_cap(
+async def test_graph_full_events_truthfully_bound_payloads_above_the_rendered_byte_cap(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
@@ -3301,9 +3448,20 @@ async def test_graph_full_events_do_not_decode_payloads_above_the_public_byte_ca
     assert response.status_code == 200
     event = response.json()[0]
     assert event["event_id"].startswith("callback_accepted-")
-    assert event["payload"] == {}
+    payload = event["payload"]
+    assert payload["node_id"] == "oversized-node"
+    assert payload["lease_id"] == "lease-1"
+    assert payload["lease_generation"] == 1
+    assert payload["execution_id"] == "execution-1"
+    assert payload["idempotency_key"] == "fixture-callback"
+    assert payload["reason"] == "accepted"
+    bounded_value = payload["payload"]["oversized_value"]
+    assert bounded_value["truncated"] is True
+    assert bounded_value["value"].startswith("sha256:")
+    assert bounded_value["original_bytes"] > len(oversized_value)
+    assert len(bounded_value["sha256"]) == 64
     assert event["payload_truncated"] is True
     assert event["payload_original_bytes"] > len(oversized_value)
-    assert event["payload_sha256"] is None
+    assert len(event["payload_sha256"]) == 64
     assert response.headers["X-Has-More"] == "false"
     assert response.headers["X-Next-Position"] == "null"

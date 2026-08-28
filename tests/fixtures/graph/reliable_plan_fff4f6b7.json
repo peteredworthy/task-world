@@ -1,0 +1,39 @@
+{
+  "incident_id": "fff4f6b7-bf33-475f-8280-31ff5e1ef7ca",
+  "skeleton_id": "reliable-plan-fff4f6b7-v1",
+  "scenario_manifest": {
+    "incident_id": "fff4f6b7-bf33-475f-8280-31ff5e1ef7ca",
+    "skeleton_id": "reliable-plan-fff4f6b7-v1",
+    "scenarios": [
+      {"number": 1, "name": "analysis-only discovery authority", "product_path": "planner patch validation and controller scheduling"},
+      {"number": 2, "name": "accepted discovery and plan verification readiness", "product_path": "controller schedule_tick readiness"},
+      {"number": 3, "name": "declared batch topology or accepted amendment", "product_path": "planner patch validation"},
+      {"number": 4, "name": "bound requirement and evidence prompt hydration", "product_path": "runtime dispatch packet assembly"},
+      {"number": 5, "name": "exact corrective grades and check results", "product_path": "corrective runtime dispatch packet assembly"},
+      {"number": 6, "name": "semantic schema selector compatibility", "product_path": "controller callback acceptance"},
+      {"number": 7, "name": "accepted snapshot base authority", "product_path": "controller lease grant"},
+      {"number": 8, "name": "all batch verifications and final audit", "product_path": "controller final reconciliation"},
+      {"number": 9, "name": "conclusive callback and lease recovery", "product_path": "controller agent_died recovery"},
+      {"number": 10, "name": "operator semantic incompleteness visibility", "product_path": "durable node and region read models"}
+    ]
+  },
+  "luna_arm": {
+    "arm_id": "luna-bounded-workers",
+    "planner": {"runner_type": "codex_server", "model": "gpt-5.6-sol", "profile": "architect"},
+    "discovery_worker": {"runner_type": "codex_server", "model": "gpt-5.6-luna", "profile": "summarizer"},
+    "implementation_worker": {"runner_type": "codex_server", "model": "gpt-5.6-luna", "profile": "coder"},
+    "correction_worker": {"runner_type": "codex_server", "model": "gpt-5.6-luna", "profile": "coder"},
+    "verifier": {"runner_type": "codex_server", "model": "gpt-5.6-sol", "profile": "coder"},
+    "successor_planner": {"runner_type": "codex_server", "model": "gpt-5.6-luna", "profile": "architect"}
+  },
+  "alternate_arm": {
+    "arm_id": "alternate-workers-and-verifier",
+    "planner": {"runner_type": "codex_server", "model": "gpt-5.6-sol", "profile": "architect"},
+    "discovery_worker": {"runner_type": "codex_server", "model": "gpt-5.6-terra", "profile": "summarizer"},
+    "implementation_worker": {"runner_type": "codex_server", "model": "gpt-5.6-terra", "profile": "coder"},
+    "correction_worker": {"runner_type": "codex_server", "model": "gpt-5.6-terra", "profile": "coder"},
+    "verifier": {"runner_type": "codex_server", "model": "gpt-5.6-sol", "profile": "coder"},
+    "successor_planner": {"runner_type": "codex_server", "model": "gpt-5.6-sol", "profile": "architect"}
+  },
+  "enable_luna_one_horizon_planning": false
+}

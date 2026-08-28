@@ -37,7 +37,7 @@ class ProjectionCheckpointCodecError(ValueError):
     """A serialization failure while writing a disposable checkpoint."""
 
 
-PROJECTION_CHECKPOINT_SCHEMA_VERSION = 15
+PROJECTION_CHECKPOINT_SCHEMA_VERSION = 17
 
 
 class ProjectionCheckpointEnvelope(BaseModel):
