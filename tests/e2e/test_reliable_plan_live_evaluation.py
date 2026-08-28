@@ -36,6 +36,8 @@ _REQUIRED_ENV = (
     "RELIABLE_PLAN_E2E_REPO_NAME",
     "RELIABLE_PLAN_E2E_BRANCH",
     "RELIABLE_PLAN_E2E_QUALIFICATION_PATH",
+    "RELIABLE_PLAN_E2E_FEATURE_SPEC_PATH",
+    "RELIABLE_PLAN_E2E_ACCEPTANCE_COMMAND",
     "OPENAI_API_KEY",
 )
 _TERMINAL = {"completed", "failed", "cancelled"}
@@ -201,7 +203,11 @@ async def test_live_reliable_plan_comparison_uses_terminal_operator_readbacks() 
                     "execution_mode": mode,
                     "agent_runner_type": arm.implementation_worker.runner_type,
                     "agent_runner_config": {"model": arm.implementation_worker.model},
-                    "config": serialize_authorized_reliable_plan_run_config(gated, arm),
+                    "config": {
+                        "feature_spec_path": os.environ["RELIABLE_PLAN_E2E_FEATURE_SPEC_PATH"],
+                        "acceptance_command": os.environ["RELIABLE_PLAN_E2E_ACCEPTANCE_COMMAND"],
+                        **serialize_authorized_reliable_plan_run_config(gated, arm),
+                    },
                     "reliable_plan_qualification_reference": qualification_reference,
                 },
             )

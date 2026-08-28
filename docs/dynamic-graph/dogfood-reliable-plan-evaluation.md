@@ -20,7 +20,10 @@ grant, while caller-supplied qualification facts remain invalid.
    recovery, read-contract, evaluation, and durable controller suites.
 2. Set `RELIABLE_PLAN_E2E_QUALIFICATION_PATH` to a writable evidence directory.
    The live harness reruns the canonical controller-backed qualification there
-   and stops before any network request if a scenario fails.
+   and stops before any network request if a scenario fails. Also set
+   `RELIABLE_PLAN_E2E_FEATURE_SPEC_PATH` and
+   `RELIABLE_PLAN_E2E_ACCEPTANCE_COMMAND`; these are supplied to every graph
+   and legacy arm so all three execute the same public contract and gate.
 3. With a separately running server, credentials, repository registration,
    graph and legacy routines, writable qualification path, and available Codex
    Server runner, run
