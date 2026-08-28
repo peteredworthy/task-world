@@ -55,6 +55,7 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from orchestrator.workflow.graph_driver import (
     GRAPH_OPERATOR_REOPEN_PAUSE_REASON,
+    MAX_NODE_RECOVERIES_PER_DRIVE,
     GraphRunDriver,
     _renew_running_leases_near_expiry,
 )
@@ -1713,3 +1714,229 @@ def test_is_clarification_pause_reason_classification() -> None:
     assert is_clarification_pause_reason("manual_gate") is False
     assert is_clarification_pause_reason("agent_execution_error") is False
     assert is_clarification_pause_reason(None) is False
+
+
+class NoOpDispatcher:
+    """Suppresses ALL outbox delivery (decision D8, chunk 6).
+
+    In this harness a *non-managed* dispatch always concludes with
+    ``agent_died`` (``dispatch.py:972-974``, ``:1011-1012``) and a *managed*
+    one always routes to ``request_runner_recovery`` (the boundary path) —
+    neither can produce a genuinely orphaned lease. The one production shape
+    the orphan-lease sweep exists for, per its own docstring
+    (``graph_driver.py:1153-1159``), is an outbox item delivered by an
+    executor this driver instance does not own. The faithful way to model
+    that here is to never deliver the item at all: the controller, the real
+    ``GraphRunDriver``, the real ``GraphDispatchExecutor`` and the real
+    projection read path all run unmodified — only this one seam (outbox
+    delivery) is stubbed, so the granted lease is never acknowledged and the
+    driver's own orphan-lease recovery sweep is the only thing that can ever
+    conclude it.
+    """
+
+    async def dispatch_pending(
+        self,
+        *,
+        run_id: str | None = None,
+        allowed_kinds: frozenset[str] | None = None,
+    ) -> None:
+        del run_id, allowed_kinds
+
+    async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None:
+        del run_id
+        return None
+
+
+def _routine_with_retry_budget(max_attempts: int) -> RoutineConfig:
+    """Same single-worker/verifier shape as ``_routine()``, but with an
+    explicit compiled retry budget well above ``MAX_NODE_RECOVERIES_PER_DRIVE``
+    (decision D9's sanctioned fallback). Without this, the kernel's own
+    default ``RetryConfig.max_attempts`` (3, ``config/models.py:187``) equals
+    the driver's recovery budget (also 3), and — per branch precedence
+    (D5, ``_commands.py:4240`` before ``:4283``) — the run would terminate via
+    ``max_attempts_exhausted`` before the driver's ``recovery_exhausted``
+    branch (chunk 3) ever fires. Bounding this node's compiled budget at 10
+    guarantees the driver's smaller budget is what concludes it.
+    """
+    return RoutineConfig.model_validate(
+        {
+            "id": "graph-driver-missing-callback",
+            "name": "Graph Driver Missing Callback",
+            "execution_mode": "graph",
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "task-1",
+                            "title": "Touch the repo",
+                            "task_context": "Produce one implementation candidate.",
+                            "retry": {"max_attempts": max_attempts},
+                            "requirements": [{"id": "req-1", "desc": "Requirement passes."}],
+                            "verifier": {
+                                "rubric": [
+                                    {
+                                        "id": "req-1",
+                                        "text": "Does the candidate satisfy req-1?",
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+async def _drive_missing_callback_scenario(
+    session_factory: async_sessionmaker[AsyncSession],
+    repo: Path,
+    run_id: str,
+) -> tuple[Any, list[EventEnvelope]]:
+    """Drive one real graph run, end to end, through the real
+    ``GraphController``, ``GraphRunDriver``, ``GraphDispatchExecutor`` and
+    projection read path, with outbox delivery suppressed (``NoOpDispatcher``,
+    D8). The single compiled worker node's lease is granted and then never
+    acknowledged by anyone, so it is genuinely orphaned; only the driver's
+    own orphan-lease recovery sweep can conclude it. Shared by both chunk-6
+    tests so the setup is not duplicated.
+    """
+    await _create_graph_run(
+        session_factory,
+        _routine_with_retry_budget(10),
+        run_id=run_id,
+        repo=repo,
+    )
+    dispatch_order: list[str] = []
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={},
+        dispatch_order=dispatch_order,
+        dispatcher_factory=lambda *_args: NoOpDispatcher(),
+    )
+    outcome = await driver.run(run_id)
+    events = await _events(session_factory, run_id)
+    # Nothing was ever executed: the lease really was orphaned rather than
+    # concluded by a runner that ran and then failed to call back.
+    assert dispatch_order == []
+    return outcome, events
+
+
+@pytest.mark.asyncio
+async def test_missing_callback_ends_with_a_conclusively_revoked_lease(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Scenario #9, closed end to end (facts X/Y, chunk 6).
+
+    A missing callback that only the driver's own orphan-lease sweep can
+    recover must terminate as a conclusively revoked lease with a classified
+    terminal failure record — never a paused run with an active lease left
+    unaccounted for. This drives the REAL controller, kernel, driver and
+    projection read path with real event-log reads on every call; no
+    ``GraphProjectionSnapshot`` is constructed by hand anywhere in this test.
+    """
+    _, session_factory = file_db
+    repo = tmp_path / "repo-missing-callback"
+    _init_repo(repo)
+    run_id = "graph-missing-callback"
+
+    outcome, events = await _drive_missing_callback_scenario(session_factory, repo, run_id)
+
+    projection = project_graph_projection_snapshot(events)
+    assert projection.active_leases == {}  # criterion 3, end to end
+
+    failed_nodes = [
+        node_id for node_id, state in projection.node_states.items() if state == "failed"
+    ]
+    assert failed_nodes == ["worker-step-1-task-1"]
+    node_id = failed_nodes[0]
+
+    node_failure_records = [
+        event.payload["value"]
+        for event in events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+        and event.payload.get("producer_node_id") == node_id
+    ]
+    error_classes_seen = {value["error_class"] for value in node_failure_records}
+    # D9's trap, defused: the node's compiled budget (10) is far above the
+    # driver's recovery budget (3), so the kernel's max-attempts branch must
+    # never have fired — only the driver's own recovery_exhausted branch
+    # (chunk 3) may conclude this node.
+    assert "max_attempts_exhausted" not in error_classes_seen
+
+    terminal_records = [
+        value
+        for value in node_failure_records
+        if value["error_class"] == "recovery_budget_exhausted"
+    ]
+    assert len(terminal_records) == 1
+    (terminal_value,) = terminal_records
+    assert terminal_value["failure_class"] == "infrastructure_failure"
+    assert terminal_value["retryable"] is False
+
+    agent_died_indices = [i for i, event in enumerate(events) if event.event_type == "agent_died"]
+    assert len(agent_died_indices) == MAX_NODE_RECOVERIES_PER_DRIVE + 1
+    last_agent_died = events[agent_died_indices[-1]]
+    terminal_lease_id = last_agent_died.payload.get("lease_id")
+    # The terminal command's events (agent_died, lease_revoked, the failure
+    # record, node_state_changed -> failed) all land atomically in one
+    # append, immediately after the last agent_died -- i.e. the kernel took
+    # the terminal branch here, not another retry.
+    trailing = events[agent_died_indices[-1] + 1 : agent_died_indices[-1] + 4]
+    assert any(
+        event.event_type == "lease_revoked" and event.payload.get("lease_id") == terminal_lease_id
+        for event in trailing
+    )
+    assert any(
+        event.event_type == "node_state_changed"
+        and event.payload.get("node_id") == node_id
+        and event.payload.get("new_state") == "failed"
+        for event in trailing
+    )
+
+    assert outcome.completed is False
+    assert (
+        outcome.blocked_reason == f"graph has failed node(s): {node_id}: recovery_budget_exhausted"
+    )
+    assert "active lease(s) without callback" not in (outcome.blocked_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_missing_callback_never_pauses_with_an_active_lease(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """The negative pin (R7). Whatever the driver's exact command sequence,
+    it must never leave the run row paused while the projection still shows
+    an active lease, and no lease that was ever granted may be left
+    unrevoked. This is the property that must survive even if a future
+    change alters *how* the driver concludes.
+    """
+    _, session_factory = file_db
+    repo = tmp_path / "repo-missing-callback-pin"
+    _init_repo(repo)
+    run_id = "graph-missing-callback-pin"
+
+    _outcome, events = await _drive_missing_callback_scenario(session_factory, repo, run_id)
+
+    granted_lease_ids = {
+        event.payload["lease_id"] for event in events if event.event_type == "lease_granted"
+    }
+    revoked_lease_ids = {
+        event.payload["lease_id"] for event in events if event.event_type == "lease_revoked"
+    }
+    assert granted_lease_ids  # sanity: leases really were granted along the way
+    assert granted_lease_ids <= revoked_lease_ids  # none left dangling
+
+    projection = project_graph_projection_snapshot(events)
+    assert projection.active_leases == {}
+
+    async with session_factory() as session:
+        run_row = await RunRepository(session).get(run_id)
+    assert run_row.status == RunStatus.PAUSED
+    assert run_row.pause_reason == "graph_blocked"

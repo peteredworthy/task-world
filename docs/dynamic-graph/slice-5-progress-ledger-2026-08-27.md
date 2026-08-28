@@ -15,6 +15,36 @@ uv run pytest tests/ -q -n auto --dist worksteal
 
 ## Verified chunks
 
+- **Chunk 6 — Scenario #9 regression coverage (final chunk).** Two new
+  integration tests in `tests/integration/test_graph_run_driver.py`,
+  test-only, on the file's existing real-controller harness with a plain
+  `NoOpDispatcher` (matches the file's `CrashingOutboxDispatcher`
+  precedent, not a mock/monkeypatch) suppressing only outbox delivery.
+  Uses the D9-sanctioned unbounded-budget fallback (`max_attempts=10`,
+  exceeding `MAX_NODE_RECOVERIES_PER_DRIVE=3`) so the scenario genuinely
+  exercises the driver's own recovery-budget branch rather than the
+  kernel's `max_attempts_exhausted` branch — proven at runtime by an
+  explicit `assert "max_attempts_exhausted" not in error_classes_seen`.
+  Zero hand-built `GraphProjectionSnapshot` anywhere; every assertion reads
+  the real reduction path. Independent Validator (read-only role) verified
+  everything by reading and traced both non-vacuity claims logically, but
+  flagged it lacked file-write access to literally execute the
+  revert/run/restore experiment chunk 3 established as this loop's
+  convention — so the orchestrator did it directly: temporarily deleted the
+  chunk-3 `if payload.recovery_exhausted:` branch in `_commands.py`, ran
+  both new tests, confirmed genuine failures (`lease-71` left ungranted-
+  and-unrevoked, not an import/timeout error), restored the file via `git
+  checkout --` (byte-identical, confirmed empty diff), reran and confirmed
+  both pass again. Test counts: **5533 passed, 5 skipped** by default
+  (this whole file is pre-existing `pytest.mark.slow`, invisible to the
+  default invocation — not introduced by this chunk); **24 passed** (22 +
+  2 new) under `--run-slow`, 5/5 stable on repeat. Flagged, pre-existing,
+  not-this-chunk's-problem risk: `--run-slow` appears nowhere in this
+  repo's documented acceptance/CI commands for this file, so all 24 of its
+  tests (not just the 2 new ones) are effectively invisible to the normal
+  dev loop and merge gate today. Ruff/format/pyright/boundary-check all
+  clean; schema version 15 unchanged; zero production code touched.
+
 - **Chunk 3 — Conclusive lease revocation (the headline requirement).**
   Budget-exhaustion in `_recover_orphaned_active_leases` no longer silently
   `continue`s past an orphaned lease — it now always issues
