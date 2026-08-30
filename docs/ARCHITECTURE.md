@@ -236,6 +236,7 @@ task-world/
 │   │   ├── agent_factory.py   # Registry-based agent factory; each package self-registers
 │   │   ├── agent_detector.py  # Registry-based runner detection (preferred over detector.py)
 │   │   ├── errors.py          # Runner-specific error types
+│   │   ├── planner_tools.py   # Authorized planner-tool ordering and reliable-plan preflight
 │   │   ├── agents/            # Concrete agent implementations
 │   │   │   ├── claude_cli/    # CLIAgent + ClaudeCliQuotaAgent (subprocess)
 │   │   │   ├── codex/         # CodexServerAgent (stdio/JSON-RPC)

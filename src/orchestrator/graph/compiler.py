@@ -378,6 +378,7 @@ class _Compiler:
             "step_index": step_index,
             "title": step.title,
             "step_context": step.step_context,
+            "available_tools": step.available_tools,
             "task_context": _planner_task_context(step, self._dynamic_feature_inputs),
             "authority": {
                 "allowed_actions": ["submit_patch", "request_clarification"],

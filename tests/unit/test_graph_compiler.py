@@ -534,6 +534,32 @@ def test_compile_planner_step_seeds_chain_head() -> None:
     ]
 
 
+def test_compile_planner_step_preserves_explicit_available_tools() -> None:
+    requested = [
+        "submit_graph_patch",
+        "create_discovery_region",
+        "create_plan_verification",
+        "create_successor_planner",
+        "create_effectful_batch",
+    ]
+    routine = RoutineConfig(
+        id="planner-tools",
+        name="Planner Tools",
+        steps=[
+            StepConfig(
+                id="Plan",
+                kind="planner",
+                title="Plan horizons",
+                available_tools=requested,
+            )
+        ],
+    )
+
+    planner = _node_event(_compile(routine), "planner-plan").payload
+
+    assert planner["available_tools"] == requested
+
+
 def test_dynamic_graph_feature_run_inputs_seed_planner_context() -> None:
     routine = RoutineConfig(
         id="dynamic-graph-feature",

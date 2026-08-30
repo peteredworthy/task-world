@@ -30,6 +30,7 @@ from orchestrator.runners.mcp_scope import (
     resolve_mcp_server_cwd,
     scope_mcp_servers_to_available_tools,
 )
+from orchestrator.runners.planner_tools import GRAPH_PLANNER_TOOL_ORDER
 from orchestrator.workflow import GateBlockedError
 from orchestrator.git import WorktreeCommitError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
@@ -264,12 +265,15 @@ class CLIAgent:
 
         graph_tools_section = ""
         if context.graph_mcp_url is not None:
+            graph_tool_names = ", ".join(
+                name
+                for name in GRAPH_PLANNER_TOOL_ORDER
+                if context.available_tools is None or name in context.available_tools
+            )
             graph_tools_section = (
                 "\n\n## Graph Tools\n"
                 "You are connected to an orchestrator-graph MCP server exposing "
-                "submit_graph_patch and the graph macro tools (create_work_region, "
-                "attach_verifier, attach_check, create_gap_planner, create_join, "
-                "request_gate, retire_or_supersede, create_corrective_region). Use "
+                f"these authorized graph tools: {graph_tool_names}. Use "
                 "them directly as native tool calls — prefer the macro tools; use "
                 "submit_graph_patch with raw ops only when no macro expresses the "
                 "mutation you need. The MCP endpoint for this execution is "

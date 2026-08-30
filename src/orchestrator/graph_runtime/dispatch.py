@@ -116,7 +116,15 @@ from orchestrator.graph_runtime.gatekeeper import (
 from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, SideEffectExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
-from orchestrator.runners import AgentRunner, create_agent_runner
+from orchestrator.runners import (
+    AgentRunner,
+    RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
+    ReliablePlanToolPreflightError,
+    build_dynamic_tool_specs,
+    create_agent_runner,
+    is_reliable_plan_planner,
+    resolve_dispatch_tools,
+)
 from orchestrator.runners.types import ExecutionContext
 
 MAX_GRAPH_PROMPT_CHARS = _prompts.MAX_GRAPH_PROMPT_CHARS
@@ -446,7 +454,102 @@ class RunnerBoundaryCapture:
 
 
 class GraphAgentFactory(Protocol):
+    def preflight(
+        self,
+        context: GraphDispatchContext,
+        execution_context: ExecutionContext,
+        *,
+        graph_mcp_available: bool,
+    ) -> None: ...
+
     def create_runner(self, context: GraphDispatchContext) -> AgentRunner: ...
+
+
+class GraphToolCatalogProvider(Protocol):
+    """Validates the selected runner's concrete reliable-plan definitions."""
+
+    def preflight(
+        self,
+        context: ExecutionContext,
+        *,
+        graph_mcp_available: bool,
+    ) -> None: ...
+
+
+class GraphRunnerBuilder(Protocol):
+    """Injectable selected-runner construction boundary."""
+
+    def __call__(
+        self,
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
+        *,
+        run_id: str,
+        phase: str,
+    ) -> AgentRunner: ...
+
+
+class SelectedRunnerGraphToolCatalog:
+    """Production catalog backed by the concrete selected-runner adapters."""
+
+    def __init__(
+        self,
+        runner_type: AgentRunnerType,
+        runner_config: Mapping[str, Any],
+    ) -> None:
+        self._runner_type = runner_type
+        self._runner_config = dict(runner_config)
+
+    def preflight(
+        self,
+        context: ExecutionContext,
+        *,
+        graph_mcp_available: bool,
+    ) -> None:
+        if self._runner_type == AgentRunnerType.CODEX_SERVER:
+            # This is the same concrete definition builder passed to
+            # ``thread/start.dynamicTools`` by CodexServerAgent.execute().
+            build_dynamic_tool_specs(context=context)
+            return
+
+        if self._runner_type == AgentRunnerType.CLI_SUBPROCESS:
+            command = str(self._runner_config.get("command", "claude"))
+            if Path(command).name != "claude":
+                self._reject_delivery(
+                    "CLI subprocess command "
+                    f"{command!r} cannot attach the per-execution graph MCP server; "
+                    "select codex_server or the Claude CLI for reliable-plan execution"
+                )
+            if not graph_mcp_available:
+                self._reject_delivery(
+                    "the per-execution graph MCP registry is unavailable for the Claude CLI"
+                )
+
+            # Build the actual FastMCP server used by the scheduled execution.
+            # Its registration path constructs and validates the concrete JSON
+            # schemas, so a missing or malformed registration is rejected here.
+            from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
+
+            async def receive_patch(_payload: dict[str, Any]) -> str:
+                return "preflight-only"
+
+            build_graph_mcp_server(
+                receive_patch,
+                None,
+                allowed_tools=context.available_tools,
+                required_tools=context.required_tools,
+            )
+            return
+
+        self._reject_delivery(
+            f"runner {self._runner_type.value!r} has no reliable-plan graph tool adapter"
+        )
+
+    @staticmethod
+    def _reject_delivery(reason: str) -> None:
+        raise ReliablePlanToolPreflightError(
+            invalid_tools={name: reason for name in RELIABLE_PLAN_REQUIRED_TOOL_NAMES}
+        )
 
 
 class GraphProcessRegistry(Protocol):
@@ -573,9 +676,30 @@ class StaticGraphAgentFactory:
         self,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        *,
+        graph_tool_catalog: GraphToolCatalogProvider | None = None,
+        runner_builder: GraphRunnerBuilder = create_agent_runner,
     ) -> None:
         self._runner_type = runner_type
         self._runner_config = dict(runner_config or {})
+        self._graph_tool_catalog = graph_tool_catalog or SelectedRunnerGraphToolCatalog(
+            runner_type,
+            self._runner_config,
+        )
+        self._runner_builder = runner_builder
+
+    def preflight(
+        self,
+        context: GraphDispatchContext,
+        execution_context: ExecutionContext,
+        *,
+        graph_mcp_available: bool,
+    ) -> None:
+        del context
+        self._graph_tool_catalog.preflight(
+            execution_context,
+            graph_mcp_available=graph_mcp_available,
+        )
 
     def create_runner(self, context: GraphDispatchContext) -> AgentRunner:
         phase = "verifying" if context.node_kind == "verifier" else "building"
@@ -585,7 +709,7 @@ class StaticGraphAgentFactory:
             str,
         ):
             runner_config["model"] = model_override
-        return create_agent_runner(
+        return self._runner_builder(
             self._runner_type,
             runner_config,
             run_id=context.run_id,
@@ -690,6 +814,24 @@ class GraphDispatchExecutor(SideEffectExecutor):
             return
 
         context = await self._build_dispatch_context(item)
+        if is_reliable_plan_planner(node_kind=context.node_kind, node_payload=context.node_payload):
+            execution_context = self._execution_context(context)
+            preflight = getattr(self._agent_factory, "preflight", None)
+            if not callable(preflight):
+                raise ReliablePlanToolPreflightError(
+                    invalid_tools={
+                        name: (
+                            "selected graph agent factory does not expose a concrete "
+                            "tool-catalog preflight"
+                        )
+                        for name in RELIABLE_PLAN_REQUIRED_TOOL_NAMES
+                    }
+                )
+            preflight(
+                context,
+                execution_context,
+                graph_mcp_available=self._graph_mcp_registry is not None,
+            )
         existing = self._running.get(context.execution_id)
         if existing is not None and not existing.done():
             return
@@ -1037,6 +1179,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
             graph_mcp_url: str | None = None
             can_submit_patch = _can_submit_graph_patch(context)
             is_verifier = context.node_kind == "verifier"
+            execution_context = self._execution_context(
+                context,
+                graph_patch_callback=(on_submit_graph_patch if can_submit_patch else None),
+            )
             if self._graph_mcp_registry is not None and (can_submit_patch or is_verifier):
                 import secrets
 
@@ -1045,21 +1191,20 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 graph_mcp_server = build_graph_mcp_server(
                     on_submit_graph_patch,
                     on_grade if is_verifier else None,
+                    allowed_tools=execution_context.available_tools,
+                    required_tools=execution_context.required_tools,
                 )
                 graph_mcp_token = secrets.token_urlsafe(24)
                 self._graph_mcp_registry.register(
                     graph_mcp_token, graph_mcp_server.sse_app(mount_path="/")
                 )
                 graph_mcp_url = f"{self._base_url}/mcp-graph/{graph_mcp_token}/sse"
+                execution_context.graph_mcp_url = graph_mcp_url
 
             try:
                 started = self._monotonic()
                 result = await runner.execute(
-                    self._execution_context(
-                        context,
-                        graph_patch_callback=(on_submit_graph_patch if can_submit_patch else None),
-                        graph_mcp_url=graph_mcp_url,
-                    ),
+                    execution_context,
                     on_checklist_update,
                     on_submit,
                     on_output=on_output,
@@ -1211,6 +1356,14 @@ class GraphDispatchExecutor(SideEffectExecutor):
     ) -> ExecutionContext:
         node = context.node_payload
         prompt = _prompt_for_node(context)
+        available_tools = resolve_dispatch_tools(
+            node_kind=context.node_kind,
+            node_role=context.node_role,
+            available_tools=_available_tools_for_context(context),
+        )
+        reliable_plan = is_reliable_plan_planner(
+            node_kind=context.node_kind, node_payload=context.node_payload
+        )
         return ExecutionContext(
             run_id=context.run_id,
             task_id=str(node.get("task_id") or node.get("task_region_id") or context.node_id),
@@ -1223,7 +1376,12 @@ class GraphDispatchExecutor(SideEffectExecutor):
             node_role=context.node_role,
             graph_patch_callback=graph_patch_callback,
             graph_mcp_url=graph_mcp_url,
-            available_tools=_available_tools_for_context(context),
+            available_tools=(
+                list(available_tools)
+                if context.node_kind == "verifier" or available_tools
+                else None
+            ),
+            required_tools=RELIABLE_PLAN_REQUIRED_TOOL_NAMES if reliable_plan else (),
             mcp_servers=cast(Any, node.get("mcp_servers")),
             work_mode=_work_mode(node.get("work_mode")),
         )

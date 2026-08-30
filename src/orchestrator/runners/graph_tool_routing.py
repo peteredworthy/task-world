@@ -1,7 +1,7 @@
 """Graph tool call routing and payload normalization.
 
 Shared by every graph-capable runner adapter (codex_server, claude_cli).
-All graph tools an LLM can call — ``submit_graph_patch`` plus 8 "macro"
+All graph tools an LLM can call — ``submit_graph_patch`` plus the "macro"
 tools that create/attach graph nodes and regions — normalize through the
 same ``GraphPatchCallback`` (a single closure the graph dispatcher builds
 per in-flight execution). This module owns that normalization so no
@@ -21,24 +21,12 @@ from orchestrator.runners.types import (
     GraphPatchCallback,
     SubmitCallback,
 )
+from orchestrator.runners.planner_tools import GRAPH_PLANNER_TOOL_ORDER
 
 logger = logging.getLogger(__name__)
 
 GRAPH_MACRO_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "create_work_region",
-        "create_corrective_region",
-        "attach_verifier",
-        "attach_check",
-        "create_gap_planner",
-        "create_join",
-        "request_gate",
-        "retire_or_supersede",
-        "create_discovery_region",
-        "create_plan_verification",
-        "create_successor_planner",
-        "create_effectful_batch",
-    }
+    name for name in GRAPH_PLANNER_TOOL_ORDER if name != "submit_graph_patch"
 )
 
 

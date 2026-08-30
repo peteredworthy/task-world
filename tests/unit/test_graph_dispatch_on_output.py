@@ -26,7 +26,11 @@ from orchestrator.graph import (
     reduce_event,
 )
 from orchestrator.git import snapshot
-from orchestrator.graph_runtime import GraphDispatchContext, GraphDispatchExecutor
+from orchestrator.graph_runtime import (
+    GraphDispatchContext,
+    GraphDispatchExecutor,
+    StaticGraphAgentFactory,
+)
 from orchestrator.graph_runtime.dispatch import (
     DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS,
     _callback_conflict_reason,
@@ -50,6 +54,11 @@ from orchestrator.runners.types import (
     GradeCallback,
     LogLineCallback,
     SubmitCallback,
+)
+from orchestrator.runners import (
+    ReliablePlanToolPreflightError,
+    build_dynamic_tool_specs,
+    validate_reliable_plan_tool_specs,
 )
 from orchestrator.runners.graph_tool_routing import normalize_patch_payload
 from tests.unit.graph_test_utils import canonical_event_payload
@@ -764,11 +773,12 @@ class RecordingExecutor(GraphDispatchExecutor):
         self,
         on_agent_output: Any = None,
         graph_patch_feedback: str = "graph patch accepted",
+        agent_factory: Any = None,
     ) -> None:
         super().__init__(
             cast(async_sessionmaker[AsyncSession], object()),
             cast(Any, object()),
-            cast(Any, object()),
+            cast(Any, agent_factory if agent_factory is not None else object()),
             worktree_path="/tmp/worktree",
             artifact_store=FilesystemArtifactStore(Path("/tmp/test-graph-artifacts")),
             on_agent_output=on_agent_output,
@@ -1615,6 +1625,15 @@ def test_execution_context_does_not_grant_graph_tools_to_fan_out_planner_role() 
     assert execution_context.available_tools is None
 
 
+def test_execution_context_verifier_has_explicit_empty_graph_tool_allowlist() -> None:
+    context = _context(node_id="verifier-1", node_kind="verifier", node_role="verifier")
+    executor = RecordingExecutor()
+
+    execution_context = executor._execution_context(context)
+
+    assert execution_context.available_tools == []
+
+
 def test_execution_context_preserves_explicit_node_tools() -> None:
     context = _context(
         node_id="planner-1",
@@ -1627,6 +1646,203 @@ def test_execution_context_preserves_explicit_node_tools() -> None:
     execution_context = executor._execution_context(context)
 
     assert execution_context.available_tools == ["read_file"]
+
+
+@pytest.mark.asyncio
+async def test_reliable_plan_dispatch_rejects_missing_registration_before_runner_creation() -> None:
+    class DeficientCodexCatalog:
+        def preflight(
+            self,
+            execution_context: ExecutionContext,
+            *,
+            graph_mcp_available: bool,
+        ) -> None:
+            del graph_mcp_available
+            specs = [
+                spec
+                for spec in build_dynamic_tool_specs(context=execution_context)
+                if spec["name"] != "create_successor_planner"
+            ]
+            validate_reliable_plan_tool_specs(specs)
+
+    class RecordingStaticFactory(StaticGraphAgentFactory):
+        def __init__(self) -> None:
+            super().__init__(
+                AgentRunnerType.CODEX_SERVER,
+                graph_tool_catalog=DeficientCodexCatalog(),
+            )
+            self.create_calls = 0
+
+        def create_runner(self, context: GraphDispatchContext) -> Any:
+            self.create_calls += 1
+            return super().create_runner(context)
+
+    context = _context(
+        node_id="planner-1",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "reliable_plan_skeleton_id": "reliable-plan-v1",
+            "available_tools": [
+                "submit_graph_patch",
+                "create_discovery_region",
+                "create_plan_verification",
+                "create_successor_planner",
+                "create_effectful_batch",
+            ],
+        },
+    )
+    factory = RecordingStaticFactory()
+    executor = RecordingExecutor(agent_factory=factory)
+    executor.dispatch_context = context
+
+    with pytest.raises(ReliablePlanToolPreflightError) as raised:
+        await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+
+    assert raised.value.missing_tools == ("create_successor_planner",)
+    assert factory.create_calls == 0
+    assert executor._running == {}
+
+
+@pytest.mark.asyncio
+async def test_reliable_plan_dispatch_rejects_malformed_schema_before_runner_creation() -> None:
+    class MalformedCodexCatalog:
+        def preflight(
+            self,
+            execution_context: ExecutionContext,
+            *,
+            graph_mcp_available: bool,
+        ) -> None:
+            del graph_mcp_available
+            specs = [dict(spec) for spec in build_dynamic_tool_specs(context=execution_context)]
+            malformed = next(spec for spec in specs if spec["name"] == "create_plan_verification")
+            malformed["inputSchema"] = {"type": "array"}
+            validate_reliable_plan_tool_specs(specs)
+
+    class RecordingStaticFactory(StaticGraphAgentFactory):
+        def __init__(self) -> None:
+            super().__init__(
+                AgentRunnerType.CODEX_SERVER,
+                graph_tool_catalog=MalformedCodexCatalog(),
+            )
+            self.create_calls = 0
+
+        def create_runner(self, context: GraphDispatchContext) -> Any:
+            self.create_calls += 1
+            return super().create_runner(context)
+
+    context = _context(
+        node_id="planner-1",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "reliable_plan_skeleton_id": "reliable-plan-v1",
+            "available_tools": [
+                "submit_graph_patch",
+                "create_discovery_region",
+                "create_plan_verification",
+                "create_successor_planner",
+                "create_effectful_batch",
+            ],
+        },
+    )
+    factory = RecordingStaticFactory()
+    executor = RecordingExecutor(agent_factory=factory)
+    executor.dispatch_context = context
+
+    with pytest.raises(ReliablePlanToolPreflightError) as raised:
+        await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+
+    assert raised.value.invalid_tools == {
+        "create_plan_verification": "inputSchema root type must be object"
+    }
+    assert factory.create_calls == 0
+    assert executor._running == {}
+
+
+@pytest.mark.asyncio
+async def test_reliable_plan_codex_cli_rejected_before_runner_creation() -> None:
+    class RecordingStaticFactory(StaticGraphAgentFactory):
+        def __init__(self) -> None:
+            super().__init__(
+                AgentRunnerType.CLI_SUBPROCESS,
+                {"command": "codex"},
+            )
+            self.create_calls = 0
+
+        def create_runner(self, context: GraphDispatchContext) -> Any:
+            self.create_calls += 1
+            return super().create_runner(context)
+
+    context = _context(
+        node_id="planner-1",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "reliable_plan_skeleton_id": "reliable-plan-v1",
+            "available_tools": [
+                "submit_graph_patch",
+                "create_discovery_region",
+                "create_plan_verification",
+                "create_successor_planner",
+                "create_effectful_batch",
+            ],
+        },
+    )
+    factory = RecordingStaticFactory()
+    executor = RecordingExecutor(agent_factory=factory)
+    executor.dispatch_context = context
+
+    with pytest.raises(ReliablePlanToolPreflightError) as raised:
+        await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+
+    assert tuple(raised.value.invalid_tools) == (
+        "create_discovery_region",
+        "create_plan_verification",
+        "create_successor_planner",
+        "create_effectful_batch",
+    )
+    assert "command 'codex' cannot attach" in str(raised.value)
+    assert factory.create_calls == 0
+    assert executor._running == {}
+
+
+@pytest.mark.asyncio
+async def test_reliable_plan_claude_cli_requires_graph_mcp_registry_before_creation() -> None:
+    class RecordingStaticFactory(StaticGraphAgentFactory):
+        def __init__(self) -> None:
+            super().__init__(AgentRunnerType.CLI_SUBPROCESS, {"command": "claude"})
+            self.create_calls = 0
+
+        def create_runner(self, context: GraphDispatchContext) -> Any:
+            self.create_calls += 1
+            return super().create_runner(context)
+
+    context = _context(
+        node_id="planner-1",
+        node_kind="planner",
+        node_role="planner",
+        node_payload={
+            "reliable_plan_skeleton_id": "reliable-plan-v1",
+            "available_tools": [
+                "submit_graph_patch",
+                "create_discovery_region",
+                "create_plan_verification",
+                "create_successor_planner",
+                "create_effectful_batch",
+            ],
+        },
+    )
+    factory = RecordingStaticFactory()
+    executor = RecordingExecutor(agent_factory=factory)
+    executor.dispatch_context = context
+
+    with pytest.raises(ReliablePlanToolPreflightError) as raised:
+        await executor.dispatch(cast(Any, SimpleNamespace(kind="agent_dispatch")))
+
+    assert "graph MCP registry is unavailable" in str(raised.value)
+    assert factory.create_calls == 0
+    assert executor._running == {}
 
 
 def test_access_mode_does_not_affect_legacy_execution_context_work_mode() -> None:

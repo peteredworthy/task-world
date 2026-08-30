@@ -21,11 +21,17 @@ from typing import Any, cast
 import pytest
 
 from orchestrator.git import WorktreeCommitError
-from orchestrator.runners import CodexServerAgent, RealStdioTransport
+from orchestrator.runners import (
+    CodexServerAgent,
+    RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
+    RealStdioTransport,
+)
 from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
+from orchestrator.config.models import RoutineConfig, StepConfig
+from orchestrator.graph import FakeClock, SequentialIdGenerator, compile_routine
 
 # ---------------------------------------------------------------------------
 # Fake transport
@@ -324,6 +330,61 @@ async def test_execute_sends_thread_start_request() -> None:
 
     methods = [msg.get("method") for msg in transport.sent]
     assert "thread/start" in methods
+
+
+async def test_reliable_plan_compiled_routine_sends_required_dynamic_tools() -> None:
+    requested = ["submit_graph_patch", *RELIABLE_PLAN_REQUIRED_TOOL_NAMES]
+    routine = RoutineConfig(
+        id="reliable-plan-production-packet",
+        name="Reliable Plan Production Packet",
+        steps=[
+            StepConfig(
+                id="S-01",
+                kind="planner",
+                title="Plan",
+                available_tools=requested,
+            )
+        ],
+    )
+    events = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        run_id="run-reliable-packet",
+        run_config={"reliable_plan_skeleton_id": "reliable-plan-v1"},
+    )
+    planner = next(
+        event.payload
+        for event in events
+        if event.event_type == "node_created" and event.payload.get("node_id") == "planner-s-01"
+    )
+    context = ExecutionContext(
+        run_id="run-reliable-packet",
+        task_id="planner-s-01",
+        working_dir="/tmp/reliable-plan-packet",
+        prompt="Plan the reliable execution graph.",
+        requirements=[],
+        node_kind=str(planner["kind"]),
+        node_role=str(planner["role"]),
+        available_tools=cast(list[str], planner["available_tools"]),
+        required_tools=RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
+    )
+    agent, transport = _make_agent([_turn_completed()], local_provider="lmstudio")
+
+    await agent.execute(
+        context=context,
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    thread_start = next(
+        message for message in transport.sent if message.get("method") == "thread/start"
+    )
+    specs = thread_start["params"]["dynamicTools"]
+    reliable_specs = [spec for spec in specs if spec["name"] in RELIABLE_PLAN_REQUIRED_TOOL_NAMES]
+    assert [spec["name"] for spec in reliable_specs] == list(RELIABLE_PLAN_REQUIRED_TOOL_NAMES)
+    assert all(spec["inputSchema"]["type"] == "object" for spec in reliable_specs)
+    assert all(spec["inputSchema"]["required"] for spec in reliable_specs)
 
 
 async def test_execute_sends_turn_start_with_prompt() -> None:

@@ -443,6 +443,9 @@ def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:
                 "task_region_id": f"region-{prefix}",
                 "attempt_number": 1,
                 "candidate_id": candidate_id,
+                "objective": f"Implement the {prefix} planning horizon.",
+                "access_mode": "write",
+                "acceptance": [f"The {prefix} horizon implementation is complete."],
             },
         },
         {

@@ -100,6 +100,7 @@ class ExecutionContext(BaseModel):
     graph_patch_callback: GraphPatchCallback | None = None
     graph_mcp_url: str | None = None
     available_tools: list[str] | None = None
+    required_tools: tuple[str, ...] = ()
     mcp_servers: list[MCPServerConfig] | None = None
     work_mode: Literal["implementation", "oversight"] = "implementation"
 

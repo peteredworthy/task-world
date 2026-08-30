@@ -23,13 +23,17 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
-from orchestrator.graph import DEFAULT_NODE_CONTRACTS, RecordSelector
+from orchestrator.graph import RecordSelector
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.graph_tool_routing import (
     GRAPH_MACRO_TOOL_NAMES,
     normalize_macro_tool_payload as _normalize_macro_tool_payload,  # noqa: F401  # pyright: ignore[reportUnusedImport]
     normalize_patch_payload as _normalize_patch_payload,  # noqa: F401  # pyright: ignore[reportUnusedImport]
     route_tool_call as _route_tool_call_impl,
+)
+from orchestrator.runners.planner_tools import (
+    resolve_graph_planner_tools,
+    validate_reliable_plan_tool_specs,
 )
 from orchestrator.runners.types import (
     ChecklistUpdateCallback,
@@ -856,7 +860,11 @@ def build_dynamic_tool_specs(
             "request_gate": request_gate_spec,
             "submit_graph_patch": submit_graph_patch_spec,
         }
-        for tool_name in _contract_allowed_graph_tools(context):
+        for tool_name in resolve_graph_planner_tools(
+            node_kind=context.node_kind or "",
+            node_role=context.node_role,
+            available_tools=context.available_tools,
+        ):
             spec = graph_tool_specs.get(tool_name)
             if spec is not None:
                 specs.append(spec)
@@ -873,29 +881,9 @@ def build_dynamic_tool_specs(
                 tool_name,
             )
 
+    if context is not None and context.required_tools:
+        validate_reliable_plan_tool_specs(specs)
     return specs
-
-
-def _contract_allowed_graph_tools(context: ExecutionContext) -> list[str]:
-    allowed_tools = DEFAULT_NODE_CONTRACTS.allowed_tools_for(
-        context.node_kind or "", context.node_role
-    )
-    ordered_names = [
-        "create_work_region",
-        "create_corrective_region",
-        "attach_verifier",
-        "attach_check",
-        "create_gap_planner",
-        "create_join",
-        "request_gate",
-        "retire_or_supersede",
-        "create_discovery_region",
-        "create_plan_verification",
-        "create_successor_planner",
-        "create_effectful_batch",
-        "submit_graph_patch",
-    ]
-    return [tool_name for tool_name in ordered_names if tool_name in allowed_tools]
 
 
 def extract_agent_message_delta(notification: dict[str, Any]) -> str | None:

@@ -4,17 +4,20 @@ Each graph-dispatched claude_cli execution gets a fresh instance of this
 server (see ``GraphDispatchExecutor._run_agent``), with every tool handler
 closing directly over that execution's ``on_submit_graph_patch``/``on_grade``
 callables — the same closures codex_server's in-process JSON-RPC session
-already awaits directly today. All 9 graph-patch tools funnel through the
+already awaits directly today. All graph-patch tools funnel through the
 shared ``graph_tool_routing.route_tool_call`` so the normalization logic
 (macro-tool -> patch envelope) is identical to codex_server's.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.tools import Tool
 
+from orchestrator.runners import validate_reliable_plan_tool_specs
 from orchestrator.runners.graph_tool_routing import route_tool_call
 from orchestrator.runners.types import GradeCallback, GraphPatchCallback
 
@@ -29,6 +32,10 @@ _GRAPH_MCP_ALLOWLIST = frozenset(
         "create_join",
         "request_gate",
         "retire_or_supersede",
+        "create_discovery_region",
+        "create_plan_verification",
+        "create_successor_planner",
+        "create_effectful_batch",
         "graph_grade",
     }
 )
@@ -45,6 +52,9 @@ async def _noop_submit() -> None:
 def build_graph_mcp_server(
     on_submit_graph_patch: GraphPatchCallback,
     on_grade: GradeCallback | None,
+    *,
+    allowed_tools: Sequence[str] | None = None,
+    required_tools: Sequence[str] = (),
 ) -> FastMCP:
     """Build a fresh MCP server exposing the graph tools for one execution.
 
@@ -63,6 +73,20 @@ def build_graph_mcp_server(
             "or one of the macro tools to propose graph mutations."
         ),
     )
+    enabled_tools = frozenset(allowed_tools) if allowed_tools is not None else _GRAPH_MCP_ALLOWLIST
+    concrete_specs: list[dict[str, Any]] = []
+
+    def _add_tool(function: Any, *, name: str, description: str) -> None:
+        if name in enabled_tools or name == "graph_grade":
+            mcp.add_tool(function, name=name, description=description)
+            concrete_specs.append(
+                {
+                    "name": name,
+                    "inputSchema": Tool.from_function(
+                        function, name=name, description=description
+                    ).parameters,
+                }
+            )
 
     async def _route(tool_name: str, args: dict[str, Any]) -> str:
         return await route_tool_call(
@@ -92,7 +116,7 @@ def build_graph_mcp_server(
             args["rationale_record_id"] = rationale_record_id
         return await _route("submit_graph_patch", args)
 
-    mcp.add_tool(
+    _add_tool(
         submit_graph_patch,
         name="submit_graph_patch",
         description=(
@@ -139,7 +163,7 @@ def build_graph_mcp_server(
             args["access_mode_override_justification"] = access_mode_override_justification
         return await _route("create_work_region", args)
 
-    mcp.add_tool(
+    _add_tool(
         create_work_region,
         name="create_work_region",
         description="Create a work region in the graph.",
@@ -185,7 +209,7 @@ def build_graph_mcp_server(
             args["access_mode_override_justification"] = access_mode_override_justification
         return await _route("create_corrective_region", args)
 
-    mcp.add_tool(
+    _add_tool(
         create_corrective_region,
         name="create_corrective_region",
         description="Create a corrective region in the graph.",
@@ -215,7 +239,7 @@ def build_graph_mcp_server(
             args["rationale_record_id"] = rationale_record_id
         return await _route("attach_verifier", args)
 
-    mcp.add_tool(
+    _add_tool(
         attach_verifier,
         name="attach_verifier",
         description="Attach a verifier to the current graph region.",
@@ -251,7 +275,7 @@ def build_graph_mcp_server(
             args["rationale_record_id"] = rationale_record_id
         return await _route("attach_check", args)
 
-    mcp.add_tool(
+    _add_tool(
         attach_check,
         name="attach_check",
         description="Attach a check to the current graph region.",
@@ -278,7 +302,7 @@ def build_graph_mcp_server(
             args["rationale_record_id"] = rationale_record_id
         return await _route("create_gap_planner", args)
 
-    mcp.add_tool(
+    _add_tool(
         create_gap_planner,
         name="create_gap_planner",
         description="Create a gap planner node for the graph.",
@@ -306,7 +330,7 @@ def build_graph_mcp_server(
             args["rationale_record_id"] = rationale_record_id
         return await _route("create_join", args)
 
-    mcp.add_tool(
+    _add_tool(
         create_join,
         name="create_join",
         description="Create a join node in the graph.",
@@ -346,7 +370,7 @@ def build_graph_mcp_server(
             args["rationale_record_id"] = rationale_record_id
         return await _route("request_gate", args)
 
-    mcp.add_tool(
+    _add_tool(
         request_gate,
         name="request_gate",
         description="Request a human gate or authority decision for the current graph node.",
@@ -373,10 +397,176 @@ def build_graph_mcp_server(
             args["rationale_record_id"] = rationale_record_id
         return await _route("retire_or_supersede", args)
 
-    mcp.add_tool(
+    _add_tool(
         retire_or_supersede,
         name="retire_or_supersede",
         description="Retire or supersede an existing graph node.",
+    )
+
+    async def create_discovery_region(
+        patch_id: str,
+        base_graph_position: int,
+        region_id: str,
+        semantic_schema_id: str,
+        semantic_schema_version: int,
+        objective: str,
+        acceptance: list[str],
+        worker_id: str | None = None,
+        requirement_source_node_ids: list[str] | None = None,
+        rationale_record_id: str | None = None,
+    ) -> str:
+        """Create a read-only discovery region with a declared semantic output."""
+        args: dict[str, Any] = {
+            "patch_id": patch_id,
+            "base_graph_position": base_graph_position,
+            "region_id": region_id,
+            "semantic_schema_id": semantic_schema_id,
+            "semantic_schema_version": semantic_schema_version,
+            "objective": objective,
+            "acceptance": acceptance,
+        }
+        if worker_id is not None:
+            args["worker_id"] = worker_id
+        if requirement_source_node_ids is not None:
+            args["requirement_source_node_ids"] = requirement_source_node_ids
+        if rationale_record_id is not None:
+            args["rationale_record_id"] = rationale_record_id
+        return await _route("create_discovery_region", args)
+
+    _add_tool(
+        create_discovery_region,
+        name="create_discovery_region",
+        description="Create a read-only discovery region with a declared semantic output.",
+    )
+
+    async def create_plan_verification(
+        patch_id: str,
+        base_graph_position: int,
+        region_id: str,
+        artifact_source_node_id: str,
+        semantic_schema_id: str,
+        semantic_schema_version: int,
+        objective: str,
+        acceptance: list[str],
+        rubric: list[str],
+        verifier_id: str | None = None,
+        requirement_source_node_ids: list[str] | None = None,
+        rationale_record_id: str | None = None,
+    ) -> str:
+        """Create independent verification for a declared semantic plan artifact."""
+        args: dict[str, Any] = {
+            "patch_id": patch_id,
+            "base_graph_position": base_graph_position,
+            "region_id": region_id,
+            "artifact_source_node_id": artifact_source_node_id,
+            "semantic_schema_id": semantic_schema_id,
+            "semantic_schema_version": semantic_schema_version,
+            "objective": objective,
+            "acceptance": acceptance,
+            "rubric": rubric,
+        }
+        if verifier_id is not None:
+            args["verifier_id"] = verifier_id
+        if requirement_source_node_ids is not None:
+            args["requirement_source_node_ids"] = requirement_source_node_ids
+        if rationale_record_id is not None:
+            args["rationale_record_id"] = rationale_record_id
+        return await _route("create_plan_verification", args)
+
+    _add_tool(
+        create_plan_verification,
+        name="create_plan_verification",
+        description="Create independent verification for a declared semantic plan artifact.",
+    )
+
+    async def create_successor_planner(
+        patch_id: str,
+        base_graph_position: int,
+        region_id: str,
+        evidence_source_node_id: str,
+        evidence_source_port: str,
+        planning_horizon: int,
+        node_id: str | None = None,
+        semantic_schema_id: str | None = None,
+        semantic_schema_version: int | None = None,
+        rationale_record_id: str | None = None,
+    ) -> str:
+        """Create one successor planning horizon from accepted semantic evidence."""
+        args: dict[str, Any] = {
+            "patch_id": patch_id,
+            "base_graph_position": base_graph_position,
+            "region_id": region_id,
+            "evidence_source_node_id": evidence_source_node_id,
+            "evidence_source_port": evidence_source_port,
+            "planning_horizon": planning_horizon,
+        }
+        if node_id is not None:
+            args["node_id"] = node_id
+        if semantic_schema_id is not None:
+            args["semantic_schema_id"] = semantic_schema_id
+        if semantic_schema_version is not None:
+            args["semantic_schema_version"] = semantic_schema_version
+        if rationale_record_id is not None:
+            args["rationale_record_id"] = rationale_record_id
+        return await _route("create_successor_planner", args)
+
+    _add_tool(
+        create_successor_planner,
+        name="create_successor_planner",
+        description="Create one successor planning horizon from accepted semantic evidence.",
+    )
+
+    async def create_effectful_batch(
+        patch_id: str,
+        base_graph_position: int,
+        region_id: str,
+        batch_id: str,
+        plan_source_node_id: str,
+        plan_verification_source_node_id: str,
+        semantic_schema_id: str,
+        semantic_schema_version: int,
+        objective: str,
+        acceptance: list[str],
+        checks: list[dict[str, Any]],
+        rubric: list[str],
+        planning_horizon: int,
+        worker_id: str | None = None,
+        verifier_id: str | None = None,
+        requirement_source_node_ids: list[str] | None = None,
+        accepted_plan_amendment_record_id: str | None = None,
+        rationale_record_id: str | None = None,
+    ) -> str:
+        """Create one declared implementation batch with checks and verification."""
+        args: dict[str, Any] = {
+            "patch_id": patch_id,
+            "base_graph_position": base_graph_position,
+            "region_id": region_id,
+            "batch_id": batch_id,
+            "plan_source_node_id": plan_source_node_id,
+            "plan_verification_source_node_id": plan_verification_source_node_id,
+            "semantic_schema_id": semantic_schema_id,
+            "semantic_schema_version": semantic_schema_version,
+            "objective": objective,
+            "acceptance": acceptance,
+            "checks": checks,
+            "rubric": rubric,
+            "planning_horizon": planning_horizon,
+        }
+        for key, value in (
+            ("worker_id", worker_id),
+            ("verifier_id", verifier_id),
+            ("requirement_source_node_ids", requirement_source_node_ids),
+            ("accepted_plan_amendment_record_id", accepted_plan_amendment_record_id),
+            ("rationale_record_id", rationale_record_id),
+        ):
+            if value is not None:
+                args[key] = value
+        return await _route("create_effectful_batch", args)
+
+    _add_tool(
+        create_effectful_batch,
+        name="create_effectful_batch",
+        description="Create one declared implementation batch with checks and verification.",
     )
 
     if on_grade is not None:
@@ -387,10 +577,12 @@ def build_graph_mcp_server(
                 "grade", {"req_id": req_id, "grade": grade, "grade_reason": grade_reason}
             )
 
-        mcp.add_tool(
+        _add_tool(
             graph_grade,
             name="graph_grade",
             description="Set a grade on a requirement (verifier phase only).",
         )
 
+    if required_tools:
+        validate_reliable_plan_tool_specs(concrete_specs)
     return mcp

@@ -37,6 +37,22 @@ async def test_verifier_server_has_graph_grade_tool() -> None:
     assert "graph_grade" in _tool_names(mcp)
 
 
+async def test_verifier_empty_allowlist_does_not_expose_planner_macros() -> None:
+    async def on_submit_graph_patch(payload: dict[str, Any]) -> str:
+        return "ok"
+
+    async def on_grade(req_id: str, grade: str, grade_reason: str | None) -> None:
+        return None
+
+    mcp = build_graph_mcp_server(
+        on_submit_graph_patch,
+        on_grade,
+        allowed_tools=[],
+    )
+
+    assert _tool_names(mcp) == {"graph_grade"}
+
+
 async def test_submit_graph_patch_tool_calls_the_closure() -> None:
     calls: list[dict[str, Any]] = []
 
