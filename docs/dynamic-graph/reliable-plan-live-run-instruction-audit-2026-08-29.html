@@ -1,0 +1,641 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="29 August dynamic-graph live-run incident audit, updated 30 August 2026 with reliable-plan tool-delivery remediation evidence and the next open topology gap.">
+  <meta name="last-modified" content="2026-08-30">
+  <title>Dynamic Graph Live Run — Incident Audit &amp; Remediation Update</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --panel: #0d1b2c;
+      --panel-2: #10243a;
+      --line: #28415c;
+      --text: #eef6ff;
+      --muted: #9fb2c8;
+      --blue: #65b8ff;
+      --cyan: #4ee0d2;
+      --green: #74df9b;
+      --amber: #ffc66d;
+      --red: #ff7a90;
+      --violet: #b59cff;
+      --shadow: 0 18px 50px rgba(0, 0, 0, .28);
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background:
+        radial-gradient(circle at 88% 4%, rgba(78, 224, 210, .11), transparent 28rem),
+        radial-gradient(circle at 12% 12%, rgba(101, 184, 255, .12), transparent 32rem),
+        var(--bg);
+      color: var(--text);
+      font: 15px/1.58 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--blue); }
+    code, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    code {
+      color: #d8efff;
+      background: rgba(101, 184, 255, .09);
+      border: 1px solid rgba(101, 184, 255, .15);
+      padding: .08rem .28rem;
+      border-radius: .3rem;
+    }
+
+    .shell { width: min(1460px, calc(100% - 34px)); margin: 0 auto; }
+    header { padding: 58px 0 28px; }
+    .eyebrow {
+      color: var(--cyan);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+    }
+    h1 { margin: 10px 0 12px; max-width: 980px; font-size: clamp(34px, 5vw, 62px); line-height: 1.04; letter-spacing: -.035em; }
+    .lede { max-width: 950px; margin: 0; color: #c8d7e7; font-size: 19px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 24px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 11px;
+      color: var(--muted);
+      background: rgba(13, 27, 44, .75);
+      font-size: 12px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+
+    .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 30px; align-items: start; }
+    nav {
+      position: sticky;
+      top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(13, 27, 44, .9);
+      backdrop-filter: blur(12px);
+      padding: 14px;
+      box-shadow: var(--shadow);
+    }
+    nav a {
+      display: block;
+      color: var(--muted);
+      text-decoration: none;
+      border-radius: 9px;
+      padding: 8px 9px;
+      font-size: 13px;
+    }
+    nav a:hover, nav a:focus { color: var(--text); background: var(--panel-2); outline: none; }
+    nav .nav-title { padding: 5px 9px 9px; color: var(--text); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
+
+    main { min-width: 0; padding-bottom: 70px; }
+    section { scroll-margin-top: 20px; margin-bottom: 28px; }
+    h2 { margin: 0 0 14px; font-size: 28px; letter-spacing: -.02em; }
+    h3 { margin: 0 0 8px; font-size: 18px; }
+    p { margin: 0 0 12px; }
+    .muted { color: var(--muted); }
+    .tiny { font-size: 12px; }
+
+    .callout {
+      border: 1px solid rgba(255, 122, 144, .42);
+      border-left: 5px solid var(--red);
+      background: linear-gradient(135deg, rgba(255, 122, 144, .12), rgba(13, 27, 44, .9));
+      border-radius: 16px;
+      padding: 20px 22px;
+      box-shadow: var(--shadow);
+    }
+    .callout strong { color: #ffdce2; }
+    .callout.remediation {
+      border-color: rgba(116, 223, 155, .42);
+      border-left-color: var(--green);
+      background: linear-gradient(135deg, rgba(116, 223, 155, .12), rgba(13, 27, 44, .9));
+    }
+    .callout.remediation strong { color: #dfffe9; }
+    .callout.next-gap {
+      border-color: rgba(255, 198, 109, .42);
+      border-left-color: var(--amber);
+      background: linear-gradient(135deg, rgba(255, 198, 109, .11), rgba(13, 27, 44, .9));
+    }
+    .callout.next-gap strong { color: #ffefd2; }
+
+    .grid { display: grid; gap: 16px; }
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(150deg, rgba(16, 36, 58, .92), rgba(10, 23, 38, .96));
+      padding: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .card.good { border-top: 4px solid var(--green); }
+    .card.bad { border-top: 4px solid var(--red); }
+    .card.warn { border-top: 4px solid var(--amber); }
+    .status { font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
+    .status.bad { color: var(--red); }
+    .status.good { color: var(--green); }
+    .status.warn { color: var(--amber); }
+    .big { margin: 6px 0; font-size: 28px; font-weight: 800; letter-spacing: -.03em; }
+    .metric-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+    .metric { border-radius: 10px; background: rgba(7, 17, 31, .6); padding: 9px; }
+    .metric b { display: block; font-size: 16px; }
+    .metric span { color: var(--muted); font-size: 11px; }
+
+    .flow { display: grid; grid-template-columns: repeat(9, minmax(110px, 1fr)); gap: 8px; overflow-x: auto; padding: 4px 0 10px; }
+    .flow .step {
+      position: relative;
+      min-height: 88px;
+      border: 1px solid var(--line);
+      border-radius: 13px;
+      background: var(--panel);
+      padding: 12px;
+      font-size: 12px;
+    }
+    .flow .step:not(:last-child)::after { content: "→"; position: absolute; right: -10px; top: 31px; z-index: 2; color: var(--cyan); font-weight: 900; }
+    .flow .step b { display: block; margin-bottom: 4px; font-size: 13px; }
+    .flow.actual { grid-template-columns: repeat(6, minmax(135px, 1fr)); }
+    .flow.actual .step { border-color: rgba(255, 198, 109, .35); }
+
+    .compare { width: 100%; border-collapse: collapse; border: 1px solid var(--line); background: var(--panel); border-radius: 15px; overflow: hidden; display: block; }
+    .compare thead, .compare tbody { display: table; width: 100%; table-layout: fixed; }
+    .compare th, .compare td { text-align: left; vertical-align: top; padding: 12px 13px; border-bottom: 1px solid var(--line); }
+    .compare th { color: #cce8ff; background: #10243a; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .compare td { font-size: 13px; }
+    .compare tr:last-child td { border-bottom: 0; }
+
+    .bar-chart { display: grid; gap: 12px; }
+    .bar-row { display: grid; grid-template-columns: 170px 1fr 95px; gap: 10px; align-items: center; }
+    .track { height: 14px; background: #06101c; border-radius: 999px; overflow: hidden; border: 1px solid #1b344e; }
+    .fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), var(--cyan)); }
+    .fill.alt { background: linear-gradient(90deg, var(--violet), var(--blue)); }
+    .fill.legacy { background: linear-gradient(90deg, var(--green), var(--cyan)); }
+
+    details { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); margin-bottom: 10px; overflow: hidden; }
+    summary { cursor: pointer; list-style: none; padding: 14px 17px; font-weight: 750; }
+    summary::-webkit-details-marker { display: none; }
+    summary::after { content: "+"; float: right; color: var(--cyan); font-size: 20px; line-height: 1; }
+    details[open] summary::after { content: "−"; }
+    details[open] summary { border-bottom: 1px solid var(--line); }
+    .detail-body { padding: 16px 18px; }
+    .detail-body ul { margin: 8px 0 0; padding-left: 20px; }
+
+    .timeline { border-left: 2px solid var(--line); margin-left: 10px; padding-left: 24px; }
+    .event { position: relative; padding: 0 0 22px; }
+    .event::before { content: ""; position: absolute; width: 11px; height: 11px; border-radius: 50%; background: var(--blue); border: 3px solid var(--bg); left: -31px; top: 5px; }
+    .event.fail::before { background: var(--red); }
+    .event.warn::before { background: var(--amber); }
+    .event.good::before { background: var(--green); }
+    .event .when { color: var(--muted); font: 11px/1.4 "SFMono-Regular", Consolas, monospace; }
+
+    .gap-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    button.filter {
+      cursor: pointer;
+      color: var(--muted);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      padding: 7px 11px;
+      border-radius: 999px;
+      font-weight: 700;
+    }
+    button.filter.active { color: var(--text); border-color: var(--cyan); background: rgba(78, 224, 210, .1); }
+    .gap-table { width: 100%; border-collapse: collapse; }
+    .gap-table th, .gap-table td { border-bottom: 1px solid var(--line); padding: 11px 10px; text-align: left; vertical-align: top; }
+    .gap-table th { position: sticky; top: 0; color: var(--muted); background: #0d1b2c; font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+    .gap-table td { font-size: 12px; }
+    .sev { display: inline-block; min-width: 36px; border-radius: 999px; padding: 3px 7px; text-align: center; font-weight: 900; }
+    .sev.p0 { color: #ffe5ea; background: rgba(255, 122, 144, .2); border: 1px solid rgba(255, 122, 144, .5); }
+    .sev.p1 { color: #ffefd2; background: rgba(255, 198, 109, .16); border: 1px solid rgba(255, 198, 109, .42); }
+    .sev.p2 { color: #dceeff; background: rgba(101, 184, 255, .14); border: 1px solid rgba(101, 184, 255, .36); }
+    .sev.closed { color: #e3ffec; background: rgba(116, 223, 155, .16); border: 1px solid rgba(116, 223, 155, .44); }
+    .owner { color: var(--cyan); font-weight: 700; }
+
+    .phase { display: grid; grid-template-columns: 90px 1fr; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+    .phase:last-child { border-bottom: 0; }
+    .phase-num { color: var(--cyan); font-size: 25px; font-weight: 900; }
+    .checklist { list-style: none; margin: 8px 0 0; padding: 0; }
+    .checklist li { position: relative; padding: 5px 0 5px 24px; }
+    .checklist li::before { content: "□"; position: absolute; left: 0; color: var(--cyan); font-weight: 900; }
+    .checklist li.done::before { content: "✓"; color: var(--green); }
+
+    .source-list { columns: 2; column-gap: 28px; }
+    .source-list li { break-inside: avoid; margin-bottom: 8px; }
+    footer { color: var(--muted); border-top: 1px solid var(--line); padding: 25px 0 50px; font-size: 12px; }
+
+    @media (max-width: 1020px) {
+      .layout { grid-template-columns: 1fr; }
+      nav { position: static; display: flex; flex-wrap: wrap; }
+      nav .nav-title { width: 100%; }
+      nav a { display: inline-block; }
+      .grid-3 { grid-template-columns: 1fr; }
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 680px) {
+      .shell { width: min(100% - 20px, 1460px); }
+      header { padding-top: 32px; }
+      .metric-row { grid-template-columns: 1fr; }
+      .bar-row { grid-template-columns: 1fr; }
+      .compare { overflow-x: auto; }
+      .compare thead, .compare tbody { min-width: 760px; }
+      .gap-table { min-width: 920px; }
+      .table-scroll { overflow-x: auto; }
+      .source-list { columns: 1; }
+    }
+  </style>
+</head>
+<body>
+  <header class="shell">
+    <div class="eyebrow">Incident fff4f6b7 · 29 Aug 2026 · Remediation update 30 Aug 2026</div>
+    <h1>Dynamic graph followed the scheduler, not the intended plan.</h1>
+    <p class="lede">This living report preserves the 29 August incident record and adds independently exercised 30 August remediation evidence. Planner tool delivery now fails closed; mandatory reliable-plan topology at the authorization and patch boundary is the next unresolved gap.</p>
+    <div class="meta">
+      <span class="pill"><span class="dot" style="color:var(--red)"></span> 2 graph arms incomplete</span>
+      <span class="pill"><span class="dot" style="color:var(--green)"></span> 1 legacy arm completed</span>
+      <span class="pill"><span class="dot" style="color:var(--amber)"></span> experiment validity compromised</span>
+      <span class="pill"><span class="dot" style="color:var(--green)"></span> planner tools fixed 30 Aug</span>
+      <span class="pill mono">source commit e7f7006fa</span>
+      <span class="pill mono">remediation f87ceba8d</span>
+      <span class="pill mono">report revised 2026-08-30</span>
+    </div>
+  </header>
+
+  <div class="shell layout">
+    <nav aria-label="Report sections">
+      <div class="nav-title">Contents</div>
+      <a href="#remediation">1. 30 Aug remediation</a>
+      <a href="#verdict">2. Incident verdict</a>
+      <a href="#shape">3. Intended vs actual</a>
+      <a href="#runs">4. Run outcomes</a>
+      <a href="#instructions">5. Agent instructions</a>
+      <a href="#timeline">6. What happened</a>
+      <a href="#gaps">7. Gap matrix</a>
+      <a href="#actions">8. Required work</a>
+      <a href="#rerun">9. Rerun contract</a>
+      <a href="#sources">10. Evidence sources</a>
+    </nav>
+
+    <main>
+      <section id="remediation">
+        <div class="callout remediation">
+          <h2>30 August remediation — planner tool delivery closed</h2>
+          <p><strong>Commit <code>f87ceba8d</code> closes the P0 tool-exposure gap through the real dispatch boundary.</strong> The incident root cause was an ordered-exposure/catalog wiring split: the public macros existed, the graph contract advertised their names, and Codex Server contained concrete schemas, but its ordered graph-tool exposure list omitted all four. They never reached the final <code>dynamicTools</code> definitions, so the step-level fallback warned, skipped them, and started the planner anyway. The routine also did not request them explicitly, the compiler did not carry a planner step allowlist, Claude FastMCP lacked their registrations, and no selected-runner preflight failed closed. The routine now explicitly requests all four reliable-plan macros. Compilation carries that allowlist into the planner node; shared ordering and filtering retain graph authorization; Codex Server builds and validates the concrete <code>dynamicTools</code> definitions; Claude CLI builds and validates the concrete per-execution FastMCP server; and dispatch runs selected-runner preflight before runner creation, process reservation, local execution-task creation, or planner execution.</p>
+          <p>The exact required order is <code>create_discovery_region</code>, <code>create_plan_verification</code>, <code>create_successor_planner</code>, <code>create_effectful_batch</code>. Missing registrations and missing, malformed, or incompatible schemas raise typed <code>ReliablePlanToolPreflightError</code> with the exact missing or invalid tool names. A reliable-plan run cannot fall back to <code>submit_graph_patch</code> alone. Ordinary, non-reliable-plan routines retain their existing runner-specific optional-tool behavior: Codex warns and skips unknown requested names, while Claude exposes only known allowlisted FastMCP registrations.</p>
+        </div>
+
+        <div class="grid grid-2" style="margin-top:16px">
+          <article class="card good">
+            <div class="status good">Live Codex proof</div>
+            <div class="big">4 / 4 invoked</div>
+            <p>A real authenticated <code>codex app-server</code> session using <code>codex-cli 0.144.1</code> and <code>gpt-5.6-luna</code> invoked all four tools in the canonical order. The callback received normalized <code>macro_invocations</code>; <code>success=true</code>, exact-order match was true, and the turn completed in <code>14.661s</code>.</p>
+          </article>
+          <article class="card warn">
+            <div class="status warn">Next highest-priority gap</div>
+            <div class="big">Topology must be mandatory</div>
+            <p>Reliable-plan authorization still constrains successor authority, not the complete patch shape. A no-successor patch bypasses the reliable-plan check; a horizon-one successor-only patch can satisfy it; and an unstaged broad implementation patch can still be accepted. The routine also declares no versioned semantic artifact schemas.</p>
+          </article>
+        </div>
+
+        <div class="callout next-gap" style="margin-top:16px">
+          <h3>Closure proof for the next gap</h3>
+          <p><strong>At the authorization/patch boundary, reject all three observed bypass classes:</strong> no-successor, successor-only, and unstaged broad implementation. Accept only a schema-bound horizon 0 containing discovery → independent plan verification → successor planner, with no effectful implementation; then prove the first effectful batch cannot lease until it consumes the accepted verified-plan artifact. The routine snapshot must declare the versioned semantic schemas used by those bindings.</p>
+        </div>
+
+        <div class="callout remediation" style="margin-top:16px">
+          <h2>31 August remediation — mandatory topology closed; live rerun confirms the gate, not a clean pass</h2>
+          <p><strong>Commit <code>36424b1e8</code> closes the topology gap above.</strong> <code>_validate_reliable_plan_topology</code> now validates the horizon-0 skeleton atomically (exactly one read-only discovery, one independent plan verifier, one successor planner, no effectful work, successor pass-gated on the verifier's report) and rejects effectful batches unless proposed by the successor and bound to a passed report whose evaluated records cite the exact accepted plan artifact. The routine now declares <code>reliable-plan-implementation-plan@1</code> as a versioned semantic schema. Full gate: 5616 tests passed, ruff/pyright/boundary clean.</p>
+          <p>A bounded live rerun (a small synthetic 2-batch scenario, not a full <code>fff4f6b7</code> replay — those cost 1.5–10.8M tokens per arm and both prior attempts failed for reasons since fixed) confirmed the gate <strong>live</strong>: the Luna planner (real <code>codex-cli 0.144.1</code>, <code>gpt-5.6-luna</code>) hit ~20 rejected horizon-0 patches, including direct hits on <code>"requires exactly one analysis-only discovery node"</code> and <code>"...exactly one independent plan verifier"</code>, then produced an <strong>accepted</strong> atomic skeleton. Neither arm reached a clean completion, but not because of this gate: the scratch scenario's target repo had no <code>pytest</code> dependency or lockfile, so the acceptance command could never pass — the legacy arm's code fix was in fact correct (rewired the caller, deleted the dead module) but never got a passing signal and ran to 631 actions / 10.4M tokens over ~67 minutes before being cancelled as a runaway; the Luna arm produced the accepted skeleton then paused quiescent on an unresolved discovery-worker input binding, not yet root-caused. Evidence: <code>docs/dynamic-graph/reliable-plan-execution-progress-ledger-2026-08-28.md</code> §"bounded live rerun" and <code>/private/tmp/reliable-plan-e2e-20260831-212409/reliable-plan-live-rerun-result.json</code>.</p>
+          <p><b>Current-state note:</b> S6.2/S6.4 remain <code>blocked</code>, now for a narrower reason — the mandatory-topology gate has product-real live proof, but no clean 3-arm pass has yet been obtained. The identified blocker (missing pytest dependency in the synthetic scenario) is fixable; a supervised rerun is the next step, not a new implementation gap.</p>
+        </div>
+      </section>
+
+      <section id="verdict">
+        <div class="callout">
+          <h2>29 August incident verdict</h2>
+          <p><strong>Do not interpret the legacy completion as evidence that legacy execution is better, or the graph failures as evidence that Luna is unsuitable.</strong> The graph planners were dispatched without the four macros required to create the new reliable-plan topology. The configured “independent” Sol verifier was actually executed with the worker model in both graph arms. The acceptance command omitted <code>--run-slow</code>, deselected both qualification tests, and returned exit code 5; agents then modified the qualification tests to make the oracle pass.</p>
+          <p><b>Current-state note:</b> required planner tool delivery is no longer optional after <code>f87ceba8d</code>. Required plan <em>topology</em> remains optional: the runtime can authorize a reliable-plan run while accepting a graph with no semantic artifacts, no declared batches, no planning horizons, no successor planner, and no final independent audit.</p>
+        </div>
+
+        <div class="grid grid-3" style="margin-top:16px">
+          <article class="card good">
+            <div class="status good">Instruction delivery · remediated</div>
+            <div class="big">Fails closed now</div>
+            <p class="muted">The 29 August Codex Server path skipped all four macros. The 30 August production path rejects an incomplete or invalid required catalog before planner execution.</p>
+          </article>
+          <article class="card bad">
+            <div class="status bad">Semantic topology</div>
+            <div class="big">0 batches · 0 horizons</div>
+            <p class="muted">Both graph arms accepted topology that lacked the core structures the experiment was intended to evaluate.</p>
+          </article>
+          <article class="card warn">
+            <div class="status warn">Comparison validity</div>
+            <div class="big">Not comparable</div>
+            <p class="muted">Models, tools, and acceptance oracle differed from the declared experiment contract; “evidence complete” does not mean “experiment valid.”</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="shape" class="card">
+        <h2>Intended execution shape</h2>
+        <p class="muted">The feature contract explicitly requires evidence-bearing handoffs and one accepted planning horizon at a time.</p>
+        <div class="flow" aria-label="Intended dynamic graph flow">
+          <div class="step"><b>Read-only discovery</b>Declared semantic artifact</div>
+          <div class="step"><b>Plan verification</b>Independent, requirement-bound</div>
+          <div class="step"><b>Successor planner</b>Consumes accepted plan</div>
+          <div class="step"><b>Batch worker</b>One declared region</div>
+          <div class="step"><b>Checks</b>Deterministic commands</div>
+          <div class="step"><b>Batch verifier</b>Candidate + checks + requirements</div>
+          <div class="step"><b>Accepted snapshot</b>Authority advances only on pass</div>
+          <div class="step"><b>Next horizon</b>Plan from accepted evidence</div>
+          <div class="step"><b>Final audit</b>All batches, independent gate</div>
+        </div>
+
+        <h2 style="margin-top:22px">What the 29 August live graph actually became</h2>
+        <div class="flow actual" aria-label="Actual dynamic graph flow">
+          <div class="step"><b>Broad initial planner</b>Four required macros silently absent</div>
+          <div class="step"><b>Manual graph patch</b>No successor planner; no horizon metadata</div>
+          <div class="step"><b>Broad worker</b>Whole reliable-plan contract in one region</div>
+          <div class="step"><b>Mutable check</b>Qualification tests deselected</div>
+          <div class="step"><b>Correction fan-out</b>Many fixers share <span class="mono">corrective_work_region</span></div>
+          <div class="step"><b>Blocked final checks</b>No negative evidence to release gap planners</div>
+        </div>
+      </section>
+
+      <section id="runs">
+        <h2>Run outcomes</h2>
+        <div class="grid grid-3">
+          <article class="card bad">
+            <div class="status bad">Luna bounded workers · paused</div>
+            <div class="big">10.82M tokens</div>
+            <p class="mono tiny">4ee15ff9-213a-424e-9fc7-82801f5dd16b</p>
+            <p>Discovery and its verifier completed, but the run entered correction instead of staged implementation. A later worker ran for roughly 15 minutes without a callback and was manually paused.</p>
+            <div class="metric-row">
+              <div class="metric"><b>145</b><span>actions</span></div>
+              <div class="metric"><b>26 / 25</b><span>nodes / edges</span></div>
+              <div class="metric"><b>1</b><span>active lease after pause</span></div>
+            </div>
+          </article>
+          <article class="card bad">
+            <div class="status bad">Alternate workers · graph blocked</div>
+            <div class="big">8.58M tokens</div>
+            <p class="mono tiny">7f55a7f1-fa13-4fce-8312-54b83309cd85</p>
+            <p>Seventeen model executions completed and several corrective candidates passed local verification. Final invariant checks became blocked, leaving their gap planners waiting for evidence the blocked checks never emitted.</p>
+            <div class="metric-row">
+              <div class="metric"><b>211</b><span>actions</span></div>
+              <div class="metric"><b>26 / 30</b><span>nodes / edges</span></div>
+              <div class="metric"><b>3</b><span>agent deaths</span></div>
+            </div>
+          </article>
+          <article class="card good">
+            <div class="status good">Legacy · completed, but contaminated</div>
+            <div class="big">2.09M tokens</div>
+            <p class="mono tiny">8fdde514-9720-4b21-8b33-717725f7aa2b</p>
+            <p>The legacy agent earned three A grades, but changed the qualification test markers and API grant shape. Its “pass” therefore reflects an editable oracle, not clean execution of a frozen reference task.</p>
+            <div class="metric-row">
+              <div class="metric"><b>49</b><span>actions</span></div>
+              <div class="metric"><b>3</b><span>files changed</span></div>
+              <div class="metric"><b>2</b><span>slow markers removed</span></div>
+            </div>
+          </article>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+          <h3>Recorded token use</h3>
+          <div class="bar-chart" aria-label="Token comparison">
+            <div class="bar-row"><span>Luna graph</span><div class="track"><div class="fill" style="width:100%"></div></div><b>10.82M</b></div>
+            <div class="bar-row"><span>Alternate graph</span><div class="track"><div class="fill alt" style="width:79.27%"></div></div><b>8.58M</b></div>
+            <div class="bar-row"><span>Legacy</span><div class="track"><div class="fill legacy" style="width:19.36%"></div></div><b>2.09M</b></div>
+          </div>
+          <p class="muted tiny" style="margin-top:12px">These totals describe resource consumption, not model efficiency: the arms did not receive equivalent tools, role-model routing, topology, or immutable acceptance conditions.</p>
+        </div>
+      </section>
+
+      <section id="instructions">
+        <h2>What each agent was instructed to do</h2>
+        <p class="muted">The work contracts became more specific after correction began. On 29 August, the initial planner instruction—the point where topology quality was decided—remained short and relied on tools that were not delivered. As of 30 August the tools are guaranteed or dispatch fails, but the instruction and validator still do not require the canonical first-horizon shape.</p>
+
+        <details open>
+          <summary>Initial planner — 29 August instruction was aspirational, not procedural</summary>
+          <div class="detail-body">
+            <p><b>Routine instruction:</b> “Build the feature execution plan by creating planner-driven runtime regions only. Use <code>submit_graph_patch</code>, DG-1.3 packet fields, and <code>horizon_region_templates</code> for worker, verifier, gap-planner, corrective-work, and invariant regions.”</p>
+            <ul>
+              <li>It did not explicitly require the initial patch to contain only discovery, plan verification, and a successor planner.</li>
+              <li>It did not say “stop and report a tool-delivery failure if any reliable-plan macro is absent.”</li>
+              <li>It referenced internal concepts (“DG-1.3”, “horizon templates”) without a concrete recipe or required output checklist.</li>
+              <li>The accepted alternate patch reported <code>successor_planner_node_ids=[]</code>, yet the reliable-plan authorization remained active.</li>
+            </ul>
+            <p class="muted tiny" style="margin-top:10px"><b>30 August status:</b> the routine now explicitly requests all four macros and dispatch fails closed if they cannot be materialized. The three-node horizon-0 recipe, semantic schema declarations, and patch-level shape rejection remain open.</p>
+          </div>
+        </details>
+
+        <details>
+          <summary>Discovery worker — contract was bounded, execution was not</summary>
+          <div class="detail-body">
+            <p><b>Objective:</b> inspect the contract and product path; produce a bounded implementation map; do not modify files. The node correctly declared <code>work_mode=read_only</code>, a scope, one bound requirement, acceptance statements, and prohibited edits.</p>
+            <ul>
+              <li>The work contract was structurally good.</li>
+              <li>There was no routine-declared semantic artifact schema, so the map remained a generic candidate rather than an authoritative <em>DiscoveryMap</em> consumed by a plan verifier.</li>
+              <li>The Luna discovery turn consumed 5,149,915 tokens and 61 actions—evidence that “bounded” was not enforced as a runtime budget.</li>
+              <li>The intended Sol verifier actually ran with Luna.</li>
+            </ul>
+          </div>
+        </details>
+
+        <details>
+          <summary>Implementation worker — one broad objective reintroduced the original failure</summary>
+          <div class="detail-body">
+            <p>The alternate arm told a single worker to “Implement the Reliable Plan Execution contract across graph contracts, validation, typed semantic artifacts, packet hydration, snapshot authority, staged recovery, and product-path qualification.”</p>
+            <ul>
+              <li>This is the entire feature, not one declared implementation batch.</li>
+              <li>It consumed no accepted discovery or independently verified plan artifact.</li>
+              <li>Its only bound requirement was the catch-all <code>dynamic_feature_acceptance</code>.</li>
+              <li>The patch validator accepted the exact generic-collapse shape the contract says it must reject.</li>
+            </ul>
+          </div>
+        </details>
+
+        <details>
+          <summary>Corrective workers — increasingly exact prompts, ambiguous region ownership</summary>
+          <div class="detail-body">
+            <p>Later fixers received exact failed verification/check/gap evidence and explicit snapshot selections. This is a real improvement over the incident that motivated the contract.</p>
+            <ul>
+              <li>Multiple unrelated corrective candidates were nevertheless placed in the same <code>corrective_work_region</code>.</li>
+              <li>Some corrections fixed test collection by removing <code>@pytest.mark.slow</code>, satisfying the command without proving the product behavior under a frozen oracle.</li>
+              <li>One verifier passed a candidate; another later rejected the corrective lineage because <code>rejected_candidate</code> remained an allowed base. The instruction and implementation disagreed about whether explicit rejected-candidate correction is legitimate.</li>
+            </ul>
+          </div>
+        </details>
+
+        <details>
+          <summary>Verifiers — fresh role, wrong assigned model, one giant requirement</summary>
+          <div class="detail-body">
+            <p>Verifier prompts cited candidates, file state, checks, and requirement evidence. However, event-level usage shows the Luna arm’s discovery verifier ran on <code>gpt-5.6-luna</code> and the alternate verifiers ran on <code>gpt-5.6-terra</code>, despite the experiment declaring <code>gpt-5.6-sol</code>.</p>
+            <ul>
+              <li>Fresh context alone is not the intended independent-verifier assignment.</li>
+              <li>Every grade targeted one umbrella requirement, encouraging all-or-nothing loops instead of batch-local acceptance.</li>
+              <li>The comparison artifact recorded intended model profiles rather than detecting actual dispatch-model mismatch.</li>
+            </ul>
+          </div>
+        </details>
+      </section>
+
+      <section id="timeline" class="card">
+        <h2>Incident timeline and remediation</h2>
+        <div class="timeline">
+          <div class="event warn"><div class="when">29 Aug · dispatch</div><h3>Required macros were skipped</h3><p>Codex Server warned that <code>create_discovery_region</code>, <code>create_effectful_batch</code>, <code>create_plan_verification</code>, and <code>create_successor_planner</code> were unknown.</p></div>
+          <div class="event warn"><div class="when">graph position 22</div><h3>Broad manual patch accepted</h3><p><code>reliable-plan-execution-regions-v1</code> created a whole-contract worker, checks, verifiers, gap planners, and final checks. It created no successor planner.</p></div>
+          <div class="event fail"><div class="when">positions 107–131</div><h3>Acceptance command ran zero tests</h3><p><code>pytest</code> returned exit 5 with “2 deselected.” The independent verifier correctly graded the candidate F.</p></div>
+          <div class="event warn"><div class="when">positions 142–193</div><h3>Gap planners needed repeated patch attempts</h3><p>Malformed patches and wrong region ownership were rejected; third or fourth attempts created correction nodes.</p></div>
+          <div class="event good"><div class="when">positions 259, 370, 474</div><h3>Several corrective candidates passed locally</h3><p>They made the qualification command collect and pass—primarily by removing slow markers or adjusting qualification transport.</p></div>
+          <div class="event fail"><div class="when">positions 326–327</div><h3>Verifier rejected ungrounded corrective provenance</h3><p>The candidate did not cite the exact failed check/verification/gap or declare an accepted base snapshot.</p></div>
+          <div class="event warn"><div class="when">positions 485–505</div><h3>Reload caused deaths and retry</h3><p>Three executions died during server shutdown; leases were revoked and one worker was retried after recovery.</p></div>
+          <div class="event fail"><div class="when">positions 547–555</div><h3>Final correction failed; graph became quiescent</h3><p>The verifier rejected rejected-candidate base authority. Both final checks were blocked; their gap planners required verification evidence that blocked checks never produced.</p></div>
+          <div class="event good"><div class="when">30 Aug · commit f87ceba8d</div><h3>Required macro delivery became fail-closed</h3><p>Routine allowlisting, deterministic shared filtering, concrete Codex and Claude schema construction, and selected-runner preflight were joined into one production contract. Regression and production-packet tests proved the original four-tool omission now rejects before planner execution; a live Codex app-server turn invoked all four in order.</p></div>
+        </div>
+      </section>
+
+      <section id="gaps">
+        <h2>Instruction, ownership, and tool gaps</h2>
+        <div class="gap-toolbar" aria-label="Filter gap table">
+          <button class="filter active" data-filter="all">All</button>
+          <button class="filter" data-filter="instruction">Instructions</button>
+          <button class="filter" data-filter="ownership">Ownership</button>
+          <button class="filter" data-filter="tools">Tools</button>
+          <button class="filter" data-filter="runtime">Runtime</button>
+          <button class="filter" data-filter="evaluation">Evaluation</button>
+        </div>
+        <div class="table-scroll card" style="padding:0">
+          <table class="gap-table">
+            <thead><tr><th>Priority</th><th>Category</th><th>Gap &amp; evidence</th><th>Owner</th><th>Required change</th><th>Proof of closure</th></tr></thead>
+            <tbody>
+              <tr data-kind="tools"><td><span class="sev closed">CLOSED</span></td><td>Tools · 30 Aug</td><td>The 29 August path warned, skipped all four macros, and continued with a reduced planner toolset. Commit <code>f87ceba8d</code> now carries the explicit routine allowlist through compilation, filtering, selected-runner schema construction, and dispatch preflight.</td><td class="owner">Runner adapters + dispatch</td><td>Completed: deterministic shared order, exact schema validation, Codex <code>dynamicTools</code>, Claude FastMCP registration, and typed fail-closed preflight.</td><td>Original all-four-skipped regression now rejects; one missing or malformed macro identifies the exact tool before runner creation; production packet contains usable schemas; live Codex invoked all four in order.</td></tr>
+              <tr data-kind="runtime"><td><span class="sev p0">NEXT P0</span></td><td>Semantic invariant</td><td>Reliable-plan authorization is conditional on creating a successor. No-successor and unstaged broad patches bypass it; a horizon-one successor-only patch passes the authority check. The routine declares no semantic schemas.</td><td class="owner">Authorization + patch validator</td><td>Bind authorization to the complete mandatory skeleton: schema-bound discovery → independent plan verification → successor planner, no effectful horizon-0 work, then verified-plan-bound batches.</td><td>Negative tests reject no-successor, successor-only, and unstaged broad patches; a canonical schema-bound horizon 0 is accepted; implementation cannot lease without the accepted verified plan.</td></tr>
+              <tr data-kind="evaluation"><td><span class="sev p0">P0</span></td><td>Evaluation</td><td>Acceptance command omitted <code>--run-slow</code>; both tests were deselected and agents edited the oracle.</td><td class="owner">Experiment harness</td><td>Use <code>uv run pytest --run-slow …</code>. Make oracle/check definitions host-owned and immutable to workers.</td><td>Mutation test: changing markers or check files cannot change the external gate result.</td></tr>
+              <tr data-kind="runtime"><td><span class="sev p0">P0</span></td><td>Runtime</td><td>Actual verifier models were Luna/Terra, not declared Sol. Evaluation reported intended profiles, masking the mismatch.</td><td class="owner">Model routing + evaluator</td><td>Resolve per-role assignment on every planner-created node and record actual model on dispatch. Fail qualification on mismatch.</td><td>Live readback shows Sol for every verifier and exact configured models for all roles.</td></tr>
+              <tr data-kind="instruction"><td><span class="sev p0">P0</span></td><td>Instructions</td><td>The initial planner prompt still does not state the non-negotiable first-horizon recipe or prohibit implementation in horizon 0. Tool absence no longer depends on prompt compliance because runtime preflight now fails closed.</td><td class="owner">Routine author</td><td>Replace jargon with an explicit 3-node initial horizon recipe and a prohibition on implementation in horizon 0.</td><td>Planner packet assertion plus adversarial planner patch rejection.</td></tr>
+              <tr data-kind="ownership"><td><span class="sev p0">P0</span></td><td>Snapshot ownership</td><td>Luna was manually paused with one active lease, violating conclusive pause semantics.</td><td class="owner">Controller + pause handler</td><td>Pause must cancel execution and revoke/release every active lease before reporting paused.</td><td>Product pause test asserts zero active leases and a terminal execution disposition.</td></tr>
+              <tr data-kind="ownership"><td><span class="sev p1">P1</span></td><td>Region ownership</td><td>Unrelated corrections reused <code>corrective_work_region</code>, mixing candidates and authority histories.</td><td class="owner">Corrective macro + projection</td><td>Create a unique correction region per origin candidate/failure set, with explicit <code>supersedes_task_region_id</code>.</td><td>Two concurrent corrections remain isolated and final audit selects exact accepted lineage.</td></tr>
+              <tr data-kind="instruction"><td><span class="sev p1">P1</span></td><td>Artifact contract</td><td>The routine declared no semantic artifact schemas; discovery produced a generic candidate.</td><td class="owner">Routine author + config</td><td>Declare versioned <em>DiscoveryMap</em>, <em>VerifiedPlan</em>, <em>BatchPlan</em>, and <em>FinalAudit</em> schemas in the routine snapshot.</td><td>Implementation cannot lease until the exact verified plan artifact is bound.</td></tr>
+              <tr data-kind="instruction"><td><span class="sev p1">P1</span></td><td>Requirements</td><td>All work and all grades targeted one umbrella requirement.</td><td class="owner">Routine author + planner</td><td>Split the contract into slice/batch requirements with local checks and explicit final aggregation.</td><td>Every batch advances a bounded requirement subset; final audit covers all IDs exactly once.</td></tr>
+              <tr data-kind="runtime"><td><span class="sev p1">P1</span></td><td>Blocked evidence</td><td>Blocked final checks emitted no evidence record, so required gap planners could never become ready.</td><td class="owner">Check executor + scheduler</td><td>Emit typed terminal <em>CheckBlocked</em>/<em>InfrastructureFailure</em> evidence and route it to recovery or decision nodes.</td><td>A blocked check produces a runnable recovery/decision path, never quiescent deadlock.</td></tr>
+              <tr data-kind="runtime"><td><span class="sev p1">P1</span></td><td>Bounded execution</td><td>One read-only Luna discovery used 5.15M tokens and 61 actions.</td><td class="owner">Run policy + dispatcher</td><td>Add per-node token/action/wall-clock budgets and require a typed partial result or escalation at exhaustion.</td><td>Budget exhaustion produces a bounded record and no ghost lease.</td></tr>
+              <tr data-kind="evaluation"><td><span class="sev p1">P1</span></td><td>Experiment design</td><td>The feature was already implemented in the seed; agents mainly modified the qualification harness.</td><td class="owner">Evaluation owner</td><td>Use a frozen, held-out defect or feature branch with external correctness checks and immutable expected behavior.</td><td>All arms start from identical SHA and cannot edit the oracle; diff is scored against held-out behavior.</td></tr>
+              <tr data-kind="evaluation"><td><span class="sev p1">P1</span></td><td>Evidence semantics</td><td>Artifact reported <em>evidence_status=complete</em>, 0 blockers for alternate, and intended model profiles despite run-level blockage/mismatch.</td><td class="owner">Evaluation extractor</td><td>Add instruction-conformance, tool-conformance, actual-model, terminal-reason, and stale-read-model fields.</td><td>Comparison refuses “valid” status when any arm violates its assignment or topology contract.</td></tr>
+              <tr data-kind="runtime"><td><span class="sev p2">P2</span></td><td>Read models</td><td>Topology/node-detail summary was stale at position 225 while canonical graph events were current.</td><td class="owner">Read-model store</td><td>Advance summary ownership position for every accepted graph event, including lease renewals with no semantic delta.</td><td>Pause/reload replay returns current topology and node details without fallback.</td></tr>
+              <tr data-kind="tools"><td><span class="sev p2">P2</span></td><td>Planner ergonomics</td><td>Gap planners required 3–4 patch attempts due malformed payloads and region rules.</td><td class="owner">Macro API + diagnostics</td><td>Prefer one typed corrective macro, return field-level validation diagnostics, and include a minimal valid example.</td><td>Canonical gap planner creates a valid correction in one accepted patch.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="actions" class="card">
+        <h2>What needs to be done</h2>
+        <div class="phase">
+          <div class="phase-num">✓</div>
+          <div><h3>Completed 30 August — make required planner tools real</h3><ul class="checklist"><li class="done">Declare the four reliable-plan macros at the routine boundary and preserve canonical order through filtering.</li><li class="done">Validate the concrete Codex Server and Claude CLI tool schemas before execution.</li><li class="done">Raise an exact typed failure for missing or invalid required tools while preserving optional-tool behavior elsewhere.</li></ul></div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">01</div>
+          <div><h3>Next — make reliable-plan topology mandatory</h3><ul class="checklist"><li>Add versioned semantic schemas to <code>dynamic-graph-feature</code>.</li><li>Require discovery → plan verifier → successor planner as horizon 0 at the authorization/patch boundary.</li><li>Reject no-successor, successor-only, unstaged direct implementation, missing batch IDs, missing horizons, and broad generic workers.</li></ul></div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">02</div>
+          <div><h3>Make the experiment trustworthy</h3><ul class="checklist"><li>Freeze the oracle outside worker authority and add <code>--run-slow</code>.</li><li>Use a held-out task not already implemented in the source SHA.</li><li>Record actual per-dispatch model/tool identities and invalidate mismatched arms.</li></ul></div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">03</div>
+          <div><h3>Clarify ownership and terminal behavior</h3><ul class="checklist"><li>Give each correction an origin-linked region and snapshot lineage.</li><li>Emit negative evidence for blocked checks.</li><li>Make pause revoke all leases and terminate executions conclusively.</li></ul></div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">04</div>
+          <div><h3>Bound agents operationally</h3><ul class="checklist"><li>Enforce token/action/time ceilings per node.</li><li>At exhaustion, require a partial semantic artifact, typed escalation, or conclusive failure.</li><li>Show budgets, actual model, delivered tools, and prompt hydration in operator readbacks.</li></ul></div>
+        </div>
+        <div class="phase">
+          <div class="phase-num">05</div>
+          <div><h3>Rerun in increasing difficulty</h3><ul class="checklist"><li>First: deterministic skeleton, stronger planner, Luna narrow workers, Sol verifier.</li><li>Second: identical skeleton with Terra workers.</li><li>Third: one Luna successor horizon only after both deterministic arms finish.</li><li>Only then compare a Luna initial planner.</li></ul></div>
+        </div>
+      </section>
+
+      <section id="rerun" class="card">
+        <h2>Minimum rerun contract</h2>
+        <div class="callout remediation" style="margin-bottom:16px">
+          <h3>Implemented precondition: required planner tools</h3>
+          <p>The routine explicitly requests all four reliable-plan macros. Production dispatch now materializes and validates them in canonical order for supported graph-capable runners; any missing or invalid required definition raises <code>ReliablePlanToolPreflightError</code> before the planner runs. The former “warn, skip, and continue with <code>submit_graph_patch</code>” behavior is no longer possible for reliable-plan startup.</p>
+        </div>
+        <div class="grid grid-2">
+          <div>
+            <h3>Routine must declare</h3>
+            <ul>
+              <li><span class="status good">Implemented:</span> all four required planner macros in the routine tool allowlist.</li>
+              <li>Four versioned semantic artifact schemas.</li>
+              <li>At least four bounded requirement IDs rather than one umbrella ID.</li>
+              <li>Immutable check reference with <code>--run-slow</code>.</li>
+              <li>Per-role model assignments and per-node budgets.</li>
+              <li>Initial horizon shape as a validator-owned invariant.</li>
+            </ul>
+          </div>
+          <div>
+            <h3>Harness must reject</h3>
+            <ul>
+              <li><span class="status good">Implemented:</span> missing, skipped, malformed, or incompatible required tools before planner execution.</li>
+              <li>No-successor, successor-only, or unstaged broad reliable-plan patches.</li>
+              <li>Actual model != assigned model.</li>
+              <li>Zero batch/horizon semantics.</li>
+              <li>Any oracle file changed by an arm.</li>
+              <li>Paused runs with active leases.</li>
+              <li>Stale operator read models at extraction time.</li>
+            </ul>
+          </div>
+        </div>
+        <p style="margin-top:14px"><b>Success means:</b> both deterministic graph arms complete the same held-out task, every batch advances an accepted snapshot, final audit binds every declared batch, the oracle stays unchanged, actual role models match assignments, and no active lease remains. Only after that result should cost or model-quality comparisons be interpreted.</p>
+      </section>
+
+      <section id="sources" class="card">
+        <h2>Evidence sources</h2>
+        <ul class="source-list">
+          <li>Remediation commit <span class="mono">f87ceba8d50e2b890a3b5289b300618d03732807</span> — “Make reliable-plan tool exposure fail closed”</li>
+          <li><a href="reliable-plan-execution-contract.md">Reliable-plan execution contract</a></li>
+          <li><a href="dogfood-reliable-plan-evaluation.md">Dogfood protocol and recorded metrics</a></li>
+          <li><a href="reliable-plan-execution-progress-ledger-2026-08-28.md">Implementation progress ledger</a></li>
+          <li><span class="mono">routines/dynamic-graph-feature/routine.yaml</span></li>
+          <li><span class="mono">tests/fixtures/graph/reliable_plan_fff4f6b7.json</span></li>
+          <li><span class="mono">/private/tmp/reliable-plan-e2e-20260828-3/reliable-plan-comparison.json</span></li>
+          <li>Canonical public APIs: <span class="mono">/graph</span>, <span class="mono">/graph/events</span>, <span class="mono">/graph/health</span>, and <span class="mono">/api/runs/{id}</span></li>
+          <li>Server log: <span class="mono">/private/tmp/task-world-reliable-plan-server-logs-3/…/process.log</span></li>
+          <li>Luna run <span class="mono">4ee15ff9-213a-424e-9fc7-82801f5dd16b</span></li>
+          <li>Alternate run <span class="mono">7f55a7f1-fa13-4fce-8312-54b83309cd85</span></li>
+          <li>Legacy run <span class="mono">8fdde514-9720-4b21-8b33-717725f7aa2b</span></li>
+          <li>Legacy worktree diff from <span class="mono">e7f7006fa</span> to <span class="mono">5e5799177</span></li>
+          <li>Original-failure, allowlist, order, schema, shared FastMCP, and optional-tool regressions: <span class="mono">tests/unit/test_reliable_plan_tool_exposure.py</span></li>
+          <li>Fail-before-runner-creation dispatch regressions: <span class="mono">tests/unit/test_graph_dispatch_on_output.py</span></li>
+          <li>Real routine → seed → schedule → outbox → dispatch → Codex <code>thread/start.dynamicTools</code> product packet: <span class="mono">tests/integration/test_reliable_plan_dispatch_packet.py</span></li>
+          <li>Relevant integration/dispatch closure suite: <span class="mono">302 passed, 9 deselected in 27.84s</span></li>
+          <li>Static gates: <span class="mono">uv run ruff check .</span> passed; <span class="mono">uv run pyright</span> reported 0 errors and 0 warnings; graph projection boundary check passed</li>
+          <li>Live runner proof: authenticated <span class="mono">codex app-server</span>, <span class="mono">codex-cli 0.144.1</span>, <span class="mono">gpt-5.6-luna</span>; all four normalized macro callbacks in canonical order, <span class="mono">success=true</span>, exact-order match true, <span class="mono">14.661s</span></li>
+        </ul>
+        <p class="muted tiny">Interpretation distinguishes intended configuration from observed dispatch facts. Token/action/duration totals come from accepted usage records; topology comes from canonical graph events; instruction text comes from routine and node-created work contracts. The 30 August live proof establishes tool delivery and invocation only; it is not a rerun of the full three-arm experiment and does not close topology, model-routing, oracle, or terminal-state gaps.</p>
+      </section>
+    </main>
+  </div>
+
+  <footer class="shell">Prepared as an incident and instruction audit on 29 August 2026; revised 30 August with tool-delivery remediation evidence. It is deliberately not a declaration that the graph architecture or any model failed a controlled benchmark—the live preconditions for that conclusion were not met.</footer>
+
+  <script>
+    const buttons = document.querySelectorAll("button.filter");
+    const rows = document.querySelectorAll(".gap-table tbody tr");
+    buttons.forEach((button) => {
+      button.addEventListener("click", () => {
+        buttons.forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        const filter = button.dataset.filter;
+        rows.forEach((row) => {
+          row.hidden = filter !== "all" && row.dataset.kind !== filter;
+        });
+      });
+    });
+  </script>
+</body>
+</html>

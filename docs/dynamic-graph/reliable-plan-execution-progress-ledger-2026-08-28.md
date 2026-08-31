@@ -76,6 +76,120 @@ no live model result or comparison was inferred from deterministic execution.
 | S6.4 | Evaluation compares correctness, revisions, graph shape, token use, and recovery with the legacy baseline. | Existing carrier metrics cover some graph facts. | Produce a comparison artifact from real run event streams. | Metrics extractor tests. | partial | Extend/reference metrics and record current run evidence without fabricating unavailable model runs. |
 | X.1 | Operator read models expose objective/mode/scope, bound requirements/inputs, outputs/checks, accepted/candidate snapshots, readiness/correction reason, horizon, and usage/hydration summaries. | Slice 1 exposed worker/prompt data; snapshot/horizon/semantic authority fields are absent. | Inspect graph node/region APIs for the deterministic scenario. | API/read-contract matrix tests. | partial | Extend node/region read models for new semantics. |
 
+## 2026-08-31 addendum: mandatory topology gate
+
+The 29 Aug live-run incident audit
+([`reliable-plan-live-run-instruction-audit-2026-08-29.html`](reliable-plan-live-run-instruction-audit-2026-08-29.html))
+found that after the 30 Aug tool-exposure fix (`f87ceba8d`), reliable-plan
+authorization still constrained only successor authority, not the complete
+patch shape: a no-successor patch bypassed the check, a successor-only patch
+could satisfy it, and an unstaged broad implementation patch could still be
+accepted. The routine also declared no versioned semantic artifact schemas.
+
+Commit `36424b1e8` closes this gap:
+
+- `_validate_reliable_plan_topology` in `patch_validator.py` now validates the
+  horizon-0 skeleton atomically: exactly one read-only discovery node, one
+  independent plan verifier, one successor planner, no effectful work, the
+  successor bound to the verifier's *passed* `verification_report`, and no
+  extra dispatchable nodes (generic worker or oversight) admitted alongside
+  the three.
+- Effectful batches are rejected unless proposed by a `successor_planning`
+  node and bound to a durably passed `verification_report` whose
+  `evaluated_record_ids` cite the exact accepted plan artifact the batch
+  consumes (`unverified_exact_plan_lineage`).
+- `routines/dynamic-graph-feature/routine.yaml` declares
+  `reliable-plan-implementation-plan@1` as a versioned
+  `semantic_artifact_schemas` input.
+
+Product-real proof: `validate_patch` (the function the real patch command
+calls) rejects successor-only patches with
+`violation == "missing_or_ambiguous_discovery"`, rejects extra dispatchable
+nodes atomically, and rejects effectful batches proposed by non-successor
+nodes (`unauthorized_effectful_proposer`) or lacking exact plan lineage. The
+compiler and S6.3 qualification path (`reliable_plan_qualification.py`) are
+the only production writers of `reliable_plan_skeleton_id` /
+`reliable_plan_one_horizon_authorized`, so the gate is live on every
+reliable-plan run, not just test fixtures.
+
+Regression evidence: `uv run pytest` 5616 passed, 5 skipped (pre-existing,
+unrelated: git-snapshot UTF-8 filename test and 4 docker-agent
+environment-gated tests). `ruff check .`, `uv run pyright`, and
+`scripts/check_graph_projection_boundaries.py` all clean.
+
+Remaining gap per the audit: S6.2/S6.4 (live Luna and alternate-model graph
+arms) are still `blocked` — no rerun has been attempted since this fix
+landed. That is the next chunk.
+
+## 2026-08-31 addendum 2: bounded live rerun — gate confirmed live, no clean pass
+
+Ran a bounded live rerun against `36424b1e8` rather than replaying the full
+`fff4f6b7` scenario (two prior full replays cost 1.5–10.8M tokens per arm and
+both failed for reasons since fixed). Built a small synthetic scenario — a
+throwaway two-file "remove the legacy pricing path in 2 batches" task in a
+scratch repo (`pricing-widgets`, not task-world), driven through a fresh
+scratch server (isolated DB, isolated port, isolated repos dir), using the
+real production controller/scheduler/patch-validator/dispatch path and real
+`codex-cli 0.144.1` sessions (`gpt-5.6-luna` graph arm,
+`comparison-feature-single-agent` legacy arm). Evidence:
+`/private/tmp/reliable-plan-e2e-20260831-212409/reliable-plan-live-rerun-result.json`.
+
+**The mandatory-topology gate held live.** The Luna planner proposed roughly
+20 horizon-0 patches over the run; `graph_patch_rejected` events include two
+direct hits on the new invariant (`"reliable-plan initial skeleton requires
+exactly one analysis-only discovery node"`, `"...requires exactly one
+independent plan verifier"`) plus a long tail of edge/port/schema rejections
+from the pre-existing typed-edge and semantic-stage validators. The planner
+eventually produced an **accepted** atomic horizon-0 skeleton (discovery +
+plan verification + successor planner nodes all created together, no
+effectful work) — direct live proof the gate is satisfiable, not just
+restrictive.
+
+**Neither arm reached a clean pass — but not because of the gate.** Root
+cause, found by inspecting both worktrees directly: the scratch target repo's
+`pyproject.toml` declared no `pytest` dependency and had no `uv.lock`, so
+`uv sync --frozen` (run unconditionally per worktree by
+`git/worktree.py:_create_worktree_venv`) never installed `pytest` into either
+worktree's `.venv`. The `acceptance_command` (`python -m pytest -q`) could
+therefore never pass regardless of code correctness. The **legacy arm's
+actual code fix was correct** — `widgets/api.py` was rewired to
+`widgets.core.compute_price` and `widgets/legacy_shim.py` was deleted, both
+batches done right — but it never received a passing acceptance signal, so
+it kept retrying: 631 actions, 10.4M read / 233K write tokens over ~67
+minutes before I cancelled it as a runaway (this is a scenario-construction
+defect, not a legacy-vs-graph finding). A first attempt at this same
+scenario also hit an unrelated real infra finding before the `.gitignore`
+fix below: the graph's pre-flight file-state boundary rejected
+`.venv/bin/python*` (symlinks to the shared uv toolchain cache, outside the
+worktree) as `repo_escape`, killing the planner before dispatch, because the
+scratch repo's root `.gitignore` — unlike task-world's own — didn't list
+`.venv`. Adding one fixed it; this is worth a permanent regression note but
+was not investigated further as a product change (out of scope for this
+chunk).
+
+The Luna graph arm, after landing the accepted skeleton, stalled: `paused` /
+`graph_blocked`, quiescent with `worker-pricing-plan-discovery` reporting
+`missing_required_input:requirement_1` even though the source requirement
+node shows `completed`. Not yet root-caused — could be the documented
+"graph quiescent pauses need an explicit `runs resume`" behavior
+([graph-run ops gotchas](project_graph_run_ops_gotchas.md)) rather than a
+new defect; not resolved before the scratch environment was torn down.
+
+**S6.2/S6.4 status: still `blocked`**, now for a different, narrower reason
+than before — not "no environment available," but "no clean 3-arm pass yet
+obtained; the one blocking factor identified (missing pytest dependency in
+the synthetic scenario) is fixable and worth a supervised rerun using either
+a real `uv.lock`-backed scratch repo or the real `fff4f6b7` scenario once
+budget is authorized." The mandatory-topology gate itself has product-real
+live evidence and does not block on this.
+
+Runs (scratch server, torn down after this evidence was collected):
+
+| Arm | Run ID | Status | Actions | Tokens (read/write) |
+|---|---|---|---:|---|
+| Luna graph | `a57f4e62-1396-4be2-a05b-316070c5df1f` | `cancelled` (was `paused`/`graph_blocked`) | 70 | 3.74M / 48.7K |
+| Legacy baseline | `aaf615d8-dd23-47d9-8f8f-cbb7e3793182` | `cancelled` (runaway, correct code, unrunnable oracle) | 631 | 10.43M / 233K |
+
 ## Validation policy
 
 - Focused tests support each row but do not by themselves validate it.
