@@ -238,6 +238,7 @@ class NodeSchedulingProjection(ProjectionModel):
     last_deferred_reason: StrictStr | None = None
     retry_not_before: StrictStr | None = None
     recovery_blocker_record_id: StrictStr | None = None
+    runtime_retry_count: StrictInt = 0
 
 
 class NodeProjection(ProjectionModel):

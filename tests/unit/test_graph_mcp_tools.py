@@ -69,6 +69,39 @@ async def test_submit_graph_patch_tool_calls_the_closure() -> None:
     assert any("accepted" in str(item) for item in result)
 
 
+async def test_submit_graph_patch_preserves_atomic_macro_invocation_order() -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def on_submit_graph_patch(payload: dict[str, Any]) -> str:
+        calls.append(payload)
+        return "graph patch skeleton accepted"
+
+    invocations = [
+        {"macro": "create_discovery_region", "args": {"region_id": "discovery"}},
+        {"macro": "create_plan_verification", "args": {"region_id": "verification"}},
+        {"macro": "create_successor_planner", "args": {"region_id": "successor"}},
+    ]
+    mcp = build_graph_mcp_server(on_submit_graph_patch, None)
+    result = await mcp.call_tool(
+        "submit_graph_patch",
+        {
+            "patch_id": "skeleton",
+            "base_graph_position": 7,
+            "macro_invocations": invocations,
+        },
+    )
+
+    assert calls == [
+        {
+            "patch_id": "skeleton",
+            "base_graph_position": 7,
+            "ops": [],
+            "macro_invocations": invocations,
+        }
+    ]
+    assert any("accepted" in str(item) for item in result)
+
+
 async def test_create_work_region_tool_normalizes_and_calls_the_closure() -> None:
     calls: list[dict[str, Any]] = []
 

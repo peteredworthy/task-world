@@ -5,12 +5,14 @@ from collections.abc import AsyncGenerator
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.api import token_usage_to_schema
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.db import EventV2Model, RunModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     Actor,
@@ -18,11 +20,13 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
+    leases_view,
 )
-from orchestrator.graph_runtime import GraphController, GraphEventStore
+from orchestrator.graph_runtime import GraphController, GraphDispatchExecutor, GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph_runtime.dispatch import GraphDispatchContext
 from orchestrator.state import ModelTokenUsage
+from orchestrator.runners.types import ExecutionMetrics, ExecutionResult
 
 
 def _legacy_usage_snapshot(value: object) -> object:
@@ -66,6 +70,106 @@ def _event(event_id: str, event_type: str, payload: dict[str, object]) -> EventE
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
         payload=payload,
     )
+
+
+class FailedUsageAgent:
+    async def execute(self, *args: Any, **kwargs: Any) -> ExecutionResult:
+        del args, kwargs
+        return ExecutionResult(
+            success=False,
+            error="runner failed after reporting usage",
+            metrics=ExecutionMetrics(
+                gen_ai_usage_input_tokens=17,
+                gen_ai_usage_output_tokens=9,
+                duration_ms=40,
+                num_actions=2,
+            ),
+        )
+
+    async def cancel(self) -> None:
+        return None
+
+
+class FailedUsageExecutor(GraphDispatchExecutor):
+    async def _acknowledge_start(self, context: GraphDispatchContext) -> None:
+        del context
+
+    async def _record_start_heartbeat(self, context: GraphDispatchContext) -> None:
+        del context
+
+
+@pytest.mark.asyncio
+async def test_failed_execution_persists_usage_before_failure_recovery(
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    controller = GraphController(
+        session_factory, FakeClock(), SequentialIdGenerator(), auto_dispatch=False
+    )
+    context = replace(
+        _context(),
+        node_payload={"profile": "coder", "max_attempts": 1},
+    )
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                RunModel(
+                    id=context.run_id,
+                    repo_name="usage-repo",
+                    status="active",
+                    execution_mode="graph",
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+                )
+            )
+            await GraphEventStore(session).append_events(
+                context.run_id,
+                0,
+                [
+                    _event(
+                        "node-1",
+                        "node_created",
+                        {
+                            "node_id": context.node_id,
+                            "kind": "worker",
+                            "role": "builder",
+                            "state": "leased",
+                            "attempt_number": 1,
+                            "max_attempts": 1,
+                        },
+                    ),
+                    _event(
+                        "lease-1",
+                        "lease_granted",
+                        {
+                            "node_id": context.node_id,
+                            "lease_id": context.lease_id,
+                            "generation": context.lease_generation,
+                            "execution_id": context.execution_id,
+                            "expires_at": "2026-01-01T01:00:00+00:00",
+                        },
+                    ),
+                ],
+            )
+    executor = FailedUsageExecutor(
+        session_factory,
+        controller,
+        cast(Any, object()),
+        worktree_path=tmp_path,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+
+    await executor._run_agent(context, FailedUsageAgent())
+
+    projection = await controller.read_projection(context.run_id)
+    async with session_factory() as session:
+        run = (
+            await session.execute(select(RunModel).where(RunModel.id == context.run_id))
+        ).scalar_one()
+    assert projection.usage.tokens_by_node == {context.node_id: 26}
+    assert all(lease.state != "active" for lease in leases_view(projection).values())
+    assert run.total_num_actions == 2
+    assert len(run.token_usage_by_model or []) == 1
 
 
 @pytest.mark.asyncio

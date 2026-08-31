@@ -4455,7 +4455,7 @@ def test_patch_rejects_planner_authored_verifier_candidate_id() -> None:
         },
     )
 
-    assert [event.event_type for event in output] == ["graph_patch_rejected"]
+    assert [event.event_type for event in output] == ["graph_patch_rejected"], output[0].payload
     assert (
         output[0].payload["reason"]
         == "node verifier-1 must not declare candidate_id; verifiers derive the "
@@ -4486,7 +4486,7 @@ def test_patch_rejects_planner_authored_check_candidate_id() -> None:
         },
     )
 
-    assert [event.event_type for event in output] == ["graph_patch_rejected"]
+    assert [event.event_type for event in output] == ["graph_patch_rejected"], output[0].payload
     assert (
         output[0].payload["reason"]
         == "node check-1 must not declare candidate_id; checks derive evaluated "
@@ -5181,6 +5181,100 @@ def test_patch_reject_emits_rejection() -> None:
     assert output[0].payload["proposed_by_node_id"] == "planner-1"
     assert output[0].payload["actor_role"] == "planner"
     assert output[0].payload["base_graph_position"] == -1
+
+
+def test_mixed_valid_and_invalid_concrete_port_patch_rejects_atomically_with_diagnostics() -> None:
+    events = [
+        _event(
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "role": "planner", "state": "leased"},
+            0,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "requirement-1",
+                "kind": "requirement",
+                "role": "requirement",
+                "state": "completed",
+                "outputs": [
+                    {"port": "requirement", "direction": "output", "schema": "Requirement"}
+                ],
+            },
+            1,
+        ),
+    ]
+    output = _apply(
+        events,
+        "submit_patch",
+        {
+            "patch_id": "patch-mixed-port-failure",
+            "base_graph_position": 1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {"node_id": "valid-note", "kind": "artifact", "state": "planned"},
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "discovery-1",
+                        "kind": "worker",
+                        "role": "discovery",
+                        "state": "planned",
+                        "objective": "Read the requirement.",
+                        "access_mode": "read_only",
+                        "acceptance": ["requirement read"],
+                        "inputs": [
+                            {
+                                "port": "requirement_1",
+                                "direction": "input",
+                                "schema": "Requirement",
+                                "required": True,
+                            }
+                        ],
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-invalid-requirement-record",
+                    "from_node_id": "requirement-1",
+                    "from_port": "requirement_record",
+                    "to_node_id": "discovery-1",
+                    "to_port": "requirement_1",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "requirement_record",
+                        "schema": "Requirement",
+                    },
+                },
+            ],
+        },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=1,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_rejected"], output[0].payload
+    diagnostics = output[0].payload["diagnostics"]
+    assert diagnostics["patch_id"] == "patch-mixed-port-failure"
+    assert diagnostics["invariant"] == "edge_concrete_declared_port"
+    assert diagnostics["source_node_id"] == "requirement-1"
+    assert diagnostics["source_port"] == "requirement_record"
+    assert diagnostics["target_node_id"] == "discovery-1"
+    assert diagnostics["target_port"] == "requirement_1"
+    assert diagnostics["requested_schemas"] == ["Requirement"]
+    assert diagnostics["declared_source_schemas"] == []
+    assert diagnostics["declared_target_schemas"] == ["Requirement"]
+    assert diagnostics["accepted_schemas"] == []
+    assert diagnostics["incompatible_schemas"] == ["Requirement"]
+    assert not any(
+        event.event_type in {"node_created", "edge_created", "node_state_changed", "lease_granted"}
+        for event in output
+    )
 
 
 def test_malformed_patch_is_rejected_at_schema_boundary() -> None:
@@ -8891,6 +8985,100 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
     assert node_state(projection, "planner-1") == "failed"
 
 
+def test_agent_died_retry_budget_is_durable_across_calls_and_checkpoint_replay() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "oversight-1",
+                "kind": "oversight",
+                "role": "oversight",
+                "state": "running",
+                "attempt_number": 1,
+                "max_attempts": 3,
+            },
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "oversight-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    for attempt in (1, 2):
+        retry = _apply(
+            events,
+            "agent_died",
+            {
+                "lease_id": f"lease-{attempt}",
+                "execution_id": f"exec-{attempt}",
+                "reason": "callback_contract_conflict",
+                "retry_backoff_seconds": 1,
+                "max_attempts": 3,
+            },
+        )
+        assert any(event.event_type == "runtime_retry_scheduled" for event in retry)
+        events.extend(retry)
+        position = max(event.position for event in events) + 1
+        events.extend(
+            [
+                _event(
+                    "node_state_changed",
+                    {
+                        "node_id": "oversight-1",
+                        "new_state": "ready",
+                        "trigger": "retry_backoff_elapsed",
+                        "attempt_number": attempt + 1,
+                    },
+                    position,
+                ),
+                _event(
+                    "lease_granted",
+                    {
+                        "node_id": "oversight-1",
+                        "lease_id": f"lease-{attempt + 1}",
+                        "generation": attempt + 1,
+                        "execution_id": f"exec-{attempt + 1}",
+                    },
+                    position + 1,
+                ),
+            ]
+        )
+
+    exhausted = _apply_from_checkpoint(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-3",
+            "execution_id": "exec-3",
+            "reason": "callback_contract_conflict",
+            "retry_backoff_seconds": 1,
+            "max_attempts": 3,
+        },
+    )
+    events.extend(exhausted)
+    replayed = _project(events)
+
+    assert len([event for event in events if event.event_type == "agent_died"]) == 3
+    assert len([event for event in events if event.event_type == "runtime_retry_scheduled"]) == 2
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in exhausted)
+    assert any(
+        event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+        and event.payload.get("value", {}).get("error_class") == "max_attempts_exhausted"
+        for event in exhausted
+    )
+    assert node_state(replayed, "oversight-1") == "failed"
+    assert all(lease.state != "active" for lease in leases_view(replayed).values())
+
+
 def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -9379,6 +9567,17 @@ def test_raise_appeal_accepts_well_formed() -> None:
 
     assert [event.event_type for event in output] == ["appeal_opened", "node_created"]
     assert output[1].payload["kind"] == "oversight"
+    assert output[1].payload["role"] == "oversight"
+    assert output[1].payload["attempt_number"] == 1
+    assert output[1].payload["max_attempts"] == 3
+    assert output[1].payload["outputs"] == [
+        {
+            "port": "recovery_plan",
+            "direction": "output",
+            "schema": "RecoveryPlan",
+            "required": True,
+        }
+    ]
 
 
 def test_raise_appeal_rejects_malformed() -> None:

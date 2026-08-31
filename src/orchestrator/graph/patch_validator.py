@@ -6,7 +6,12 @@ import posixpath
 from typing import Any, cast
 
 from orchestrator.graph.command_bindings import is_known_check_command_binding
-from orchestrator.graph.contracts import validate_edge_payload, validate_node_payload
+from orchestrator.graph.contracts import (
+    binding_policy,
+    merge_bound_record_ids,
+    validate_edge_payload,
+    validate_node_payload,
+)
 from orchestrator.graph.models import (
     EdgeProjection,
     EventEnvelope,
@@ -14,9 +19,11 @@ from orchestrator.graph.models import (
     SemanticArtifactRecord,
     VerificationReportRecord,
     normalize_record_selector,
+    record_selector_matches,
 )
 from orchestrator.graph.projection_queries import (
     edges_view,
+    input_bindings_view,
     node_kinds_view,
     node_payload_view,
     node_roles_view,
@@ -25,6 +32,7 @@ from orchestrator.graph.projection_queries import (
     resource_claims_for_node,
     semantic_schema_declarations_view,
     output_record_payloads_view,
+    output_records_by_node_port_view,
 )
 from orchestrator.graph.projections import GraphProjection
 from orchestrator.graph.semantic_artifacts import (
@@ -36,6 +44,7 @@ from orchestrator.graph.semantic_artifacts import (
 class PatchValidationResult:
     accepted: bool
     rejection_reason: str | None = None
+    diagnostics: dict[str, Any] | None = None
     conflicting_events: list[EventEnvelope] = field(default_factory=lambda: [])
     read_set_diff: dict[str, Any] | None = None
 
@@ -213,9 +222,14 @@ def validate_patch(
                             rejection_reason=check_command_error,
                         )
 
-    topology_error = _validate_typed_topology(ops, projection)
+    topology_error = _validate_typed_topology(ops, projection, patch.patch_id)
     if topology_error is not None:
-        return PatchValidationResult(accepted=False, rejection_reason=topology_error)
+        reason, diagnostics = topology_error
+        return PatchValidationResult(
+            accepted=False,
+            rejection_reason=reason,
+            diagnostics=diagnostics,
+        )
 
     cycle_error = _validate_no_forbidden_cycles(ops, projection)
     if cycle_error is not None:
@@ -235,7 +249,20 @@ def validate_patch(
 
     semantic_stage_error = _validate_semantic_stage_invariants(ops, projection)
     if semantic_stage_error is not None:
-        return PatchValidationResult(accepted=False, rejection_reason=semantic_stage_error)
+        return PatchValidationResult(
+            accepted=False,
+            rejection_reason=semantic_stage_error,
+            diagnostics=_semantic_stage_diagnostics(patch.patch_id, ops, projection),
+        )
+
+    reliable_plan_error = _validate_reliable_plan_topology(patch, ops, projection)
+    if reliable_plan_error is not None:
+        reason, diagnostics = reliable_plan_error
+        return PatchValidationResult(
+            accepted=False,
+            rejection_reason=reason,
+            diagnostics=diagnostics,
+        )
 
     return PatchValidationResult(accepted=True)
 
@@ -243,7 +270,8 @@ def validate_patch(
 def _validate_typed_topology(
     ops: list[dict[str, Any]],
     projection: GraphProjection,
-) -> str | None:
+    patch_id: str,
+) -> tuple[str, dict[str, Any] | None] | None:
     created_nodes: dict[str, tuple[str, str | None]] = {}
     seen_node_ids: set[str] = set()
     seen_edge_ids: set[str] = set()
@@ -253,7 +281,7 @@ def _validate_typed_topology(
         if op_name == "create_node":
             node = op.get("node")
             if not isinstance(node, dict):
-                return "create_node requires node payload"
+                return "create_node requires node payload", None
             duplicate_error = _register_created_node(
                 cast(dict[str, Any], node),
                 created_nodes,
@@ -262,7 +290,7 @@ def _validate_typed_topology(
                 missing_message="create_node requires node_id",
             )
             if duplicate_error is not None:
-                return duplicate_error
+                return duplicate_error, None
         elif op_name == "create_revision_attempt":
             for node_key, default_kind in (
                 ("worker_node", "worker"),
@@ -280,13 +308,13 @@ def _validate_typed_topology(
                     default_kind=default_kind,
                 )
                 if duplicate_error is not None:
-                    return duplicate_error
+                    return duplicate_error, None
         elif op_name == "create_edge":
             edge_id = op.get("edge_id")
             if not isinstance(edge_id, str) or not edge_id:
-                return "create_edge requires edge_id"
+                return "create_edge requires edge_id", None
             if edge_id in seen_edge_ids or edge_id in edges_view(projection):
-                return f"duplicate edge id: {edge_id}"
+                return f"duplicate edge id: {edge_id}", None
             seen_edge_ids.add(edge_id)
 
     for op in ops:
@@ -297,23 +325,39 @@ def _validate_typed_topology(
         from_node_id = edge.get("from_node_id")
         to_node_id = edge.get("to_node_id")
         if not isinstance(edge_id, str) or not edge_id:
-            return "create_edge requires edge_id"
+            return "create_edge requires edge_id", None
         if not isinstance(from_node_id, str) or not from_node_id:
-            return f"edge {edge_id} requires from_node_id"
+            return f"edge {edge_id} requires from_node_id", None
         if not isinstance(to_node_id, str) or not to_node_id:
-            return f"edge {edge_id} requires to_node_id"
+            return f"edge {edge_id} requires to_node_id", None
 
         if from_node_id == "*":
             source = _producer_class_contract_identity(edge)
             if source is None:
-                return f"edge {edge_id} producer-class source requires from_node_kind"
+                return f"edge {edge_id} producer-class source requires from_node_kind", None
+            source_payload = None
         else:
             source = _node_contract_identity(from_node_id, created_nodes, projection)
             if source is None:
-                return f"edge {edge_id} references unknown source node: {from_node_id}"
+                return f"edge {edge_id} references unknown source node: {from_node_id}", None
+            source_payload = _concrete_node_payload(from_node_id, ops, projection)
         target = _node_contract_identity(to_node_id, created_nodes, projection)
         if target is None:
-            return f"edge {edge_id} references unknown target node: {to_node_id}"
+            return f"edge {edge_id} references unknown target node: {to_node_id}", None
+        target_payload = _concrete_node_payload(to_node_id, ops, projection)
+
+        concrete_port_error = _concrete_declared_port_error(
+            patch_id=patch_id,
+            edge=edge,
+            source_node_id=from_node_id,
+            source_payload=source_payload,
+            source_port=edge.get("from_port"),
+            target_node_id=to_node_id,
+            target_payload=target_payload,
+            target_port=edge.get("to_port"),
+        )
+        if concrete_port_error is not None:
+            return concrete_port_error
 
         contract_error = validate_edge_payload(
             edge,
@@ -323,8 +367,184 @@ def _validate_typed_topology(
             target_role=target[1],
         )
         if contract_error is not None:
-            return contract_error
+            return contract_error, _edge_diagnostics(
+                patch_id,
+                "edge_schema_or_port_contract",
+                edge,
+                source_payload,
+                target_payload,
+            )
 
+    return None
+
+
+def _edge_diagnostics(
+    patch_id: str,
+    invariant: str,
+    edge: dict[str, Any],
+    source_payload: dict[str, Any] | None,
+    target_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Render stable, actionable topology facts without parsing error text."""
+    facts = _edge_schema_facts(edge, source_payload, target_payload)
+    return {
+        "patch_id": patch_id,
+        "invariant": invariant,
+        "edge_id": edge.get("edge_id"),
+        "source_node_id": edge.get("from_node_id"),
+        "source_port": edge.get("from_port"),
+        "target_node_id": edge.get("to_node_id"),
+        "target_port": edge.get("to_port"),
+        **facts,
+        "source_ports": _declared_port_diagnostics(source_payload, "outputs"),
+        "target_ports": _declared_port_diagnostics(target_payload, "inputs"),
+    }
+
+
+def _edge_schema_facts(
+    edge: dict[str, Any],
+    source_payload: dict[str, Any] | None,
+    target_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Return stable schema facts shared by every typed edge rejection."""
+    requested = {item for item in cast(list[Any], edge.get("schemas", [])) if isinstance(item, str)}
+    selector = edge.get("accepted_record_selector")
+    if isinstance(selector, dict):
+        selector_schema = cast(dict[str, Any], selector).get("schema")
+        if isinstance(selector_schema, str):
+            requested.add(selector_schema)
+    source_declared = _schemas_for_declared_port(source_payload, "outputs", edge.get("from_port"))
+    target_declared = _schemas_for_declared_port(target_payload, "inputs", edge.get("to_port"))
+    accepted = requested & source_declared & target_declared
+    declared = source_declared | target_declared
+    return {
+        # ``edge_schemas`` is retained for read-model compatibility while the
+        # named facts make failures actionable without parsing prose.
+        "edge_schemas": sorted(requested),
+        "requested_schemas": sorted(requested),
+        "declared_source_schemas": sorted(source_declared),
+        "declared_target_schemas": sorted(target_declared),
+        "declared_schemas": sorted(declared),
+        "accepted_schemas": sorted(accepted),
+        "missing_schemas": sorted(requested - declared),
+        "incompatible_schemas": sorted(requested - accepted),
+    }
+
+
+def _schemas_for_declared_port(
+    payload: dict[str, Any] | None,
+    field_name: str,
+    port: Any,
+) -> set[str]:
+    if payload is None or not isinstance(port, str):
+        return set()
+    raw_ports = payload.get(field_name)
+    if not isinstance(raw_ports, list):
+        return set()
+    schemas: set[str] = set()
+    for raw in cast(list[Any], raw_ports):
+        if not isinstance(raw, dict):
+            continue
+        item = cast(dict[str, Any], raw)
+        if item.get("port") != port:
+            continue
+        schema = item.get("schema")
+        if isinstance(schema, str):
+            schemas.add(schema)
+        raw_schemas = item.get("schemas")
+        if isinstance(raw_schemas, list):
+            schemas.update(
+                value for value in cast(list[Any], raw_schemas) if isinstance(value, str)
+            )
+    return schemas
+
+
+def _declared_port_diagnostics(
+    payload: dict[str, Any] | None,
+    field_name: str,
+) -> list[dict[str, Any]]:
+    if payload is None or not isinstance(payload.get(field_name), list):
+        return []
+    return [
+        {
+            "port": item.get("port"),
+            "schema": item.get("schema"),
+            "schemas": item.get("schemas"),
+            "required": item.get("required"),
+        }
+        for raw in cast(list[Any], payload[field_name])
+        if isinstance(raw, dict)
+        for item in [cast(dict[str, Any], raw)]
+    ]
+
+
+def _concrete_node_payload(
+    node_id: str,
+    ops: list[dict[str, Any]],
+    projection: GraphProjection,
+) -> dict[str, Any] | None:
+    for op in ops:
+        if op.get("op") != "create_node":
+            continue
+        node = op.get("node")
+        if isinstance(node, dict):
+            typed_node = cast(dict[str, Any], node)
+            if typed_node.get("node_id") == node_id:
+                return typed_node
+    return node_payload_view(projection, node_id)
+
+
+def _concrete_declared_port_error(
+    *,
+    patch_id: str,
+    edge: dict[str, Any],
+    source_node_id: str,
+    source_payload: dict[str, Any] | None,
+    source_port: Any,
+    target_node_id: str,
+    target_payload: dict[str, Any] | None,
+    target_port: Any,
+) -> tuple[str, dict[str, Any]] | None:
+    edge_id = cast(str, edge["edge_id"])
+    for node_id, payload, field_name, port, direction in (
+        (source_node_id, source_payload, "outputs", source_port, "source"),
+        (target_node_id, target_payload, "inputs", target_port, "target"),
+    ):
+        if payload is None:
+            continue
+        raw_ports = payload.get(field_name)
+        if not isinstance(raw_ports, list):
+            continue
+        declared_names: set[str] = set()
+        for item in cast(list[Any], raw_ports):
+            if not isinstance(item, dict):
+                continue
+            typed_item = cast(dict[str, Any], item)
+            declared_port = typed_item.get("port")
+            if isinstance(declared_port, str):
+                declared_names.add(declared_port)
+        declared = sorted(declared_names)
+        if isinstance(port, str) and port in declared:
+            continue
+        diagnostics = {
+            "patch_id": patch_id,
+            "invariant": "edge_concrete_declared_port",
+            "edge_id": edge_id,
+            "source_node_id": source_node_id,
+            "source_port": source_port,
+            "target_node_id": target_node_id,
+            "target_port": target_port,
+            "node_id": node_id,
+            "direction": direction,
+            "port": port,
+            "declared_ports": declared,
+            **_edge_schema_facts(edge, source_payload, target_payload),
+        }
+        return (
+            f"patch {patch_id} edge {edge_id} references nonexistent concrete "
+            f"{direction} port {node_id}.{port}; declared ports: {', '.join(declared) or '<none>'}",
+            diagnostics,
+        )
     return None
 
 
@@ -741,6 +961,443 @@ def _validate_semantic_stage_invariants(
             if error is not None:
                 return error
     return None
+
+
+def _validate_reliable_plan_topology(
+    patch: PatchEnvelope,
+    ops: list[dict[str, Any]],
+    projection: GraphProjection,
+) -> tuple[str, dict[str, Any]] | None:
+    parent = node_payload_view(projection, patch.proposed_by_node_id) or {}
+    skeleton_id = parent.get("reliable_plan_skeleton_id")
+    if not isinstance(skeleton_id, str):
+        return None
+
+    created = _created_nodes_by_id(ops)
+    edges = [op for op in ops if op.get("op") == "create_edge"]
+    edge_facts = [
+        {
+            "edge_id": edge.get("edge_id"),
+            "source_node_id": edge.get("from_node_id"),
+            "source_port": edge.get("from_port"),
+            "target_node_id": edge.get("to_node_id"),
+            "target_port": edge.get("to_port"),
+            **_edge_schema_facts(
+                edge,
+                _concrete_node_payload(str(edge.get("from_node_id")), ops, projection),
+                _concrete_node_payload(str(edge.get("to_node_id")), ops, projection),
+            ),
+        }
+        for edge in edges
+    ]
+    requested_semantic_schemas = {
+        f"{node.get('semantic_schema_id')}@{node.get('semantic_schema_version')}"
+        for node in created.values()
+        if isinstance(node.get("semantic_schema_id"), str)
+        and isinstance(node.get("semantic_schema_version"), int)
+    }
+    accepted_semantic_schemas = {
+        f"{schema_id}@{version}"
+        for schema_id, version in semantic_schema_declarations_view(projection)
+    }
+    single_edge = edge_facts[0] if len(edge_facts) == 1 else {}
+    diagnostics: dict[str, Any] = {
+        "patch_id": patch.patch_id,
+        "invariant": "reliable_plan_verified_topology",
+        "proposed_by_node_id": patch.proposed_by_node_id,
+        "reliable_plan_skeleton_id": skeleton_id,
+        "created_node_ids": sorted(created),
+        "source_node_id": single_edge.get("source_node_id"),
+        "source_port": single_edge.get("source_port"),
+        "target_node_id": single_edge.get("target_node_id"),
+        "target_port": single_edge.get("target_port"),
+        "edge_facts": edge_facts,
+        "requested_schemas": sorted(requested_semantic_schemas),
+        "declared_schemas": sorted(accepted_semantic_schemas),
+        "accepted_schemas": sorted(requested_semantic_schemas & accepted_semantic_schemas),
+        "missing_schemas": sorted(requested_semantic_schemas - accepted_semantic_schemas),
+        "incompatible_schemas": [],
+    }
+
+    if parent.get("reliable_plan_one_horizon_authorized") is True:
+        discovery_ids = {
+            node_id
+            for node_id, node in created.items()
+            if node.get("semantic_stage") == "discovery"
+        }
+        verifier_ids = {
+            node_id
+            for node_id, node in created.items()
+            if node.get("semantic_stage") == "plan_verification"
+        }
+        successor_ids = {
+            node_id
+            for node_id, node in created.items()
+            if node.get("semantic_stage") == "successor_planning"
+        }
+        diagnostics.update(
+            {
+                "discovery_node_ids": sorted(discovery_ids),
+                "plan_verifier_node_ids": sorted(verifier_ids),
+                "successor_node_ids": sorted(successor_ids),
+            }
+        )
+        expected_executable_ids = discovery_ids | verifier_ids | successor_ids
+        dispatchable_ids = {
+            node_id
+            for node_id, node in created.items()
+            if node.get("state", "planned") not in {"completed", "cancelled", "failed", "retired"}
+        }
+        diagnostics.update(
+            {
+                "executable_node_ids": sorted(dispatchable_ids),
+                "expected_executable_node_ids": sorted(expected_executable_ids),
+            }
+        )
+        if any(node.get("semantic_stage") == "effectful_batch" for node in created.values()):
+            return (
+                f"patch {patch.patch_id} reliable-plan initial skeleton cannot create "
+                "effectful work before passed plan verification",
+                {**diagnostics, "violation": "preverification_effectful_work"},
+            )
+        if len(discovery_ids) != 1:
+            return (
+                f"patch {patch.patch_id} reliable-plan initial skeleton requires exactly one "
+                "analysis-only discovery node",
+                {**diagnostics, "violation": "missing_or_ambiguous_discovery"},
+            )
+        if len(verifier_ids) != 1:
+            return (
+                f"patch {patch.patch_id} reliable-plan initial skeleton requires exactly one "
+                "independent plan verifier",
+                {**diagnostics, "violation": "missing_or_ambiguous_plan_verifier"},
+            )
+        if len(successor_ids) != 1:
+            return (
+                f"patch {patch.patch_id} reliable-plan initial skeleton requires exactly one "
+                "successor planner",
+                {**diagnostics, "violation": "missing_or_ambiguous_successor"},
+            )
+        if dispatchable_ids != expected_executable_ids:
+            return (
+                f"patch {patch.patch_id} reliable-plan initial skeleton executable set must "
+                "contain only discovery, independent plan verifier, and successor planner",
+                {
+                    **diagnostics,
+                    "violation": "unexpected_initial_executable_nodes",
+                    "unexpected_executable_node_ids": sorted(
+                        dispatchable_ids - expected_executable_ids
+                    ),
+                },
+            )
+
+        discovery_id = next(iter(discovery_ids))
+        verifier_id = next(iter(verifier_ids))
+        successor_id = next(iter(successor_ids))
+        contract_error = _reliable_plan_initial_contract_error(
+            discovery_id=discovery_id,
+            discovery=created[discovery_id],
+            verifier_id=verifier_id,
+            verifier=created[verifier_id],
+            successor_id=successor_id,
+            successor=created[successor_id],
+        )
+        if contract_error is not None:
+            violation, detail = contract_error
+            return (
+                f"patch {patch.patch_id} reliable-plan initial skeleton has invalid {detail}",
+                {**diagnostics, "violation": violation, "contract_error": detail},
+            )
+        discovery_requirement_edges = [
+            edge
+            for edge in edges
+            if edge.get("to_node_id") == discovery_id
+            and str(edge.get("to_port", "")).startswith("requirement_")
+            and edge.get("required") is not False
+        ]
+        verifier_requirement_edges = [
+            edge
+            for edge in edges
+            if edge.get("to_node_id") == verifier_id
+            and str(edge.get("to_port", "")).startswith("requirement_")
+            and edge.get("required") is not False
+        ]
+        if not discovery_requirement_edges or not verifier_requirement_edges:
+            return (
+                f"patch {patch.patch_id} reliable-plan discovery and plan verifier must both "
+                "bind required requirement evidence",
+                {**diagnostics, "violation": "missing_requirement_bindings"},
+            )
+        if not any(
+            edge.get("from_node_id") == discovery_id
+            and edge.get("from_port") == "semantic_artifact"
+            and edge.get("to_node_id") == verifier_id
+            and edge.get("to_port") == "semantic_artifact"
+            for edge in edges
+        ):
+            return (
+                f"patch {patch.patch_id} plan verifier must consume the exact discovery "
+                "semantic_artifact",
+                {**diagnostics, "violation": "unbound_discovery_plan"},
+            )
+        successor_edges = [
+            edge
+            for edge in edges
+            if edge.get("from_node_id") == verifier_id
+            and edge.get("from_port") == "verification_report"
+            and edge.get("to_node_id") == successor_id
+            and edge.get("to_port") == "verification_report"
+        ]
+        if len(successor_edges) != 1 or _selector_field(successor_edges[0], "outcome") != "passed":
+            return (
+                f"patch {patch.patch_id} successor planner must be bound to the independent "
+                "plan verifier's passed verification_report",
+                {**diagnostics, "violation": "successor_not_pass_gated"},
+            )
+        return None
+
+    effectful_ids = {
+        node_id
+        for node_id, node in created.items()
+        if node.get("semantic_stage") == "effectful_batch" and node.get("kind") == "worker"
+    }
+    if not effectful_ids:
+        return None
+    diagnostics["effectful_node_ids"] = sorted(effectful_ids)
+    if parent.get("semantic_stage") != "successor_planning":
+        return (
+            f"patch {patch.patch_id} effectful batch may only be proposed by the verified-plan "
+            "successor planner",
+            {**diagnostics, "violation": "unauthorized_effectful_proposer"},
+        )
+    verification_binding = (
+        input_bindings_view(projection)
+        .get(patch.proposed_by_node_id, {})
+        .get("verification_report")
+    )
+    record_ids = verification_binding.record_ids if verification_binding is not None else []
+    records = record_payloads_view(projection)
+    passed_reports = [
+        record_id
+        for record_id in record_ids
+        if (record := records.get(record_id)) is not None
+        and record.get("record_type") == "verification_report"
+        and (
+            record.get("outcome") == "passed"
+            or (
+                isinstance(record.get("value"), dict)
+                and cast(dict[str, Any], record["value"]).get("outcome") == "passed"
+            )
+        )
+    ]
+    if not passed_reports:
+        return (
+            f"patch {patch.patch_id} effectful batch requires a durably bound passed "
+            "verification_report on successor {patch.proposed_by_node_id}",
+            {
+                **diagnostics,
+                "violation": "missing_bound_passed_verification",
+                "bound_verification_record_ids": record_ids,
+            },
+        )
+    plan_edges = [
+        edge
+        for edge in edges
+        if edge.get("to_node_id") in effectful_ids and edge.get("to_port") == "semantic_artifact"
+    ]
+    verification_edges = [
+        edge
+        for edge in edges
+        if edge.get("to_node_id") in effectful_ids and edge.get("to_port") == "verification_report"
+    ]
+    effective_plan_record_ids: list[str] = []
+    effective_report_ids: list[str] = []
+    lineage_verified_report_ids: list[str] = []
+    typed_records = output_record_payloads_view(projection)
+    for effectful_id in sorted(effectful_ids):
+        node_plan_edges = [edge for edge in plan_edges if edge.get("to_node_id") == effectful_id]
+        node_verification_edges = [
+            edge for edge in verification_edges if edge.get("to_node_id") == effectful_id
+        ]
+        if len(node_plan_edges) != 1 or len(node_verification_edges) != 1:
+            continue
+        effective_plans = _effective_edge_backfill_record_ids(projection, node_plan_edges[0])
+        effective_reports = _effective_edge_backfill_record_ids(
+            projection, node_verification_edges[0]
+        )
+        effective_plan_record_ids.extend(effective_plans)
+        effective_report_ids.extend(effective_reports)
+        if len(effective_plans) != 1 or len(effective_reports) != 1:
+            continue
+        plan_record_id = effective_plans[0]
+        report_record_id = effective_reports[0]
+        plan = typed_records.get(plan_record_id)
+        report = typed_records.get(report_record_id)
+        if (
+            isinstance(plan, SemanticArtifactRecord)
+            and plan.value.authority_status == "accepted"
+            and isinstance(report, VerificationReportRecord)
+            and report.outcome == "passed"
+            and report_record_id in passed_reports
+            and plan_record_id in report.evaluated_record_ids
+        ):
+            lineage_verified_report_ids.append(report_record_id)
+    diagnostics.update(
+        {
+            "bound_verification_record_ids": sorted(record_ids),
+            "accepted_plan_record_ids": effective_plan_record_ids,
+            "effective_plan_record_ids": effective_plan_record_ids,
+            "effective_verification_record_ids": effective_report_ids,
+            "lineage_verified_report_ids": lineage_verified_report_ids,
+            "plan_source_ports": sorted(
+                {f"{edge.get('from_node_id')}.{edge.get('from_port')}" for edge in plan_edges}
+            ),
+            "verification_source_ports": sorted(
+                {
+                    f"{edge.get('from_node_id')}.{edge.get('from_port')}"
+                    for edge in verification_edges
+                }
+            ),
+        }
+    )
+    if (
+        len(effective_plan_record_ids) != len(effectful_ids)
+        or len(effective_report_ids) != len(effectful_ids)
+        or len(lineage_verified_report_ids) != len(effectful_ids)
+    ):
+        return (
+            f"patch {patch.patch_id} effectful batch requires a bound passing verification "
+            "report that evaluated the exact accepted plan artifact used by the batch",
+            {**diagnostics, "violation": "unverified_exact_plan_lineage"},
+        )
+    return None
+
+
+def _reliable_plan_initial_contract_error(
+    *,
+    discovery_id: str,
+    discovery: dict[str, Any],
+    verifier_id: str,
+    verifier: dict[str, Any],
+    successor_id: str,
+    successor: dict[str, Any],
+) -> tuple[str, str] | None:
+    """Validate the concrete identities/contracts of the initial three nodes."""
+    if discovery.get("kind") != "worker" or discovery.get("role") != "discovery":
+        return "invalid_discovery_contract", f"discovery node {discovery_id} kind/role"
+    if discovery.get("access_mode") != "read_only" or _has_effectful_resource_claim(discovery):
+        return "invalid_discovery_contract", f"discovery node {discovery_id} read-only authority"
+    if not _has_required_port(discovery, "outputs", "semantic_artifact", "SemanticArtifact"):
+        return "invalid_discovery_contract", f"discovery node {discovery_id} output contract"
+
+    if verifier.get("kind") != "verifier" or verifier.get("role") != "verifier":
+        return "invalid_plan_verifier_contract", f"plan verifier {verifier_id} kind/role"
+    if _has_effectful_resource_claim(verifier) or not _has_required_port(
+        verifier, "inputs", "semantic_artifact", "SemanticArtifact"
+    ):
+        return "invalid_plan_verifier_contract", f"plan verifier {verifier_id} input contract"
+    if not _has_required_port(verifier, "outputs", "verification_report", "VerificationReport"):
+        return "invalid_plan_verifier_contract", f"plan verifier {verifier_id} output contract"
+
+    if successor.get("kind") != "planner" or successor.get("role") != "planner":
+        return "invalid_successor_contract", f"successor node {successor_id} kind/role"
+    if successor.get("planning_horizon") != 1 or _has_effectful_resource_claim(successor):
+        return "invalid_successor_contract", f"successor node {successor_id} horizon/authority"
+    if not _has_required_port(successor, "inputs", "verification_report", "VerificationReport"):
+        return "invalid_successor_contract", f"successor node {successor_id} input contract"
+    return None
+
+
+def _has_required_port(
+    node: dict[str, Any],
+    field_name: str,
+    port: str,
+    schema: str,
+) -> bool:
+    return any(
+        item.get("port") == port
+        and item.get("schema") == schema
+        and item.get("required") is not False
+        for item in _port_dicts(node.get(field_name))
+    )
+
+
+def _has_effectful_resource_claim(node: dict[str, Any]) -> bool:
+    authority = node.get("authority")
+    if not isinstance(authority, dict):
+        return False
+    claims = cast(dict[str, Any], authority).get("resource_claims")
+    if not isinstance(claims, list):
+        return False
+    return any(
+        isinstance(claim, dict)
+        and cast(dict[str, Any], claim).get("mode") in {"write", "review_write", "external"}
+        for claim in cast(list[Any], claims)
+    )
+
+
+def _effective_edge_backfill_record_ids(
+    projection: GraphProjection,
+    edge: dict[str, Any],
+) -> list[str]:
+    """Mirror deterministic edge-backfill merge semantics used during patch apply."""
+    source = edge.get("from_node_id")
+    port = edge.get("from_port")
+    if not isinstance(source, str) or not isinstance(port, str) or source == "*":
+        return []
+    records = output_records_by_node_port_view(projection).get(source, {}).get(port, [])
+    policy = binding_policy(edge.get("binding_policy"), None)
+    bound: list[str] = []
+    for record in records:
+        payload = record.model_dump(mode="json")
+        record_id = payload.get("record_id")
+        if not isinstance(record_id, str) or not record_selector_matches(
+            edge.get("accepted_record_selector"), payload
+        ):
+            continue
+        bound = merge_bound_record_ids(
+            policy,
+            bound,
+            [record_id],
+            supersedes_record_id=payload.get("supersedes_record_id"),
+        )
+    return bound
+
+
+def _semantic_stage_diagnostics(
+    patch_id: str,
+    ops: list[dict[str, Any]],
+    projection: GraphProjection,
+) -> dict[str, Any]:
+    created = _created_nodes_by_id(ops)
+    schema_keys = sorted(
+        f"{schema_id}@{version}"
+        for schema_id, version in semantic_schema_declarations_view(projection)
+    )
+    requested_schemas = sorted(
+        {
+            f"{node.get('semantic_schema_id')}@{node.get('semantic_schema_version')}"
+            for node in created.values()
+            if node.get("semantic_schema_id") is not None
+            or node.get("semantic_schema_version") is not None
+        }
+    )
+    return {
+        "patch_id": patch_id,
+        "invariant": "semantic_stage_topology",
+        "node_ids": sorted(created),
+        "ports": sorted(
+            {
+                f"{edge.get('from_node_id')}.{edge.get('from_port')}->"
+                f"{edge.get('to_node_id')}.{edge.get('to_port')}"
+                for edge in ops
+                if edge.get("op") == "create_edge"
+            }
+        ),
+        "requested_schemas": requested_schemas,
+        "accepted_schemas": schema_keys,
+        "missing_schemas": sorted(set(requested_schemas) - set(schema_keys)),
+    }
 
 
 def _corrective_evidence_error(

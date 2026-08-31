@@ -1515,6 +1515,25 @@ def _output_records_for_submit(
         return []
     if context.node_kind == "check":
         return []
+    if context.node_kind in {"appeal", "oversight", "recovery"}:
+        return [
+            {
+                "record_id": f"recovery-plan-{context.execution_id}",
+                "record_kind": "output",
+                "record_type": "recovery_plan",
+                "producer_node_id": context.node_id,
+                "port": "recovery_plan",
+                "schema": "RecoveryPlan",
+                "value": {
+                    "action": "pause",
+                    "responsible_actor": "oversight",
+                    "graph_changes": [],
+                    "reason": "appeal reviewed; explicit recovery action required",
+                    "attempt_number": attempt_number,
+                    "max_attempts": int(node.get("max_attempts", 3)),
+                },
+            }
+        ]
     if context.node_kind == "verifier":
         candidate_id = _candidate_id_for_verifier(context)
         outcome = "passed" if _grades_pass(grades) else "failed"

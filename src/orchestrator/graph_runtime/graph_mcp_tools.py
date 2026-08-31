@@ -103,15 +103,18 @@ def build_graph_mcp_server(
     async def submit_graph_patch(
         patch_id: str,
         base_graph_position: int,
-        ops: list[dict[str, Any]],
+        ops: list[dict[str, Any]] | None = None,
+        macro_invocations: list[dict[str, Any]] | None = None,
         rationale_record_id: str | None = None,
     ) -> str:
-        """Submit a graph patch envelope of raw ops."""
+        """Submit one atomic graph patch envelope of raw ops and/or macros."""
         args: dict[str, Any] = {
             "patch_id": patch_id,
             "base_graph_position": base_graph_position,
-            "ops": ops,
+            "ops": ops or [],
         }
+        if macro_invocations is not None:
+            args["macro_invocations"] = macro_invocations
         if rationale_record_id is not None:
             args["rationale_record_id"] = rationale_record_id
         return await _route("submit_graph_patch", args)
@@ -120,9 +123,9 @@ def build_graph_mcp_server(
         submit_graph_patch,
         name="submit_graph_patch",
         description=(
-            "Submit a graph patch envelope of validated low-level ops. "
-            "Prefer the macro tools; use this only when no macro expresses "
-            "the mutation you need."
+            "Submit one atomic graph patch envelope of validated low-level ops and/or "
+            "macro_invocations. Use macro_invocations when several reliable-plan regions "
+            "must be accepted transactionally."
         ),
     )
 

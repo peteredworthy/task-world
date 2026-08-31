@@ -16,12 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.graph import (
+    apply_command,
     Actor,
     ActorKind,
     EventEnvelope,
     FakeClock,
     GraphProjection,
     GraphCommandContext,
+    SequentialIdGenerator,
     initial_projection,
     reduce_event,
 )
@@ -34,6 +36,7 @@ from orchestrator.graph_runtime import (
 from orchestrator.graph_runtime.dispatch import (
     DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS,
     _callback_conflict_reason,
+    _declared_output_contract_error,
     _execute_check_command,
     _output_records_for_submit,
     _planner_evidence,
@@ -1490,6 +1493,60 @@ async def test_graph_patch_callback_returns_all_safe_diagnostics_beyond_durable_
     }
 
 
+@pytest.mark.asyncio
+async def test_graph_patch_callback_surfaces_same_durable_typed_edge_diagnostics() -> None:
+    durable = {
+        "patch_id": "patch-mixed-port-failure",
+        "invariant": "edge_concrete_declared_port",
+        "source_node_id": "requirement-1",
+        "source_port": "requirement_record",
+        "target_node_id": "discovery-1",
+        "target_port": "requirement_1",
+        "requested_schemas": ["Requirement"],
+        "declared_schemas": ["Requirement"],
+        "accepted_schemas": [],
+        "missing_schemas": [],
+        "incompatible_schemas": ["Requirement"],
+    }
+
+    class _FeedbackExecutor(GraphDispatchExecutor):
+        async def _current_position(self, run_id: str) -> int:
+            assert run_id == "run-1"
+            return 1
+
+        async def _handle_command_retry_stale(self, *args: Any, **kwargs: Any) -> Any:
+            return SimpleNamespace(
+                events=[
+                    _event(
+                        "graph_patch_rejected",
+                        {
+                            "reason": "nonexistent concrete source port",
+                            "patch_id": "patch-mixed-port-failure",
+                            "diagnostics": durable,
+                        },
+                    )
+                ]
+            )
+
+    executor = _FeedbackExecutor(
+        cast(async_sessionmaker[AsyncSession], object()),
+        cast(Any, object()),
+        cast(Any, object()),
+        worktree_path="/tmp/worktree",
+        artifact_store=FilesystemArtifactStore(Path("/tmp/test-graph-artifacts")),
+    )
+    feedback = await executor._submit_graph_patch_callback(
+        _context(node_id="planner-1", node_kind="planner", node_role="planner"),
+        {
+            "patch_id": "patch-mixed-port-failure",
+            "base_graph_position": 1,
+            "ops": [],
+        },
+    )
+
+    assert json.loads(feedback.split("validation_diagnostics=", maxsplit=1)[1]) == durable
+
+
 def test_gap_planner_submit_emits_classified_gap_after_accepted_nonempty_patch() -> None:
     context = _context(node_id="gap-planner-1", node_kind="planner", node_role="gap_planner")
     context.node_payload["_accepted_gap_planner_patch_had_ops"] = True
@@ -1568,6 +1625,121 @@ def test_check_submit_does_not_fabricate_pass_record() -> None:
     )
 
     assert _output_records_for_submit(context, []) == []
+
+
+def test_real_oversight_submit_emits_its_declared_recovery_plan_contract() -> None:
+    context = _context(
+        node_id="oversight-1",
+        node_kind="oversight",
+        node_role="oversight",
+        node_payload={
+            "task_region_id": "appeal-region",
+            "attempt_number": 2,
+            "max_attempts": 3,
+            "outputs": [
+                {
+                    "port": "recovery_plan",
+                    "direction": "output",
+                    "schema": "RecoveryPlan",
+                    "required": True,
+                }
+            ],
+        },
+    )
+
+    records = _output_records_for_submit(context, [])
+
+    assert len(records) == 1
+    assert records[0]["record_type"] == "recovery_plan"
+    assert records[0]["port"] == "recovery_plan"
+    assert records[0]["schema"] == "RecoveryPlan"
+    assert records[0]["value"]["attempt_number"] == 2
+    assert records[0]["value"]["max_attempts"] == 3
+
+
+def test_real_appeal_command_dispatch_output_passes_executable_contract_preflight() -> None:
+    clock = FakeClock()
+    events = apply_command(
+        initial_projection(),
+        [],
+        "raise_appeal",
+        {"node_id": "verifier-1", "appeal_type": "invalid_test"},
+        GraphCommandContext(run_id="run-1", current_graph_position=0),
+        clock,
+        SequentialIdGenerator(),
+    )
+    oversight = next(event.payload for event in events if event.event_type == "node_created")
+    context = _context(
+        node_id=str(oversight["node_id"]),
+        node_kind="oversight",
+        node_role="oversight",
+        node_payload=oversight,
+    )
+
+    records = _output_records_for_submit(context, [])
+
+    assert _declared_output_contract_error(context, records) is None
+    assert records[0]["port"] == "recovery_plan"
+    assert records[0]["schema"] == "RecoveryPlan"
+
+
+def test_output_contract_preflight_rejects_impossible_appeal_callback() -> None:
+    context = _context(
+        node_id="oversight-1",
+        node_kind="oversight",
+        node_role="oversight",
+        node_payload={
+            "outputs": [
+                {
+                    "port": "recovery_plan",
+                    "direction": "output",
+                    "schema": "RecoveryPlan",
+                    "required": True,
+                }
+            ]
+        },
+    )
+
+    error = _declared_output_contract_error(
+        context,
+        [{"port": "candidate", "schema": "ImplementationCandidate"}],
+    )
+
+    assert error is not None
+    assert "unknown port candidate" in error
+    assert "recovery_plan" in error
+
+
+def test_output_contract_preflight_defers_ordinary_worker_completion_protocol() -> None:
+    context = _context(
+        node_id="worker-1",
+        node_kind="worker",
+        node_role="builder",
+        node_payload={
+            "outputs": [
+                {
+                    "port": "candidate",
+                    "direction": "output",
+                    "schema": "ImplementationCandidate",
+                    "required": True,
+                },
+                {
+                    "port": "completion",
+                    "direction": "output",
+                    "schema": "NodeCompletion",
+                    "required": True,
+                },
+            ]
+        },
+    )
+
+    assert (
+        _declared_output_contract_error(
+            context,
+            [{"port": "candidate", "schema": "ImplementationCandidate"}],
+        )
+        is None
+    )
 
 
 def test_worker_submit_emits_declared_artifact_references() -> None:

@@ -8,6 +8,52 @@ routine:
     scan_budget:
       max_entries: 50000
       max_bytes: 1073741824
+  semantic_artifact_schemas:
+    - schema_id: "reliable-plan-implementation-plan"
+      version: 1
+      semantic_role: "implementation_plan"
+      json_schema:
+        type: object
+        required:
+          - batches
+        properties:
+          summary:
+            type: string
+          batches:
+            type: array
+            minItems: 1
+            items:
+              type: object
+              required:
+                - batch_id
+                - objective
+                - acceptance
+              properties:
+                batch_id:
+                  type: string
+                  minLength: 1
+                objective:
+                  type: string
+                  minLength: 1
+                scope:
+                  type: array
+                  items:
+                    type: string
+                requirement_ids:
+                  type: array
+                  items:
+                    type: string
+                acceptance:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: string
+                checks:
+                  type: array
+                  items:
+                    type: string
+              additionalProperties: true
+        additionalProperties: true
   inputs:
     - name: feature_spec_path
       required: true

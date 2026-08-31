@@ -320,6 +320,71 @@ _evaluated_record_citations = _prompts.evaluated_record_citations
 _add_evaluated_record_citations = _prompts.add_evaluated_record_citations
 
 
+def _declared_output_contract_error(
+    context: GraphDispatchContext,
+    records: list[dict[str, object]],
+) -> str | None:
+    """Preflight synthesized appeal/recovery output before callback I/O.
+
+    Ordinary workers and verifiers have richer completion protocols than the
+    small auto-submit record synthesized by the runtime.  Their callback path
+    remains the authority for validating submitted records.  Appeal/recovery
+    nodes are the narrow case this preflight protects: their output is wholly
+    synthesized, so a node/agent contract mismatch must fail before callback
+    I/O can enter a retry loop.
+    """
+    if context.node_kind not in {"appeal", "oversight", "recovery"}:
+        return None
+    raw_outputs = context.node_payload.get("outputs")
+    if not isinstance(raw_outputs, list):
+        return None
+    declared: dict[str, set[str]] = {}
+    required_ports: set[str] = set()
+    for raw_output in cast(list[object], raw_outputs):
+        if not isinstance(raw_output, dict):
+            continue
+        output = cast(dict[str, object], raw_output)
+        port = output.get("port")
+        if not isinstance(port, str):
+            continue
+        schemas: set[str] = set()
+        schema = output.get("schema")
+        if isinstance(schema, str):
+            schemas.add(schema)
+        raw_schemas = output.get("schemas")
+        if isinstance(raw_schemas, list):
+            schemas.update(
+                item for item in cast(list[object], raw_schemas) if isinstance(item, str)
+            )
+        declared[port] = schemas
+        if output.get("required") is not False:
+            required_ports.add(port)
+
+    emitted_ports: set[str] = set()
+    for index, record in enumerate(records):
+        port = record.get("port")
+        schema = record.get("schema")
+        if not isinstance(port, str) or port not in declared:
+            return (
+                f"output contract preflight failed for node {context.node_id}: record {index} "
+                f"uses unknown port {port}; declared ports={sorted(declared)}"
+            )
+        expected_schemas = declared[port]
+        if expected_schemas and schema not in expected_schemas:
+            return (
+                f"output contract preflight failed for node {context.node_id}: record {index} "
+                f"uses schema {schema} on {port}; expected schemas={sorted(expected_schemas)}"
+            )
+        emitted_ports.add(port)
+    missing = sorted(required_ports - emitted_ports)
+    if missing:
+        return (
+            f"output contract preflight failed for node {context.node_id}: "
+            f"missing required ports={missing}"
+        )
+    return None
+
+
 def _empty_event_list() -> list[EventEnvelope]:
     return []
 
@@ -1432,12 +1497,15 @@ class GraphDispatchExecutor(SideEffectExecutor):
         *,
         output_records: list[dict[str, object]] | None = None,
     ) -> None:
-        observed_position = await self._current_position(context.run_id)
         submitted_records = (
             list(output_records)
             if output_records is not None
             else _output_records_for_submit(context, grades)
         )
+        output_contract_error = _declared_output_contract_error(context, submitted_records)
+        if output_contract_error is not None:
+            raise ValueError(output_contract_error)
+        observed_position = await self._current_position(context.run_id)
         submitted_records = await _controller_ready_semantic_artifact_records(
             submitted_records, context.graph_projection, self._artifact_store
         )
@@ -1845,13 +1913,22 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if rejection is not None:
             reason = rejection.payload.get("reason") or "unknown rejection"
             patch_id = rejection.payload.get("patch_id", payload.get("patch_id", "unknown"))
-            if full_validation_diagnostics is not None:
+            event_diagnostics = rejection.payload.get("diagnostics")
+            diagnostics_payload: dict[str, Any] | None = (
+                cast(dict[str, Any], event_diagnostics)
+                if isinstance(event_diagnostics, dict)
+                else full_validation_diagnostics
+            )
+            if diagnostics_payload is not None:
                 diagnostics = json.dumps(
-                    full_validation_diagnostics,
+                    diagnostics_payload,
                     sort_keys=True,
                     separators=(",", ":"),
                 )
-                return f"graph patch {patch_id} rejected: {reason}; validation_diagnostics={diagnostics}"
+                return (
+                    f"graph patch {patch_id} rejected: {reason}; "
+                    f"graph_patch_rejected; validation_diagnostics={diagnostics}"
+                )
             return f"graph patch {patch_id} rejected: {reason}"
 
         return "graph patch command completed without accepted or rejected patch event"

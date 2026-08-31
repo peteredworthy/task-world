@@ -111,6 +111,94 @@ def test_patch_at_current_position_accepted() -> None:
     assert result.accepted
 
 
+def test_exact_nonexistent_requirement_record_source_port_rejects_atomically() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "requirement-1",
+                    "kind": "requirement",
+                    "role": "requirement",
+                    "state": "completed",
+                    "outputs": [
+                        {
+                            "port": "requirement",
+                            "direction": "output",
+                            "schema": "Requirement",
+                        }
+                    ],
+                },
+            ),
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "role": "discovery",
+                    "state": "planned",
+                    "objective": "Inspect requirements.",
+                    "access_mode": "read_only",
+                    "acceptance": ["requirements inspected"],
+                    "inputs": [
+                        {
+                            "port": "requirement_1",
+                            "direction": "input",
+                            "schema": "Requirement",
+                        }
+                    ],
+                },
+                position=1,
+            ),
+        ]
+    )
+    before = projection
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-invalid-requirement-port",
+                    "from_node_id": "requirement-1",
+                    "from_port": "requirement_record",
+                    "to_node_id": "worker-1",
+                    "to_port": "requirement_1",
+                    "required": True,
+                    "accepted_record_selector": {"record_type": "requirement_record"},
+                }
+            ]
+        ),
+        projection=projection,
+    )
+
+    assert result.accepted is False
+    assert result.diagnostics is not None
+    assert result.diagnostics == {
+        "patch_id": "patch-1",
+        "invariant": "edge_concrete_declared_port",
+        "edge_id": "edge-invalid-requirement-port",
+        "source_node_id": "requirement-1",
+        "source_port": "requirement_record",
+        "target_node_id": "worker-1",
+        "target_port": "requirement_1",
+        "node_id": "requirement-1",
+        "direction": "source",
+        "port": "requirement_record",
+        "declared_ports": ["requirement"],
+        "edge_schemas": [],
+        "requested_schemas": [],
+        "declared_source_schemas": [],
+        "declared_target_schemas": ["Requirement"],
+        "declared_schemas": ["Requirement"],
+        "accepted_schemas": [],
+        "missing_schemas": [],
+        "incompatible_schemas": [],
+    }
+    assert "nonexistent concrete source port" in str(result.rejection_reason)
+    assert projection is before
+    assert "edge-invalid-requirement-port" not in projection.topology.edges
+
+
 def test_required_pass_gated_final_check_from_recoverable_verifier_rejected() -> None:
     result = _validate(
         _patch(

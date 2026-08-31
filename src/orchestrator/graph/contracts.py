@@ -1080,6 +1080,18 @@ DEFAULT_NODE_CONTRACTS = _registry(
             ),
         ),
         _node_contract(
+            "oversight",
+            "agent",
+            roles=("oversight",),
+            inputs=(
+                _port(
+                    "failure_record", "failure_record", schemas=("FailureRecord",), required=False
+                ),
+            ),
+            outputs=(_port("recovery_plan", "recovery_plan", schemas=("RecoveryPlan",)),),
+            aliases=("appeal", "review"),
+        ),
+        _node_contract(
             "recovery",
             "controller",
             roles=None,
@@ -1093,7 +1105,7 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     required=False,
                 ),
             ),
-            aliases=("appeal", "oversight", "review", "task_projection", "file_state", "session"),
+            aliases=("task_projection", "file_state", "session"),
         ),
     )
 )

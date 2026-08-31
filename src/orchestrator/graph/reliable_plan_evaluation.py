@@ -20,6 +20,7 @@ from orchestrator.graph.projection_queries import (
     node_states_view,
     recovery_nodes_by_record_id_view,
     record_payloads_view,
+    runtime_retry_counts_view,
     run_state,
     usage_metrics_view,
 )
@@ -735,6 +736,7 @@ def evaluate_reliable_plan_projection(
     """Build an evaluation artifact from public projection carrier facts."""
     states = node_states_view(projection)
     attempts = node_attempts_view(projection)
+    runtime_retries = runtime_retry_counts_view(projection)
     payloads = [
         payload
         for node_id in states
@@ -796,7 +798,7 @@ def evaluate_reliable_plan_projection(
         ),
         recovery=ReliablePlanRecoveryMetrics(
             infrastructure_failure_count=len(environment_failures_view(projection)),
-            retry_count=sum(max(0, attempt - 1) for attempt in attempts.values()),
+            retry_count=sum(runtime_retries.values()),
             recovery_node_count=sum(
                 len(entries) for entries in recovery_nodes_by_record_id_view(projection).values()
             ),

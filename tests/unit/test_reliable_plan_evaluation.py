@@ -256,9 +256,31 @@ def test_evaluate_projection_extracts_all_comparison_metrics_from_events() -> No
                 position=6,
             ),
             event(
+                "runtime_retry_scheduled",
+                {
+                    "node_id": "worker-1",
+                    "lease_id": "lease-1",
+                    "generation": 1,
+                    "policy": "v1_requeue_same_node_after_agent_death",
+                    "reason": "callback_conflict",
+                },
+                position=7,
+            ),
+            event(
+                "runtime_retry_scheduled",
+                {
+                    "node_id": "worker-1",
+                    "lease_id": "lease-2",
+                    "generation": 2,
+                    "policy": "v1_requeue_same_node_after_agent_death",
+                    "reason": "callback_conflict",
+                },
+                position=8,
+            ),
+            event(
                 "run_lifecycle_changed",
                 {"from_state": "active", "to_state": "completed"},
-                position=7,
+                position=9,
             ),
         ]
     )
@@ -280,5 +302,6 @@ def test_evaluate_projection_extracts_all_comparison_metrics_from_events() -> No
     assert result.usage.total_actions == 3
     assert result.usage.total_duration_ms == 40
     assert result.recovery.recovery_node_count == 1
+    assert result.recovery.retry_count == 2
     assert result.recovery.revoked_lease_count == 1
     assert result.recovery.active_lease_count == 0

@@ -219,6 +219,7 @@ RUN_LIFECYCLE_TRANSITIONS: dict[str, dict[str, str]] = {
 # Actor roles allowed to take the failed -> resuming reopen edge.
 REOPEN_ACTOR_ROLES = {"human", "operator"}
 TERMINAL_RUN_STATES = {"cancelled", "completed", "failed"}
+DEFAULT_OVERSIGHT_MAX_ATTEMPTS = 3
 NONTERMINAL_RUN_STATES = {
     "draft",
     "queued",
@@ -1768,6 +1769,27 @@ def _accepted_output_record_events(
                 )
             )
             continue
+        if record_payload.get("record_type") == "recovery_plan":
+            try:
+                record = RecoveryPlanRecord.model_validate(record_payload)
+            except ValueError:
+                # Contract validation already rejected malformed callback
+                # records. Keep this defensive parse aligned with the other
+                # typed acceptance branches.
+                continue
+            payload = record.model_dump(mode="json")
+            output.append(make_event("output_record_accepted", payload))
+            output.extend(
+                _input_bound_events_for_record(
+                    projection,
+                    record.producer_node_id,
+                    record.port,
+                    record.record_id,
+                    payload,
+                    make_event,
+                )
+            )
+            continue
         if _is_graph_patch_proposal_record_payload(record_payload):
             record_payload = _graph_patch_proposal_record_payload_for_validation(
                 record_payload,
@@ -1976,10 +1998,14 @@ def _required_output_record_conflict(
     if contract is None:
         return f"output records produced by unknown node type: {node_kind}"
 
-    required_ports = {port.name for port in contract.output_ports.values() if port.required}
     payload = node_payload_view(projection, expected_producer_node_id) or {}
     declared_outputs = payload.get("outputs")
     if isinstance(declared_outputs, list):
+        # A concrete node declaration is the executable contract. This is
+        # essential for specialized workers such as reliable-plan discovery,
+        # whose sole required result is a SemanticArtifact rather than the
+        # generic implementation-worker candidate/file-state pair.
+        required_ports: set[str] = set()
         for raw_item in cast(list[Any], declared_outputs):
             if not isinstance(raw_item, dict):
                 continue
@@ -1987,6 +2013,8 @@ def _required_output_record_conflict(
             port = item.get("port")
             if item.get("required") is True and isinstance(port, str):
                 required_ports.add(port)
+    else:
+        required_ports = {port.name for port in contract.output_ports.values() if port.required}
     if not required_ports:
         return None
 
@@ -2781,6 +2809,7 @@ def _apply_patch_command(
                     actor_role,
                     reason=result.rejection_reason,
                     read_set_diff=result.read_set_diff,
+                    diagnostics=result.diagnostics,
                 ),
             )
         ]
@@ -2952,6 +2981,7 @@ def _patch_rejected_payload(
     *,
     reason: str | None,
     read_set_diff: dict[str, Any] | None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return GraphPatchRejectedPayload.model_validate(
         {
@@ -2961,6 +2991,7 @@ def _patch_rejected_payload(
             "proposed_by_node_id": patch.proposed_by_node_id,
             "reason": reason,
             "read_set_diff": read_set_diff,
+            "diagnostics": diagnostics,
         }
     ).model_dump(mode="json")
 
@@ -5213,8 +5244,20 @@ def _apply_raise_appeal(
             {
                 "node_id": oversight_node_id,
                 "kind": "oversight",
+                "role": "oversight",
                 "state": "planned",
                 "task_region_id": payload.task_region_id,
+                "attempt_number": 1,
+                "max_attempts": DEFAULT_OVERSIGHT_MAX_ATTEMPTS,
+                "objective": "Produce a bounded recovery decision for the opened appeal.",
+                "outputs": [
+                    {
+                        "port": "recovery_plan",
+                        "direction": "output",
+                        "schema": "RecoveryPlan",
+                        "required": True,
+                    }
+                ],
             },
         ),
     ]

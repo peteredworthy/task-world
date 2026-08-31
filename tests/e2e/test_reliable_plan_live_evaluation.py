@@ -206,7 +206,9 @@ async def _extract_result(
         ),
         recovery=ReliablePlanRecoveryMetrics(
             infrastructure_failure_count=len(health.get("expired_leases", [])),
-            retry_count=revision_count,
+            retry_count=sum(
+                event.get("event_type") == "runtime_retry_scheduled" for event in graph_events
+            ),
             recovery_node_count=recovery_count,
             revoked_lease_count=sum(lease.get("state") == "revoked" for lease in leases.values()),
             active_lease_count=sum(lease.get("state") == "active" for lease in leases.values()),

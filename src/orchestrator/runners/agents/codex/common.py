@@ -457,7 +457,7 @@ def build_dynamic_tool_specs(
             "properties": {
                 "patch": {
                     "type": "object",
-                    "required": ["patch_id", "base_graph_position", "ops"],
+                    "required": ["patch_id", "base_graph_position"],
                     "properties": {
                         "patch_id": {"type": "string"},
                         "base_graph_position": {"type": "integer", "minimum": -1},
@@ -471,6 +471,22 @@ def build_dynamic_tool_specs(
                             "items": _raw_patch_op_schema(),
                             "minItems": 0,
                             "maxItems": 200,
+                        },
+                        "macro_invocations": {
+                            "type": "array",
+                            "description": (
+                                "Validated macros expanded and accepted in this same atomic patch."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "required": ["macro", "args"],
+                                "properties": {
+                                    "macro": {"type": "string"},
+                                    "args": {"type": "object"},
+                                },
+                                "additionalProperties": False,
+                            },
+                            "maxItems": 20,
                         },
                         "rationale_record_id": {"type": "string"},
                     },
@@ -489,11 +505,28 @@ def build_dynamic_tool_specs(
                     "minItems": 0,
                     "maxItems": 200,
                 },
+                "macro_invocations": {
+                    "type": "array",
+                    "description": (
+                        "Validated macros expanded and accepted in this same atomic patch."
+                    ),
+                    "items": {
+                        "type": "object",
+                        "required": ["macro", "args"],
+                        "properties": {
+                            "macro": {"type": "string"},
+                            "args": {"type": "object"},
+                        },
+                        "additionalProperties": False,
+                    },
+                    "maxItems": 20,
+                },
                 "rationale_record_id": {"type": "string"},
             },
-            "oneOf": [
+            "anyOf": [
                 {"required": ["patch"]},
                 {"required": ["patch_id", "base_graph_position", "ops"]},
+                {"required": ["patch_id", "base_graph_position", "macro_invocations"]},
             ],
             "additionalProperties": False,
         },

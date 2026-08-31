@@ -272,6 +272,15 @@ def node_attempts_view(projection: GraphProjection) -> dict[str, int]:
     }
 
 
+def runtime_retry_counts_view(projection: GraphProjection) -> dict[str, int]:
+    """Return canonical accepted runtime-retry event counts by node."""
+    return {
+        node_id: node.scheduling.runtime_retry_count
+        for node_id, node in projection.nodes.items()
+        if node.scheduling.runtime_retry_count > 0
+    }
+
+
 def node_max_attempts_view(projection: GraphProjection) -> dict[str, int]:
     return {
         node_id: node.spec.max_attempts

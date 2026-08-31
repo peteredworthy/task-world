@@ -1182,6 +1182,7 @@ def _reduce_slice_a_node_update(state: GraphProjection, event: EventEnvelope) ->
                     update={
                         "retry_not_before": payload.retry_not_before,
                         "recovery_blocker_record_id": None,
+                        "runtime_retry_count": node.scheduling.runtime_retry_count + 1,
                     }
                 ),
             ),

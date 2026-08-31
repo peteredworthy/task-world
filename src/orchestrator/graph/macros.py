@@ -207,6 +207,8 @@ _MACRO_SPECS = {
     "create_effectful_batch": CreateEffectfulBatchArgs,
 }
 
+RELIABLE_PLAN_MAX_ATTEMPTS = 3
+
 
 def expand_patch_macros(
     ops: list[dict[str, Any]],
@@ -648,6 +650,8 @@ def _create_discovery_region(args: dict[str, Any]) -> list[dict[str, Any]]:
                     "required": True,
                 }
             ],
+            "inputs": _requirement_input_ports(args),
+            "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
             "bound_requirement_ids": list(args.get("requirement_source_node_ids", [])),
             "invariants": ["repository state is unchanged"],
             "prohibited_actions": ["modify repository files", "produce implementation changes"],
@@ -672,6 +676,24 @@ def _create_plan_verification(args: dict[str, Any]) -> list[dict[str, Any]]:
             "semantic_schema_id": schema_id,
             "semantic_schema_version": schema_version,
             "bound_requirement_ids": list(args.get("requirement_source_node_ids", [])),
+            "inputs": [
+                {
+                    "port": "semantic_artifact",
+                    "direction": "input",
+                    "schema": "SemanticArtifact",
+                    "required": True,
+                },
+                *_requirement_input_ports(args),
+            ],
+            "outputs": [
+                {
+                    "port": "verification_report",
+                    "direction": "output",
+                    "schema": "VerificationReport",
+                    "required": True,
+                }
+            ],
+            "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
         }
     )
     artifact_source = _required_str(args, "artifact_source_node_id")
@@ -709,6 +731,7 @@ def _create_successor_planner(args: dict[str, Any]) -> list[dict[str, Any]]:
                 "run_baseline" if args["planning_horizon"] == 1 else "latest_accepted"
             ),
             "planning_horizon": args["planning_horizon"],
+            "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
             "inputs": [
                 {
                     "port": source_port,
@@ -790,8 +813,16 @@ def _create_effectful_batch(args: dict[str, Any]) -> list[dict[str, Any]]:
                     "direction": "input",
                     "schema": "SemanticArtifact",
                     "required": True,
-                }
+                },
+                {
+                    "port": "verification_report",
+                    "direction": "input",
+                    "schema": "VerificationReport",
+                    "required": True,
+                },
+                *_requirement_input_ports(args),
             ],
+            "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
         }
     )
     verifier = _verifier_node(verifier_id, region_id, rubric=cast(list[str], args["rubric"]))
@@ -804,13 +835,23 @@ def _create_effectful_batch(args: dict[str, Any]) -> list[dict[str, Any]]:
             "base_snapshot_selection": "candidate_under_test",
             "inputs": [
                 {
+                    "port": "candidate_under_test",
+                    "direction": "input",
+                    "schema": "ImplementationCandidate",
+                    "required": True,
+                }
+            ]
+            + [
+                {
                     "port": f"check_result_{index}",
                     "direction": "input",
                     "schema": "CheckResult",
                     "required": True,
                 }
                 for index, _ in enumerate(cast(list[dict[str, Any]], args["checks"]), start=1)
-            ],
+            ]
+            + _requirement_input_ports(args),
+            "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
         }
     )
     plan_source = _required_str(args, "plan_source_node_id")
@@ -865,6 +906,15 @@ def _create_effectful_batch(args: dict[str, Any]) -> list[dict[str, Any]]:
             "semantic_stage": "effectful_batch",
             "declared_batch_id": batch_id,
             "base_snapshot_selection": "candidate_under_test",
+            "max_attempts": RELIABLE_PLAN_MAX_ATTEMPTS,
+            "inputs": [
+                {
+                    "port": "candidate_under_test",
+                    "direction": "input",
+                    "schema": "ImplementationCandidate",
+                    "required": True,
+                }
+            ],
         }
         _copy_command(raw_check, check_node)
         ops.extend(
@@ -943,6 +993,19 @@ def _requirement_edges(args: dict[str, Any], target_node_id: str) -> list[dict[s
             prompt_hydration_policy="structured_json",
         )
         for index, source_id in enumerate(source_ids, start=1)
+    ]
+
+
+def _requirement_input_ports(args: dict[str, Any]) -> list[dict[str, Any]]:
+    source_ids = cast(list[str], args.get("requirement_source_node_ids", []))
+    return [
+        {
+            "port": f"requirement_{index}",
+            "direction": "input",
+            "schema": "Requirement",
+            "required": True,
+        }
+        for index, _ in enumerate(source_ids, start=1)
     ]
 
 

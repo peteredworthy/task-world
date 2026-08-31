@@ -591,9 +591,10 @@ def test_submit_graph_patch_exposed_only_to_graph_planner() -> None:
     spec = next(s for s in planner_specs if s["name"] == "submit_graph_patch")
     schema = spec["inputSchema"]
     assert schema["additionalProperties"] is False
-    assert schema["oneOf"] == [
+    assert schema["anyOf"] == [
         {"required": ["patch"]},
         {"required": ["patch_id", "base_graph_position", "ops"]},
+        {"required": ["patch_id", "base_graph_position", "macro_invocations"]},
     ]
     assert schema["properties"]["patch"]["properties"]["ops"]["minItems"] == 0
     assert (
@@ -606,6 +607,8 @@ def test_submit_graph_patch_exposed_only_to_graph_planner() -> None:
     assert raw_op_schema["additionalProperties"] is False
     assert raw_op_schema["required"] == ["op"]
     assert schema["properties"]["ops"]["maxItems"] == 200
+    assert schema["properties"]["macro_invocations"]["maxItems"] == 20
+    assert schema["properties"]["patch"]["properties"]["macro_invocations"]["maxItems"] == 20
     assert schema["properties"]["base_graph_position"]["minimum"] == -1
     assert "unknown operation fields are rejected" in spec["description"]
 

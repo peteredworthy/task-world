@@ -5,11 +5,13 @@ from pathlib import Path
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from orchestrator.api import CreateRunRequest
-from orchestrator.config import RoutineConfig
-from orchestrator.db import RunRepository
+from orchestrator.config import RoutineConfig, load_routine_from_path
+from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
+    GraphCommandContext,
     FakeClock,
     PatchCommandContext,
     ReliablePlanEvaluationConfig,
@@ -18,11 +20,21 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     authorize_reliable_plan_one_horizon,
     compile_routine,
+    event_factory,
+    input_bindings_view,
+    leases_view,
+    node_kinds_view,
+    node_attempts_view,
+    node_states_view,
+    output_record_payloads_view,
+    runtime_retry_counts_view,
     require_reliable_plan_one_horizon_authorization,
     serialize_authorized_reliable_plan_run_config,
 )
 from orchestrator.graph_runtime import (
     GraphController,
+    GraphEventStore,
+    assemble_graph_dispatch_context,
     require_reliable_plan_qualification_for_run,
     run_reliable_plan_product_path_scenarios,
     verified_reliable_plan_seed_config,
@@ -30,6 +42,637 @@ from orchestrator.graph_runtime import (
 
 
 FIXTURE = Path("tests/fixtures/graph/reliable_plan_fff4f6b7.json")
+
+
+@pytest.mark.asyncio
+async def test_production_reliable_plan_controller_path_gates_first_effectful_lease(
+    tmp_path: Path,
+) -> None:
+    routine_path = Path("routines/dynamic-graph-feature/routine.yaml")
+    routine = load_routine_from_path(routine_path)
+
+    async def run_arm(outcome: str) -> tuple[GraphController, AsyncEngine, int, str]:
+        engine = create_engine(tmp_path / f"reliable-plan-{outcome}.db")
+        sessions = create_session_factory(engine)
+        await init_db(engine)
+        clock = FakeClock()
+        controller = GraphController(sessions, clock, SequentialIdGenerator(), auto_dispatch=False)
+        run_id = f"reliable-plan-{outcome}"
+        compiled = compile_routine(
+            routine,
+            clock,
+            SequentialIdGenerator(),
+            run_id=run_id,
+            source_path=str(routine_path),
+            run_config={
+                "feature_spec_path": "docs/spec.md",
+                "acceptance_command": "uv run pytest",
+                "reliable_plan_skeleton_id": "reliable-plan-v1",
+                "reliable_plan_one_horizon_authorized": True,
+            },
+        )
+        seeded = await controller.handle_command(
+            run_id, 0, "seed_compiled_events", {"events": compiled}
+        )
+        accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
+        started = await controller.handle_command(run_id, accepted.projection_position, "start")
+        position = started.projection_position
+        skeleton = await controller.handle_command(
+            run_id,
+            position,
+            "submit_patch",
+            {
+                "patch_id": f"initial-skeleton-{outcome}",
+                "base_graph_position": position,
+                "macro_invocations": [
+                    {
+                        "macro": "create_discovery_region",
+                        "args": {
+                            "region_id": "discovery",
+                            "worker_id": "worker-discovery",
+                            "semantic_schema_id": "reliable-plan-implementation-plan",
+                            "semantic_schema_version": 1,
+                            "objective": "Discover the implementation plan.",
+                            "acceptance": ["plan is complete"],
+                            "requirement_source_node_ids": [
+                                "requirement-dynamic-feature-acceptance"
+                            ],
+                        },
+                    },
+                    {
+                        "macro": "create_plan_verification",
+                        "args": {
+                            "region_id": "plan-verification",
+                            "verifier_id": "verifier-plan",
+                            "artifact_source_node_id": "worker-discovery",
+                            "semantic_schema_id": "reliable-plan-implementation-plan",
+                            "semantic_schema_version": 1,
+                            "objective": "Independently verify the plan.",
+                            "acceptance": ["requirements are covered"],
+                            "rubric": ["dynamic_feature_acceptance maps to batch-1"],
+                            "requirement_source_node_ids": [
+                                "requirement-dynamic-feature-acceptance"
+                            ],
+                        },
+                    },
+                    {
+                        "macro": "create_successor_planner",
+                        "args": {
+                            "region_id": "successor",
+                            "node_id": "planner-successor",
+                            "evidence_source_node_id": "verifier-plan",
+                            "evidence_source_port": "verification_report",
+                            "planning_horizon": 1,
+                        },
+                    },
+                ],
+            },
+            context=PatchCommandContext(
+                run_id=run_id,
+                current_graph_position=position,
+                proposed_by_node_id="planner-s-01",
+                actor_role="planner",
+            ),
+        )
+        assert any(event.event_type == "graph_patch_accepted" for event in skeleton.events)
+        position = skeleton.projection_position
+        projection = await controller.read_projection(run_id)
+        assert node_states_view(projection)["worker-discovery"] == "planned"
+        assert node_states_view(projection)["verifier-plan"] == "planned"
+        assert node_states_view(projection)["planner-successor"] == "planned"
+        assert not input_bindings_view(projection).get("verifier-plan", {}).get("semantic_artifact")
+        assert (
+            not input_bindings_view(projection)
+            .get("planner-successor", {})
+            .get("verification_report")
+        )
+
+        async def lease(node_id: str) -> tuple[int, dict[str, object]]:
+            nonlocal position
+            scheduled = await controller.handle_command(
+                run_id,
+                position,
+                "schedule_tick",
+                {
+                    "max_grants": 1,
+                    "lease_seconds": 60,
+                    "base_snapshot_id": "baseline",
+                    "priorities": {node_id: 100},
+                },
+            )
+            grant = next(
+                event.payload
+                for event in scheduled.events
+                if event.event_type == "lease_granted" and event.payload.get("node_id") == node_id
+            )
+            acknowledged = await controller.handle_command(
+                run_id,
+                scheduled.projection_position,
+                "acknowledge_start",
+                {
+                    "node_id": node_id,
+                    "lease_id": grant["lease_id"],
+                    "lease_generation": grant["generation"],
+                    "execution_id": grant["execution_id"],
+                },
+            )
+            position = acknowledged.projection_position
+            return position, grant
+
+        async def callback(grant: dict[str, object], record: dict[str, object]) -> None:
+            nonlocal position
+            result = await controller.handle_command(
+                run_id,
+                position,
+                "submit_callback",
+                {
+                    "node_id": grant["node_id"],
+                    "execution_id": grant["execution_id"],
+                    "lease_id": grant["lease_id"],
+                    "lease_generation": grant["generation"],
+                    "base_snapshot_id": grant["base_snapshot_id"],
+                    "observed_graph_position": position,
+                    "idempotency_key": f"callback-{grant['node_id']}-{outcome}",
+                    "payload": {"output_records": [record]},
+                    "complete_node": True,
+                    "new_state": "completed",
+                },
+            )
+            assert result.events[0].event_type == "callback_accepted", result.events
+            position = result.projection_position
+
+        _, discovery_lease = await lease("worker-discovery")
+        await callback(
+            discovery_lease,
+            {
+                "record_id": "accepted-plan",
+                "record_kind": "graph_record",
+                "record_type": "semantic_artifact",
+                "schema_version": 1,
+                "producer_node_id": "worker-discovery",
+                "port": "semantic_artifact",
+                "schema": "SemanticArtifact",
+                "value": {
+                    "semantic_role": "implementation_plan",
+                    "schema_id": "reliable-plan-implementation-plan",
+                    "schema_version": 1,
+                    "content": {
+                        "batches": [
+                            {
+                                "batch_id": "batch-1",
+                                "objective": "Implement batch 1.",
+                                "acceptance": ["batch 1 passes"],
+                            }
+                        ]
+                    },
+                    "provenance": {"source": "discovery"},
+                    "source_record_ids": ["requirement-dynamic-feature-acceptance"],
+                    "requirement_ids": ["dynamic_feature_acceptance"],
+                    "task_region_id": "discovery",
+                    "validation_status": "validated",
+                    "authority_status": "accepted",
+                },
+            },
+        )
+        projection = await controller.read_projection(run_id)
+        assert node_states_view(projection)["verifier-plan"] in {"planned", "ready"}
+        assert (
+            not input_bindings_view(projection)
+            .get("planner-successor", {})
+            .get("verification_report")
+        )
+
+        _, verifier_lease = await lease("verifier-plan")
+        await callback(
+            verifier_lease,
+            {
+                "record_id": f"verification-{outcome}",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-plan",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "accepted-plan",
+                "task_region_id": "plan-verification",
+                "outcome": outcome,
+                "value": {
+                    "outcome": outcome,
+                    "grades": [
+                        {
+                            "requirement_id": "dynamic_feature_acceptance",
+                            "grade": "grade-A" if outcome == "passed" else "grade-C",
+                            "reason": "independent plan review",
+                        }
+                    ],
+                },
+            },
+        )
+        return controller, engine, position, run_id
+
+    failed_controller, failed_engine, failed_position, failed_run_id = await run_arm("failed")
+    try:
+        failed_projection = await failed_controller.read_projection(str(failed_run_id))
+        assert (
+            not input_bindings_view(failed_projection)
+            .get("planner-successor", {})
+            .get("verification_report")
+        )
+        assert not any(
+            kind == "worker" and node_id != "worker-discovery"
+            for node_id, kind in node_kinds_view(failed_projection).items()
+        )
+        assert all(lease.state != "active" for lease in leases_view(failed_projection).values())
+    finally:
+        await failed_engine.dispose()
+
+    passed_controller, passed_engine, position, passed_run_id = await run_arm("passed")
+    try:
+        passed_projection = await passed_controller.read_projection(str(passed_run_id))
+        assert (
+            input_bindings_view(passed_projection)
+            .get("planner-successor", {})
+            .get("verification_report")
+        ), {node_id: state for node_id, state in node_states_view(passed_projection).items()}
+        scheduled_successor = await passed_controller.handle_command(
+            str(passed_run_id),
+            position,
+            "schedule_tick",
+            {
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {"planner-successor": 100},
+            },
+        )
+        assert any(
+            event.event_type == "lease_granted"
+            and event.payload.get("node_id") == "planner-successor"
+            for event in scheduled_successor.events
+        )
+        effectful = await passed_controller.handle_command(
+            str(passed_run_id),
+            scheduled_successor.projection_position,
+            "submit_patch",
+            {
+                "patch_id": "first-effectful-batch",
+                "base_graph_position": scheduled_successor.projection_position,
+                "macro_invocations": [
+                    {
+                        "macro": "create_effectful_batch",
+                        "args": {
+                            "region_id": "region-batch-1",
+                            "batch_id": "batch-1",
+                            "plan_source_node_id": "worker-discovery",
+                            "plan_verification_source_node_id": "verifier-plan",
+                            "semantic_schema_id": "reliable-plan-implementation-plan",
+                            "semantic_schema_version": 1,
+                            "objective": "Implement batch 1.",
+                            "acceptance": ["batch 1 passes"],
+                            "requirement_source_node_ids": [
+                                "requirement-dynamic-feature-acceptance"
+                            ],
+                            "checks": [
+                                {
+                                    "check_id": "check-batch-1",
+                                    "command_binding": "dynamic_feature_hidden_oracle",
+                                }
+                            ],
+                            "rubric": ["batch 1 passes"],
+                            "planning_horizon": 1,
+                        },
+                    }
+                ],
+            },
+            context=PatchCommandContext(
+                run_id=str(passed_run_id),
+                current_graph_position=scheduled_successor.projection_position,
+                proposed_by_node_id="planner-successor",
+                actor_role="planner",
+            ),
+        )
+        assert any(event.event_type == "graph_patch_accepted" for event in effectful.events)
+        effectful_projection = await passed_controller.read_projection(str(passed_run_id))
+        effectful_ids = {
+            node_id
+            for node_id, kind in node_kinds_view(effectful_projection).items()
+            if kind == "worker" and node_id != "worker-discovery"
+        }
+        assert effectful_ids
+        effectful_schedule = await passed_controller.handle_command(
+            str(passed_run_id),
+            effectful.projection_position,
+            "schedule_tick",
+            {
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {next(iter(effectful_ids)): 100},
+            },
+        )
+        assert any(
+            event.event_type == "lease_granted" and event.payload.get("node_id") in effectful_ids
+            for event in effectful_schedule.events
+        )
+    finally:
+        await passed_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_real_appeal_dispatch_context_and_callback_accept_recovery_plan(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(tmp_path / "appeal-product-path.db")
+    sessions = create_session_factory(engine)
+    await init_db(engine)
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    run_id = "reliable-plan-real-appeal"
+    make_event = event_factory(run_id, "seed_compiled_events", clock, ids)
+    try:
+        seeded = await controller.handle_command(
+            run_id,
+            0,
+            "seed_compiled_events",
+            {
+                "events": [
+                    make_event(
+                        "node_created",
+                        {
+                            "node_id": "verifier-plan",
+                            "kind": "verifier",
+                            "role": "verifier",
+                            "state": "blocked",
+                        },
+                    )
+                ]
+            },
+        )
+        accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
+        started = await controller.handle_command(run_id, accepted.projection_position, "start")
+        appealed = await controller.handle_command(
+            run_id,
+            started.projection_position,
+            "raise_appeal",
+            {"node_id": "verifier-plan", "appeal_type": "invalid_test"},
+            context=GraphCommandContext(
+                run_id=run_id,
+                current_graph_position=started.projection_position,
+            ),
+        )
+        oversight = next(
+            event.payload for event in appealed.events if event.event_type == "node_created"
+        )
+        oversight_id = str(oversight["node_id"])
+        scheduled = await controller.handle_command(
+            run_id,
+            appealed.projection_position,
+            "schedule_tick",
+            {
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {oversight_id: 100},
+            },
+        )
+        dispatch_item = next(
+            item
+            for item in scheduled.outbox_items
+            if item.kind == "agent_dispatch" and item.payload.get("node_id") == oversight_id
+        )
+        dispatch = await assemble_graph_dispatch_context(
+            sessions, dispatch_item, worktree_path=str(tmp_path)
+        )
+        assert dispatch.node_kind == "oversight"
+        assert dispatch.node_payload["outputs"] == [
+            {
+                "port": "recovery_plan",
+                "direction": "output",
+                "schema": "RecoveryPlan",
+                "required": True,
+            }
+        ]
+        acknowledged = await controller.handle_command(
+            run_id,
+            scheduled.projection_position,
+            "acknowledge_start",
+            {
+                "node_id": oversight_id,
+                "lease_id": dispatch.lease_id,
+                "lease_generation": dispatch.lease_generation,
+                "execution_id": dispatch.execution_id,
+            },
+        )
+        record_id = "appeal-recovery-plan"
+        callback = await controller.handle_command(
+            run_id,
+            acknowledged.projection_position,
+            "submit_callback",
+            {
+                "node_id": oversight_id,
+                "execution_id": dispatch.execution_id,
+                "lease_id": dispatch.lease_id,
+                "lease_generation": dispatch.lease_generation,
+                "base_snapshot_id": dispatch.base_snapshot_id,
+                "observed_graph_position": acknowledged.projection_position,
+                "idempotency_key": "appeal-recovery-plan-callback",
+                "payload": {
+                    "output_records": [
+                        {
+                            "record_id": record_id,
+                            "record_kind": "output",
+                            "record_type": "recovery_plan",
+                            "producer_node_id": oversight_id,
+                            "port": "recovery_plan",
+                            "schema": "RecoveryPlan",
+                            "value": {
+                                "action": "pause",
+                                "responsible_actor": "oversight",
+                                "graph_changes": [],
+                                "reason": "bounded appeal decision",
+                                "attempt_number": oversight["attempt_number"],
+                                "max_attempts": oversight["max_attempts"],
+                            },
+                        }
+                    ]
+                },
+                "complete_node": True,
+                "new_state": "completed",
+            },
+        )
+        assert callback.events[0].event_type == "callback_accepted"
+        assert any(
+            event.event_type == "output_record_accepted"
+            and event.payload.get("record_id") == record_id
+            and event.payload.get("record_type") == "recovery_plan"
+            for event in callback.events
+        ), [(event.event_type, event.payload) for event in callback.events]
+        projection = await controller.read_projection(run_id)
+        assert output_record_payloads_view(projection)[record_id].record_type == "recovery_plan"
+        assert all(lease.state != "active" for lease in leases_view(projection).values())
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reconstructed_controller_honors_durable_three_attempt_retry_budget(
+    tmp_path: Path,
+) -> None:
+    """The persistent controller boundary survives the same reconstruction as a driver restart.
+
+    A real GraphRunDriver needs runner/worktree orchestration to manufacture a
+    runtime death. The durable decision is made below the driver by the public
+    controller command, so recreating that controller before every attempt is
+    the closest deterministic file-backed proof of the restart invariant.
+    """
+    engine = create_engine(tmp_path / "durable-retry-reconstruction.db")
+    sessions = create_session_factory(engine)
+    await init_db(engine)
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    run_id = "durable-retry-reconstruction"
+    make_event = event_factory(run_id, "seed_compiled_events", clock, ids)
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    health_record = {
+        "record_id": "health-check-passed",
+        "record_kind": "output",
+        "record_type": "check_result",
+        "producer_node_id": "health-check",
+        "port": "check_result",
+        "schema": "CheckResult",
+        "candidate_id": "runtime-health",
+        "task_region_id": "region-retry",
+        "attempt_number": 1,
+        "value": {
+            "status": "passed",
+            "classification": "passed",
+            "command_id": "runtime-health",
+            "command_text": "runner health probe",
+            "command": {"argv": ["true"]},
+            "worktree_path": "/work",
+            "base_snapshot_id": "baseline",
+            "execution_id": "health-exec",
+            "exit_code": 0,
+            "duration_ms": 1,
+            "stdout_tail": "healthy",
+            "stderr_tail": "",
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "timeout_seconds": 1.0,
+            "environment_policy": {},
+        },
+        "evaluated_record_ids": [],
+    }
+    try:
+        seeded = await controller.handle_command(
+            run_id,
+            0,
+            "seed_compiled_events",
+            {
+                "events": [
+                    make_event(
+                        "node_created",
+                        {"node_id": "health-check", "kind": "check", "state": "completed"},
+                    ),
+                    make_event(
+                        "node_created",
+                        {
+                            "node_id": "worker-retry",
+                            "kind": "worker",
+                            "role": "builder",
+                            "state": "planned",
+                            "attempt_number": 1,
+                            "max_attempts": 3,
+                            "objective": "Exercise bounded runtime recovery.",
+                            "access_mode": "read_only",
+                            "acceptance": ["retry is bounded"],
+                        },
+                    ),
+                    make_event("output_record_accepted", health_record),
+                ]
+            },
+        )
+        accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
+        started = await controller.handle_command(run_id, accepted.projection_position, "start")
+        position = started.projection_position
+
+        lease_ids: list[str] = []
+        retry_events = []
+        exhausted_events = []
+        for attempt in range(1, 4):
+            # Recreate all process-local controller state before every drive.
+            controller = GraphController(sessions, FakeClock(), ids, auto_dispatch=False)
+            scheduled = await controller.handle_command(
+                run_id,
+                position,
+                "schedule_tick",
+                {
+                    "max_grants": 1,
+                    "lease_seconds": 60,
+                    "base_snapshot_id": "baseline",
+                    "priorities": {"worker-retry": 100},
+                },
+            )
+            grant = next(
+                event.payload
+                for event in scheduled.events
+                if event.event_type == "lease_granted"
+                and event.payload.get("node_id") == "worker-retry"
+            )
+            lease_ids.append(str(grant["lease_id"]))
+            died = await controller.handle_command(
+                run_id,
+                scheduled.projection_position,
+                "agent_died",
+                {
+                    "lease_id": grant["lease_id"],
+                    "execution_id": grant["execution_id"],
+                    "reason": "callback contract conflict",
+                    "health_evidence_record_id": "health-check-passed",
+                    "max_attempts": 3,
+                },
+            )
+            retry_events.extend(
+                event for event in died.events if event.event_type == "runtime_retry_scheduled"
+            )
+            exhausted_events.extend(
+                event
+                for event in died.events
+                if event.event_type == "node_state_changed"
+                and event.payload.get("trigger") == "max_attempts_exhausted"
+            )
+            position = died.projection_position
+            if attempt < 3:
+                assert len(retry_events) == attempt
+
+        reconstructed = GraphController(sessions, FakeClock(), ids, auto_dispatch=False)
+        projection = await reconstructed.read_projection(run_id)
+        assert len(lease_ids) == 3
+        assert len(set(lease_ids)) == 3
+        assert len(retry_events) == 2
+        assert len(exhausted_events) == 1
+        assert node_attempts_view(projection)["worker-retry"] == 3
+        assert runtime_retry_counts_view(projection)["worker-retry"] == 2
+        assert node_states_view(projection)["worker-retry"] == "failed"
+        assert all(lease.state != "active" for lease in leases_view(projection).values())
+        fourth = await reconstructed.handle_command(
+            run_id,
+            position,
+            "schedule_tick",
+            {
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {"worker-retry": 100},
+            },
+        )
+        assert not any(event.event_type == "lease_granted" for event in fourth.events)
+        async with sessions() as session:
+            events = await GraphEventStore(session).read_run(run_id)
+        assert sum(event.event_type == "lease_granted" for event in events) == 3
+        assert sum(event.event_type == "runtime_retry_scheduled" for event in events) == 2
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -49,7 +692,34 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
             "name": "Reliable plan API",
             "execution_mode": "graph",
             "planner_generation_budget": 2,
-            "steps": [{"id": "plan", "kind": "planner", "title": "Plan"}],
+            "semantic_artifact_schemas": [
+                {
+                    "schema_id": "reliable-plan-implementation-plan",
+                    "version": 1,
+                    "semantic_role": "implementation_plan",
+                    "json_schema": {
+                        "type": "object",
+                        "required": ["batches"],
+                        "properties": {"batches": {"type": "array"}},
+                    },
+                }
+            ],
+            "steps": [
+                {
+                    "id": "plan",
+                    "kind": "planner",
+                    "title": "Plan",
+                    "tasks": [
+                        {
+                            "id": "scope",
+                            "title": "Scope",
+                            "requirements": [
+                                {"id": "REQ-1", "desc": "Implement the qualified scope"}
+                            ],
+                        }
+                    ],
+                }
+            ],
         },
         "repo_name": git_repo.name,
         "branch": "main",
@@ -94,6 +764,7 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
         if event.event_type == "node_created" and event.payload.get("kind") == "planner"
     )
     assert planner_created.payload["reliable_plan_one_horizon_authorized"] is True
+    requirement_node_id = "requirement-qualified-scope"
 
     controller = GraphController(
         app.state.session_factory,
@@ -124,13 +795,57 @@ async def test_run_api_consumes_server_qualification_once_and_rejects_forgery(
                 {
                     "op": "create_node",
                     "node": {
-                        "node_id": "planner-successor-one",
-                        "kind": "planner",
-                        "role": "planner",
-                        "state": "planned",
-                        "planning_horizon": 1,
+                        "node_id": requirement_node_id,
+                        "kind": "requirement",
+                        "role": "requirement",
+                        "state": "completed",
+                        "outputs": [
+                            {
+                                "port": "requirement",
+                                "direction": "output",
+                                "schema": "Requirement",
+                            }
+                        ],
                     },
                 }
+            ],
+            "macro_invocations": [
+                {
+                    "macro": "create_discovery_region",
+                    "args": {
+                        "region_id": "discovery",
+                        "worker_id": "worker-discovery",
+                        "semantic_schema_id": "reliable-plan-implementation-plan",
+                        "semantic_schema_version": 1,
+                        "objective": "Discover the implementation plan.",
+                        "acceptance": ["plan is complete"],
+                        "requirement_source_node_ids": [requirement_node_id],
+                    },
+                },
+                {
+                    "macro": "create_plan_verification",
+                    "args": {
+                        "region_id": "plan-verification",
+                        "verifier_id": "verifier-plan",
+                        "artifact_source_node_id": "worker-discovery",
+                        "semantic_schema_id": "reliable-plan-implementation-plan",
+                        "semantic_schema_version": 1,
+                        "objective": "Independently verify the plan.",
+                        "acceptance": ["requirements are covered"],
+                        "rubric": ["REQ-1 maps to a batch"],
+                        "requirement_source_node_ids": [requirement_node_id],
+                    },
+                },
+                {
+                    "macro": "create_successor_planner",
+                    "args": {
+                        "region_id": "successor",
+                        "node_id": "planner-successor-one",
+                        "evidence_source_node_id": "verifier-plan",
+                        "evidence_source_port": "verification_report",
+                        "planning_horizon": 1,
+                    },
+                },
             ],
         },
         context=PatchCommandContext(
