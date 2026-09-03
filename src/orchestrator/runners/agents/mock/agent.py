@@ -1,7 +1,8 @@
 """Mock agent for testing."""
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from orchestrator.runners.errors import AgentCancelledError, AgentExecutionError
 from orchestrator.runners.runtime.quota import QuotaFetcher
@@ -16,6 +17,7 @@ from orchestrator.runners.types import (
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    RunnerRuntimeObservationCapability,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
@@ -70,6 +72,10 @@ class MockAgent:
             agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
             name="mock",
             version="1.0.0",
+            runtime_observation=RunnerRuntimeObservationCapability(
+                mode="non_process_owning",
+                reason="deterministic mock runner owns no operating-system process",
+            ),
         )
 
     def get_quota(self, fetcher: QuotaFetcher | None = None) -> AgentQuota | None:
@@ -106,7 +112,8 @@ class MockAgent:
         if self._behavior.should_submit:
             if self._cancelled:
                 raise AgentCancelledError("mock")
-            await on_submit()
+            empty_submit = cast(Callable[[], Awaitable[None]], on_submit)
+            await empty_submit()
 
         return ExecutionResult(
             success=True,

@@ -29,7 +29,12 @@ from orchestrator.graph import (
     initial_projection,
 )
 from orchestrator.graph import GraphCommandContext
-from orchestrator.graph import COMMAND_SPECS, apply_command, serialize_event_payload
+from orchestrator.graph import (
+    COMMAND_SPECS,
+    apply_command,
+    boundary_manifest_hash,
+    serialize_event_payload,
+)
 from tests.unit.graph_test_utils import event
 
 
@@ -275,6 +280,26 @@ COMMAND_EXAMPLES: dict[str, dict[str, Any]] = {
         "boundary_hash": "sha256:" + "0" * 64,
         "boundary_entries": [],
     },
+    "witness_runner_completion": {
+        "execution_id": "exec-1",
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "final_snapshot_id": "final-1",
+        "final_snapshot_ref": "refs/orchestrator/snapshots/final-1",
+        "final_commit_sha": "b" * 40,
+        "final_tree_sha": "a" * 40,
+        "boundary_hash": boundary_manifest_hash("a" * 40, [], [], None),
+        "boundary_entries": [],
+        "staged_payload_hash": "sha256:" + "1" * 64,
+        "staged_payload_size_bytes": 12,
+        "staged_snapshot_id": "staged-1",
+        "staged_snapshot_ref": "refs/orchestrator/snapshots/staged-1",
+        "staged_commit_sha": "c" * 40,
+        "staged_tree_sha": "a" * 40,
+        "staged_boundary_hash": boundary_manifest_hash("a" * 40, [], [], None),
+        "runner_return_kind": "successful_return",
+    },
     "finalize_runner_execution": {
         "execution_id": "exec-1",
         "node_id": "worker-1",
@@ -368,6 +393,22 @@ IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     "evaluate_join": ("node_id", "record_id", "lease_id"),
     "evaluate_final_gate": ("node_id", "record_id", "lease_id"),
     "record_cleanup_applied": ("cleanup_id",),
+    "witness_runner_completion": (
+        "execution_id",
+        "node_id",
+        "lease_id",
+        "final_snapshot_id",
+        "final_snapshot_ref",
+        "final_commit_sha",
+        "final_tree_sha",
+        "boundary_hash",
+        "staged_payload_hash",
+        "staged_snapshot_id",
+        "staged_snapshot_ref",
+        "staged_commit_sha",
+        "staged_tree_sha",
+        "staged_boundary_hash",
+    ),
 }
 
 

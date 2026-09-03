@@ -279,7 +279,13 @@ async def test_file_state_snapshot_publication_replays_from_durable_staging(
         run_id=run_id, allowed_kinds=frozenset({"snapshot_publish"})
     )
 
-    assert [item.kind for item in completed] == ["snapshot_publish"]
+    # Baseline/final publication intents may be picked up in this same outbox
+    # tranche when real Git boundaries finish after the dispatcher's prior
+    # scan.  The contract under test is exactly one replay of this staged ref,
+    # independent of that legitimate scheduling order.
+    assert completed
+    assert all(item.kind == "snapshot_publish" for item in completed)
+    assert sum(item.payload.get("snapshot_ref") == ref for item in completed) == 1
     assert _ref_exists(repo, ref)
     assert (
         subprocess.run(

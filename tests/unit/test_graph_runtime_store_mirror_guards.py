@@ -25,18 +25,25 @@ so there is nothing left to keep in sync by hand.
 from __future__ import annotations
 
 import ast
+import hashlib
 import inspect
+import json
 import typing
+from datetime import UTC, datetime
+from types import SimpleNamespace
 
 from pydantic import BaseModel, RootModel
 
 import orchestrator.graph as graph_models
 from orchestrator.graph import (
+    Actor,
+    ActorKind,
     AuthorityDecisionValue,
     AuthorityRequestValue,
     DecisionRecordValue,
     DecisionRequestValue,
     EVENT_PAYLOAD_MODELS,
+    EventEnvelope,
     LeaseGrantedPayload,
     TypedRecordBase,
 )
@@ -187,6 +194,52 @@ def test_record_payload_base_fields_match_typed_record_base_envelope() -> None:
         f"matches the TypedRecordBase envelope.\nmissing: {sorted(expected - actual)}"
         f"\nstale: {sorted(actual - expected)}"
     )
+
+
+def test_semantic_artifact_typed_payload_is_a_deterministic_owner_descriptor() -> None:
+    value = {
+        "schema_id": "reliable-plan-implementation-plan",
+        "schema_version": 1,
+        "content": {"plan": "x" * 28_018},
+    }
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+
+    assert store._typed_record_payload({"record_type": "semantic_artifact", "value": value}) == {
+        "semantic_artifact_value_owner": "event.payload.value",
+        "canonical_value_sha256": f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+        "canonical_value_size_bytes": len(canonical),
+    }
+
+
+def test_ordinary_and_legacy_record_payloads_keep_their_existing_shape() -> None:
+    value = {"status": "passed", "stdout": "exact"}
+    assert store._typed_record_payload({"record_type": "check_result", "value": value}) == value
+    legacy = {
+        "record_id": "legacy-semantic",
+        "record_type": "semantic_artifact",
+        "record_kind": "graph_record",
+        "producer_node_id": "discovery",
+        "port": "semantic_artifact",
+        "schema": "SemanticArtifact",
+        "value": value,
+        "payload": {"status": "historically-duplicated"},
+    }
+    store._add_durable_record_base_fields(
+        SimpleNamespace(
+            event_type="output_record_accepted",
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        ),
+        legacy,
+        9,
+        "run-legacy",
+    )
+    assert legacy["value"] == value
+    assert legacy["payload"] == {"status": "historically-duplicated"}
 
 
 # ---------------------------------------------------------------------------
@@ -347,3 +400,26 @@ def test_summary_payload_fields_covers_every_event_type_or_is_a_documented_gap()
         f"_SUMMARY_KNOWN_EMPTY_EVENT_TYPES so the exclusion list stays honest: "
         f"{sorted(stale_exclusions)}"
     )
+
+
+def test_runner_completion_dispositions_survive_compact_event_readback() -> None:
+    """The compact activity/read API must distinguish every public submit state."""
+    for index, (event_type, disposition) in enumerate(
+        (
+            ("runner_submission_staged", "durably_staged"),
+            ("runner_execution_finalized", "finalized_accepted"),
+        ),
+        start=1,
+    ):
+        event = EventEnvelope(
+            event_id=f"event-{index}",
+            run_id="run",
+            position=index,
+            event_type=event_type,
+            schema_version=1,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            causation_id="test",
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            payload={"execution_id": "exec", "disposition": disposition},
+        )
+        assert store.summarize_graph_event(event).payload["disposition"] == disposition

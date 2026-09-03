@@ -15,6 +15,7 @@ from orchestrator.runners.types import (
     ExecutionMetrics,
     ExecutionResult,
 )
+from orchestrator.runners import MockAgent
 from orchestrator.config import AgentRunnerType
 
 
@@ -95,6 +96,12 @@ def test_agent_info_no_version() -> None:
         agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL, name="openhands_local"
     )
     assert info.version is None
+
+
+def test_mock_runner_explicitly_owns_no_process() -> None:
+    capability = MockAgent().info.runtime_observation
+    assert capability.mode == "non_process_owning"
+    assert "no operating-system process" in capability.reason
 
 
 def test_retired_agent_runner_type_is_in_enum() -> None:

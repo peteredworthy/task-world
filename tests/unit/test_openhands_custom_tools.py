@@ -6,12 +6,14 @@ correctly from a worker thread back to the event loop.
 """
 
 import asyncio
+import json
 from dataclasses import dataclass
 
 import pytest
 
 from orchestrator.runners import (  # pyright: ignore[reportPrivateUsage]
     GetRequirementsExecutor,
+    SubmissionAcknowledgement,
     SubmitExecutor,
     UpdateChecklistExecutor,
     _SDK_AVAILABLE,  # pyright: ignore[reportPrivateUsage]
@@ -184,4 +186,33 @@ async def test_submit_executor_invokes_callback() -> None:
 
     assert submitted is True
     assert isinstance(result, _FakeObservation)
-    assert "submitted" in result.text.lower()
+    acknowledgement = json.loads(result.text)
+    assert acknowledgement["disposition"] == "durably_staged"
+    assert "not yet accepted" in acknowledgement["message"]
+
+
+@pytest.mark.parametrize(
+    ("disposition", "message"),
+    [
+        ("rejected", "submission rejected: acceptance command failed"),
+        ("durably_staged", "durably staged; pending runner completion and not yet accepted"),
+        ("finalized_accepted", "submission is durably finalized and accepted"),
+    ],
+)
+async def test_submit_executor_preserves_three_way_acknowledgement(
+    disposition: str,
+    message: str,
+) -> None:
+    async def on_submit() -> SubmissionAcknowledgement:
+        return SubmissionAcknowledgement.model_validate(
+            {"disposition": disposition, "message": message, "execution_id": "execution-1"}
+        )
+
+    loop = asyncio.get_running_loop()
+    executor = SubmitExecutor(on_submit, loop, observation_factory=_fake_observation_factory)
+    result = await asyncio.to_thread(lambda: executor(action=None))
+
+    assert isinstance(result, _FakeObservation)
+    acknowledgement = json.loads(result.text)
+    assert acknowledgement["disposition"] == disposition
+    assert acknowledgement["message"] == message

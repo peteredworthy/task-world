@@ -224,10 +224,11 @@ class ReliablePlanProductPathRunner:
                         {
                             "op": "create_node",
                             "node": {
-                                **_executable_worker("worker-discovery", "discovery"),
+                                **_executable_worker(
+                                    "worker-discovery", "discovery", access_mode="write"
+                                ),
                                 "role": "discovery",
                                 "semantic_stage": "discovery",
-                                "access_mode": "write",
                                 "semantic_schema_id": "inventory",
                                 "semantic_schema_version": 1,
                                 "outputs": [
@@ -420,8 +421,9 @@ class ReliablePlanProductPathRunner:
                         {
                             "op": "create_node",
                             "node": {
-                                **_executable_worker("generic-worker", "generic"),
-                                "access_mode": "write",
+                                **_executable_worker(
+                                    "generic-worker", "generic", access_mode="write"
+                                ),
                             },
                         }
                     ],
@@ -1706,7 +1708,12 @@ def _planner_node() -> dict[str, object]:
     return {"node_id": "planner-1", "kind": "planner", "role": "planner", "state": "completed"}
 
 
-def _executable_worker(node_id: str, region: str) -> dict[str, object]:
+def _executable_worker(
+    node_id: str,
+    region: str,
+    *,
+    access_mode: str = "read_only",
+) -> dict[str, object]:
     return {
         "node_id": node_id,
         "kind": "worker",
@@ -1717,7 +1724,10 @@ def _executable_worker(node_id: str, region: str) -> dict[str, object]:
         "attempt_number": 1,
         "objective": f"Execute {region} contract",
         "work_mode": "implementation",
-        "access_mode": "read_only",
+        "access_mode": access_mode,
+        "effect_contract": (
+            "read_only_semantic" if access_mode == "read_only" else "effectful_write"
+        ),
         "scope": f"scope-{region}",
         "acceptance": [f"{region} accepted"],
         "invariants": ["preserve accepted evidence"],
@@ -1836,8 +1846,7 @@ def _requirement_record(*, source: str = "incident contract") -> dict[str, objec
 
 def _plan_handoff_facts(outcome: str | None) -> list[tuple[str, dict[str, object]]]:
     worker = {
-        **_executable_worker("worker-implementation", "implementation"),
-        "access_mode": "write",
+        **_executable_worker("worker-implementation", "implementation", access_mode="write"),
     }
     facts: list[tuple[str, dict[str, object]]] = [
         (
@@ -2118,10 +2127,9 @@ def _snapshot_scenario_facts() -> list[tuple[str, dict[str, object]]]:
         worker_id = f"worker-snapshot-{suffix}"
         verifier_id = f"verifier-snapshot-{suffix}"
         worker = {
-            **_executable_worker(worker_id, "snapshots"),
+            **_executable_worker(worker_id, "snapshots", access_mode="write"),
             "candidate_id": f"candidate-{suffix}",
             "attempt_number": attempt,
-            "access_mode": "write",
             "base_snapshot_selection": "run_baseline" if attempt == 1 else "accepted_region",
         }
         if attempt > 1:
@@ -2221,9 +2229,8 @@ def _final_gate_facts() -> list[tuple[str, dict[str, object]]]:
         (
             "node_created",
             {
-                **_executable_worker("worker-batch", "batch-1"),
+                **_executable_worker("worker-batch", "batch-1", access_mode="write"),
                 "role": "implementer",
-                "access_mode": "write",
                 "semantic_stage": "effectful_batch",
                 "declared_batch_id": "batch-1",
                 "task_region_id": "region-batch-1",

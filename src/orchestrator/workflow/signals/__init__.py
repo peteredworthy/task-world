@@ -23,11 +23,19 @@ from orchestrator.workflow.signals.runtime import (
 
 # Consumer must be imported AFTER signals.signals and handlers are loaded
 # to avoid circular imports (handlers.py imports WorkflowSignal from this __init__)
-from orchestrator.workflow.signals.consumer import SignalConsumer
+from orchestrator.workflow.signals.consumer import (
+    GraphDriverOwnership,
+    GraphLifecycleQuiescenceError,
+    GraphLivenessReconciliation,
+    SignalConsumer,
+)
 
 __all__ = [
     "EventSignalTransport",
     "ExecutorCallbacks",
+    "GraphDriverOwnership",
+    "GraphLifecycleQuiescenceError",
+    "GraphLivenessReconciliation",
     "InMemorySignalTransport",
     "LoopAction",
     "NoTaskReason",

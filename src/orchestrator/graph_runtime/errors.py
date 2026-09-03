@@ -1,8 +1,22 @@
 """Typed runtime errors for graph persistence and outbox dispatch."""
 
+from typing import Any
+
 
 class GraphRuntimeError(Exception):
     """Base class for graph runtime failures."""
+
+
+class SubmissionQualityGateError(GraphRuntimeError, ValueError):
+    """Raised before staging when authoritative validation does not pass."""
+
+    def __init__(self, message: str, *, report: Any | None = None) -> None:
+        self.report = report
+        super().__init__(message)
+
+
+class InvalidExecutionContractError(SubmissionQualityGateError):
+    """Raised when immutable node execution authority is malformed."""
 
 
 class StaleProjectionError(GraphRuntimeError):
@@ -63,3 +77,7 @@ class RecoveryCompletionRejectedError(GraphRuntimeError):
 
 class ProcessQuiescenceError(GraphRuntimeError):
     """Raised when an owned runner cannot be stopped before recovery."""
+
+
+class RunnerProcessMissingError(GraphRuntimeError):
+    """Raised when a dispatched runner's verified process identity disappears."""

@@ -60,6 +60,7 @@ from orchestrator.graph.command_models import (
     RecordRunnerBaselineCommand,
     RequestRunnerRecoveryCommand,
     StageRunnerSubmissionCommand,
+    WitnessRunnerCompletionCommand,
     FinalizeRunnerExecutionCommand,
     CompleteRunnerRecoveryCommand,
 )
@@ -223,6 +224,7 @@ from orchestrator.graph.models import (
     RunnerBoundaryEntry,
     RunnerBaselineRecordedPayload,
     RunnerSubmissionStagedPayload,
+    RunnerCompletionWitnessedPayload,
     RunnerBoundaryMismatchPayload,
     RunnerRecoveryRequestedPayload,
     RunnerRecoveryCompletedPayload,
@@ -289,6 +291,11 @@ from orchestrator.graph.semantic_artifacts import (
     semantic_declaration_conflict,
     semantic_schema_declarations,
     validate_semantic_artifact_content,
+)
+from orchestrator.graph.semantic_applicability import (
+    WriteWorkerSemanticApplicability,
+    accepted_declared_batch_ids,
+    classify_write_worker_semantics,
 )
 from orchestrator.graph.projection_collections import (
     FrozenJsonValue,
@@ -651,11 +658,13 @@ __all__ = [
     "RecordRunnerBaselineCommand",
     "RequestRunnerRecoveryCommand",
     "StageRunnerSubmissionCommand",
+    "WitnessRunnerCompletionCommand",
     "FinalizeRunnerExecutionCommand",
     "CompleteRunnerRecoveryCommand",
     "RunnerBoundaryEntry",
     "RunnerBaselineRecordedPayload",
     "RunnerSubmissionStagedPayload",
+    "RunnerCompletionWitnessedPayload",
     "RunnerBoundaryMismatchPayload",
     "RunnerRecoveryRequestedPayload",
     "RunnerRecoveryCompletedPayload",
@@ -857,6 +866,9 @@ __all__ = [
     "validate_patch",
     "semantic_declaration_conflict",
     "semantic_schema_declarations",
+    "WriteWorkerSemanticApplicability",
+    "accepted_declared_batch_ids",
+    "classify_write_worker_semantics",
     "validate_semantic_artifact_content",
     "resource_claim_dicts",
     "AnalysisSummaryRecord",

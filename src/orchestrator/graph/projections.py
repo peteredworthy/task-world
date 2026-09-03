@@ -1173,7 +1173,7 @@ def _reduce_slice_a_node_update(state: GraphProjection, event: EventEnvelope) ->
         node = state.nodes.get(payload.node_id)
         if node is None:
             return state
-        return _replace_node(
+        updated = _replace_node(
             state,
             _node_from_parts(
                 node.spec,
@@ -1187,6 +1187,33 @@ def _reduce_slice_a_node_update(state: GraphProjection, event: EventEnvelope) ->
                 ),
             ),
         )
+        matching_attempts = [
+            attempt
+            for attempt in state.execution.attempts_by_execution_id.values()
+            if attempt.node_id == payload.node_id
+            and attempt.lease_id == payload.lease_id
+            and attempt.lease_generation == payload.generation
+        ]
+        if len(matching_attempts) > 1:
+            raise ProjectionReplayConflictError(
+                "runtime retry identifies multiple execution attempts"
+            )
+        if not matching_attempts:
+            # Legacy and non-runner retry events predate execution-attempt
+            # ownership. Preserve their node scheduling behavior without
+            # fabricating a crash-drill lineage fact.
+            return updated
+        attempt = matching_attempts[0].model_copy(update={"retry_scheduled": True})
+        execution = updated.execution.model_copy(
+            update={
+                "attempts_by_execution_id": map_set(
+                    updated.execution.attempts_by_execution_id,
+                    attempt.execution_id,
+                    attempt,
+                )
+            }
+        )
+        return _replace_projection_groups(updated, execution=execution)
     payload = NodeAuthorityChangedPayload.model_validate(event.payload)
     node = state.nodes.get(payload.node_id)
     if node is None:
@@ -2223,6 +2250,7 @@ def _reduce_slice_c(state: GraphProjection, event: EventEnvelope) -> GraphProjec
     if event.event_type in {
         "runner_baseline_recorded",
         "runner_submission_staged",
+        "runner_completion_witnessed",
         "runner_boundary_mismatch",
         "runner_recovery_requested",
         "runner_recovery_completed",
@@ -2265,6 +2293,18 @@ def _attempt_root_union(existing: object, observed: tuple[object, ...]) -> tuple
         tuple(value for value in phase if not isinstance(value, str)) for phase in phases
     )
     return (*tuple(sorted(set(strings))), *latest_cache_root_union(*typed_phases))
+
+
+def _legacy_recovery_completion_disposition(existing: object) -> str:
+    """Derive old completion events that predate an explicit disposition."""
+    recovery_reason = getattr(existing, "recovery_reason", None)
+    if recovery_reason == "staged_artifact_missing":
+        return "restored_artifact_missing"
+    if recovery_reason == "staged_artifact_corrupt":
+        return "restored_artifact_corrupt"
+    if getattr(existing, "runner_return_kind", None) == "successful_return":
+        return "restored_boundary_mismatch"
+    return "restored_unwitnessed"
 
 
 def _validate_replay_cache_authority(state: GraphProjection, payload: object) -> None:
@@ -2362,6 +2402,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
     from orchestrator.graph.models import (
         RunnerBaselineRecordedPayload,
         RunnerExecutionFinalizedPayload,
+        RunnerCompletionWitnessedPayload,
         RunnerRecoveryCompletedPayload,
         RunnerRecoveryRequestedPayload,
         RunnerSubmissionStagedPayload,
@@ -2444,6 +2485,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 and existing.payload_size_bytes == payload.payload_size_bytes
                 and existing.staged_cache_roots == replay_roots
                 and existing.cache_authority_hash == payload.cache_authority_hash
+                and thaw_json(existing.validation_witness) == payload.validation_witness
             ):
                 return state
             raise ProjectionReplayConflictError(
@@ -2479,8 +2521,84 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "is_mutating": payload.is_mutating,
                 "complete_node": payload.complete_node,
                 "new_state": payload.new_state,
+                "completion_disposition": "durably_staged",
                 "staged_cache_roots": replay_roots,
                 "staged_cache_status_evidence": tuple(payload.cache_status_evidence or ()),
+                "validation_witness": freeze_json(payload.validation_witness)
+                if payload.validation_witness is not None
+                else None,
+            }
+        )
+    elif event.event_type == "runner_completion_witnessed":
+        payload = RunnerCompletionWitnessedPayload.model_validate(event.payload)
+        _validate_replay_cache_authority(state, payload)
+        _verify_boundary_hash(
+            payload.final_tree_sha,
+            payload.boundary_entries,
+            payload.boundary_hash,
+            payload.cache_status_evidence or (),
+            payload.cache_authority_hash,
+        )
+        existing = attempts.get(payload.execution_id)
+        replay_roots = _replay_cache_roots(state, payload)
+        if existing is None:
+            raise ProjectionReplayConflictError("runner completion witness has no staged attempt")
+        if existing.state in {"completion_witnessed", "finalized"}:
+            if (
+                existing.node_id == payload.node_id
+                and existing.lease_id == payload.lease_id
+                and existing.lease_generation == payload.lease_generation
+                and existing.payload_hash == payload.staged_payload_hash
+                and existing.payload_size_bytes == payload.staged_payload_size_bytes
+                and existing.staged_snapshot_id == payload.staged_snapshot_id
+                and existing.staged_snapshot_ref == payload.staged_snapshot_ref
+                and existing.staged_commit_sha == payload.staged_commit_sha
+                and existing.staged_tree_sha == payload.staged_tree_sha
+                and existing.staged_boundary_hash == payload.staged_boundary_hash
+                and existing.runner_return_kind == payload.runner_return_kind
+                and existing.final_snapshot_id == payload.final_snapshot_id
+                and existing.final_snapshot_ref == payload.final_snapshot_ref
+                and existing.final_commit_sha == payload.final_commit_sha
+                and existing.final_tree_sha == payload.final_tree_sha
+                and existing.final_boundary_hash == payload.boundary_hash
+                and existing.final_boundary_entries == tuple(payload.boundary_entries)
+                and existing.final_cache_roots == replay_roots
+                and existing.cache_authority_hash == payload.cache_authority_hash
+            ):
+                return state
+            raise ProjectionReplayConflictError(
+                "runner completion witness duplicate conflicts during replay"
+            )
+        if (
+            existing.state != "submission_staged"
+            or existing.node_id != payload.node_id
+            or existing.lease_id != payload.lease_id
+            or existing.lease_generation != payload.lease_generation
+            or existing.payload_hash != payload.staged_payload_hash
+            or existing.payload_size_bytes != payload.staged_payload_size_bytes
+            or existing.staged_snapshot_id != payload.staged_snapshot_id
+            or existing.staged_snapshot_ref != payload.staged_snapshot_ref
+            or existing.staged_commit_sha != payload.staged_commit_sha
+            or existing.staged_tree_sha != payload.staged_tree_sha
+            or existing.staged_boundary_hash != payload.staged_boundary_hash
+        ):
+            raise ProjectionReplayConflictError(
+                "runner completion witness conflicts with staged execution"
+            )
+        candidate = existing.model_copy(
+            update={
+                "state": "completion_witnessed",
+                "completion_disposition": "completion_witnessed",
+                "runner_return_kind": payload.runner_return_kind,
+                "final_snapshot_id": payload.final_snapshot_id,
+                "final_snapshot_ref": payload.final_snapshot_ref,
+                "final_commit_sha": payload.final_commit_sha,
+                "final_tree_sha": payload.final_tree_sha,
+                "final_boundary_hash": payload.boundary_hash,
+                "final_boundary_entries": tuple(payload.boundary_entries),
+                "final_cache_roots": replay_roots,
+                "final_cache_status_evidence": tuple(payload.cache_status_evidence or ()),
+                "cache_roots": _attempt_root_union(existing, replay_roots),
             }
         )
     elif event.event_type == "runner_recovery_requested":
@@ -2530,6 +2648,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
             if (
                 existing.recovery_id == payload.recovery_id
                 and existing.recovery_reason == payload.reason
+                and existing.recovery_error_detail == payload.error_detail
                 and existing.node_id == payload.node_id
                 and existing.lease_id == payload.lease_id
                 and existing.lease_generation == payload.lease_generation
@@ -2541,6 +2660,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 and existing.recovery_snapshot_ref == payload.recovery_snapshot_ref
                 and existing.recovery_commit_sha == payload.recovery_commit_sha
                 and existing.recovery_max_attempts == payload.max_attempts
+                and existing.retry_after_recovery == payload.retry_after_recovery
                 and existing.final_tree_sha == payload.final_tree_sha
                 and existing.final_snapshot_id == payload.final_snapshot_id
                 and existing.final_snapshot_ref == payload.final_snapshot_ref
@@ -2553,7 +2673,12 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 return state
             raise ProjectionReplayConflictError("runner recovery duplicate conflicts during replay")
         if (
-            existing.state not in {"baseline_captured", "submission_staged"}
+            existing.state
+            not in {
+                "baseline_captured",
+                "submission_staged",
+                "completion_witnessed",
+            }
             or existing.node_id != payload.node_id
             or existing.lease_id != payload.lease_id
             or existing.lease_generation != payload.lease_generation
@@ -2581,7 +2706,9 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "state": "recovery_requested",
                 "recovery_id": payload.recovery_id,
                 "recovery_reason": payload.reason,
+                "recovery_error_detail": payload.error_detail,
                 "recovery_max_attempts": payload.max_attempts,
+                "retry_after_recovery": payload.retry_after_recovery,
                 "recovery_snapshot_id": payload.recovery_snapshot_id,
                 "recovery_snapshot_ref": payload.recovery_snapshot_ref,
                 "recovery_commit_sha": payload.recovery_commit_sha,
@@ -2681,6 +2808,8 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
         candidate = existing.model_copy(
             update={
                 "state": "recovered",
+                "completion_disposition": payload.disposition
+                or _legacy_recovery_completion_disposition(existing),
                 "recovery_proof_hash": payload.proof_hash,
                 "restored_paths": tuple(payload.restored_paths),
                 "removed_paths": tuple(payload.removed_paths),
@@ -2719,7 +2848,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
                 "runner finalization duplicate conflicts during replay"
             )
         if (
-            existing.state != "submission_staged"
+            existing.state not in {"submission_staged", "completion_witnessed"}
             or existing.node_id != payload.node_id
             or existing.lease_id != payload.lease_id
             or existing.lease_generation != payload.lease_generation
@@ -2731,6 +2860,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
         candidate = existing.model_copy(
             update={
                 "state": "finalized",
+                "completion_disposition": "finalized_accepted",
                 "final_snapshot_id": payload.final_snapshot_id,
                 "final_snapshot_ref": payload.final_snapshot_ref,
                 "final_commit_sha": payload.final_commit_sha,
@@ -2759,7 +2889,7 @@ def _reduce_runner_execution(state: GraphProjection, event: EventEnvelope) -> Gr
         existing = attempts.get(payload.execution_id)
         if (
             existing is None
-            or existing.state != "submission_staged"
+            or existing.state not in {"submission_staged", "completion_witnessed"}
             or existing.node_id != payload.node_id
             or existing.lease_id != payload.lease_id
             or existing.lease_generation != payload.lease_generation
@@ -5099,14 +5229,6 @@ def project_graph_blocked_reason(projection: GraphProjectionSnapshot) -> str:
         )
         if leased_nodes:
             return f"graph has active lease(s) without callback: {', '.join(leased_nodes[:3])}"
-    missing_input_nodes = _project_nonterminal_node_details(projection, require_missing_input=True)
-    if missing_input_nodes:
-        suffix = "" if len(missing_input_nodes) <= 3 else f" (+{len(missing_input_nodes) - 3} more)"
-        return (
-            "graph quiescent with non-terminal node(s): "
-            + ", ".join(missing_input_nodes[:3])
-            + suffix
-        )
     failed_nodes = sorted(
         node_id for node_id, state in projection.node_states.items() if state == "failed"
     )
@@ -5119,6 +5241,14 @@ def project_graph_blocked_reason(projection: GraphProjectionSnapshot) -> str:
         ]
         suffix = "" if len(failed_nodes) <= 3 else f" (+{len(failed_nodes) - 3} more)"
         return f"graph has failed node(s): {', '.join(details)}{suffix}"
+    missing_input_nodes = _project_nonterminal_node_details(projection, require_missing_input=True)
+    if missing_input_nodes:
+        suffix = "" if len(missing_input_nodes) <= 3 else f" (+{len(missing_input_nodes) - 3} more)"
+        return (
+            "graph quiescent with non-terminal node(s): "
+            + ", ".join(missing_input_nodes[:3])
+            + suffix
+        )
     nonterminal_nodes = _project_nonterminal_node_details(projection)
     if nonterminal_nodes:
         suffix = "" if len(nonterminal_nodes) <= 3 else f" (+{len(nonterminal_nodes) - 3} more)"

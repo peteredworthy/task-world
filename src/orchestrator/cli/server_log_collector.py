@@ -41,14 +41,31 @@ def collect_server_output(
     return traceback_seen
 
 
+def _signal_ready(raw_fd: str) -> None:
+    """Acknowledge that the durable destination is open before the child runs freely."""
+    try:
+        ready_fd = int(raw_fd)
+    except ValueError as exc:
+        raise RuntimeError("collector readiness file descriptor must be an integer") from exc
+    try:
+        os.write(ready_fd, b"R")
+    finally:
+        os.close(ready_fd)
+
+
 def main() -> int:
     """Collect stdin into the process-log path supplied on the command line."""
-    if len(sys.argv) != 2:
-        print("usage: python -m orchestrator.cli.server_log_collector PROCESS_LOG", file=sys.stderr)
+    if len(sys.argv) not in (2, 3):
+        print(
+            "usage: python -m orchestrator.cli.server_log_collector PROCESS_LOG [READY_FD]",
+            file=sys.stderr,
+        )
         return 2
     process_log_path = Path(sys.argv[1])
     destination = getattr(sys.stdout, "buffer", None)
     with process_log_path.open("ab", buffering=0) as process_log:
+        if len(sys.argv) == 3:
+            _signal_ready(sys.argv[2])
         collect_server_output(sys.stdin.buffer, process_log, destination)
     return 0
 

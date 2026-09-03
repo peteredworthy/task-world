@@ -158,6 +158,7 @@ _RUNNER_CACHE_CARRIER_EVENT_TYPES = frozenset(
     {
         "runner_baseline_recorded",
         "runner_submission_staged",
+        "runner_completion_witnessed",
         "runner_boundary_mismatch",
         "runner_recovery_requested",
         "runner_execution_finalized",
@@ -178,6 +179,7 @@ SUMMARY_PAYLOAD_FIELDS = (
     "command_binding",
     "command_definition",
     "command_type",
+    "disposition",
     "candidate_id",
     "base_snapshot_selection",
     "base_snapshot_region_id",
@@ -244,6 +246,7 @@ BOOLEAN_PAYLOAD_FIELDS = frozenset(
         "owns_file_state_snapshot",
         "rate_missing",
         "reliable_plan_one_horizon_authorized",
+        "retry_after_recovery",
         "required",
         "requires_authority",
         "semantic_change",
@@ -1994,6 +1997,63 @@ def graph_aggregate_id(run_id: str) -> str:
     return f"{GRAPH_AGGREGATE_PREFIX}{run_id}"
 
 
+def _iterables_equal(left: Any, right: Any) -> bool:
+    """Compare two deterministic view iterators without retaining either view."""
+    sentinel = object()
+    left_iterator = iter(left)
+    right_iterator = iter(right)
+    while True:
+        left_value = next(left_iterator, sentinel)
+        right_value = next(right_iterator, sentinel)
+        if left_value is sentinel or right_value is sentinel:
+            return left_value is right_value
+        if left_value != right_value:
+            return False
+
+
+def _archival_views_are_semantically_unchanged(
+    previous: GraphProjection,
+    current: GraphProjection,
+) -> bool:
+    """Return whether all coupled archival rows would remain byte-equivalent.
+
+    This is deliberately projection-semantic rather than event-name based.  A
+    new canonical event type therefore gets the right archival behavior from
+    what its reducer changes, without extending a fragile neutral allowlist.
+    The iterators are compared row-by-row so the append path does not retain a
+    second complete topology or blocker collection.
+    """
+    if not _iterables_equal(
+        iter_archival_graph_topology_entries(
+            previous,
+            collection_limit=GRAPH_JSON_ARRAY_ITEMS,
+        ),
+        iter_archival_graph_topology_entries(
+            current,
+            collection_limit=GRAPH_JSON_ARRAY_ITEMS,
+        ),
+    ):
+        return False
+    if not _iterables_equal(
+        iter_archival_final_invariant_blockers(
+            [],
+            previous,
+            collection_limit=GRAPH_JSON_ARRAY_ITEMS,
+        ),
+        iter_archival_final_invariant_blockers(
+            [],
+            current,
+            collection_limit=GRAPH_JSON_ARRAY_ITEMS,
+        ),
+    ):
+        return False
+    return task_states_view(previous) == task_states_view(
+        current
+    ) and task_region_snapshot_authority_view(previous) == task_region_snapshot_authority_view(
+        current
+    )
+
+
 def _payload_with_durable_graph_position(
     event: EventEnvelope,
     position: int,
@@ -2140,6 +2200,13 @@ def _record_type_for_port(port: str, payload: dict[str, Any]) -> str:
 def _typed_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
     value = payload.get("value")
     if isinstance(value, dict):
+        if payload.get("record_type") == "semantic_artifact":
+            canonical_value = _canonical_json_bytes(value)
+            return {
+                "semantic_artifact_value_owner": "event.payload.value",
+                "canonical_value_sha256": f"sha256:{sha256(canonical_value).hexdigest()}",
+                "canonical_value_size_bytes": len(canonical_value),
+            }
         return dict(cast(dict[str, Any], value))
     return {
         key: value
@@ -2199,6 +2266,9 @@ class BoundedGraphHealth:
     event_count: int
     summaries_complete: bool
     run_state: str | None
+    failed_nodes: tuple[dict[str, Any], ...]
+    failed_nodes_total: int | None
+    failed_nodes_truncated: bool
     patches_accepted: int | None
     patches_rejected: int | None
     patch_decisions: tuple[dict[str, Any], ...]
@@ -2335,8 +2405,17 @@ class GraphEventStore:
         run_id: str,
         expected_position: int,
         events: list[EventEnvelope],
+        *,
+        authoritative_projection: GraphProjection | None = None,
     ) -> list[EventEnvelope]:
-        """Append events if the run stream is still at ``expected_position``."""
+        """Append events if the run stream is still at ``expected_position``.
+
+        ``authoritative_projection`` is the immutable projection already loaded
+        by ``GraphController`` before planning a command.  The controller passes
+        it only after re-checking the exact stream head inside its write
+        transaction.  Direct store callers omit it and retain the independent
+        authoritative-prefix load.
+        """
         if not events:
             return []
 
@@ -2380,12 +2459,17 @@ class GraphEventStore:
         # Validate relationships against the authoritative prefix before any
         # event row is staged.  The checkpoint remains a disposable cache, so
         # this reducer pass is the acceptance boundary for relationships.
-        projection, position = await self._projection_for_append(run_id, current_position)
+        if authoritative_projection is None:
+            projection, position = await self._projection_for_append(run_id, current_position)
+        else:
+            projection = authoritative_projection
+            position = current_position
         if position != expected_position:
             raise StaleProjectionError(
                 f"stale graph projection for run {run_id}: "
                 f"expected {expected_position}, found {position}"
             )
+        previous_projection = projection
         for event in stored_events:
             projection = reduce_event(
                 projection,
@@ -2429,6 +2513,7 @@ class GraphEventStore:
             [_projection_event(event) for event in stored_events],
             expected_position=expected_position,
             projection=projection,
+            previous_projection=previous_projection,
         )
         usage_events = [
             event for event in stored_events if event.event_type == "node_usage_recorded"
@@ -2688,6 +2773,9 @@ class GraphEventStore:
                 event_count=event_position,
                 summaries_complete=False,
                 run_state=None,
+                failed_nodes=(),
+                failed_nodes_total=None,
+                failed_nodes_truncated=False,
                 patches_accepted=None,
                 patches_rejected=None,
                 patch_decisions=(),
@@ -2704,6 +2792,9 @@ class GraphEventStore:
                 event_count=0,
                 summaries_complete=True,
                 run_state=None,
+                failed_nodes=(),
+                failed_nodes_total=0,
+                failed_nodes_truncated=False,
                 patches_accepted=0,
                 patches_rejected=0,
                 patch_decisions=(),
@@ -2716,12 +2807,18 @@ class GraphEventStore:
                 verifier_results_truncated=False,
             )
         run_state = await self._bounded_health_run_state(run_id)
+        failed_nodes, failed_nodes_total = await self._bounded_health_failed_nodes(
+            run_id, detail_limit
+        )
         patches = await self._bounded_health_patch_facts(run_id, detail_limit)
         verifiers = await self._bounded_health_verifier_facts(run_id, detail_limit)
         return BoundedGraphHealth(
             event_count=event_position,
             summaries_complete=True,
             run_state=run_state,
+            failed_nodes=failed_nodes,
+            failed_nodes_total=failed_nodes_total,
+            failed_nodes_truncated=failed_nodes_total > detail_limit,
             patches_accepted=patches[0],
             patches_rejected=patches[1],
             patch_decisions=patches[2],
@@ -2763,6 +2860,111 @@ class GraphEventStore:
         )
         value = result.scalar_one_or_none()
         return value if isinstance(value, str) else None
+
+    async def _bounded_health_failed_nodes(
+        self, run_id: str, detail_limit: int
+    ) -> tuple[tuple[dict[str, Any], ...], int]:
+        """Return nodes whose latest compact state is currently failed."""
+        created_node_id = func.json_extract(GraphEventSummaryModel.payload, "$.node_id")
+        created_state = func.json_extract(GraphEventSummaryModel.payload, "$.state")
+        creations_ranked = (
+            select(
+                created_node_id.label("node_id"),
+                created_state.label("state"),
+                func.row_number()
+                .over(
+                    partition_by=created_node_id,
+                    order_by=(
+                        GraphEventSummaryModel.position.asc(),
+                        GraphEventSummaryModel.event_id.asc(),
+                    ),
+                )
+                .label("row_number"),
+            )
+            .where(GraphEventSummaryModel.run_id == run_id)
+            .where(GraphEventSummaryModel.event_type == "node_created")
+            .where(created_node_id.is_not(None))
+            .subquery()
+        )
+        creations = (
+            select(creations_ranked.c.node_id, creations_ranked.c.state)
+            .where(creations_ranked.c.row_number == 1)
+            .subquery()
+        )
+        changed_node_id = func.json_extract(GraphEventSummaryModel.payload, "$.node_id")
+        changed_state = func.json_extract(GraphEventSummaryModel.payload, "$.new_state")
+        changed_reason = func.coalesce(
+            func.json_extract(GraphEventSummaryModel.payload, "$.reason"),
+            func.json_extract(GraphEventSummaryModel.payload, "$.trigger"),
+            "failed",
+        )
+        changes_ranked = (
+            select(
+                changed_node_id.label("node_id"),
+                changed_state.label("state"),
+                changed_reason.label("reason"),
+                func.row_number()
+                .over(
+                    partition_by=changed_node_id,
+                    order_by=(
+                        GraphEventSummaryModel.position.desc(),
+                        GraphEventSummaryModel.event_id.desc(),
+                    ),
+                )
+                .label("row_number"),
+            )
+            .where(GraphEventSummaryModel.run_id == run_id)
+            .where(GraphEventSummaryModel.event_type == "node_state_changed")
+            .where(changed_node_id.is_not(None))
+            .subquery()
+        )
+        latest_changes = (
+            select(
+                changes_ranked.c.node_id,
+                changes_ranked.c.state,
+                changes_ranked.c.reason,
+            )
+            .where(changes_ranked.c.row_number == 1)
+            .subquery()
+        )
+        current = (
+            select(
+                creations.c.node_id,
+                func.coalesce(latest_changes.c.state, creations.c.state).label("state"),
+                latest_changes.c.reason.label("reason"),
+            )
+            .select_from(creations)
+            .outerjoin(latest_changes, latest_changes.c.node_id == creations.c.node_id)
+            .subquery()
+        )
+        total = int(
+            await self._session.scalar(
+                select(func.count()).select_from(current).where(current.c.state == "failed")
+            )
+            or 0
+        )
+        rows = (
+            (
+                await self._session.execute(
+                    select(current.c.node_id, current.c.reason)
+                    .where(current.c.state == "failed")
+                    .order_by(current.c.node_id)
+                    .limit(detail_limit)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return (
+            tuple(
+                {
+                    "node_id": str(row["node_id"]),
+                    "reason": row["reason"] if isinstance(row["reason"], str) else "failed",
+                }
+                for row in rows
+            ),
+            total,
+        )
 
     async def _bounded_health_patch_facts(
         self, run_id: str, detail_limit: int
@@ -5075,19 +5277,35 @@ class GraphEventStore:
             summaries=summaries,
             edge_ports=edge_ports,
         )
+        facts_absent = False
+        if checkpoint is None and expected_position == 0:
+            existing_fact = await self._session.scalar(
+                select(GraphNodeDetailCollectionFactModel.run_id)
+                .where(GraphNodeDetailCollectionFactModel.run_id == run_id)
+                .limit(1)
+            )
+            facts_absent = existing_fact is None
+        affected = await self._upsert_node_detail_collection_facts(
+            run_id,
+            events,
+            summaries=updated,
+            facts_absent=facts_absent,
+        )
         for summary in updated.values():
             row = rows.get(summary.node_id)
             if row is None:
                 row = GraphNodeDetailSummaryModel(run_id=run_id, node_id=summary.node_id)
                 self._session.add(row)
-            _assign_node_detail_summary(row, summary)
+            if summary.node_id in affected:
+                # The normalized fact rows below are the authoritative source
+                # for every affected collection. Assign the scalar/unpacked
+                # fields once, then let the refresh perform the sole bounded
+                # owner pack. Packing the same collections here first was
+                # semantically redundant and doubled initial-seed CPU work.
+                _assign_node_detail_summary_unpacked(row, summary)
+            else:
+                _assign_node_detail_summary(row, summary)
             rows[summary.node_id] = row
-
-        affected = await self._upsert_node_detail_collection_facts(
-            run_id,
-            events,
-            summaries=updated,
-        )
         await self._session.flush()
         for node_id, collection_names in affected.items():
             row = rows.get(node_id)
@@ -5149,6 +5367,7 @@ class GraphEventStore:
         *,
         expected_position: int,
         projection: GraphProjection | None = None,
+        previous_projection: GraphProjection | None = None,
     ) -> None:
         """Incrementally maintain the full projection checkpoint for appends."""
         if not events:
@@ -5159,6 +5378,14 @@ class GraphEventStore:
                 run_id,
                 projection,
                 expected_position + len(events),
+                previous_position=expected_position,
+                archival_views_unchanged=(
+                    previous_projection is not None
+                    and _archival_views_are_semantically_unchanged(
+                        previous_projection,
+                        projection,
+                    )
+                ),
             )
             return
         projection = initial_projection() if row is None and expected_position == 0 else None
@@ -5189,12 +5416,18 @@ class GraphEventStore:
                 )
                 await self._session.flush()
                 return
+        previous_projection = projection
         for event in events:
             projection = reduce_event(projection, event, enforce_relationships=True)
         await self.persist_projection_snapshot(
             run_id,
             projection,
             expected_position + len(events),
+            previous_position=expected_position,
+            archival_views_unchanged=_archival_views_are_semantically_unchanged(
+                previous_projection,
+                projection,
+            ),
         )
 
     async def persist_projection_snapshot(
@@ -5202,6 +5435,9 @@ class GraphEventStore:
         run_id: str,
         projection: GraphProjection,
         position: int,
+        *,
+        previous_position: int | None = None,
+        archival_views_unchanged: bool = False,
     ) -> GraphProjectionSnapshotModel:
         """Persist the current projection and mark archival views dirty in O(1)."""
         row = await self._session.get(GraphProjectionSnapshotModel, run_id)
@@ -5214,11 +5450,23 @@ class GraphEventStore:
             checkpoint_row = GraphProjectionCheckpointModel(run_id=run_id)
             self._session.add(checkpoint_row)
         _assign_projection_checkpoint(checkpoint_row, run_id, projection, position)
-        await self._mark_archival_views_dirty(run_id, position)
+        await self._mark_archival_views_dirty(
+            run_id,
+            position,
+            previous_position=previous_position,
+            archival_views_unchanged=archival_views_unchanged,
+        )
         await self._session.flush()
         return row
 
-    async def _mark_archival_views_dirty(self, run_id: str, position: int) -> None:
+    async def _mark_archival_views_dirty(
+        self,
+        run_id: str,
+        position: int,
+        *,
+        previous_position: int | None,
+        archival_views_unchanged: bool,
+    ) -> None:
         """Record the newest archival target without replacing published rows."""
         checkpoint = await self._session.get(GraphArchivalViewCheckpointModel, run_id)
         if checkpoint is None:
@@ -5231,6 +5479,14 @@ class GraphEventStore:
             )
             return
         if checkpoint.position == position and checkpoint.target_position is None:
+            return
+        if (
+            archival_views_unchanged
+            and previous_position is not None
+            and checkpoint.position == previous_position
+            and checkpoint.target_position is None
+        ):
+            checkpoint.position = position
             return
         checkpoint.target_position = position
 
@@ -5867,6 +6123,7 @@ class GraphEventStore:
         events: list[EventEnvelope],
         *,
         summaries: dict[str, GraphNodeDetailSummary],
+        facts_absent: bool = False,
     ) -> dict[str, set[str]]:
         """Apply event-targeted normalized collection facts.
 
@@ -5877,6 +6134,7 @@ class GraphEventStore:
         """
 
         affected: dict[str, set[str]] = {}
+        staged_rows: dict[tuple[str, str, str, str], GraphNodeDetailCollectionFactModel] = {}
 
         async def upsert(
             node_id: str,
@@ -5894,10 +6152,10 @@ class GraphEventStore:
                     payload,
                 )
             payload_json = _canonical_json_bytes(bounded_payload).decode()
-            row = await self._session.get(
-                GraphNodeDetailCollectionFactModel,
-                (run_id, node_id, collection_name, item_key),
-            )
+            key = (run_id, node_id, collection_name, item_key)
+            row = staged_rows.get(key)
+            if row is None and not facts_absent:
+                row = await self._session.get(GraphNodeDetailCollectionFactModel, key)
             if row is None:
                 row = GraphNodeDetailCollectionFactModel(
                     run_id=run_id,
@@ -5909,6 +6167,7 @@ class GraphEventStore:
                     payload_bytes=len(payload_json.encode()),
                 )
                 self._session.add(row)
+                staged_rows[key] = row
             else:
                 row.position = position
                 row.payload_json = payload_json
@@ -6038,89 +6297,91 @@ class GraphEventStore:
         node_id: str,
         collection_name: str,
     ) -> tuple[list[dict[str, Any]], int, dict[str, Any] | None]:
-        """Read one collection's exact count and at most its first 50 facts."""
+        """Read one collection's exact count and at most its first 50 facts.
+
+        A windowed count keeps the exact total and bounded payload prefix in
+        one query.  The prior count, size, then payload query sequence made
+        initial graph compilation pay three SQLite round trips per node even
+        though all three reads used the same keyset ordering.
+        """
         where = (
             GraphNodeDetailCollectionFactModel.run_id == run_id,
             GraphNodeDetailCollectionFactModel.node_id == node_id,
             GraphNodeDetailCollectionFactModel.collection_name == collection_name,
         )
-        total_known = int(
-            await self._session.scalar(
-                select(func.count()).select_from(GraphNodeDetailCollectionFactModel).where(*where)
-            )
-            or 0
-        )
         actual_bytes = func.length(
             sql_cast(GraphNodeDetailCollectionFactModel.payload_json, LargeBinary)
         )
-        sized_result = await self._session.execute(
+        prefix_result = await self._session.execute(
             select(
                 GraphNodeDetailCollectionFactModel.item_key,
                 actual_bytes.label("actual_payload_bytes"),
+                case(
+                    (
+                        actual_bytes <= GRAPH_ARCHIVAL_ENTRY_BYTES,
+                        GraphNodeDetailCollectionFactModel.payload_json,
+                    ),
+                    else_=None,
+                ).label("bounded_payload_json"),
+                func.count().over().label("total_known"),
             )
             .where(*where)
             .order_by(GraphNodeDetailCollectionFactModel.item_key)
             .limit(GRAPH_JSON_ARRAY_ITEMS)
         )
-        sized = list(sized_result)
-        if any(int(fact.actual_payload_bytes or 0) > GRAPH_ARCHIVAL_ENTRY_BYTES for fact in sized):
+        prefix = list(prefix_result)
+        if any(int(fact.actual_payload_bytes or 0) > GRAPH_ARCHIVAL_ENTRY_BYTES for fact in prefix):
             raise GraphReadModelUnavailable(
                 run_id,
                 "node_detail",
                 "collection_fact_exceeds_byte_cap",
             )
-        keys = [str(fact.item_key) for fact in sized]
-        retained: list[dict[str, Any]] = []
-        if keys:
-            payload_result = await self._session.execute(
-                select(GraphNodeDetailCollectionFactModel.payload_json)
-                .where(*where)
-                .where(GraphNodeDetailCollectionFactModel.item_key.in_(keys))
-                .order_by(GraphNodeDetailCollectionFactModel.item_key)
-            )
-            retained = [
-                cast(dict[str, Any], json.loads(str(payload_json)))
-                for payload_json in payload_result.scalars()
-            ]
+        total_known = int(prefix[0].total_known) if prefix else 0
+        retained = [
+            cast(dict[str, Any], json.loads(str(fact.bounded_payload_json))) for fact in prefix
+        ]
 
         selected_lease: dict[str, Any] | None = None
         if collection_name == "leases":
-            active_key = await self._session.scalar(
-                select(GraphNodeDetailCollectionFactModel.item_key)
-                .where(*where)
-                .where(
+            active_first = case(
+                (
                     func.json_extract(
                         GraphNodeDetailCollectionFactModel.payload_json,
                         "$.state",
                     )
-                    == "active"
+                    == "active",
+                    0,
+                ),
+                else_=1,
+            )
+            selected_result = await self._session.execute(
+                select(
+                    GraphNodeDetailCollectionFactModel.item_key,
+                    actual_bytes.label("actual_payload_bytes"),
+                    case(
+                        (
+                            actual_bytes <= GRAPH_ARCHIVAL_ENTRY_BYTES,
+                            GraphNodeDetailCollectionFactModel.payload_json,
+                        ),
+                        else_=None,
+                    ).label("bounded_payload_json"),
                 )
-                .order_by(GraphNodeDetailCollectionFactModel.item_key)
+                .where(*where)
+                .order_by(active_first, GraphNodeDetailCollectionFactModel.item_key)
                 .limit(1)
             )
-            selected_key = str(active_key) if active_key is not None else keys[0] if keys else None
-            if selected_key is not None:
-                selected_size = await self._session.scalar(
-                    select(actual_bytes)
-                    .where(*where)
-                    .where(GraphNodeDetailCollectionFactModel.item_key == selected_key)
-                )
-                if int(selected_size or 0) > GRAPH_ARCHIVAL_ENTRY_BYTES:
+            selected = selected_result.one_or_none()
+            if selected is not None:
+                if int(selected.actual_payload_bytes or 0) > GRAPH_ARCHIVAL_ENTRY_BYTES:
                     raise GraphReadModelUnavailable(
                         run_id,
                         "node_detail",
                         "collection_fact_exceeds_byte_cap",
                     )
-                selected_json = await self._session.scalar(
-                    select(GraphNodeDetailCollectionFactModel.payload_json)
-                    .where(*where)
-                    .where(GraphNodeDetailCollectionFactModel.item_key == selected_key)
+                selected_lease = cast(
+                    dict[str, Any],
+                    json.loads(str(selected.bounded_payload_json)),
                 )
-                if selected_json is not None:
-                    selected_lease = cast(
-                        dict[str, Any],
-                        json.loads(str(selected_json)),
-                    )
         return retained, total_known, selected_lease
 
     async def _refresh_node_detail_collections(
@@ -7198,6 +7459,35 @@ def _node_detail_summary_from_row(
         prompt_summary=stored_prompt,
         read_contract=read_contract,
     )
+
+
+def _assign_node_detail_summary_unpacked(
+    row: GraphNodeDetailSummaryModel,
+    summary: GraphNodeDetailSummary,
+) -> None:
+    """Assign one summary before an immediate authoritative-fact refresh."""
+    row.position = summary.position
+    row.kind = summary.kind
+    row.role = summary.role
+    row.state = summary.state
+    row.task_region_id = summary.task_region_id
+    row.semantic_contract = dict(summary.semantic_contract)
+    row.readiness_reason = summary.readiness_reason
+    row.usage_summary = dict(summary.usage_summary)
+    row.snapshot_authority = (
+        dict(summary.snapshot_authority) if summary.snapshot_authority is not None else None
+    )
+    row.input_ports = {key: list(value) for key, value in summary.input_ports.items()}
+    row.output_records = [dict(record) for record in summary.output_records]
+    row.file_state_records = [dict(record) for record in summary.file_state_records]
+    row.leases = [dict(lease) for lease in summary.leases]
+    row.active_lease = dict(summary.active_lease) if summary.active_lease is not None else None
+    row.callback_history = [dict(event) for event in summary.callback_history]
+    row.events = [dict(event) for event in summary.events]
+    prompt_storage = dict(summary.prompt_summary or {})
+    if isinstance(summary.read_contract, dict):
+        prompt_storage[_READ_CONTRACT_KEY] = dict(summary.read_contract)
+    row.prompt_summary = prompt_storage
 
 
 def _assign_node_detail_summary(

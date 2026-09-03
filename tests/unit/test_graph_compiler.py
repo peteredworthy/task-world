@@ -598,6 +598,7 @@ def test_dynamic_graph_feature_run_inputs_seed_planner_context() -> None:
         "feature_spec_content": "Build the dynamic-smoke artifact.",
         "feature_spec_content_source": "worktree",
         "acceptance_command": "uv run pytest tests/smoke -q",
+        "acceptance_command_timeout_seconds": 180.0,
         "hidden_oracle_command": "uv run pytest tests/oracle -q",
         "patch_budget": 4,
         "gap_policy_profile": "standard",

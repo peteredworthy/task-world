@@ -153,3 +153,4 @@
 | Immutable projection | full, every-split incremental, and checkpoint-tail replay equivalence | tests/unit/test_graph_projection_replay_equivalence.py |
 | Immutable projection | model-derived flexible JSON event/checkpoint round trips | tests/unit/test_graph_projection_flexible_json.py |
 | Immutable projection | direct 10,000-event median performance and behavior cardinality | tests/unit/test_graph_projection_performance.py |
+| FR-18 live recovery | hash-pinned, sanitized canonical positions 1..455 replay and closed legacy-node repair | fr18-cd72-position-455-export.json + tests/integration/test_graph_fr08_acceptance.py::test_file_sqlite_public_api_repairs_exported_canonical_position_455_stream |

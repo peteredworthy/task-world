@@ -6,15 +6,23 @@ from pathlib import Path
 from time import perf_counter
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, inspect, select, text
 
 from orchestrator.config import RoutineConfig, load_routine_from_path
-from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
+from orchestrator.db import (
+    GraphNodeDetailSummaryCheckpointModel,
+    GraphNodeDetailSummaryModel,
+    GraphOutboxModel,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
 from orchestrator.graph import (
     cache_authority_binding,
     input_bindings_view,
     node_attempts_view,
     node_kinds_view,
+    node_payload_view,
     node_task_regions_view,
     output_record_payloads_view,
     EventEnvelope,
@@ -83,12 +91,138 @@ def test_dynamic_graph_feature_routine_loads_with_graph_head_config() -> None:
     assert inputs["feature_spec_content"].required is False
     assert inputs["feature_spec_content"].default == ""
     assert inputs["acceptance_command"].required is True
+    assert inputs["acceptance_command_timeout_seconds"].required is False
+    assert inputs["acceptance_command_timeout_seconds"].default == 180.0
     assert inputs["hidden_oracle_command"].required is False
     assert inputs["hidden_oracle_command"].default == ""
     assert inputs["patch_budget"].required is False
     assert inputs["patch_budget"].default == 8
     assert inputs["gap_policy_profile"].required is False
     assert inputs["gap_policy_profile"].default == "standard"
+
+
+def test_worker_payload_carries_required_routine_checks_into_submission_gate() -> None:
+    routine = RoutineConfig.model_validate(
+        {
+            "id": "submission-gate-commands",
+            "name": "Submission gate commands",
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "task-1",
+                            "title": "Task 1",
+                            "accepted_baseline_failure_fingerprints": ["a" * 64],
+                            "acceptance_command_timeout_seconds": 725,
+                            "auto_verify": {
+                                "items": [
+                                    {"id": "required", "cmd": "uv run pytest -q"},
+                                    {
+                                        "id": "advisory",
+                                        "cmd": "uv run ruff check .",
+                                        "must": False,
+                                    },
+                                ]
+                            },
+                            "fan_out": {
+                                "input_glob": "plans/*.md",
+                                "output_pattern": "results/{stem}.md",
+                                "per_item_prompt": "Implement {input}",
+                                "auto_verify": {
+                                    "items": [
+                                        {"id": "duplicate", "cmd": "uv run pytest -q"},
+                                        {"id": "types", "cmd": "uv run pyright"},
+                                    ]
+                                },
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    events = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        run_id="submission-gate-commands-run",
+    )
+    worker = next(
+        event
+        for event in events
+        if event.event_type == "node_created" and event.payload.get("kind") == "worker"
+    )
+
+    assert worker.payload["acceptance_commands"] == [
+        "uv run pytest -q",
+        "uv run pyright",
+    ]
+    assert worker.payload["accepted_baseline_failure_fingerprints"] == ["a" * 64]
+    assert worker.payload["acceptance_command_timeout_seconds"] == 725
+    assert worker.payload["effect_contract"] == "effectful_write"
+    assert worker.payload["access_mode"] == "write"
+
+
+@pytest.mark.asyncio
+async def test_seed_run_checkpoint_retains_worker_submission_gate_contract(
+    tmp_path: Path,
+) -> None:
+    routine = RoutineConfig.model_validate(
+        {
+            "id": "persisted-submission-gate-contract",
+            "name": "Persisted submission gate contract",
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "task-1",
+                            "title": "Task 1",
+                            "accepted_baseline_failure_fingerprints": ["a" * 64],
+                            "acceptance_command_timeout_seconds": 725,
+                            "auto_verify": {
+                                "items": [
+                                    {
+                                        "id": "required",
+                                        "cmd": "uv run pytest -q",
+                                    }
+                                ]
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    engine = create_engine(tmp_path / "persisted-gate-contract.db")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    run_id = "persisted-gate-contract"
+
+    try:
+        await seed_run(
+            session_factory,
+            routine,
+            run_id=run_id,
+            clock=FakeClock(),
+            id_gen=SequentialIdGenerator(),
+        )
+        async with session_factory() as session:
+            checkpoint = await GraphEventStore(session).read_current_projection_view(run_id)
+
+        assert checkpoint is not None
+        payload = node_payload_view(checkpoint.projection, "worker-step-1-task-1")
+        assert payload is not None
+        assert payload["acceptance_commands"] == ["uv run pytest -q"]
+        assert payload["accepted_baseline_failure_fingerprints"] == ["a" * 64]
+        assert payload["acceptance_command_timeout_seconds"] == 725
+        assert payload["effect_contract"] == "effectful_write"
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -134,6 +268,214 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
         assert snapshot["source_path"] == "routines/demo-task.yaml"
         assert snapshot["source_ref"] == "test-ref"
         assert outbox_count == 0
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_seed_run_uses_v2_node_detail_owner_without_mutating_legacy_tables(
+    tmp_path: Path,
+) -> None:
+    """A pre-semantic-contract database remains readable after current init/seed."""
+    engine = create_engine(tmp_path / "pre-bd92-node-detail.db")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE graph_node_detail_summaries ("
+                "run_id VARCHAR NOT NULL, node_id VARCHAR NOT NULL, position INTEGER NOT NULL, "
+                "kind VARCHAR, role VARCHAR, state VARCHAR, task_region_id VARCHAR, "
+                "input_ports JSON NOT NULL, output_records JSON NOT NULL, "
+                "file_state_records JSON NOT NULL, leases JSON NOT NULL, active_lease JSON, "
+                "callback_history JSON NOT NULL, events JSON NOT NULL, prompt_summary JSON, "
+                "PRIMARY KEY (run_id, node_id))"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX idx_graph_node_detail_summaries_run "
+                "ON graph_node_detail_summaries (run_id)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX idx_graph_node_detail_summaries_run_position "
+                "ON graph_node_detail_summaries (run_id, position)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE graph_node_detail_summary_checkpoints ("
+                "run_id VARCHAR NOT NULL PRIMARY KEY, position INTEGER NOT NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO graph_node_detail_summaries "
+                "(run_id, node_id, position, kind, role, state, task_region_id, "
+                "input_ports, output_records, file_state_records, leases, active_lease, "
+                "callback_history, events, prompt_summary) VALUES "
+                "('legacy-run', 'legacy-node', 17, 'worker', 'builder', 'completed', "
+                "'legacy-region', '{}', '[]', '[]', '[]', NULL, '[]', '[]', "
+                "'{\"sentinel\": true}')"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO graph_node_detail_summary_checkpoints "
+                "(run_id, position) VALUES ('legacy-run', 17)"
+            )
+        )
+
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    try:
+        async with engine.begin() as conn:
+            schema = await conn.run_sync(
+                lambda sync_conn: {
+                    "tables": set(inspect(sync_conn).get_table_names()),
+                    "legacy_columns": {
+                        column["name"]
+                        for column in inspect(sync_conn).get_columns("graph_node_detail_summaries")
+                    },
+                    "legacy_indexes": {
+                        index["name"]
+                        for index in inspect(sync_conn).get_indexes("graph_node_detail_summaries")
+                    },
+                    "legacy_checkpoint_columns": {
+                        column["name"]
+                        for column in inspect(sync_conn).get_columns(
+                            "graph_node_detail_summary_checkpoints"
+                        )
+                    },
+                    "legacy_checkpoint_indexes": {
+                        index["name"]
+                        for index in inspect(sync_conn).get_indexes(
+                            "graph_node_detail_summary_checkpoints"
+                        )
+                    },
+                    "v2_columns": {
+                        column["name"]
+                        for column in inspect(sync_conn).get_columns(
+                            "graph_node_detail_summaries_v2"
+                        )
+                    },
+                    "v2_indexes": {
+                        index["name"]
+                        for index in inspect(sync_conn).get_indexes(
+                            "graph_node_detail_summaries_v2"
+                        )
+                    },
+                }
+            )
+            legacy_summary = (
+                await conn.execute(
+                    text(
+                        "SELECT position, prompt_summary "
+                        "FROM graph_node_detail_summaries "
+                        "WHERE run_id = 'legacy-run' AND node_id = 'legacy-node'"
+                    )
+                )
+            ).one()
+            legacy_checkpoint = (
+                await conn.execute(
+                    text(
+                        "SELECT position FROM graph_node_detail_summary_checkpoints "
+                        "WHERE run_id = 'legacy-run'"
+                    )
+                )
+            ).scalar_one()
+
+        assert {
+            "graph_node_detail_summaries",
+            "graph_node_detail_summary_checkpoints",
+            "graph_node_detail_summaries_v2",
+            "graph_node_detail_summary_checkpoints_v2",
+        } <= schema["tables"]
+        assert schema["legacy_columns"] == {
+            "run_id",
+            "node_id",
+            "position",
+            "kind",
+            "role",
+            "state",
+            "task_region_id",
+            "input_ports",
+            "output_records",
+            "file_state_records",
+            "leases",
+            "active_lease",
+            "callback_history",
+            "events",
+            "prompt_summary",
+        }
+        assert schema["legacy_indexes"] == {
+            "idx_graph_node_detail_summaries_run",
+            "idx_graph_node_detail_summaries_run_position",
+        }
+        assert schema["legacy_checkpoint_columns"] == {"run_id", "position"}
+        assert schema["legacy_checkpoint_indexes"] == set()
+        assert {
+            "semantic_contract",
+            "readiness_reason",
+            "usage_summary",
+            "snapshot_authority",
+        } <= schema["v2_columns"]
+        assert schema["v2_indexes"] == {
+            "idx_graph_node_detail_summaries_v2_run",
+            "idx_graph_node_detail_summaries_v2_run_position",
+        }
+        assert legacy_summary == (17, '{"sentinel": true}')
+        assert legacy_checkpoint == 17
+
+        run_id = "current-seed-on-legacy-db"
+        result = await seed_run(
+            session_factory,
+            load_routine_from_path(Path("routines/demo-task.yaml")),
+            run_id=run_id,
+            clock=FakeClock(),
+            id_gen=SequentialIdGenerator(),
+        )
+        async with session_factory() as session:
+            stored_events = await GraphEventStore(session).read_run(run_id)
+            rows = list(
+                (
+                    await session.execute(
+                        select(GraphNodeDetailSummaryModel)
+                        .where(GraphNodeDetailSummaryModel.run_id == run_id)
+                        .order_by(GraphNodeDetailSummaryModel.node_id)
+                    )
+                ).scalars()
+            )
+            checkpoint = await session.get(GraphNodeDetailSummaryCheckpointModel, run_id)
+
+        assert stored_events == result.events
+        assert rows
+        task_row = next(row for row in rows if row.kind == "worker")
+        assert task_row.semantic_contract["work_mode"] == "implementation"
+        assert task_row.semantic_contract["inputs"]
+        assert task_row.semantic_contract["outputs"]
+        assert task_row.readiness_reason == "planned"
+        assert task_row.usage_summary == {}
+        assert checkpoint is not None
+        assert checkpoint.position == len(stored_events)
+
+        async with engine.begin() as conn:
+            assert (
+                await conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM graph_node_detail_summaries "
+                        "WHERE run_id = 'legacy-run' AND node_id = 'legacy-node'"
+                    )
+                )
+            ).scalar_one() == 1
+            assert (
+                await conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM graph_node_detail_summary_checkpoints "
+                        "WHERE run_id = 'legacy-run' AND position = 17"
+                    )
+                )
+            ).scalar_one() == 1
     finally:
         await engine.dispose()
 
@@ -196,6 +538,7 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
         "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
         "feature_spec_content": "Build the dynamic-smoke artifact.",
         "acceptance_command": "uv run python -c 'print(\"dynamic-smoke\")'",
+        "acceptance_command_timeout_seconds": 725,
         "hidden_oracle_command": "uv run python -c 'print(\"validation-strengthened\")'",
         "patch_budget": 4,
         "gap_policy_profile": "standard",
@@ -228,6 +571,24 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
         assert snapshot["cache_authority_preimage"] == seeded_authority.preimage
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize("timeout", [True, 0, 3601, "725"])
+def test_dynamic_feature_timeout_fails_at_compile_boundary(timeout: object) -> None:
+    routine = load_routine_from_path(DYNAMIC_FEATURE_ROUTINE_PATH)
+
+    with pytest.raises(ValueError, match="acceptance_command_timeout_seconds"):
+        compile_routine(
+            routine,
+            FakeClock(),
+            SequentialIdGenerator(),
+            run_id="invalid-dynamic-timeout",
+            run_config={
+                "feature_spec_path": "docs/spec.md",
+                "acceptance_command": "true",
+                "acceptance_command_timeout_seconds": timeout,
+            },
+        )
 
 
 @pytest.mark.asyncio
@@ -396,23 +757,27 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
             clock=clock,
             id_gen=id_gen,
         )
+        seeded_at = perf_counter()
         accepted = await controller.handle_command(
             run_id,
             seed_result.projection_position,
             "accept_run",
         )
+        accepted_at = perf_counter()
         started = await controller.handle_command(
             run_id,
             accepted.projection_position,
             "start",
         )
+        run_started_at = perf_counter()
         scheduled = await controller.handle_command(
             run_id,
             started.projection_position,
             "schedule_tick",
             {"max_grants": 1, "lease_seconds": 60},
         )
-        elapsed_seconds = perf_counter() - started_at
+        scheduled_at = perf_counter()
+        elapsed_seconds = scheduled_at - started_at
 
         async with session_factory() as session:
             stored_events = await GraphEventStore(session).read_run(run_id)
@@ -425,6 +790,10 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
             "graph_compile_seed_schedule_overhead "
             f"nodes={node_count} events={len(stored_events)} "
             f"events_per_node={events_per_node:.2f} ms_per_node={ms_per_node:.2f}"
+            f" seed_ms={(seeded_at - started_at) * 1000:.2f}"
+            f" accept_ms={(accepted_at - seeded_at) * 1000:.2f}"
+            f" start_ms={(run_started_at - accepted_at) * 1000:.2f}"
+            f" schedule_ms={(scheduled_at - run_started_at) * 1000:.2f}"
         )
 
         assert scheduled.events

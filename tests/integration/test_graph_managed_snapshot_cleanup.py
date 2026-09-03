@@ -27,6 +27,7 @@ from orchestrator.git import WorktreeError, delete_snapshot_ref, snapshot
 from orchestrator.graph import (
     boundary_manifest_hash,
     cache_authority_binding,
+    execution_attempts_view,
     project_final_invariant_blockers,
 )
 from orchestrator.graph_runtime import (
@@ -140,9 +141,9 @@ async def test_mismatch_restores_before_cleanup_and_includes_recovery_ref(
     cleanup_rows = await _rows(sessions, fixture.run_id, "snapshot_cleanup")
     assert [row.payload["snapshot_role"] for row in cleanup_rows] == [
         "baseline",
-        "staged",
         "final",
     ]
+    assert _ref_exists(fixture.repo, fixture.staged.ref)
     await dispatcher.dispatch_pending(run_id=fixture.run_id)
     assert all(not _ref_exists(fixture.repo, row.payload["snapshot_ref"]) for row in cleanup_rows)
 
@@ -160,7 +161,11 @@ async def test_terminal_startup_reconciles_owned_recovery_without_agent_retry(
         sessions, _dispatcher(sessions, fixture, tmp_path), run_id=fixture.run_id
     )
 
-    assert {item.kind for item in report.redispatched} == {"runner_recovery", "snapshot_cleanup"}
+    assert {item.kind for item in report.redispatched} == {"runner_recovery"}
+    await _dispatcher(sessions, fixture, tmp_path).dispatch_pending(
+        run_id=fixture.run_id,
+        allowed_kinds=frozenset({"snapshot_cleanup"}),
+    )
     assert (fixture.repo / "README.md").read_text() == "baseline\n"
     assert not any(
         _ref_exists(fixture.repo, ref)
@@ -209,6 +214,10 @@ async def test_terminal_cancellation_before_recovery_request_converges_in_one_st
     ]
     await reconcile_runtime(
         fixture.controller, _executor(sessions, fixture, tmp_path), report, dispatcher
+    )
+    await dispatcher.dispatch_pending(
+        run_id=fixture.run_id,
+        allowed_kinds=frozenset({"snapshot_cleanup"}),
     )
     events = await _events(sessions, fixture.run_id)
     event_types = [event.event_type for event in events]
@@ -437,7 +446,7 @@ async def _managed_fixture(
     )
     if stop_after_baseline:
         await _complete_agent_rows(sessions, run_id)
-        return ManagedFixture(
+        fixture = ManagedFixture(
             run_id,
             repo,
             controller,
@@ -448,6 +457,8 @@ async def _managed_fixture(
             str(identity["execution_id"]),
             None,
         )
+        await _finish_snapshot_publications(sessions, fixture, tmp_path)
+        return fixture
     (repo / "README.md").write_text("staged\n")
     staged = snapshot(repo, "staged", snapshot_id="b" * 32)
     staged_entries = [_entry("README.md", "modified", "staged\n")]
@@ -474,7 +485,7 @@ async def _managed_fixture(
     )
     if stop_after_stage:
         await _complete_agent_rows(sessions, run_id)
-        return ManagedFixture(
+        fixture = ManagedFixture(
             run_id,
             repo,
             controller,
@@ -485,6 +496,8 @@ async def _managed_fixture(
             str(identity["execution_id"]),
             None,
         )
+        await _finish_snapshot_publications(sessions, fixture, tmp_path)
+        return fixture
     if mismatch:
         (repo / "README.md").write_text("final\n")
         (repo / "created.txt").write_text("created\n")
@@ -497,25 +510,31 @@ async def _managed_fixture(
         if mismatch
         else staged_entries
     )
-    finalized = await _command(
-        controller,
-        run_id,
-        "finalize_runner_execution",
-        {
-            **identity,
-            "final_snapshot_id": final.id,
-            "final_snapshot_ref": final.ref,
-            "final_commit_sha": final.commit_sha,
-            "final_tree_sha": final.tree_sha,
-            "boundary_hash": boundary_manifest_hash(final.tree_sha, final_entries),
-            "boundary_entries": final_entries,
-        },
+    final_payload = {
+        **identity,
+        "final_snapshot_id": final.id,
+        "final_snapshot_ref": final.ref,
+        "final_commit_sha": final.commit_sha,
+        "final_tree_sha": final.tree_sha,
+        "boundary_hash": boundary_manifest_hash(final.tree_sha, final_entries),
+        "boundary_entries": final_entries,
+    }
+    witnessed = await _witness(controller, run_id, final_payload)
+    finalized = (
+        witnessed
+        if mismatch
+        else await _command(
+            controller,
+            run_id,
+            "finalize_runner_execution",
+            final_payload,
+        )
     )
     await _complete_agent_rows(sessions, run_id)
     recovery = next(
         (item for item in finalized.outbox_items if item.kind == "runner_recovery"), None
     )
-    return ManagedFixture(
+    fixture = ManagedFixture(
         run_id,
         repo,
         controller,
@@ -525,6 +544,19 @@ async def _managed_fixture(
         final,
         str(identity["execution_id"]),
         recovery,
+    )
+    await _finish_snapshot_publications(sessions, fixture, tmp_path)
+    return fixture
+
+
+async def _finish_snapshot_publications(
+    sessions: async_sessionmaker[AsyncSession],
+    fixture: ManagedFixture,
+    tmp_path: Path,
+) -> None:
+    await _dispatcher(sessions, fixture, tmp_path).dispatch_pending(
+        run_id=fixture.run_id,
+        allowed_kinds=frozenset({"snapshot_publish"}),
     )
 
 
@@ -554,6 +586,7 @@ async def _command(
     if command in {
         "record_runner_baseline",
         "stage_runner_submission",
+        "witness_runner_completion",
         "finalize_runner_execution",
         "request_runner_recovery",
     }:
@@ -564,6 +597,7 @@ async def _command(
         tree_key = {
             "record_runner_baseline": "baseline_tree_sha",
             "stage_runner_submission": "staged_tree_sha",
+            "witness_runner_completion": "final_tree_sha",
             "finalize_runner_execution": "final_tree_sha",
         }.get(command)
         if tree_key is not None and entries_key in payload and tree_key in payload:
@@ -582,6 +616,32 @@ async def _command(
         )
     return await controller.handle_command(
         run_id, await controller.current_position(run_id), command, payload
+    )
+
+
+async def _witness(
+    controller: GraphController,
+    run_id: str,
+    final_payload: dict[str, object],
+):
+    attempt = execution_attempts_view(await controller.read_projection(run_id))[
+        str(final_payload["execution_id"])
+    ]
+    return await _command(
+        controller,
+        run_id,
+        "witness_runner_completion",
+        {
+            **final_payload,
+            "staged_payload_hash": attempt.payload_hash,
+            "staged_payload_size_bytes": attempt.payload_size_bytes,
+            "staged_snapshot_id": attempt.staged_snapshot_id,
+            "staged_snapshot_ref": attempt.staged_snapshot_ref,
+            "staged_commit_sha": attempt.staged_commit_sha,
+            "staged_tree_sha": attempt.staged_tree_sha,
+            "staged_boundary_hash": attempt.staged_boundary_hash,
+            "runner_return_kind": "successful_return",
+        },
     )
 
 

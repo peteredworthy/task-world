@@ -49,6 +49,7 @@ def instantiate_horizon_template(
                         "candidate_id": f"discovery-{candidate_id}",
                         "objective": "Gather the missing evidence this region needs.",
                         "access_mode": "read_only",
+                        "effect_contract": "read_only_semantic",
                         "acceptance": ["discovery evidence is recorded and accepted"],
                     },
                 }
@@ -75,6 +76,7 @@ def instantiate_horizon_template(
                         "candidate_id": candidate_id,
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 }
@@ -182,6 +184,7 @@ def instantiate_horizon_template(
                         "candidate_id": f"corrective-{candidate_id}",
                         "objective": "Produce a corrective candidate that resolves the classified gap.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["corrective candidate resolves the classified gap"],
                     },
                 },

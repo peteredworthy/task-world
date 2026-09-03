@@ -1,63 +1,272 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 from pathlib import Path
+import subprocess
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from orchestrator.api import CreateRunRequest
-from orchestrator.config import RoutineConfig, load_routine_from_path
+from orchestrator.api import CreateRunRequest, create_app
+from orchestrator.config import AgentRunnerType, RoutineConfig, RunStatus, load_routine_from_path
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     GraphCommandContext,
     FakeClock,
+    MAX_EVENT_ENVELOPE_BYTES,
     PatchCommandContext,
     ReliablePlanEvaluationConfig,
     ReliablePlanScenarioResult,
     ReliablePlanSkeletonQualification,
     SequentialIdGenerator,
     authorize_reliable_plan_one_horizon,
+    build_projection,
     compile_routine,
     event_factory,
+    execution_attempts_view,
     input_bindings_view,
     leases_view,
     node_kinds_view,
     node_attempts_view,
     node_states_view,
     output_record_payloads_view,
+    ready_nodes_view,
     runtime_retry_counts_view,
     require_reliable_plan_one_horizon_authorization,
     serialize_authorized_reliable_plan_run_config,
 )
 from orchestrator.graph_runtime import (
     GraphController,
+    GraphDispatchExecutor,
     GraphEventStore,
+    OutboxItem,
     assemble_graph_dispatch_context,
     require_reliable_plan_qualification_for_run,
     run_reliable_plan_product_path_scenarios,
     verified_reliable_plan_seed_config,
 )
+from orchestrator.runners import AgentRunner, CodexServerAgent
+from orchestrator.runners.types import (
+    AgentMetadataCallback,
+    AgentRunnerInfo,
+    ChecklistUpdateCallback,
+    EscalationCallback,
+    ExecutionContext,
+    ExecutionResult,
+    GradeCallback,
+    LogLineCallback,
+    SubmitCallback,
+)
+from orchestrator.state.factory import create_run_from_routine
+from orchestrator.workflow import GraphRunDriver, WorkflowService
 
 
 FIXTURE = Path("tests/fixtures/graph/reliable_plan_fff4f6b7.json")
 
 
+class _InjectedCodexTransport:
+    """Queue-backed real JSON-RPC transport for the joined product seam."""
+
+    def __init__(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        on_failed_tool_response: Callable[[], Awaitable[None]],
+        on_successful_tool_response: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        for message in messages:
+            self._queue.put_nowait(message)
+        self._on_failed_tool_response = on_failed_tool_response
+        self._on_successful_tool_response = on_successful_tool_response
+        self.sent: list[dict[str, Any]] = []
+
+    async def send(self, message: dict[str, Any]) -> None:
+        self.sent.append(message)
+        result = message.get("result")
+        if isinstance(result, dict) and result.get("success") is False:
+            await self._on_failed_tool_response()
+        elif (
+            isinstance(result, dict)
+            and result.get("success") is True
+            and self._on_successful_tool_response is not None
+        ):
+            await self._on_successful_tool_response()
+
+    async def recv(self) -> dict[str, Any]:
+        return await self._queue.get()
+
+    async def close(self) -> None:
+        return None
+
+
+class _SingleCodexFactory:
+    """Inject one real agent adapter into the production dispatch executor."""
+
+    def __init__(self, agent: AgentRunner) -> None:
+        self._agent = agent
+
+    def preflight(
+        self,
+        context: Any,
+        execution_context: Any,
+        *,
+        graph_mcp_available: bool,
+    ) -> None:
+        del context, execution_context, graph_mcp_available
+        return None
+
+    def create_runner(self, context: Any) -> AgentRunner:
+        del context
+        return self._agent
+
+
+class _OversizedSemanticSubmitAgent:
+    """Submit valid semantic content that genuinely exceeds the event envelope."""
+
+    def __init__(self) -> None:
+        self.attempts = 0
+
+    @property
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+            name="oversized-semantic-submit",
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        del on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
+        assert context.submission_contract is not None
+        assert context.submission_contract.requires_arguments
+        self.attempts += 1
+        typed_submit = cast(
+            Callable[[dict[str, Any] | None], Awaitable[None]],
+            on_submit,
+        )
+        await typed_submit(
+            {
+                "outputs": {
+                    "semantic_artifact": {
+                        "summary": "x" * 40_000,
+                        "batches": [
+                            {
+                                "batch_id": "batch-1",
+                                "objective": "Exercise terminal persistence recovery.",
+                                "acceptance": ["failure remains observable"],
+                            }
+                        ],
+                    }
+                }
+            }
+        )
+        return ExecutionResult(success=True)
+
+    async def cancel(self) -> None:
+        return None
+
+
+def _codex_messages(valid_content: dict[str, Any]) -> list[dict[str, Any]]:
+    def tool_call(req_id: int, args: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": "item/tool/call",
+            "params": {"tool": "submit", "arguments": args},
+        }
+
+    return [
+        {"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "joined-test/1"}},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {"thread": {"id": "thread-joined", "modelProvider": "openai"}},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {"turn": {"id": "turn-joined", "status": "inProgress", "items": []}},
+        },
+        tool_call(10, {"outputs": {}}),
+        tool_call(11, {"outputs": {"semantic_artifact": {}}}),
+        tool_call(
+            12,
+            {
+                "outputs": {
+                    "semantic_artifact": {
+                        **valid_content,
+                        "producer_node_id": "spoofed-discovery",
+                    }
+                }
+            },
+        ),
+        tool_call(13, {"outputs": {"semantic_artifact": valid_content}}),
+        {
+            "jsonrpc": "2.0",
+            "method": "turn/completed",
+            "params": {
+                "turn": {
+                    "id": "turn-joined",
+                    "status": "completed",
+                    "items": [],
+                    "error": None,
+                }
+            },
+        },
+    ]
+
+
+def _init_git_repo(path: Path) -> None:
+    path.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=path, check=True)
+    (path / "README.md").write_text("# joined product seam\n")
+    (path / "test_authoritative_acceptance.py").write_text(
+        "def test_authoritative_acceptance():\n    assert True\n"
+    )
+    subprocess.run(
+        ["git", "add", "README.md", "test_authoritative_acceptance.py"],
+        cwd=path,
+        check=True,
+    )
+    subprocess.run(["git", "commit", "-q", "-m", "Initial"], cwd=path, check=True)
+
+
 @pytest.mark.asyncio
+@pytest.mark.timeout(60)
 async def test_production_reliable_plan_controller_path_gates_first_effectful_lease(
     tmp_path: Path,
 ) -> None:
     routine_path = Path("routines/dynamic-graph-feature/routine.yaml")
     routine = load_routine_from_path(routine_path)
 
-    async def run_arm(outcome: str) -> tuple[GraphController, AsyncEngine, int, str]:
-        engine = create_engine(tmp_path / f"reliable-plan-{outcome}.db")
+    async def run_arm(
+        outcome: str,
+        *,
+        staged_payload_fault: str | None = None,
+    ) -> tuple[GraphController, AsyncEngine, int, str]:
+        arm_id = f"{outcome}-{staged_payload_fault or 'ok'}"
+        engine = create_engine(tmp_path / f"reliable-plan-{arm_id}.db")
         sessions = create_session_factory(engine)
         await init_db(engine)
         clock = FakeClock()
         controller = GraphController(sessions, clock, SequentialIdGenerator(), auto_dispatch=False)
-        run_id = f"reliable-plan-{outcome}"
+        run_id = f"reliable-plan-{arm_id}"
         compiled = compile_routine(
             routine,
             clock,
@@ -165,6 +374,21 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
                 for event in scheduled.events
                 if event.event_type == "lease_granted" and event.payload.get("node_id") == node_id
             )
+            if node_id == "verifier-plan":
+                ready_index = next(
+                    index
+                    for index, event in enumerate(scheduled.events)
+                    if event.event_type == "node_state_changed"
+                    and event.payload.get("node_id") == node_id
+                    and event.payload.get("new_state") == "ready"
+                )
+                lease_index = next(
+                    index
+                    for index, event in enumerate(scheduled.events)
+                    if event.event_type == "lease_granted"
+                    and event.payload.get("node_id") == node_id
+                )
+                assert ready_index < lease_index
             acknowledged = await controller.handle_command(
                 run_id,
                 scheduled.projection_position,
@@ -201,41 +425,372 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
             assert result.events[0].event_type == "callback_accepted", result.events
             position = result.projection_position
 
-        _, discovery_lease = await lease("worker-discovery")
-        await callback(
-            discovery_lease,
+        discovery_scheduled = await controller.handle_command(
+            run_id,
+            position,
+            "schedule_tick",
             {
-                "record_id": "accepted-plan",
-                "record_kind": "graph_record",
-                "record_type": "semantic_artifact",
-                "schema_version": 1,
-                "producer_node_id": "worker-discovery",
-                "port": "semantic_artifact",
-                "schema": "SemanticArtifact",
-                "value": {
-                    "semantic_role": "implementation_plan",
-                    "schema_id": "reliable-plan-implementation-plan",
-                    "schema_version": 1,
-                    "content": {
-                        "batches": [
-                            {
-                                "batch_id": "batch-1",
-                                "objective": "Implement batch 1.",
-                                "acceptance": ["batch 1 passes"],
-                            }
-                        ]
-                    },
-                    "provenance": {"source": "discovery"},
-                    "source_record_ids": ["requirement-dynamic-feature-acceptance"],
-                    "requirement_ids": ["dynamic_feature_acceptance"],
-                    "task_region_id": "discovery",
-                    "validation_status": "validated",
-                    "authority_status": "accepted",
-                },
+                "max_grants": 1,
+                "lease_seconds": 60,
+                "base_snapshot_id": "baseline",
+                "priorities": {"worker-discovery": 100},
             },
         )
+        discovery_dispatch = next(
+            event
+            for event in discovery_scheduled.events
+            if event.event_type == "agent_dispatch_requested"
+            and event.payload.get("node_id") == "worker-discovery"
+        )
+        position = discovery_scheduled.projection_position
+        worktree = tmp_path / f"joined-codex-{arm_id}"
+        _init_git_repo(worktree)
+        semantic_content = {
+            "summary": "x" * 28_000,
+            "batches": [
+                {
+                    "batch_id": "batch-1",
+                    "objective": "Implement batch 1.",
+                    "acceptance": ["batch 1 passes"],
+                }
+            ],
+        }
+        rejected_snapshots: list[dict[str, object]] = []
+        staged_fault_snapshots: list[dict[str, object]] = []
+
+        async def capture_rejected_atomicity() -> None:
+            projection = await controller.read_projection(run_id)
+            async with sessions() as session:
+                events = await GraphEventStore(session).read_bounded_runtime_events(run_id)
+            records = [
+                record
+                for record in output_record_payloads_view(projection).values()
+                if record.producer_node_id == "worker-discovery"
+            ]
+            rejected_snapshots.append(
+                {
+                    "record_count": len(records),
+                    "discovery_state": node_states_view(projection)["worker-discovery"],
+                    "verifier_state": node_states_view(projection)["verifier-plan"],
+                    "active_discovery_leases": sum(
+                        1
+                        for item in leases_view(projection).values()
+                        if item.node_id == "worker-discovery" and item.state == "active"
+                    ),
+                    "accepted_output_events": sum(
+                        1
+                        for event in events
+                        if event.event_type == "output_record_accepted"
+                        and event.payload.get("producer_node_id") == "worker-discovery"
+                    ),
+                    "discovery_completed_events": sum(
+                        1
+                        for event in events
+                        if event.event_type == "node_state_changed"
+                        and event.payload.get("node_id") == "worker-discovery"
+                        and event.payload.get("new_state") == "completed"
+                    ),
+                    "verifier_ready_events": sum(
+                        1
+                        for event in events
+                        if event.event_type == "node_state_changed"
+                        and event.payload.get("node_id") == "verifier-plan"
+                        and event.payload.get("new_state") == "ready"
+                    ),
+                    "discovery_lease_released_events": sum(
+                        1
+                        for event in events
+                        if event.event_type == "lease_released"
+                        and event.payload.get("node_id") == "worker-discovery"
+                    ),
+                }
+            )
+
+        artifact_root = tmp_path / f"joined-artifacts-{outcome}-{staged_payload_fault or 'ok'}"
+        artifact_store = FilesystemArtifactStore(artifact_root)
+
+        async def fault_staged_callback_payload() -> None:
+            projection = await controller.read_projection(run_id)
+            attempt = next(iter(execution_attempts_view(projection).values()))
+            assert attempt.state == "submission_staged"
+            assert attempt.payload_ref is not None
+            ref = attempt.payload_ref
+            if staged_payload_fault == "missing":
+                await artifact_store.delete(ref)
+            elif staged_payload_fault == "corrupt":
+                digest = ref.content_hash.removeprefix("sha256:")
+                blob_path = artifact_root / "sha256" / digest[:2] / digest[2:]
+                blob_path.write_bytes(b"!" * ref.size_bytes)
+            fault_projection = await controller.read_projection(run_id)
+            async with sessions() as session:
+                fault_events = await GraphEventStore(session).read_bounded_runtime_events(run_id)
+            staged_fault_snapshots.append(
+                {
+                    "semantic_outputs": sum(
+                        1
+                        for event in fault_events
+                        if event.event_type == "output_record_accepted"
+                        and event.payload.get("producer_node_id") == "worker-discovery"
+                        and event.payload.get("record_type") == "semantic_artifact"
+                    ),
+                    "discovery_completed": sum(
+                        1
+                        for event in fault_events
+                        if event.event_type == "node_state_changed"
+                        and event.payload.get("node_id") == "worker-discovery"
+                        and event.payload.get("new_state") == "completed"
+                    ),
+                    "verifier_state": node_states_view(fault_projection)["verifier-plan"],
+                    "verifier_ready": "verifier-plan" in ready_nodes_view(fault_projection),
+                    "verifier_binding": bool(
+                        input_bindings_view(fault_projection)
+                        .get("verifier-plan", {})
+                        .get("semantic_artifact")
+                    ),
+                    "verifier_active_leases": sum(
+                        1
+                        for lease in leases_view(fault_projection).values()
+                        if lease.node_id == "verifier-plan" and lease.state == "active"
+                    ),
+                    "discovery_active_leases": sum(
+                        1
+                        for lease in leases_view(fault_projection).values()
+                        if lease.node_id == "worker-discovery" and lease.state == "active"
+                    ),
+                    "discovery_lease_releases": sum(
+                        1
+                        for event in fault_events
+                        if event.event_type == "lease_released"
+                        and event.payload.get("node_id") == "worker-discovery"
+                    ),
+                }
+            )
+
+        transport = _InjectedCodexTransport(
+            _codex_messages(semantic_content),
+            on_failed_tool_response=capture_rejected_atomicity,
+            on_successful_tool_response=(
+                fault_staged_callback_payload if staged_payload_fault is not None else None
+            ),
+        )
+        agent = CodexServerAgent(api_key=None, _transport=transport, _environ={})
+        executor = GraphDispatchExecutor(
+            sessions,
+            controller,
+            _SingleCodexFactory(agent),
+            worktree_path=worktree,
+            artifact_store=artifact_store,
+        )
+        dispatch_item = OutboxItem(
+            outbox_id=0,
+            event_id=discovery_dispatch.event_id,
+            run_id=run_id,
+            kind="agent_dispatch",
+            payload={
+                "event_id": discovery_dispatch.event_id,
+                "run_id": run_id,
+                "classification": "agent_dispatch_pending",
+                **discovery_dispatch.payload,
+            },
+            status="pending",
+            attempts=0,
+            created_at=clock.now(),
+            updated_at=clock.now(),
+            next_attempt_at=None,
+            last_error=None,
+        )
+        await executor.dispatch(dispatch_item)
+        await executor.wait_for_all()
+        position = await controller.current_position(run_id)
+
+        assert (
+            rejected_snapshots
+            == [
+                {
+                    "record_count": 0,
+                    "discovery_state": "running",
+                    "verifier_state": "planned",
+                    "active_discovery_leases": 1,
+                    "accepted_output_events": 0,
+                    "discovery_completed_events": 0,
+                    "verifier_ready_events": 0,
+                    "discovery_lease_released_events": 0,
+                }
+            ]
+            * 3
+        )
+        if staged_payload_fault is not None:
+            assert staged_fault_snapshots == [
+                {
+                    "semantic_outputs": 0,
+                    "discovery_completed": 0,
+                    "verifier_state": "planned",
+                    "verifier_ready": False,
+                    "verifier_binding": False,
+                    "verifier_active_leases": 0,
+                    "discovery_active_leases": 1,
+                    "discovery_lease_releases": 0,
+                }
+            ]
+            projection = await controller.read_projection(run_id)
+            async with sessions() as session:
+                graph_events = await GraphEventStore(session).read_bounded_runtime_events(run_id)
+            assert not any(
+                event.event_type == "output_record_accepted"
+                and event.payload.get("producer_node_id") == "worker-discovery"
+                and event.payload.get("record_type") == "semantic_artifact"
+                for event in graph_events
+            )
+            assert not any(
+                event.event_type == "node_state_changed"
+                and event.payload.get("node_id") == "worker-discovery"
+                and event.payload.get("new_state") == "completed"
+                for event in graph_events
+            )
+            assert node_states_view(projection)["worker-discovery"] != "completed"
+            assert node_states_view(projection)["verifier-plan"] == "planned"
+            assert "verifier-plan" not in ready_nodes_view(projection)
+            assert (
+                not input_bindings_view(projection)
+                .get("verifier-plan", {})
+                .get("semantic_artifact")
+            )
+            assert not any(
+                event.event_type == "node_state_changed"
+                and event.payload.get("node_id") == "verifier-plan"
+                and event.payload.get("new_state") == "ready"
+                for event in graph_events
+            )
+            assert not any(
+                lease.node_id == "verifier-plan" and lease.state == "active"
+                for lease in leases_view(projection).values()
+            )
+            assert not any(
+                event.event_type == "lease_released"
+                and event.payload.get("node_id") == "worker-discovery"
+                for event in graph_events
+            )
+            return controller, engine, position, run_id
+        tool_responses = {
+            message["id"]: message["result"]
+            for message in transport.sent
+            if message.get("id") in {10, 11, 12, 13}
+        }
+        assert tool_responses[10]["success"] is False
+        assert (
+            "node worker-discovery submit missing required output port semantic_artifact; "
+            "expected schema=SemanticArtifact, semantic identity="
+            "reliable-plan-implementation-plan@1" in tool_responses[10]["contentItems"][0]["text"]
+        )
+        assert "content validation failed" in tool_responses[11]["contentItems"][0]["text"]
+        assert (
+            "trusted identity fields are not authorable: ['producer_node_id']"
+            in tool_responses[12]["contentItems"][0]["text"]
+        )
+        assert tool_responses[13]["success"] is True
+        thread_start = next(
+            message for message in transport.sent if message.get("method") == "thread/start"
+        )
+        submit_tool = next(
+            tool for tool in thread_start["params"]["dynamicTools"] if tool["name"] == "submit"
+        )
+        assert submit_tool["inputSchema"]["properties"]["outputs"]["required"] == [
+            "semantic_artifact"
+        ]
+
         projection = await controller.read_projection(run_id)
+        semantic_record = next(
+            record
+            for record in output_record_payloads_view(projection).values()
+            if record.producer_node_id == "worker-discovery" and record.port == "semantic_artifact"
+        )
+        assert node_states_view(projection)["worker-discovery"] == "completed"
         assert node_states_view(projection)["verifier-plan"] in {"planned", "ready"}
+        assert input_bindings_view(projection)["verifier-plan"]["semantic_artifact"]
+        assert not any(
+            lease.node_id == "worker-discovery" and lease.state == "active"
+            for lease in leases_view(projection).values()
+        )
+        async with sessions() as session:
+            store = GraphEventStore(session)
+            graph_events = await store.read_bounded_runtime_events(run_id)
+            projection_events = await store.read_run_projection(run_id)
+        canonical_content_bytes = json.dumps(
+            semantic_content,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+        assert len(canonical_content_bytes) >= 28_018
+        assert graph_events
+        assert all(
+            len(event.model_dump_json().encode()) <= MAX_EVENT_ENVELOPE_BYTES
+            for event in graph_events
+        )
+        accepted_event = next(
+            event
+            for event in graph_events
+            if event.event_type == "output_record_accepted"
+            and event.payload.get("record_id") == semantic_record.record_id
+        )
+        assert accepted_event.payload["value"]["content"] == semantic_content
+        assert accepted_event.payload["value"]["schema_id"] == ("reliable-plan-implementation-plan")
+        assert accepted_event.payload["value"]["schema_version"] == 1
+        assert accepted_event.payload["producer_node_id"] == "worker-discovery"
+        assert accepted_event.payload["producer_port"] == "semantic_artifact"
+        assert accepted_event.payload["port"] == "semantic_artifact"
+        assert accepted_event.payload["payload"] == {
+            "semantic_artifact_value_owner": "event.payload.value",
+            "canonical_value_sha256": (
+                "sha256:"
+                + hashlib.sha256(
+                    json.dumps(
+                        accepted_event.payload["value"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+            ),
+            "canonical_value_size_bytes": len(
+                json.dumps(
+                    accepted_event.payload["value"],
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ),
+        }
+        replayed = build_projection(projection_events)
+        replayed_record = output_record_payloads_view(replayed)[semantic_record.record_id]
+        assert replayed_record == semantic_record
+
+        split_position = accepted_event.position
+        before_tail_events = [
+            event for event in projection_events if event.position <= split_position
+        ]
+        async with sessions() as session:
+            store = GraphEventStore(session)
+            await store.persist_projection_snapshot(
+                run_id,
+                build_projection(before_tail_events),
+                split_position,
+            )
+            await session.commit()
+        async with sessions() as session:
+            checkpoint_replayed, tail, checkpoint_position = await GraphEventStore(
+                session
+            ).load_projection_with_tail(run_id)
+        assert tail
+        assert checkpoint_position == graph_events[-1].position
+        assert output_record_payloads_view(checkpoint_replayed)[semantic_record.record_id] == (
+            semantic_record
+        )
+        assert not any(
+            event.event_type
+            in {"runner_recovery_requested", "agent_died", "runtime_retry_scheduled"}
+            for event in graph_events
+        )
         assert (
             not input_bindings_view(projection)
             .get("planner-successor", {})
@@ -252,7 +807,7 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
                 "producer_node_id": "verifier-plan",
                 "port": "verification_report",
                 "schema": "VerificationReport",
-                "candidate_id": "accepted-plan",
+                "candidate_id": semantic_record.record_id,
                 "task_region_id": "plan-verification",
                 "outcome": outcome,
                 "value": {
@@ -268,6 +823,14 @@ async def test_production_reliable_plan_controller_path_gates_first_effectful_le
             },
         )
         return controller, engine, position, run_id
+
+    for staged_payload_fault in ("missing", "corrupt"):
+        fault_controller, fault_engine, _, _ = await run_arm(
+            "passed",
+            staged_payload_fault=staged_payload_fault,
+        )
+        del fault_controller
+        await fault_engine.dispose()
 
     failed_controller, failed_engine, failed_position, failed_run_id = await run_arm("failed")
     try:
@@ -673,6 +1236,239 @@ async def test_reconstructed_controller_honors_durable_three_attempt_retry_budge
         assert sum(event.event_type == "runtime_retry_scheduled" for event in events) == 2
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.timeout(60)
+async def test_oversized_semantic_persistence_exhaustion_is_publicly_observable(
+    tmp_path: Path,
+) -> None:
+    """FR-7: the public readbacks retain the upstream persistence root cause.
+
+    The application, driver, controller, recovery outbox, workflow event store,
+    and API all share a disposable file-backed SQLite database.  This is the
+    production transaction topology; unlike the suite's shared in-memory
+    StaticPool fixture, it permits the driver's concurrent graph and activity
+    transactions without sharing one connection-level transaction.
+    """
+    db_path = tmp_path / "fr7-public-readback.db"
+    app = create_app(db_path=str(db_path), routine_dirs=[])
+    await init_db(app.state.engine)
+    sessions = app.state.session_factory
+    run_id = "fr7-oversized-semantic-exhaustion"
+    worktree = tmp_path / "fr7-worktree"
+    _init_git_repo(worktree)
+    routine_path = Path("routines/dynamic-graph-feature/routine.yaml")
+    routine = load_routine_from_path(routine_path)
+    config = {
+        "feature_spec_path": "docs/spec.md",
+        "acceptance_command": "uv run pytest",
+    }
+    run = create_run_from_routine(
+        routine,
+        repo_name=worktree.name,
+        source_branch="main",
+        config=config,
+    )
+    run.id = run_id
+    run.execution_mode = "graph"
+    run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
+    run.worktree_path = str(worktree)
+    run.agent_runner_type = AgentRunnerType.CODEX_SERVER
+    async with sessions() as session:
+        await WorkflowService(session).create_run(run)
+
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(sessions, clock, ids, auto_dispatch=False)
+    compiled = compile_routine(
+        routine,
+        clock,
+        ids,
+        run_id=run_id,
+        source_path=str(routine_path),
+        run_config={**config, "reliable_plan_one_horizon_authorized": True},
+    )
+    # The FR-7 scenario starts after the production planner has installed its
+    # discovery horizon.  Marking that already-finished planner terminal in the
+    # seed avoids introducing a second runner into this single-failure proof.
+    compiled = [
+        event.model_copy(update={"payload": {**event.payload, "state": "completed"}})
+        if event.event_type == "node_created" and event.payload.get("node_id") == "planner-s-01"
+        else event
+        for event in compiled
+    ]
+    seeded = await controller.handle_command(
+        run_id,
+        0,
+        "seed_compiled_events",
+        {"events": compiled},
+    )
+    accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
+    started = await controller.handle_command(run_id, accepted.projection_position, "start")
+    patched = await controller.handle_command(
+        run_id,
+        started.projection_position,
+        "submit_patch",
+        {
+            "patch_id": "fr7-discovery-horizon",
+            "base_graph_position": started.projection_position,
+            "macro_invocations": [
+                {
+                    "macro": "create_discovery_region",
+                    "args": {
+                        "region_id": "discovery",
+                        "worker_id": "worker-discovery",
+                        "semantic_schema_id": "reliable-plan-implementation-plan",
+                        "semantic_schema_version": 1,
+                        "objective": "Discover the implementation plan.",
+                        "acceptance": ["plan is complete"],
+                        "requirement_source_node_ids": ["requirement-dynamic-feature-acceptance"],
+                    },
+                },
+                {
+                    "macro": "create_plan_verification",
+                    "args": {
+                        "region_id": "plan-verification",
+                        "verifier_id": "verifier-plan",
+                        "artifact_source_node_id": "worker-discovery",
+                        "semantic_schema_id": "reliable-plan-implementation-plan",
+                        "semantic_schema_version": 1,
+                        "objective": "Independently verify the plan.",
+                        "acceptance": ["requirements are covered"],
+                        "rubric": ["dynamic_feature_acceptance maps to batch-1"],
+                        "requirement_source_node_ids": ["requirement-dynamic-feature-acceptance"],
+                    },
+                },
+                {
+                    "macro": "create_successor_planner",
+                    "args": {
+                        "region_id": "successor",
+                        "node_id": "planner-successor",
+                        "evidence_source_node_id": "verifier-plan",
+                        "evidence_source_port": "verification_report",
+                        "planning_horizon": 1,
+                    },
+                },
+            ],
+        },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=started.projection_position,
+            proposed_by_node_id="planner-s-01",
+            actor_role="planner",
+        ),
+    )
+    assert any(event.event_type == "graph_patch_accepted" for event in patched.events)
+
+    agent = _OversizedSemanticSubmitAgent()
+    fr7_artifact_store = FilesystemArtifactStore(tmp_path / "fr7-artifacts")
+
+    async def create_service(session: Any) -> WorkflowService:
+        return WorkflowService(session)
+
+    def runtime_builder(
+        session_factory_arg: Any,
+        clock_arg: Any,
+        id_gen_arg: Any,
+        *,
+        worktree_path: str | Path,
+        runner_type: AgentRunnerType,
+        runner_config: dict[str, Any] | None = None,
+        artifact_store: Any,
+    ) -> tuple[GraphController, GraphDispatchExecutor]:
+        del worktree_path, runner_type, runner_config, artifact_store
+        runtime_controller = GraphController(
+            session_factory_arg,
+            clock_arg,
+            id_gen_arg,
+            auto_dispatch=False,
+        )
+        return runtime_controller, GraphDispatchExecutor(
+            session_factory_arg,
+            runtime_controller,
+            _SingleCodexFactory(agent),
+            worktree_path=worktree,
+            artifact_store=fr7_artifact_store,
+        )
+
+    driver = GraphRunDriver(
+        sessions,
+        create_service,
+        clock=clock,
+        id_gen=ids,
+        runtime_builder=runtime_builder,
+    )
+    try:
+        outcome = await driver.run(run_id)
+        assert outcome.completed is False
+        assert agent.attempts == 3
+
+        transport = ASGITransport(app=app)  # type: ignore[arg-type]
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            run_response = await client.get(f"/api/runs/{run_id}")
+            health_response = await client.get(f"/api/runs/{run_id}/graph/health")
+            activity_response = await client.get(
+                f"/api/runs/{run_id}/activity?limit=100&payload_mode=full"
+            )
+            scheduler_response = await client.get(f"/api/runs/{run_id}/graph/scheduler")
+            graph_events: list[dict[str, Any]] = []
+            from_position = 0
+            while True:
+                events_response = await client.get(
+                    f"/api/runs/{run_id}/graph/events",
+                    params={
+                        "from_position": from_position,
+                        "limit": 100,
+                        "payload_mode": "full",
+                    },
+                )
+                assert events_response.status_code == 200, events_response.text
+                graph_events.extend(events_response.json())
+                if events_response.headers["X-Has-More"] != "true":
+                    break
+                from_position = int(events_response.headers["X-Next-Position"])
+        assert run_response.status_code == 200, run_response.text
+        assert health_response.status_code == 200, health_response.text
+        assert activity_response.status_code == 200, activity_response.text
+        assert scheduler_response.status_code == 200, scheduler_response.text
+
+        run_json = run_response.json()
+        assert run_json["status"] == RunStatus.PAUSED.value
+        assert run_json["pause_reason"] == "graph_blocked"
+        assert "worker-discovery" in run_json["last_error"]
+        assert "maximum is 32768 bytes" in run_json["last_error"]
+        assert "verification_report" not in run_json["last_error"]
+
+        health_json = health_response.json()
+        assert health_json["status"] == "blocked"
+        assert health_json["counts"]["failed_nodes"] == 1
+        assert health_json["failed_nodes"] == [
+            {
+                "node_id": "worker-discovery",
+                "reason": health_json["failed_nodes"][0]["reason"],
+            }
+        ]
+        assert "maximum is 32768 bytes" in health_json["failed_nodes"][0]["reason"]
+
+        activity = activity_response.json()["events"]
+        correlated_errors = [
+            event
+            for event in activity
+            if event["event_type"] == "agent_error"
+            and event["payload"].get("node_id") == "worker-discovery"
+            and event["payload"].get("error_type") == "GraphEventEnvelopeTooLargeError"
+        ]
+        assert len(correlated_errors) == 3
+        assert all(
+            "maximum is 32768 bytes" in event["payload"]["error_message"]
+            for event in correlated_errors
+        )
+
+        assert sum(event["event_type"] == "runtime_retry_scheduled" for event in graph_events) == 2
+        assert scheduler_response.json()["leases"] == {"active": [], "suspended": []}
+    finally:
+        await app.state.engine.dispose()
 
 
 @pytest.mark.asyncio

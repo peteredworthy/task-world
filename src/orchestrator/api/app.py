@@ -305,7 +305,7 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
             async with session_factory() as session:
                 await GraphEventStore(session).ensure_runtime_projection_checkpoint(run.id)
                 await session.commit()
-            if consumer.arm_graph_run(run.id):
+            if await consumer.arm_graph_run(run.id):
                 logger.info("Graph startup recovery: re-armed graph run %s", run.id)
                 await _asyncio.sleep(_STARTUP_RECOVERY_RUN_STAGGER_SECONDS)
     except _asyncio.CancelledError:
@@ -562,21 +562,29 @@ async def _lifespan_core(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Start signal consumer — must start before any signals can be enqueued (R3).
     from orchestrator.api.deps import make_graph_runner
+    from orchestrator.graph_runtime import RunnerOwnedProcessRegistry
     from orchestrator.workflow import SignalConsumer
 
+    graph_process_registry = RunnerOwnedProcessRegistry()
+    graph_runner = make_graph_runner(
+        session_factory,
+        service_factory,
+        connection_manager=app.state.connection_manager,
+        artifact_stores=app.state.artifact_store_resolver,
+        journal_max_bytes=app.state.global_config.journal.max_bytes,
+        graph_mcp_registry=app.state.graph_mcp_registry,
+        base_url=f"http://localhost:{app.state.global_config.server.port}",
+        process_registry=graph_process_registry,
+    )
     signal_consumer = SignalConsumer(
         session_factory=session_factory,
         create_service=service_factory,
         workflow_runner=make_workflow_runner(getattr(app.state, "runner_executor", None)),
-        graph_runner=make_graph_runner(
-            session_factory,
-            service_factory,
-            connection_manager=app.state.connection_manager,
-            artifact_stores=app.state.artifact_store_resolver,
-            journal_max_bytes=app.state.global_config.journal.max_bytes,
-            graph_mcp_registry=app.state.graph_mcp_registry,
-            base_url=f"http://localhost:{app.state.global_config.server.port}",
-        ),
+        graph_runner=graph_runner,
+        graph_execution_quiescence_preparer=graph_process_registry.prepare_run_quiescence,
+        graph_execution_quiescer=graph_process_registry.quiesce_run,
+        graph_safe_effect_drainer=graph_runner.quiesce_run,
+        graph_owner_checker=graph_process_registry.has_run_owners,
         workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
         journal_max_bytes=app.state.global_config.journal.max_bytes,
     )

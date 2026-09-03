@@ -18,7 +18,7 @@ import shutil
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from orchestrator.runners.errors import (
     AgentCancelledError,
@@ -31,6 +31,7 @@ from orchestrator.runners.mcp_scope import (
     scope_mcp_servers_to_available_tools,
 )
 from orchestrator.runners.planner_tools import GRAPH_PLANNER_TOOL_ORDER
+from orchestrator.runners.submission import submission_prompt_instruction
 from orchestrator.workflow import GateBlockedError
 from orchestrator.git import WorktreeCommitError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
@@ -47,8 +48,10 @@ from orchestrator.runners.types import (
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    RunnerRuntimeObservationCapability,
     QuotaBucket,
     SubmitCallback,
+    SubmitCallbackResult,
 )
 from orchestrator.config.enums import AgentRunnerType
 
@@ -214,6 +217,10 @@ class CLIAgent:
         return AgentRunnerInfo(
             agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
             name=self._command,
+            runtime_observation=RunnerRuntimeObservationCapability(
+                mode="host_process",
+                reason="CLI runner reports the exact host subprocess PID at startup",
+            ),
         )
 
     @staticmethod
@@ -280,8 +287,20 @@ class CLIAgent:
                 f"{context.graph_mcp_url}."
             )
 
+        typed_submit_section = ""
+        if (
+            context.submission_contract is not None
+            and context.submission_contract.requires_arguments
+        ):
+            typed_submit_section = (
+                "\n\n## Required Typed Completion\n"
+                + submission_prompt_instruction(context.submission_contract)
+                + "\nUse the orchestrator-graph MCP submit tool with exactly this payload shape. "
+                "A bare submit() cannot complete this node."
+            )
+
         if context.api_base_url is None:
-            return prompt + git_section + graph_tools_section
+            return prompt + git_section + graph_tools_section + typed_submit_section
 
         base = context.api_base_url.rstrip("/")
 
@@ -411,7 +430,7 @@ class CLIAgent:
                     mcp_section += f"- **{mcp.name}**: (stdio) {cmd_str}\n"
             api_section += mcp_section
 
-        return prompt + git_section + api_section
+        return prompt + git_section + api_section + graph_tools_section + typed_submit_section
 
     @staticmethod
     def _build_verifier_prompt(
@@ -893,34 +912,16 @@ class CLIAgent:
             # spawns, so the agent fixes its own changes in place. Only the
             # currently-fatal commit-gate path is affected; the success path is unchanged.
             if success:
-                commit_fix_attempts = 0
-                while True:
-                    try:
-                        await on_submit()
-                        break
-                    except WorktreeCommitError as commit_exc:
-                        if commit_fix_attempts >= self._max_commit_fix_attempts:
-                            raise
-                        commit_fix_attempts += 1
-                        logger.warning(
-                            "cli_subprocess: submit rejected by pre-commit checks; "
-                            "re-prompting agent to fix (attempt %d/%d)",
-                            commit_fix_attempts,
-                            self._max_commit_fix_attempts,
-                        )
-                        fix_prompt = (
-                            "Your previous changes were rejected by the project's "
-                            "pre-commit checks. Do NOT run `git commit` — the "
-                            "orchestrator commits on submit. Fix ALL of the issues "
-                            "below in the existing files, then stop:\n\n" + str(commit_exc)
-                        )
-                        fix_lines = await self._run_commit_fix_pass(
-                            cmd, child_env, context.working_dir, fix_prompt, on_output
-                        )
-                        final_output_lines = [*final_output_lines, *fix_lines]
-                        # Re-finalize so the fix pass's token usage is included.
-                        if self._parser is not None:
-                            action_log = self._parser.finalize()
+                fix_lines = await self._submit_with_bounded_correction(
+                    on_submit=on_submit,
+                    cmd=cmd,
+                    child_env=child_env,
+                    working_dir=context.working_dir,
+                    on_output=on_output,
+                )
+                final_output_lines = [*final_output_lines, *fix_lines]
+                if fix_lines and self._parser is not None:
+                    action_log = self._parser.finalize()
 
             # Build a meaningful error message when the process failed.
             # Prefer the structured exit_subtype from the result event over the
@@ -1067,6 +1068,52 @@ class CLIAgent:
             await on_output(lines)
         await proc.wait()
         return lines
+
+    async def _submit_with_bounded_correction(
+        self,
+        *,
+        on_submit: SubmitCallback,
+        cmd: list[str],
+        child_env: dict[str, str],
+        working_dir: str,
+        on_output: LogLineCallback | None,
+    ) -> list[str]:
+        """Retry actionable post-exit submission rejection with a fresh CLI turn."""
+        fix_lines: list[str] = []
+        attempts = 0
+        empty_submit = cast(Callable[[], Awaitable[SubmitCallbackResult]], on_submit)
+        while True:
+            try:
+                acknowledgement = await empty_submit()
+                if acknowledgement is not None and acknowledgement.disposition == "rejected":
+                    raise ValueError(
+                        f"submit callback rejected: {acknowledgement.model_dump_json()}"
+                    )
+                return fix_lines
+            except WorktreeCommitError as exc:
+                rejection = exc
+            except ValueError as exc:
+                if not str(exc).startswith("submit callback rejected:"):
+                    raise
+                rejection = exc
+            if attempts >= self._max_commit_fix_attempts:
+                raise rejection
+            attempts += 1
+            logger.warning(
+                "cli_subprocess: submit rejected by validation; "
+                "re-prompting agent to fix (attempt %d/%d)",
+                attempts,
+                self._max_commit_fix_attempts,
+            )
+            fix_prompt = (
+                "Your previous submission was rejected by the project's authoritative "
+                "validation checks. Do NOT run `git commit` — the orchestrator commits "
+                "on submit. Fix ALL of the issues below in the existing files, then stop:\n\n"
+                + str(rejection)
+            )
+            fix_lines.extend(
+                await self._run_commit_fix_pass(cmd, child_env, working_dir, fix_prompt, on_output)
+            )
 
     async def cancel(self) -> None:
         """Cancel execution."""

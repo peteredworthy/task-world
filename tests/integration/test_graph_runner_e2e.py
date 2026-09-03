@@ -38,14 +38,16 @@ from orchestrator.graph_runtime import (
     GraphDispatchContext,
     GraphDispatchExecutor,
     GraphEventStore,
+    OutboxItem,
     OutboxDispatcher,
     RecoveryReport,
     RunnerOwnedProcessRegistry,
+    assemble_graph_dispatch_context,
     recover,
     reconcile_runtime,
     seed_run,
 )
-from orchestrator.runners import AgentRunner
+from orchestrator.runners import AgentRunner, SubmissionAcknowledgement
 from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import (
     AgentMetadataCallback,
@@ -111,6 +113,38 @@ class SubmitAgent:
 
     async def cancel(self) -> None:
         return None
+
+
+class RetainedAcknowledgementSubmitAgent(SubmitAgent):
+    """Retains the production callback to model duplicate/reconnect delivery."""
+
+    def __init__(self) -> None:
+        self.acknowledgements: list[SubmissionAcknowledgement] = []
+        self._on_submit: SubmitCallback | None = None
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        del context, on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
+        self._on_submit = on_submit
+        acknowledgement = await on_submit()
+        assert acknowledgement is not None
+        self.acknowledgements.append(acknowledgement)
+        return ExecutionResult(success=True)
+
+    async def duplicate_after_reconnect(self) -> SubmissionAcknowledgement:
+        assert self._on_submit is not None
+        acknowledgement = await self._on_submit()
+        assert acknowledgement is not None
+        self.acknowledgements.append(acknowledgement)
+        return acknowledgement
 
 
 class ResidueSubmitAgent(SubmitAgent):
@@ -728,6 +762,110 @@ async def test_graph_runner_builder_verifier_pass_accepts_task(
     assert project_task_states(events) == {"step-1/task-1": "accepted"}
     residue_report = project_residue_report(events)
     assert residue_report["real-run-residue.txt"][0]["classification"] == "unknown_untracked"
+    execution_ids = {
+        str(event.payload["execution_id"])
+        for event in events
+        if event.event_type == "runner_baseline_recorded"
+    }
+    assert len(execution_ids) == 2
+    for execution_id in execution_ids:
+        baseline_event = next(
+            event
+            for event in events
+            if event.event_type == "runner_baseline_recorded"
+            and event.payload.get("execution_id") == execution_id
+        )
+        lease_id = str(baseline_event.payload["lease_id"])
+        execution_events = [
+            event
+            for event in events
+            if event.payload.get("execution_id") == execution_id
+            or (event.event_type == "lease_released" and event.payload.get("lease_id") == lease_id)
+        ]
+        event_types = [event.event_type for event in execution_events]
+        assert event_types.count("runner_submission_staged") == 1
+        assert event_types.count("runner_completion_witnessed") == 1
+        assert event_types.count("runner_execution_finalized") == 1
+        assert event_types.count("callback_accepted") == 1
+        assert event_types.count("lease_released") == 1
+        assert not {
+            "runner_recovery_requested",
+            "runner_recovery_completed",
+            "runtime_retry_scheduled",
+            "agent_died",
+        }.intersection(event_types)
+        positions = {
+            event.event_type: event.position
+            for event in execution_events
+            if event.event_type
+            in {
+                "runner_submission_staged",
+                "runner_completion_witnessed",
+                "runner_execution_finalized",
+                "callback_accepted",
+                "lease_released",
+            }
+        }
+        assert (
+            positions["runner_submission_staged"]
+            < positions["runner_completion_witnessed"]
+            < positions["runner_execution_finalized"]
+            < positions["callback_accepted"]
+            < positions["lease_released"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_runner_callback_reads_back_finalized_acknowledgement(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A retained production callback reports temporal truth across finalization."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-submit-ack-readback"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "graph-runner-submit-ack-readback"
+    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    agent = RetainedAcknowledgementSubmitAgent()
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": agent, "verifier": GradingAgent("A")}),
+        worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+
+    await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
+
+    assert [item.disposition for item in agent.acknowledgements] == ["durably_staged"]
+    assert "not yet accepted" in agent.acknowledgements[0].message
+    final_acknowledgement = await agent.duplicate_after_reconnect()
+    assert final_acknowledgement.disposition == "finalized_accepted"
+    assert final_acknowledgement.execution_id == agent.acknowledgements[0].execution_id
+    assert final_acknowledgement.graph_position is not None
+
+    events = await _read_events(session_factory, run_id)
+    execution_id = final_acknowledgement.execution_id
+    staged = next(
+        event
+        for event in events
+        if event.event_type == "runner_submission_staged"
+        and event.payload.get("execution_id") == execution_id
+    )
+    finalized = next(
+        event
+        for event in events
+        if event.event_type == "runner_execution_finalized"
+        and event.payload.get("execution_id") == execution_id
+    )
+    assert staged.payload["disposition"] == "durably_staged"
+    assert finalized.payload["disposition"] == "finalized_accepted"
+    projection = await controller.read_projection(run_id)
+    attempt = execution_attempts_view(projection)[str(execution_id)]
+    assert attempt.completion_disposition == "finalized_accepted"
 
 
 @pytest.mark.asyncio
@@ -1241,6 +1379,7 @@ async def test_graph_runner_exception_requests_recovery_before_retry(
     assert len(recovery_requests) == 1
     recovery_request = recovery_requests[0]
     assert recovery_request.payload["reason"] == "runner_died"
+    assert recovery_request.payload["error_detail"] == "runner exploded"
     assert not any(
         event.payload.get("execution_id") == execution_id
         and event.event_type
@@ -1700,6 +1839,7 @@ async def test_graph_runner_unsuccessful_result_recovers_staged_submission_befor
     assert len(recovery_requests) == 1
     recovery_request = recovery_requests[0]
     assert recovery_request.payload["reason"] == "runner_died"
+    assert recovery_request.payload["error_detail"] == ("runner returned an unsuccessful result")
     node_id = str(recovery_request.payload["node_id"])
     assert not any(
         event.event_type == "agent_died" and event.payload.get("execution_id") == execution_id
@@ -1837,6 +1977,7 @@ async def test_graph_runner_success_without_submit_requests_managed_recovery_bef
     assert len(recovery_requests) == 1
     recovery_request = recovery_requests[0]
     assert recovery_request.payload["reason"] == "runner_died"
+    assert recovery_request.payload["error_detail"] == ("agent exited without a successful submit")
     node_id = str(recovery_request.payload["node_id"])
     assert not any(
         event.payload.get("execution_id") == execution_id
@@ -1850,6 +1991,12 @@ async def test_graph_runner_success_without_submit_requests_managed_recovery_bef
         for event in events_before_recovery
     )
     projection_before_recovery = await controller.read_projection(run_id)
+    recovery_attempt = execution_attempts_view(projection_before_recovery)[execution_id]
+    assert recovery_attempt.recovery_error_detail == "agent exited without a successful submit"
+    checkpoint_attempt = execution_attempts_view(
+        projection_from_checkpoint(projection_to_checkpoint(projection_before_recovery))
+    )[execution_id]
+    assert checkpoint_attempt.recovery_error_detail == ("agent exited without a successful submit")
     assert (
         accepted_output_records_by_node_port_view(projection_before_recovery)
         .get(node_id, {})
@@ -1931,6 +2078,37 @@ async def test_graph_runner_success_without_submit_requests_managed_recovery_bef
             if lease.state == "active"
         )
     )
+
+    scheduled = await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "schedule_tick",
+        {"lease_seconds": 60, "max_grants": 1},
+    )
+    dispatch_event = next(
+        event for event in scheduled.events if event.event_type == "agent_dispatch_requested"
+    )
+    dispatch_item = OutboxItem(
+        outbox_id=0,
+        event_id=dispatch_event.event_id,
+        run_id=run_id,
+        kind="agent_dispatch",
+        payload={"event_id": dispatch_event.event_id, "run_id": run_id, **dispatch_event.payload},
+        status="pending",
+        attempts=0,
+        created_at=clock.now(),
+        updated_at=clock.now(),
+        next_attempt_at=None,
+        last_error=None,
+    )
+    redispatch_context = await assemble_graph_dispatch_context(
+        session_factory,
+        dispatch_item,
+        worktree_path=str(repo),
+    )
+    redispatch_prompt = executor._execution_context(redispatch_context).prompt
+    assert '"prior_attempt_failure"' in redispatch_prompt
+    assert "agent exited without a successful submit" in redispatch_prompt
 
 
 @pytest.mark.asyncio
@@ -2188,10 +2366,16 @@ async def test_restart_recovers_cache_root_whose_ignore_kind_changed(
             and event.payload.get("execution_id") == execution_id
         )
         assert request.payload["recovery_scope"] == "selective"
-        assert request.payload["observed_cache_roots"] == [
-            {"path": "custom-cache", "kind": "untracked"}
-        ]
-        assert request.payload["authorized_cache_roots"] == [
+        assert (
+            not {
+                "cache_roots",
+                "observed_cache_roots",
+                "authorized_cache_roots",
+                "legacy_cache_root_paths",
+            }
+            & request.payload.keys()
+        )
+        assert request.payload["cache_status_evidence"] == [
             {"path": "custom-cache", "kind": "untracked"}
         ]
         assert request.payload["paths"] == [".gitignore", "custom-cache"]
@@ -2200,6 +2384,9 @@ async def test_restart_recovers_cache_root_whose_ignore_kind_changed(
         attempt = execution_attempts_view(projection)[execution_id]
         assert attempt.recovery_scope == "selective"
         assert attempt.recovery_paths == (".gitignore", "custom-cache")
+        assert [(root.path, root.kind) for root in attempt.recovery_observed_cache_roots] == [
+            ("custom-cache", "untracked")
+        ]
         assert [(root.path, root.kind) for root in attempt.recovery_authorized_cache_roots] == [
             ("custom-cache", "untracked")
         ]
@@ -2289,6 +2476,8 @@ async def test_graph_runner_restart_recovers_orphaned_staged_submission_before_u
             and event.payload["execution_id"] == execution_id
         ]
         assert len(staged) == 1
+        staged_snapshot_ref = str(staged[0].payload["staged_snapshot_ref"])
+        staged_payload_ref = StoredArtifactRef.model_validate(staged[0].payload["payload_ref"])
         staged_records = await _read_staged_output_records(staged[0], artifact_store)
         assert staged_records
         assert {record["record_kind"] for record in staged_records} == {"output", "file_state"}
@@ -2345,6 +2534,21 @@ async def test_graph_runner_restart_recovers_orphaned_staged_submission_before_u
             and event.payload.get("execution_id") == execution_id
         ]
         assert len(completions) == 1
+        assert completions[0].payload["disposition"] == "restored_unwitnessed"
+        recovered_attempt = execution_attempts_view(
+            await restarted_controller.read_projection(run_id)
+        )[execution_id]
+        assert recovered_attempt.completion_disposition == "restored_unwitnessed"
+        assert recovered_attempt.staged_snapshot_ref == staged_snapshot_ref
+        assert (
+            subprocess.run(
+                ["git", "show-ref", "--verify", "--quiet", staged_snapshot_ref],
+                cwd=repo,
+                check=False,
+            ).returncode
+            == 0
+        )
+        assert await artifact_store.read(staged_payload_ref)
         lease_revoked = next(
             event
             for event in events
@@ -2378,6 +2582,198 @@ async def test_graph_runner_restart_recovers_orphaned_staged_submission_before_u
             if not task.done():
                 task.cancel()
         await asyncio.gather(*abandoned_tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ref_fault",
+    ["none", "missing_staged", "altered_staged", "foreign_staged", "corrupt_final"],
+)
+async def test_restart_finalizes_exact_durable_completion_witness_once(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+    ref_fault: Literal[
+        "none", "missing_staged", "altered_staged", "foreign_staged", "corrupt_final"
+    ],
+) -> None:
+    """A fresh runtime accepts a CAS-backed candidate only from its exact witness."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-witnessed-restart"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "graph-runner-witnessed-restart"
+    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    agent = StagedThenSuccessfulAgent()
+    artifact_store = FilesystemArtifactStore(tmp_path / "artifacts")
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": agent, "verifier": GradingAgent("A")}),
+        worktree_path=repo,
+        artifact_store=artifact_store,
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "schedule_tick",
+        {"lease_seconds": 60, "max_grants": 1},
+    )
+    await dispatcher.dispatch_pending()
+    await asyncio.wait_for(agent.staged.wait(), timeout=2)
+
+    staged_event = next(
+        event
+        for event in await _read_events(session_factory, run_id)
+        if event.event_type == "runner_submission_staged"
+    )
+    assert "payload" not in staged_event.payload
+    staged_records = await _read_staged_output_records(staged_event, artifact_store)
+    assert staged_records
+    execution_id = str(staged_event.payload["execution_id"])
+    attempt = execution_attempts_view(await controller.read_projection(run_id))[execution_id]
+    context = await executor._reattached_execution_context(run_id, attempt)
+    assert await executor._witness_runner_completion(context) is True
+
+    events_before_restart = await _read_events(session_factory, run_id)
+    assert (
+        sum(
+            event.event_type == "runner_completion_witnessed"
+            and event.payload.get("execution_id") == execution_id
+            for event in events_before_restart
+        )
+        == 1
+    )
+    assert not any(
+        event.event_type in {"runner_execution_finalized", "callback_accepted"}
+        and event.payload.get("execution_id") == execution_id
+        for event in events_before_restart
+    )
+
+    restarted_controller = GraphController(
+        session_factory, clock, SequentialIds(start=1000), auto_dispatch=False
+    )
+    restarted_executor = GraphDispatchExecutor(
+        session_factory,
+        restarted_controller,
+        AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
+        worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
+    )
+    restarted_dispatcher = OutboxDispatcher(session_factory, restarted_executor, clock)
+    report = await recover(session_factory, restarted_dispatcher, run_id=run_id)
+    witnessed_attempt = execution_attempts_view(await restarted_controller.read_projection(run_id))[
+        execution_id
+    ]
+    if ref_fault == "missing_staged":
+        subprocess.run(
+            ["git", "update-ref", "-d", cast(str, witnessed_attempt.staged_snapshot_ref)],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif ref_fault == "altered_staged":
+        subprocess.run(
+            ["git", "update-ref", cast(str, witnessed_attempt.staged_snapshot_ref), "HEAD"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif ref_fault == "foreign_staged":
+        foreign_commit = subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit-tree",
+                cast(str, witnessed_attempt.staged_tree_sha),
+                "-m",
+                "foreign staged owner",
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        subprocess.run(
+            [
+                "git",
+                "update-ref",
+                cast(str, witnessed_attempt.staged_snapshot_ref),
+                foreign_commit,
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    elif ref_fault == "corrupt_final":
+        subprocess.run(
+            [
+                "git",
+                "update-ref",
+                cast(str, witnessed_attempt.final_snapshot_ref),
+                "HEAD",
+            ],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    await reconcile_runtime(restarted_controller, restarted_executor, report, restarted_dispatcher)
+    position_after_first_reconcile = await restarted_controller.current_position(run_id)
+    await restarted_executor.reconcile_execution_attempts(run_id)
+    assert await restarted_controller.current_position(run_id) == position_after_first_reconcile
+
+    events = await _read_events(session_factory, run_id)
+    finalized_count = sum(
+        event.event_type == "runner_execution_finalized"
+        and event.payload.get("execution_id") == execution_id
+        for event in events
+    )
+    accepted_count = sum(
+        event.event_type == "callback_accepted"
+        and event.payload.get("execution_id") == execution_id
+        for event in events
+    )
+    recovery_count = sum(
+        event.event_type == "runner_recovery_requested"
+        and event.payload.get("execution_id") == execution_id
+        for event in events
+    )
+    finalized_attempt = execution_attempts_view(await restarted_controller.read_projection(run_id))[
+        execution_id
+    ]
+    if ref_fault == "none":
+        assert (finalized_count, accepted_count, recovery_count) == (1, 1, 0)
+        assert finalized_attempt.state == "finalized"
+        assert finalized_attempt.completion_disposition == "finalized_accepted"
+    else:
+        assert (finalized_count, accepted_count, recovery_count) == (0, 0, 1)
+        assert finalized_attempt.state == "recovered"
+        assert finalized_attempt.completion_disposition == "restored_boundary_mismatch"
+
+    # The original process returning after restart is an at-least-once
+    # duplicate and cannot publish or finalize a second time.
+    agent.finish.set()
+    await executor.wait_for_all()
+    after_duplicate = await _read_events(session_factory, run_id)
+    assert sum(
+        event.event_type == "runner_execution_finalized"
+        and event.payload.get("execution_id") == execution_id
+        for event in after_duplicate
+    ) == (1 if ref_fault == "none" else 0)
+    assert sum(
+        event.event_type == "runner_recovery_requested"
+        and event.payload.get("execution_id") == execution_id
+        for event in after_duplicate
+    ) == (0 if ref_fault == "none" else 1)
 
 
 @pytest.mark.asyncio
@@ -2422,6 +2818,7 @@ async def test_graph_runner_staged_callback_artifact_fault_requests_managed_reco
     assert "payload" not in staged[0].payload
     ref = StoredArtifactRef.model_validate(staged[0].payload["payload_ref"])
     execution_id = str(staged[0].payload["execution_id"])
+    staged_snapshot_ref = str(staged[0].payload["staged_snapshot_ref"])
     if artifact_fault == "missing":
         await artifact_store.delete(ref)
     else:
@@ -2440,7 +2837,8 @@ async def test_graph_runner_staged_callback_artifact_fault_requests_managed_reco
         and event.payload.get("execution_id") == execution_id
     ]
     assert len(recovery_requests) == 1
-    assert recovery_requests[0].payload["reason"] == "runner_died"
+    expected_reason = f"staged_artifact_{artifact_fault}"
+    assert recovery_requests[0].payload["reason"] == expected_reason
     assert not any(
         event.event_type in {"callback_accepted", "runner_execution_finalized"}
         and event.payload.get("execution_id") == execution_id
@@ -2468,6 +2866,21 @@ async def test_graph_runner_staged_callback_artifact_fault_requests_managed_reco
         and event.payload.get("execution_id") == execution_id
     ]
     assert len(recovery_completions) == 1
+    expected_disposition = f"restored_artifact_{artifact_fault}"
+    assert recovery_completions[0].payload["disposition"] == expected_disposition
+    recovered_attempt = execution_attempts_view(await controller.read_projection(run_id))[
+        execution_id
+    ]
+    assert recovered_attempt.completion_disposition == expected_disposition
+    assert recovered_attempt.staged_snapshot_ref == staged_snapshot_ref
+    assert (
+        subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", staged_snapshot_ref],
+            cwd=repo,
+            check=False,
+        ).returncode
+        == 0
+    )
     assert (
         len(
             [

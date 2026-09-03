@@ -226,6 +226,7 @@ def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:
                 "candidate_id": candidate_id,
                 "objective": "Implement a candidate that satisfies the bound requirements.",
                 "access_mode": "write",
+                "effect_contract": "effectful_write",
                 "acceptance": ["candidate satisfies the bound requirements"],
             },
         },

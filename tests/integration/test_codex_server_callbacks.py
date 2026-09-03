@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.runners import CodexServerAgent
+from orchestrator.runners import CodexServerAgent, SubmissionAcknowledgement
 from orchestrator.runners import CODEX_SERVER_TOOL_ALLOWLIST
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config import ChecklistStatus
@@ -108,16 +108,37 @@ async def test_integration_local_update_checklist_blocked() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_integration_local_submit_dispatched() -> None:
-    """Local agent: submit callback fires."""
+@pytest.mark.parametrize(
+    ("disposition", "message"),
+    [
+        ("rejected", "submission rejected: acceptance command failed"),
+        ("durably_staged", "durably staged; pending runner completion and not yet accepted"),
+        ("finalized_accepted", "submission is durably finalized and accepted"),
+    ],
+)
+async def test_integration_local_submit_dispatched_with_three_way_acknowledgement(
+    disposition: str,
+    message: str,
+) -> None:
+    """Local agent returns the exact typed submission disposition."""
     agent = _local()
     submitted: list[bool] = []
 
-    async def capture() -> None:
+    async def capture() -> SubmissionAcknowledgement:
         submitted.append(True)
+        return SubmissionAcknowledgement.model_validate(
+            {
+                "disposition": disposition,
+                "message": message,
+                "execution_id": "execution-1",
+                "graph_position": 12,
+            }
+        )
 
-    await agent._route_tool_call("submit", {}, _noop_checklist, capture)
+    result = await agent._route_tool_call("submit", {}, _noop_checklist, capture)
     assert submitted == [True]
+    assert f'"disposition":"{disposition}"' in result
+    assert message in result
 
 
 # ---------------------------------------------------------------------------

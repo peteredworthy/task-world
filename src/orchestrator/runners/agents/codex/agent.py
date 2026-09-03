@@ -79,6 +79,7 @@ from orchestrator.runners.types import (
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    RunnerRuntimeObservationCapability,
     QuotaBucket,
     SubmitCallback,
 )
@@ -393,6 +394,14 @@ class CodexServerAgent:
             agent_runner_type=AgentRunnerType.CODEX_SERVER,
             name="Codex Server",
             version=None,
+            runtime_observation=RunnerRuntimeObservationCapability(
+                mode=("host_process" if self._transport is None else "unsupported"),
+                reason=(
+                    "Codex runner reports the exact spawned app-server PID at startup"
+                    if self._transport is None
+                    else "injected Codex transport does not expose a host process identity"
+                ),
+            ),
         )
 
     def get_quota(self, fetcher: Any = None) -> AgentQuota | None:
@@ -749,7 +758,12 @@ class CodexServerAgent:
                                 output=str(exc),
                             )
                         )
-                        raise
+                        logger.warning(
+                            "CodexServerAgent: submit rejected with actionable feedback; "
+                            "continuing the same session: %s",
+                            exc,
+                        )
+                        return
                     # Disallowed tool — respond with failure to unblock the server.
                     parser.record_dynamic_tool_result(str(req_id), success=False)
                     await transport.send(
@@ -1234,7 +1248,12 @@ class CodexServerAgent:
                 )
             except ValueError as exc:
                 if _is_submit_callback_rejection(tool_name, exc):
-                    raise
+                    logger.warning(
+                        "CodexServerAgent: legacy submit notification rejected; "
+                        "continuing the same session: %s",
+                        exc,
+                    )
+                    return (False, {})
                 pass  # Disallowed tool — already logged by enforce_tool_allowlist.
             except Exception as exc:
                 # Tool call raised an unexpected error (e.g. InvalidTransitionError when

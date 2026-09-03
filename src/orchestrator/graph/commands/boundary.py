@@ -16,6 +16,7 @@ from orchestrator.graph.command_models import (
     RecordManagedSnapshotCleanupAppliedCommand,
     RequestRunnerRecoveryCommand,
     StageRunnerSubmissionCommand,
+    WitnessRunnerCompletionCommand,
 )
 from orchestrator.graph.models import EventEnvelope, FileStateRecord, LeaseRevokedPayload
 from orchestrator.graph.projection_collections import thaw_json
@@ -158,6 +159,15 @@ def handle_stage_runner_submission(
     id_gen: Any,
 ) -> list[EventEnvelope]:
     del command_type, clock, id_gen
+    if (
+        payload.validation_witness is not None
+        and payload.validation_witness.get("run_id") != context.run_id
+    ):
+        return _conflict(
+            make_event,
+            "stage_runner_submission",
+            "validation_witness run_id does not match graph run",
+        )
     if reason := _authority_reason(projection, payload):
         return _conflict(make_event, "stage_runner_submission", reason)
     attempt = execution_attempts_view(projection).get(payload.execution_id)
@@ -183,7 +193,14 @@ def handle_stage_runner_submission(
         )
     if attempt.state != "baseline_captured":
         same = (
-            attempt.state == "submission_staged"
+            attempt.state
+            in {
+                "submission_staged",
+                "completion_witnessed",
+                "recovery_requested",
+                "recovered",
+                "finalized",
+            }
             and attempt.idempotency_key == payload.idempotency_key
             and attempt.payload_hash == digest
             and attempt.staged_boundary_hash == payload.boundary_hash
@@ -200,6 +217,7 @@ def handle_stage_runner_submission(
             and attempt.staged_cache_roots == tuple(payload.cache_roots)
             and attempt.staged_cache_status_evidence == tuple(payload.cache_status_evidence)
             and attempt.cache_authority_hash == payload.cache_authority_hash
+            and thaw_json(attempt.validation_witness) == payload.validation_witness
         )
         return (
             []
@@ -254,6 +272,8 @@ def handle_stage_runner_submission(
         "owns_file_state_snapshot": owns_file_state_snapshot,
         "cache_authority_hash": payload.cache_authority_hash,
         "cache_status_evidence": payload.cache_status_evidence,
+        "validation_witness": payload.validation_witness,
+        "disposition": "durably_staged",
     }
     return [make_event("runner_submission_staged", staged)]
 
@@ -295,65 +315,18 @@ def handle_finalize_runner_execution(
                 make_event, "finalize_runner_execution", "execution finalization conflicts"
             )
         )
-    if attempt.state != "submission_staged":
+    if attempt.state != "completion_witnessed":
         return _conflict(
-            make_event, "finalize_runner_execution", "execution submission is not staged"
+            make_event,
+            "finalize_runner_execution",
+            "runner completion and final boundary are not durably witnessed",
         )
-    if attempt.staged_boundary_hash != payload.boundary_hash:
-        recovery_paths = _recovery_paths(attempt, payload)
-        if not recovery_paths:
-            return _conflict(
-                make_event, "finalize_runner_execution", "boundary mismatch has no manifest delta"
-            )
-        recovery_id = f"recovery:{payload.execution_id}:{attempt.staged_boundary_hash}"
-        return [
-            make_event(
-                "runner_boundary_mismatch",
-                {
-                    "execution_id": payload.execution_id,
-                    "node_id": payload.node_id,
-                    "lease_id": payload.lease_id,
-                    "lease_generation": payload.lease_generation,
-                    "staged_boundary_hash": attempt.staged_boundary_hash,
-                    "final_boundary_hash": payload.boundary_hash,
-                    "final_tree_sha": payload.final_tree_sha,
-                    "final_snapshot_id": payload.final_snapshot_id,
-                    "final_snapshot_ref": payload.final_snapshot_ref,
-                    "final_commit_sha": payload.final_commit_sha,
-                    "final_boundary_entries": [
-                        entry.model_dump(mode="json") for entry in payload.boundary_entries
-                    ],
-                    "cache_authority_hash": payload.cache_authority_hash,
-                    "cache_status_evidence": payload.cache_status_evidence,
-                    "reason": "boundary_mismatch",
-                },
-            ),
-            make_event(
-                "runner_recovery_requested",
-                {
-                    "execution_id": payload.execution_id,
-                    "recovery_id": recovery_id,
-                    "node_id": attempt.node_id,
-                    "lease_id": attempt.lease_id,
-                    "lease_generation": attempt.lease_generation,
-                    "reason": "boundary_mismatch",
-                    "max_attempts": node_max_attempts_view(projection).get(attempt.node_id, 0),
-                    "baseline_snapshot_id": attempt.baseline_snapshot_id,
-                    "baseline_tree_sha": attempt.baseline_tree_sha,
-                    "final_tree_sha": payload.final_tree_sha,
-                    "final_snapshot_id": payload.final_snapshot_id,
-                    "final_snapshot_ref": payload.final_snapshot_ref,
-                    "final_commit_sha": payload.final_commit_sha,
-                    "final_boundary_hash": payload.boundary_hash,
-                    "final_boundary_entries": [
-                        entry.model_dump(mode="json") for entry in payload.boundary_entries
-                    ],
-                    "cache_authority_hash": payload.cache_authority_hash,
-                    "cache_status_evidence": payload.cache_status_evidence,
-                    "paths": recovery_paths,
-                },
-            ),
-        ]
+    if not _final_boundary_matches_attempt(attempt, payload):
+        return _conflict(
+            make_event,
+            "finalize_runner_execution",
+            "finalization does not match durable completion witness",
+        )
     resolved_callback_payload = (
         payload.callback_payload
         if payload.callback_payload is not None
@@ -427,6 +400,7 @@ def handle_finalize_runner_execution(
         return [make_event(item.event_type, item.payload) for item in callback_plan]
     # Finalization precedes every externally visible callback effect atomically.
     final_payload = payload.model_dump(mode="json", exclude={"callback_payload", "cache_roots"})
+    final_payload["disposition"] = "finalized_accepted"
     staged_snapshot_transferred = _accepted_file_state_owns_staged_snapshot(callback_plan, attempt)
     return [
         make_event("runner_execution_finalized", final_payload),
@@ -443,6 +417,160 @@ def handle_finalize_runner_execution(
             retain_staged_snapshot=staged_snapshot_transferred,
         ),
     ]
+
+
+def handle_witness_runner_completion(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: WitnessRunnerCompletionCommand,
+    context: GraphCommandContext,
+    make_event: Any,
+    clock: Any,
+    id_gen: Any,
+) -> list[EventEnvelope]:
+    """Record runner success and its final boundary before acceptance."""
+    del command_type, context, clock, id_gen
+    if reason := _authority_reason(projection, payload):
+        return _conflict(make_event, "witness_runner_completion", reason)
+    attempt = execution_attempts_view(projection).get(payload.execution_id)
+    if attempt is None or not _same_identity(attempt, payload):
+        return _conflict(
+            make_event,
+            "witness_runner_completion",
+            "unknown or incompatible staged execution",
+        )
+    if attempt.state in {"completion_witnessed", "recovery_requested", "recovered"}:
+        return (
+            []
+            if _witness_matches_attempt(attempt, payload)
+            else _conflict(
+                make_event,
+                "witness_runner_completion",
+                "runner completion witness conflicts",
+            )
+        )
+    if attempt.state == "finalized":
+        return (
+            []
+            if _witness_matches_attempt(attempt, payload)
+            else _conflict(
+                make_event,
+                "witness_runner_completion",
+                "runner completion witness conflicts with finalization",
+            )
+        )
+    if attempt.state != "submission_staged":
+        return _conflict(
+            make_event,
+            "witness_runner_completion",
+            "execution submission is not staged",
+        )
+    staged_identity_matches = (
+        attempt.payload_hash == payload.staged_payload_hash
+        and attempt.payload_size_bytes == payload.staged_payload_size_bytes
+        and attempt.staged_snapshot_id == payload.staged_snapshot_id
+        and attempt.staged_snapshot_ref == payload.staged_snapshot_ref
+        and attempt.staged_commit_sha == payload.staged_commit_sha
+        and attempt.staged_tree_sha == payload.staged_tree_sha
+        and attempt.staged_boundary_hash == payload.staged_boundary_hash
+    )
+    if not staged_identity_matches:
+        return _conflict(
+            make_event,
+            "witness_runner_completion",
+            "staged payload or snapshot identity does not match",
+        )
+    witness_payload = payload.model_dump(mode="json", exclude={"callback_payload", "cache_roots"})
+    witness_payload["disposition"] = "completion_witnessed"
+    witnessed = make_event("runner_completion_witnessed", witness_payload)
+    if attempt.staged_boundary_hash == payload.boundary_hash:
+        return [witnessed]
+    recovery_paths = _recovery_paths(attempt, payload)
+    if not recovery_paths:
+        return _conflict(
+            make_event,
+            "witness_runner_completion",
+            "boundary mismatch has no manifest delta",
+        )
+    recovery_id = f"recovery:{payload.execution_id}:{attempt.staged_boundary_hash}"
+    return [
+        witnessed,
+        make_event(
+            "runner_boundary_mismatch",
+            {
+                "execution_id": payload.execution_id,
+                "node_id": payload.node_id,
+                "lease_id": payload.lease_id,
+                "lease_generation": payload.lease_generation,
+                "staged_boundary_hash": attempt.staged_boundary_hash,
+                "final_boundary_hash": payload.boundary_hash,
+                "final_tree_sha": payload.final_tree_sha,
+                "final_snapshot_id": payload.final_snapshot_id,
+                "final_snapshot_ref": payload.final_snapshot_ref,
+                "final_commit_sha": payload.final_commit_sha,
+                "final_boundary_entries": [
+                    entry.model_dump(mode="json") for entry in payload.boundary_entries
+                ],
+                "cache_authority_hash": payload.cache_authority_hash,
+                "cache_status_evidence": payload.cache_status_evidence,
+                "reason": "boundary_mismatch",
+            },
+        ),
+        make_event(
+            "runner_recovery_requested",
+            {
+                "execution_id": payload.execution_id,
+                "recovery_id": recovery_id,
+                "node_id": attempt.node_id,
+                "lease_id": attempt.lease_id,
+                "lease_generation": attempt.lease_generation,
+                "reason": "boundary_mismatch",
+                "max_attempts": node_max_attempts_view(projection).get(attempt.node_id, 0),
+                "baseline_snapshot_id": attempt.baseline_snapshot_id,
+                "baseline_tree_sha": attempt.baseline_tree_sha,
+                "final_tree_sha": payload.final_tree_sha,
+                "final_snapshot_id": payload.final_snapshot_id,
+                "final_snapshot_ref": payload.final_snapshot_ref,
+                "final_commit_sha": payload.final_commit_sha,
+                "final_boundary_hash": payload.boundary_hash,
+                "final_boundary_entries": [
+                    entry.model_dump(mode="json") for entry in payload.boundary_entries
+                ],
+                "cache_authority_hash": payload.cache_authority_hash,
+                "cache_status_evidence": payload.cache_status_evidence,
+                "paths": recovery_paths,
+            },
+        ),
+    ]
+
+
+def _final_boundary_matches_attempt(attempt: Any, payload: Any) -> bool:
+    return (
+        attempt.final_snapshot_id == payload.final_snapshot_id
+        and attempt.final_snapshot_ref == payload.final_snapshot_ref
+        and attempt.final_commit_sha == payload.final_commit_sha
+        and attempt.final_tree_sha == payload.final_tree_sha
+        and attempt.final_boundary_hash == payload.boundary_hash
+        and tuple(attempt.final_boundary_entries) == tuple(payload.boundary_entries)
+        and attempt.final_cache_roots == tuple(payload.cache_roots)
+        and attempt.final_cache_status_evidence == tuple(payload.cache_status_evidence)
+        and attempt.cache_authority_hash == payload.cache_authority_hash
+    )
+
+
+def _witness_matches_attempt(attempt: Any, payload: WitnessRunnerCompletionCommand) -> bool:
+    return (
+        attempt.payload_hash == payload.staged_payload_hash
+        and attempt.payload_size_bytes == payload.staged_payload_size_bytes
+        and attempt.staged_snapshot_id == payload.staged_snapshot_id
+        and attempt.staged_snapshot_ref == payload.staged_snapshot_ref
+        and attempt.staged_commit_sha == payload.staged_commit_sha
+        and attempt.staged_tree_sha == payload.staged_tree_sha
+        and attempt.staged_boundary_hash == payload.staged_boundary_hash
+        and attempt.runner_return_kind == payload.runner_return_kind
+        and _final_boundary_matches_attempt(attempt, payload)
+    )
 
 
 def _accepted_file_state_owns_staged_snapshot(
@@ -500,7 +628,7 @@ def handle_request_runner_recovery(
     attempt = execution_attempts_view(projection).get(payload.execution_id)
     if attempt is None or not _same_identity(attempt, payload):
         return _conflict(make_event, "request_runner_recovery", "unknown execution baseline")
-    if attempt.state not in {"baseline_captured", "submission_staged"}:
+    if attempt.state not in {"baseline_captured", "submission_staged", "completion_witnessed"}:
         if attempt.state == "recovery_requested":
             paths = _request_recovery_paths(attempt, payload)
             recovery_id = f"recovery:{payload.execution_id}:{payload.reason}"
@@ -510,7 +638,9 @@ def handle_request_runner_recovery(
             same = (
                 attempt.recovery_id == recovery_id
                 and attempt.recovery_reason == payload.reason
+                and attempt.recovery_error_detail == payload.error_detail
                 and attempt.recovery_max_attempts == payload.max_attempts
+                and attempt.retry_after_recovery == payload.retry_after_recovery
                 and attempt.node_id == payload.node_id
                 and attempt.lease_id == payload.lease_id
                 and attempt.lease_generation == payload.lease_generation
@@ -542,7 +672,9 @@ def handle_request_runner_recovery(
                 "lease_id": attempt.lease_id,
                 "lease_generation": attempt.lease_generation,
                 "reason": payload.reason,
+                "error_detail": payload.error_detail,
                 "max_attempts": payload.max_attempts,
+                "retry_after_recovery": payload.retry_after_recovery,
                 "recovery_snapshot_id": payload.recovery_snapshot_id,
                 "recovery_snapshot_ref": payload.recovery_snapshot_ref,
                 "recovery_commit_sha": payload.recovery_commit_sha,
@@ -645,7 +777,13 @@ def handle_complete_runner_recovery(
             ).model_dump(mode="json", exclude_none=True),
         )
     ]
-    if attempt.recovery_reason in {"boundary_mismatch", "runner_died"}:
+    retryable_recovery = attempt.recovery_reason in {
+        "boundary_mismatch",
+        "runner_died",
+        "staged_artifact_missing",
+        "staged_artifact_corrupt",
+    } or (attempt.recovery_reason == "cancelled" and attempt.retry_after_recovery)
+    if retryable_recovery:
         attempt_number = node_attempts_view(projection).get(attempt.node_id, 0)
         max_attempts = attempt.recovery_max_attempts or 0
         if attempt.recovery_reason == "runner_died" and non_gap_planner_has_accepted_patch(
@@ -662,6 +800,9 @@ def handle_complete_runner_recovery(
                 )
             )
         elif max_attempts > 0 and attempt_number >= max_attempts:
+            failure_reason = (
+                attempt.recovery_error_detail or attempt.recovery_reason or "max_attempts_exhausted"
+            )
             lifecycle_events.append(
                 make_event(
                     "node_state_changed",
@@ -669,7 +810,7 @@ def handle_complete_runner_recovery(
                         "node_id": attempt.node_id,
                         "new_state": "failed",
                         "trigger": "max_attempts_exhausted",
-                        "reason": "max_attempts_exhausted",
+                        "reason": failure_reason,
                         "attempt_number": attempt_number,
                         "max_attempts": max_attempts,
                     },
@@ -701,10 +842,29 @@ def handle_complete_runner_recovery(
                 ]
             )
     return [
-        make_event("runner_recovery_completed", payload.model_dump(mode="json")),
+        make_event(
+            "runner_recovery_completed",
+            {
+                **payload.model_dump(mode="json"),
+                "disposition": _recovery_completion_disposition(attempt),
+            },
+        ),
         *lifecycle_events,
-        *_snapshot_cleanup_events(make_event, attempt),
+        # A recovered candidate remains operator-inspectable. Its exact staged
+        # ref and CAS identity are retained; only a later explicit disposition
+        # policy may garbage-collect them.
+        *_snapshot_cleanup_events(make_event, attempt, retain_staged_snapshot=True),
     ]
+
+
+def _recovery_completion_disposition(attempt: Any) -> str:
+    if attempt.recovery_reason == "staged_artifact_missing":
+        return "restored_artifact_missing"
+    if attempt.recovery_reason == "staged_artifact_corrupt":
+        return "restored_artifact_corrupt"
+    if attempt.runner_return_kind == "successful_return":
+        return "restored_boundary_mismatch"
+    return "restored_unwitnessed"
 
 
 def _snapshot_cleanup_events(

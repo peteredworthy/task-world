@@ -66,6 +66,7 @@ _RUNTIME_BOUNDARY_COMMANDS = frozenset(
     {
         "record_runner_baseline",
         "stage_runner_submission",
+        "witness_runner_completion",
         "finalize_runner_execution",
         "request_runner_recovery",
     }
@@ -237,6 +238,11 @@ class GraphController:
                     run_id,
                     expected_position,
                     planned_events,
+                    # The projection was loaded at ``expected_position`` for
+                    # pure command planning, and the transactional head check
+                    # above proves it is still authoritative. Reuse it instead
+                    # of decoding the same immutable checkpoint a second time.
+                    authoritative_projection=projection,
                 )
                 outbox_items = await append_outbox_rows(session, stored_events, self._clock)
                 # Graph events queue the same post-commit JSONL observer used

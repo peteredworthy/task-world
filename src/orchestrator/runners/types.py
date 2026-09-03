@@ -27,8 +27,33 @@ class BroadcastCallback(Protocol):
 ChecklistUpdateCallback = Callable[[str, ChecklistStatus, str | None], Awaitable[None]]
 """(req_id, status, note) -> None. run_id/task_id bound by caller."""
 
-SubmitCallback = Callable[[], Awaitable[None]]
-"""Called when agent submits work for verification."""
+SubmitArguments = dict[str, Any]
+
+
+class SubmissionAcknowledgement(BaseModel):
+    """Truthful durable state returned by a runner submission callback.
+
+    A first successful callback can only report ``durably_staged`` because
+    graph finalization follows successful runner return.  A duplicate or
+    reconnected callback may subsequently read back ``finalized_accepted``
+    from the canonical execution attempt.  ``rejected`` is the only failure
+    disposition and always carries actionable detail in ``message``.
+    """
+
+    model_config = {"frozen": True}
+
+    disposition: Literal["rejected", "durably_staged", "finalized_accepted"]
+    message: str = Field(min_length=1, max_length=4_096)
+    execution_id: str | None = None
+    graph_position: int | None = Field(default=None, ge=0)
+
+
+SubmitCallbackResult = SubmissionAcknowledgement | None
+SubmitCallback = (
+    Callable[[], Awaitable[SubmitCallbackResult]]
+    | Callable[[SubmitArguments | None], Awaitable[SubmitCallbackResult]]
+)
+"""Legacy empty or typed-payload submission callback with a truthful result."""
 
 LogLineCallback = Callable[[list[str]], Awaitable[None]]
 
@@ -64,6 +89,35 @@ class ExecutionMetrics(BaseModel):
     gen_ai_usage_cache_read_input_tokens: int = 0
     duration_ms: int = 0
     num_actions: int = 0
+
+
+class SubmissionOutputContract(BaseModel):
+    """Runner-facing contract for one agent-authored output port."""
+
+    model_config = {"frozen": True}
+
+    port: str = Field(min_length=1)
+    schema_name: str = Field(min_length=1)
+    required: bool = True
+    record_type: str | None = None
+    semantic_schema_id: str | None = None
+    semantic_schema_version: int | None = Field(default=None, ge=1)
+    semantic_role: str | None = None
+    content_json_schema: dict[str, Any] | None = None
+
+
+class SubmissionContract(BaseModel):
+    """Graph-agnostic typed description of model-authored submit arguments."""
+
+    model_config = {"frozen": True}
+
+    outputs: tuple[SubmissionOutputContract, ...] = ()
+
+    @property
+    def requires_arguments(self) -> bool:
+        return any(
+            output.required and output.content_json_schema is not None for output in self.outputs
+        )
 
 
 class ExecutionResult(BaseModel):
@@ -103,6 +157,22 @@ class ExecutionContext(BaseModel):
     required_tools: tuple[str, ...] = ()
     mcp_servers: list[MCPServerConfig] | None = None
     work_mode: Literal["implementation", "oversight"] = "implementation"
+    submission_contract: SubmissionContract | None = None
+
+
+class RunnerRuntimeObservationCapability(BaseModel):
+    """Declares how a runner can be supervised during one execution.
+
+    ``host_process`` promises a PID callback that can be bound to create-time
+    and command identity. ``non_process_owning`` is for in-process adapters,
+    while ``unsupported`` names a process-owning boundary (for example a
+    container) for which that exact identity is not available yet.
+    """
+
+    model_config = {"frozen": True}
+
+    mode: Literal["host_process", "non_process_owning", "unsupported"]
+    reason: str = Field(min_length=1, max_length=512)
 
 
 class AgentRunnerInfo(BaseModel):
@@ -111,6 +181,12 @@ class AgentRunnerInfo(BaseModel):
     agent_runner_type: AgentRunnerType
     name: str
     version: str | None = None
+    runtime_observation: RunnerRuntimeObservationCapability = Field(
+        default_factory=lambda: RunnerRuntimeObservationCapability(
+            mode="unsupported",
+            reason="runner did not declare a runtime-observation capability",
+        )
+    )
 
 
 class AgentConfigField(BaseModel):

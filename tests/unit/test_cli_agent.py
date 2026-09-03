@@ -6,7 +6,12 @@ from typing import Any, Literal
 
 from orchestrator.config.models import NudgerConfig
 from orchestrator.config import AgentRunnerType
-from orchestrator.runners import CLIAgent, create_cli_agent
+from orchestrator.runners import (
+    CLIAgent,
+    SubmissionContract,
+    SubmissionOutputContract,
+    create_cli_agent,
+)
 from orchestrator.runners.types import ExecutionContext
 
 
@@ -36,6 +41,7 @@ def test_cli_agent_info() -> None:
     agent = CLIAgent(command="claude")
     assert agent.info.agent_runner_type == AgentRunnerType.CLI_SUBPROCESS
     assert agent.info.name == "claude"
+    assert agent.info.runtime_observation.mode == "host_process"
 
 
 def test_cli_agent_info_codex() -> None:
@@ -500,3 +506,28 @@ def test_build_prompt_verifier_with_available_tools() -> None:
     assert "terminal" in result
     assert "file_editor" in result
     assert "Verifier" in result  # Verifier-specific section
+
+
+def test_build_prompt_renders_exact_typed_graph_submit_contract() -> None:
+    ctx = _make_context(graph_mcp_url="http://localhost:8000/mcp-graph/token/sse")
+    ctx.submission_contract = SubmissionContract(
+        outputs=(
+            SubmissionOutputContract(
+                port="semantic_artifact",
+                schema_name="SemanticArtifact",
+                semantic_schema_id="plan",
+                semantic_schema_version=1,
+                content_json_schema={
+                    "type": "object",
+                    "required": ["batches"],
+                    "properties": {"batches": {"type": "array"}},
+                },
+            ),
+        )
+    )
+
+    result = CLIAgent.build_prompt("Discover the plan", ctx)
+
+    assert "**submit**(outputs=...)" in result
+    assert "A bare submit() cannot complete this node" in result
+    assert '"required":["semantic_artifact"]' in result

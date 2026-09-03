@@ -675,7 +675,12 @@ class CallbackEventValue(ProjectionModel):
 class ExecutionAttemptValue(ProjectionModel):
     execution_id: StrictStr
     state: Literal[
-        "baseline_captured", "submission_staged", "recovery_requested", "recovered", "finalized"
+        "baseline_captured",
+        "submission_staged",
+        "completion_witnessed",
+        "recovery_requested",
+        "recovered",
+        "finalized",
     ]
     node_id: StrictStr
     lease_id: StrictStr
@@ -709,14 +714,31 @@ class ExecutionAttemptValue(ProjectionModel):
     staged_boundary_entries: tuple[RunnerBoundaryEntry, ...] = ()
     staged_cache_roots: tuple[RunnerCacheRoot | StrictStr, ...] = ()
     staged_cache_status_evidence: tuple[CacheStatusEvidence, ...] = ()
+    validation_witness: FrozenJsonValue | None = None
     observed_graph_position: StrictInt | None = None
     callback_base_snapshot_id: StrictStr | None = None
     is_mutating: StrictBool | None = None
     complete_node: StrictBool | None = None
     new_state: StrictStr | None = None
+    completion_disposition: (
+        Literal[
+            "durably_staged",
+            "completion_witnessed",
+            "finalized_accepted",
+            "restored_unwitnessed",
+            "restored_boundary_mismatch",
+            "restored_artifact_missing",
+            "restored_artifact_corrupt",
+        ]
+        | None
+    ) = None
+    runner_return_kind: Literal["successful_return"] | None = None
     recovery_id: StrictStr | None = None
     recovery_reason: StrictStr | None = None
+    recovery_error_detail: StrictStr | None = None
     recovery_max_attempts: StrictInt | None = None
+    retry_after_recovery: StrictBool = False
+    retry_scheduled: StrictBool = False
     recovery_snapshot_id: StrictStr | None = None
     recovery_snapshot_ref: StrictStr | None = None
     recovery_commit_sha: StrictStr | None = None
@@ -761,7 +783,7 @@ class ExecutionAttemptValue(ProjectionModel):
     def freeze_attempt_sequences(cls, value: object) -> tuple[object, ...]:
         return _freeze_sequence(value, "execution attempt values must be sequences")
 
-    @field_validator("payload", mode="before")
+    @field_validator("payload", "validation_witness", mode="before")
     @classmethod
     def freeze_attempt_payload(cls, value: object) -> FrozenJsonValue | None:
         return None if value is None else _freeze_json_input(value)

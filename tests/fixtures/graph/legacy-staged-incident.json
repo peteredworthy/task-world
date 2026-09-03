@@ -1,0 +1,90 @@
+[
+  {
+    "event_id": "incident-node-created",
+    "run_id": "917a81b5-117c-403b-b344-640696e8d750",
+    "position": 143,
+    "event_type": "node_created",
+    "schema_version": 1,
+    "actor": {"kind": "controller"},
+    "timestamp": "2026-09-01T22:00:00Z",
+    "payload": {
+      "node_id": "worker-reliable-plan-rp-01",
+      "kind": "worker",
+      "state": "running"
+    }
+  },
+  {
+    "event_id": "incident-lease-granted",
+    "run_id": "917a81b5-117c-403b-b344-640696e8d750",
+    "position": 144,
+    "event_type": "lease_granted",
+    "schema_version": 1,
+    "actor": {"kind": "controller"},
+    "timestamp": "2026-09-01T22:00:01Z",
+    "payload": {
+      "lease_id": "lease-8fd4e1385a904de5acd2c3d062269f2f",
+      "node_id": "worker-reliable-plan-rp-01",
+      "generation": 1,
+      "execution_id": "exec-ab62d27ce1284035a451143db5a27692",
+      "base_snapshot_id": "incident-base"
+    }
+  },
+  {
+    "event_id": "incident-baseline-recorded",
+    "run_id": "917a81b5-117c-403b-b344-640696e8d750",
+    "position": 145,
+    "event_type": "runner_baseline_recorded",
+    "schema_version": 1,
+    "actor": {"kind": "controller"},
+    "timestamp": "2026-09-01T22:00:02Z",
+    "payload": {
+      "execution_id": "exec-ab62d27ce1284035a451143db5a27692",
+      "node_id": "worker-reliable-plan-rp-01",
+      "lease_id": "lease-8fd4e1385a904de5acd2c3d062269f2f",
+      "lease_generation": 1,
+      "baseline_snapshot_id": "incident-base",
+      "baseline_tree_sha": "95b9aa9671492c11c80eecb7fca46d8456dcfab4",
+      "entries": [],
+      "boundary_hash": "sha256:48b68511f3ee8a1b22e40d2c76caee586c985b6563c795ca1617c6c76418609d",
+      "cache_roots": []
+    }
+  },
+  {
+    "event_id": "incident-staged-position-146",
+    "run_id": "917a81b5-117c-403b-b344-640696e8d750",
+    "position": 146,
+    "event_type": "runner_submission_staged",
+    "schema_version": 1,
+    "actor": {"kind": "controller"},
+    "timestamp": "2026-09-01T22:01:38.017676Z",
+    "payload": {
+      "execution_id": "exec-ab62d27ce1284035a451143db5a27692",
+      "node_id": "worker-reliable-plan-rp-01",
+      "lease_id": "lease-8fd4e1385a904de5acd2c3d062269f2f",
+      "lease_generation": 1,
+      "idempotency_key": "incident-staged-submit",
+      "payload_ref": {
+        "artifact_id": "sha256:e64e5baa8b2e204d22302d59b3131716b254829f9d5580dae36d79f8b3638522",
+        "content_hash": "sha256:e64e5baa8b2e204d22302d59b3131716b254829f9d5580dae36d79f8b3638522",
+        "size_bytes": 3219,
+        "media_type": "application/json",
+        "encoding": "utf-8",
+        "storage_uri": "artifact://sha256/e64e5baa8b2e204d22302d59b3131716b254829f9d5580dae36d79f8b3638522"
+      },
+      "payload_hash": "sha256:e64e5baa8b2e204d22302d59b3131716b254829f9d5580dae36d79f8b3638522",
+      "payload_size_bytes": 3219,
+      "staged_snapshot_id": "dca9e37e3e0852d0b034b76d6ca91c16fec194b814d878ca3472918c4d321c5b",
+      "staged_snapshot_ref": "refs/orchestrator/snapshots/dca9e37e3e0852d0b034b76d6ca91c16fec194b814d878ca3472918c4d321c5b",
+      "staged_commit_sha": "0903ec881a8d3d4c2e6deb40091957154da437e4",
+      "staged_tree_sha": "95b9aa9671492c11c80eecb7fca46d8456dcfab4",
+      "boundary_hash": "sha256:48b68511f3ee8a1b22e40d2c76caee586c985b6563c795ca1617c6c76418609d",
+      "boundary_entries": [],
+      "base_snapshot_id": "incident-base",
+      "observed_graph_position": 145,
+      "is_mutating": true,
+      "complete_node": true,
+      "new_state": "completed",
+      "disposition": "durably_staged"
+    }
+  }
+]

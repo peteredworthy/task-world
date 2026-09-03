@@ -48,6 +48,7 @@ from orchestrator.graph.command_models import (
     SubmitPatchCommand,
     RecordRunnerBaselineCommand,
     StageRunnerSubmissionCommand,
+    WitnessRunnerCompletionCommand,
     FinalizeRunnerExecutionCommand,
     CompleteRunnerRecoveryCommand,
     RequestRunnerRecoveryCommand,
@@ -70,6 +71,7 @@ from orchestrator.graph.commands.boundary import (
     handle_record_managed_snapshot_cleanup_applied,
     handle_request_runner_recovery,
     handle_stage_runner_submission,
+    handle_witness_runner_completion,
 )
 from orchestrator.graph.commands.lifecycle import (
     handle_accept_run,
@@ -112,6 +114,9 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     ),
     "stage_runner_submission": CommandSpec(
         StageRunnerSubmissionCommand, handle_stage_runner_submission
+    ),
+    "witness_runner_completion": CommandSpec(
+        WitnessRunnerCompletionCommand, handle_witness_runner_completion
     ),
     "finalize_runner_execution": CommandSpec(
         FinalizeRunnerExecutionCommand, handle_finalize_runner_execution

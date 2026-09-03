@@ -65,6 +65,10 @@ routine:
     - name: acceptance_command
       required: true
       description: "Verification command that determines final acceptance"
+    - name: acceptance_command_timeout_seconds
+      required: false
+      default: 180.0
+      description: "Bounded timeout for the dynamic acceptance command (0 < seconds <= 3600)"
     - name: hidden_oracle_command
       required: false
       default: ""

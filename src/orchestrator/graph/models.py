@@ -20,9 +20,11 @@ from pydantic import (
 from orchestrator.graph.boundary_types import (
     BoundaryValidationError,
     boundary_manifest_hash,
+    validate_callback_json,
     validate_cache_roots,
     validate_git_oid,
     validate_repo_relative_path,
+    sanitize_runner_error_detail,
     validate_snapshot_ref,
     validate_sha256,
 )
@@ -1191,6 +1193,8 @@ class RunnerSubmissionStagedPayload(StrictEventPayload):
         default_factory=lambda: cast(list[RunnerCacheRoot | str], [])
     )
     cache_status_evidence: list[CacheStatusEvidence] | None = None
+    validation_witness: dict[str, Any] | None = None
+    disposition: Literal["durably_staged"] = "durably_staged"
 
     @model_validator(mode="after")
     def manifest_is_consistent(self) -> "RunnerSubmissionStagedPayload":
@@ -1214,6 +1218,37 @@ class RunnerSubmissionStagedPayload(StrictEventPayload):
                 raise ValueError("payload_ref size must match payload_size_bytes")
             if self.payload_ref.artifact_id != self.payload_ref.content_hash:
                 raise ValueError("payload_ref artifact_id must be content-addressed")
+        if self.validation_witness is not None:
+            witness = self.validation_witness
+            validate_callback_json(witness)
+            expected = {
+                "schema_version": 1,
+                "node_id": self.node_id,
+                "execution_id": self.execution_id,
+                "lease_id": self.lease_id,
+                "lease_generation": self.lease_generation,
+                "base_snapshot_id": self.base_snapshot_id,
+            }
+            boundary = {
+                "snapshot_id": self.staged_snapshot_id,
+                "snapshot_ref": self.staged_snapshot_ref,
+                "commit_sha": self.staged_commit_sha,
+                "tree_sha": self.staged_tree_sha,
+                "boundary_hash": self.boundary_hash,
+            }
+            if any(witness.get(key) != value for key, value in expected.items()):
+                raise ValueError("validation_witness execution identity conflicts")
+            if witness.get("disposition") not in {
+                "passed",
+                "baseline_exempted",
+                "no_configured_commands",
+            }:
+                raise ValueError("validation_witness disposition is not successful")
+            commands = witness.get("commands")
+            if not isinstance(commands, list) or len(cast(list[Any], commands)) > 8:
+                raise ValueError("validation_witness commands are invalid or unbounded")
+            if witness.get("validated_boundary") != boundary:
+                raise ValueError("validation_witness boundary identity conflicts")
         return self
 
 
@@ -1269,8 +1304,16 @@ class RunnerRecoveryRequestedPayload(StrictEventPayload):
     node_id: str
     lease_id: str
     lease_generation: StrictInt
-    reason: Literal["boundary_mismatch", "runner_died", "cancelled"]
+    reason: Literal[
+        "boundary_mismatch",
+        "runner_died",
+        "cancelled",
+        "staged_artifact_missing",
+        "staged_artifact_corrupt",
+    ]
+    error_detail: str | None = Field(default=None, max_length=4_096)
     max_attempts: StrictInt = 0
+    retry_after_recovery: StrictBool = False
     recovery_snapshot_id: str | None = None
     recovery_snapshot_ref: str | None = None
     recovery_commit_sha: str | None = None
@@ -1324,6 +1367,13 @@ class RunnerRecoveryRequestedPayload(StrictEventPayload):
             raise ValueError(str(exc)) from exc
         return self
 
+    @field_validator("error_detail", mode="before")
+    @classmethod
+    def canonical_error_detail(cls, value: object) -> str | None:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("error_detail must be a string")
+        return sanitize_runner_error_detail(value)
+
 
 class RunnerRecoveryCompletedPayload(StrictEventPayload):
     execution_id: str
@@ -1338,6 +1388,15 @@ class RunnerRecoveryCompletedPayload(StrictEventPayload):
     restored_paths: list[str]
     removed_paths: list[str]
     recovery_scope: Literal["selective", "full_baseline"] = "selective"
+    disposition: (
+        Literal[
+            "restored_unwitnessed",
+            "restored_boundary_mismatch",
+            "restored_artifact_missing",
+            "restored_artifact_corrupt",
+        ]
+        | None
+    ) = None
 
     @model_validator(mode="after")
     def bounded_paths(self) -> "RunnerRecoveryCompletedPayload":
@@ -1349,6 +1408,58 @@ class RunnerRecoveryCompletedPayload(StrictEventPayload):
             )
         elif self.requested_paths or self.restored_paths or self.removed_paths:
             raise ValueError("full-baseline recovery has no path accounting")
+        return self
+
+
+class RunnerCompletionWitnessedPayload(StrictEventPayload):
+    """Durable proof that the runner returned successfully at a final boundary."""
+
+    execution_id: str
+    node_id: str
+    lease_id: str
+    lease_generation: StrictInt
+    staged_payload_hash: str
+    staged_payload_size_bytes: StrictInt
+    staged_snapshot_id: str
+    staged_snapshot_ref: str
+    staged_commit_sha: str
+    staged_tree_sha: str
+    staged_boundary_hash: str
+    runner_return_kind: Literal["successful_return"]
+    disposition: Literal["completion_witnessed"] = "completion_witnessed"
+    final_snapshot_id: str
+    final_snapshot_ref: str
+    final_commit_sha: str
+    final_tree_sha: str
+    boundary_hash: str
+    boundary_entries: list[RunnerBoundaryEntry]
+    cache_authority_hash: str | None = None
+    cache_roots: list[RunnerCacheRoot | str] = Field(
+        default_factory=lambda: cast(list[RunnerCacheRoot | str], [])
+    )
+    cache_status_evidence: list[CacheStatusEvidence] | None = None
+
+    @model_validator(mode="after")
+    def identities_are_consistent(self) -> "RunnerCompletionWitnessedPayload":
+        try:
+            validate_sha256(self.staged_payload_hash)
+            validate_sha256(self.staged_boundary_hash)
+            validate_snapshot_ref(self.staged_snapshot_ref, self.staged_snapshot_id)
+            validate_git_oid(self.staged_commit_sha)
+            validate_git_oid(self.staged_tree_sha)
+            validate_snapshot_ref(self.final_snapshot_ref, self.final_snapshot_id)
+            validate_git_oid(self.final_commit_sha)
+            validate_git_oid(self.final_tree_sha)
+            _validate_event_cache_roots(self.cache_roots, self.cache_authority_hash)
+            if self.boundary_hash != boundary_manifest_hash(
+                self.final_tree_sha,
+                self.boundary_entries,
+                self.cache_status_evidence or (),
+                self.cache_authority_hash,
+            ):
+                raise BoundaryValidationError("boundary_hash does not match final manifest")
+        except BoundaryValidationError as exc:
+            raise ValueError(str(exc)) from exc
         return self
 
 
@@ -1368,6 +1479,7 @@ class RunnerExecutionFinalizedPayload(StrictEventPayload):
         default_factory=lambda: cast(list[RunnerCacheRoot | str], [])
     )
     cache_status_evidence: list[CacheStatusEvidence] | None = None
+    disposition: Literal["finalized_accepted"] = "finalized_accepted"
 
     @model_validator(mode="after")
     def manifest_is_consistent(self) -> "RunnerExecutionFinalizedPayload":
@@ -1802,6 +1914,10 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     # marker rather than boilerplate.
     access_mode_override_justification: str | None = None
     acceptance: list[str] | None = None
+    acceptance_commands: list[str] | None = None
+    acceptance_command_timeout_seconds: float | None = Field(default=None, gt=0, le=3600)
+    accepted_baseline_failure_fingerprints: list[str] | None = None
+    effect_contract: Literal["read_only_semantic", "effectful_write"] | None = None
     artifact_reference_record: dict[str, Any] | None = None
     artifacts: list[Any] | None = None
     available_tools: list[Any] | None = None

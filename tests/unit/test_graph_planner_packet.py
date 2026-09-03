@@ -708,6 +708,34 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "dynamic_worker_instruction:" in fallback_dynamic_worker_prompt
     assert "Do not work on unrelated repository slices." in fallback_dynamic_worker_prompt
 
+    read_only_context = GraphDispatchContext(
+        run_id="run-dynamic",
+        node_id="worker-discovery",
+        node_kind="worker",
+        node_role="discovery",
+        node_payload={
+            "node_id": "worker-discovery",
+            "kind": "worker",
+            "role": "discovery",
+            "access_mode": "read_only",
+            "semantic_stage": "discovery",
+            "effect_contract": "read_only_semantic",
+        },
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-discovery",
+        lease_generation=1,
+        execution_id="exec-discovery",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-discovery",
+        graph_events=fallback_dynamic_worker_context.graph_events,
+    )
+    read_only_prompt = _prompt_for_node(read_only_context)
+    assert "downstream_acceptance_command:" in read_only_prompt
+    assert "dynamic_acceptance_command:" not in read_only_prompt
+    assert "do not execute downstream_acceptance_command" in read_only_prompt
+    assert "Do not modify repository files" in read_only_prompt
+
     verifier_events = [
         _event(
             "output_record_accepted",
@@ -1124,11 +1152,22 @@ def test_gap_planner_packet_includes_gap_contract_and_corrective_examples() -> N
             ),
         },
         "corrective_region": "corrective_work_region",
+        "corrective_categories": {
+            "implementation": "create_effectful_batch with failed batch evidence",
+            "semantic_plan_revision": (
+                "create_revision_attempt with exact failed implementation-plan artifact, "
+                "failed plan-verification report, schema, requirements, and consumer edges"
+            ),
+        },
         "repository_edits": "forbidden",
     }
 
     purposes = [example["purpose"] for example in packet["patch_examples"]]
-    assert purposes == ["no_gap_no_op_patch", "create_corrective_work_region"]
+    assert purposes == [
+        "no_gap_no_op_patch",
+        "semantic_plan_revision",
+        "create_corrective_work_region",
+    ]
     assert "create_successor_planner" not in purposes
     assert "create_gap_planner" not in purposes
 
@@ -1143,6 +1182,22 @@ def test_gap_planner_packet_includes_gap_contract_and_corrective_examples() -> N
         node = op["node"]
         if node["kind"] in {"worker", "verifier"}:
             assert node["task_region_id"] == "corrective_work_region"
+
+    revision_example = next(
+        example
+        for example in packet["patch_examples"]
+        if example["purpose"] == "semantic_plan_revision"
+    )
+    revision = revision_example["ops"][0]
+    assert revision["op"] == "create_revision_attempt"
+    worker = revision["worker_node"]
+    assert worker["semantic_stage"] == "corrective_work"
+    assert worker["access_mode"] == "write"
+    assert worker["effect_contract"] == "effectful_write"
+    assert worker["failed_candidate_id"] == worker["recovery_of_record_id"]
+    failed_report_edge = revision_example["ops"][1]
+    assert failed_report_edge["accepted_record_selector"]["outcome"] == "failed"
+    assert failed_report_edge["accepted_record_selector"]["record_id"]
 
 
 def test_gap_planner_packet_includes_blocking_obligations() -> None:

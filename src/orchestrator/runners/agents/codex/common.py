@@ -35,6 +35,10 @@ from orchestrator.runners.planner_tools import (
     resolve_graph_planner_tools,
     validate_reliable_plan_tool_specs,
 )
+from orchestrator.runners.submission import (
+    submission_prompt_instruction,
+    submission_tool_input_schema,
+)
 from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     GraphPatchCallback,
@@ -386,10 +390,11 @@ def build_dynamic_tool_specs(
     Returns:
         List of tool spec dicts suitable for ``thread/start.dynamicTools``.
     """
+    submission_contract = context.submission_contract if context is not None else None
     submit_spec: dict[str, Any] = {
         "name": "submit",
         "description": "Submit work for verification or complete the verification.",
-        "inputSchema": {"type": "object", "properties": {}},
+        "inputSchema": submission_tool_input_schema(submission_contract),
     }
     update_checklist_spec: dict[str, Any] = {
         "name": "update_checklist",
@@ -1329,6 +1334,7 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
         "- Use git status and diff only to inspect your changes before submitting.\n"
         "- Always use `git --no-pager` for git commands.\n"
     )
+    submit_instruction = submission_prompt_instruction(context.submission_contract)
 
     if is_verifier:
         verifier_action = (
@@ -1351,7 +1357,7 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
             "  - req_id: The requirement ID (e.g. 'R-01', 'R-02')\n"
             "  - grade: One of 'A', 'B', 'C', 'D', 'F'\n"
             "  - grade_reason: Optional explanation for the grade\n\n"
-            "- **submit**()\n"
+            f"{submit_instruction}\n"
             "  Complete the verification after grading all requirements.\n\n"
             "- **complete_recovery**(outcome, notes?)\n"
             "  Finalize recovery for a failed task only when this verifier phase is handling recovery."
@@ -1395,7 +1401,7 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
             "  - status: 'done', 'blocked', or 'not_applicable'\n"
             "  - note: Optional explanation\n"
             "  Example: update_checklist('R-01', 'done')\n\n"
-            "- **submit**()\n"
+            f"{submit_instruction}\n"
             "  Submit your work for verification by a reviewer.\n"
             "  Only call this after addressing all requirements.\n"
             "  Submission will fail if any CRITICAL requirement is not 'done'.\n\n"

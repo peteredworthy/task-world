@@ -575,11 +575,16 @@ class WorkflowService:
         # DRAFT runs cannot be cancelled.
         if run.status == RunStatus.DRAFT:
             raise InvalidTransitionError(run.status.value, "cancelled")
+        pending_run = (
+            await self.apply_stop_run(run_id, stop_intent="cancel")
+            if run.status == RunStatus.ACTIVE
+            else run
+        )
         queue = self._get_signal_queue()
         payload: dict[str, Any] | None = {"reason": reason} if reason else None
         await queue.enqueue(run_id, WorkflowSignal.CANCEL, payload)
         await commit_with_event_outbox(self._session)
-        return run
+        return pending_run
 
     async def apply_cancel_run(self, run_id: str, reason: str | None = None) -> Run:
         """Cancel a run (ACTIVE/PAUSED -> CANCELLED) via event append and projection.
@@ -717,7 +722,12 @@ class WorkflowService:
 
         return result
 
-    async def apply_stop_run(self, run_id: str) -> Run:
+    async def apply_stop_run(
+        self,
+        run_id: str,
+        *,
+        stop_intent: Literal["pause", "cancel"] | None = None,
+    ) -> Run:
         """Transition a run from ACTIVE to STOPPING via the event stream.
 
         Called from pause_run() to make the stop observable before the
@@ -731,6 +741,36 @@ class WorkflowService:
                 run_id=run_id,
                 old_status=run.status,
                 new_status=RunStatus.STOPPING,
+                pause_reason=(
+                    f"graph_{stop_intent}_requested" if stop_intent is not None else None
+                ),
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
+
+    async def record_graph_quiescence_failure(
+        self,
+        run_id: str,
+        *,
+        error_detail: str,
+    ) -> Run:
+        """Keep an incomplete lifecycle stop visible and retryable in STOPPING."""
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.STOPPING:
+            return run
+        bounded_detail = error_detail[:2_000]
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=RunStatus.STOPPING,
+                new_status=RunStatus.STOPPING,
+                pause_reason="graph_quiescence_failed",
+                last_error=bounded_detail,
+                timestamp=self._clock.now(),
             ),
             self._store_v2,
             self._session,
@@ -864,7 +904,7 @@ class WorkflowService:
         if run.status != RunStatus.ACTIVE:
             raise InvalidTransitionError(run.status.value, "paused")
         # Immediately visible: ACTIVE → STOPPING
-        stopping_run = await self.apply_stop_run(run_id)
+        stopping_run = await self.apply_stop_run(run_id, stop_intent="pause")
         queue = self._get_signal_queue()
         payload: dict[str, Any] = {"reason": reason}
         if error_detail:

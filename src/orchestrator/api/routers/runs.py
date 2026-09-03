@@ -293,11 +293,13 @@ def _graph_backed_run_ids_from_rows(rows: Any) -> set[str]:
     }
 
 
-def _activity_payload_for_mode(
+def activity_payload_for_mode(
     event_type: str,
     payload: dict[str, Any],
     payload_mode: ActivityPayloadMode,
 ) -> dict[str, Any]:
+    if event_type == "command_rejected" or event_type.startswith("callback_rejected_"):
+        payload = {**payload, "disposition": "rejected"}
     if payload_mode == "full":
         return payload
     if event_type == "agent_output":
@@ -925,10 +927,8 @@ async def start_run(
 @router.post("/{run_id}/cancel", response_model=RunResponse, status_code=202)
 async def cancel_run(
     run_id: str,
-    config: Annotated[GlobalConfig, Depends(get_global_config)],
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
-    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
     graph_store: Annotated[Any, Depends(get_graph_store)],
 ) -> RunResponse:
     """Cancel a run (ACTIVE/PAUSED -> CANCELLED).
@@ -939,17 +939,7 @@ async def cancel_run(
     if run.status == RunStatus.STOPPING:
         raise HTTPException(status_code=409, detail="Cannot cancel a run in STOPPING state")
     if getattr(run, "execution_mode", "legacy") == "graph":
-        from orchestrator.workflow.graph_driver import apply_graph_cancel_until_terminal
-
         run = await service.cancel_run(run_id)
-        await apply_graph_cancel_until_terminal(
-            session_factory,
-            run_id,
-            reason="api_cancel",
-            journal_max_bytes=config.journal.max_bytes,
-        )
-        await executor.cancel_run(run_id)
-        await _cancel_active_child_executors(run_id, service, executor)
         graph_position = await graph_store.current_position(run_id)
         return _run_to_response(run, is_graph_backed=graph_position > 0)
 
@@ -1134,7 +1124,7 @@ async def get_activity(
 
     events: list[ActivityEvent] = []
     for row in rows:
-        payload = _activity_payload_for_mode(row["event_type"], row["payload"], payload_mode)
+        payload = activity_payload_for_mode(row["event_type"], row["payload"], payload_mode)
         task_id = payload.get("task_id")
         step_id = payload.get("step_id")
 
@@ -1230,7 +1220,7 @@ async def stream_activity(
                 # Stream each event as SSE (outside the session context)
                 if rows:
                     for row in rows:
-                        payload = _activity_payload_for_mode(
+                        payload = activity_payload_for_mode(
                             row["event_type"], row["payload"], payload_mode
                         )
                         task_id = payload.get("task_id")

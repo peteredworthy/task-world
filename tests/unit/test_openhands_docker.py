@@ -17,6 +17,8 @@ def test_docker_agent_info() -> None:
     agent = DockerOpenHandsAgent()
     assert agent.info.agent_runner_type == AgentRunnerType.OPENHANDS_DOCKER
     assert agent.info.name == "OpenHands (Docker)"
+    assert agent.info.runtime_observation.mode == "unsupported"
+    assert "container" in agent.info.runtime_observation.reason
 
 
 def test_docker_build_prompt_contains_requirements() -> None:

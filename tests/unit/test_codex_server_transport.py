@@ -26,7 +26,7 @@ from orchestrator.runners import (
     RELIABLE_PLAN_REQUIRED_TOOL_NAMES,
     RealStdioTransport,
 )
-from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
+from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
@@ -313,6 +313,14 @@ def _make_agent(
     return agent, transport
 
 
+def test_codex_runtime_observation_capability_matches_transport_ownership() -> None:
+    production = CodexServerAgent(api_key=None, _environ={})
+    injected, _ = _make_agent([])
+
+    assert production.info.runtime_observation.mode == "host_process"
+    assert injected.info.runtime_observation.mode == "unsupported"
+
+
 # ---------------------------------------------------------------------------
 # 1. Protocol handshake: thread/start and turn/start are sent
 # ---------------------------------------------------------------------------
@@ -578,7 +586,7 @@ async def test_execute_routes_tool_call_grade_to_callback_in_verifier_phase() ->
     assert grades == [("R-01", "A", "Excellent")]
 
 
-async def test_execute_raises_when_submit_callback_is_rejected() -> None:
+async def test_execute_keeps_session_alive_when_submit_callback_is_rejected() -> None:
     notifications = [
         _tool_call_request("submit", {}, 10),
         _turn_completed(),
@@ -588,23 +596,96 @@ async def test_execute_raises_when_submit_callback_is_rejected() -> None:
     async def rejected_submit() -> None:
         raise ValueError("submit callback rejected: verification record at index 0 missing grades")
 
-    with pytest.raises(AgentExecutionError) as exc_info:
-        await agent.execute(
-            context=_ctx(node_kind="verifier"),
-            on_checklist_update=_noop_checklist,
-            on_submit=rejected_submit,
-            on_grade=_noop_grade,
-        )
-
-    assert "submit callback rejected: verification record at index 0 missing grades" in str(
-        exc_info.value
+    result = await agent.execute(
+        context=_ctx(node_kind="verifier"),
+        on_checklist_update=_noop_checklist,
+        on_submit=rejected_submit,
+        on_grade=_noop_grade,
     )
+
+    assert result.success is True
     tool_response = next(sent for sent in transport.sent if sent.get("id") == 10)
     assert tool_response["result"]["success"] is False
     assert (
         tool_response["result"]["contentItems"][0]["text"]
         == "submit callback rejected: verification record at index 0 missing grades"
     )
+
+
+async def test_execute_accepts_corrected_submit_in_same_session() -> None:
+    notifications = [
+        _tool_call_request("submit", {"outputs": {}}, 10),
+        _tool_call_request(
+            "submit",
+            {"outputs": {"semantic_artifact": {"batches": [{"batch_id": "b1"}]}}},
+            11,
+        ),
+        _turn_completed(),
+    ]
+    agent, transport = _make_agent(notifications)
+    calls: list[dict[str, Any]] = []
+
+    async def submit(args: dict[str, Any]) -> None:
+        calls.append(args)
+        if not args["outputs"]:
+            raise ValueError(
+                "submit callback rejected: node discovery-1 submit missing required "
+                "output port semantic_artifact; expected SemanticArtifact plan@1"
+            )
+
+    result = await agent.execute(
+        context=_ctx(node_kind="worker"),
+        on_checklist_update=_noop_checklist,
+        on_submit=submit,
+    )
+
+    assert result.success is True
+    assert calls == [
+        {"outputs": {}},
+        {"outputs": {"semantic_artifact": {"batches": [{"batch_id": "b1"}]}}},
+    ]
+    responses = {
+        sent["id"]: sent["result"] for sent in transport.sent if sent.get("id") in {10, 11}
+    }
+    assert responses[10]["success"] is False
+    assert (
+        "missing required output port semantic_artifact" in responses[10]["contentItems"][0]["text"]
+    )
+    assert responses[11]["success"] is True
+
+
+async def test_legacy_submit_rejection_does_not_terminate_before_corrected_dynamic_call() -> None:
+    notifications = [
+        _tool_call_started_notification("submit", {"outputs": {}}),
+        _tool_call_request(
+            "submit",
+            {"outputs": {"semantic_artifact": {"batches": [{"batch_id": "b1"}]}}},
+            12,
+        ),
+        _turn_completed(),
+    ]
+    agent, transport = _make_agent(notifications)
+    calls: list[dict[str, Any]] = []
+
+    async def submit(args: dict[str, Any]) -> None:
+        calls.append(args)
+        if not args["outputs"]:
+            raise ValueError(
+                "submit callback rejected: node discovery-1 submit missing required "
+                "output port semantic_artifact; expected schema=SemanticArtifact, "
+                "semantic identity=plan@1"
+            )
+
+    result = await agent.execute(
+        context=_ctx(node_kind="worker"),
+        on_checklist_update=_noop_checklist,
+        on_submit=submit,
+    )
+
+    assert result.success is True
+    assert len(calls) == 2
+    response = next(sent for sent in transport.sent if sent.get("id") == 12)
+    assert response["result"]["success"] is True
 
 
 async def test_execute_silently_drops_disallowed_tool_call_events() -> None:

@@ -44,6 +44,7 @@ from orchestrator.graph_runtime.dispatch import (
     _prompt_summary_for_node,
     _requirements_for_node,
     _runtime_death_max_attempts,
+    _semantic_output_records_from_submit_args,
     _full_raw_patch_validation_diagnostics,
 )
 from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
@@ -60,6 +61,7 @@ from orchestrator.runners.types import (
 )
 from orchestrator.runners import (
     ReliablePlanToolPreflightError,
+    build_codex_server_prompt,
     build_dynamic_tool_specs,
     validate_reliable_plan_tool_specs,
 )
@@ -681,6 +683,22 @@ class NoSubmitAgent(OutputAgent):
         return ExecutionResult(success=True)
 
 
+class DoubleSubmitAgent(OutputAgent):
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        await on_submit()
+        await on_submit()
+        return ExecutionResult(success=True)
+
+
 class BlockingSubmitAgent(OutputAgent):
     def __init__(self, started: list[str], release: asyncio.Event) -> None:
         super().__init__([])
@@ -972,6 +990,27 @@ async def test_no_registry_configured_means_no_graph_mcp_url() -> None:
     assert execution_context.graph_mcp_url is None
 
 
+def test_execution_context_can_isolate_runner_from_canonical_worktree() -> None:
+    context = _context(
+        node_role="discovery",
+        worktree_path="/canonical/leased-worktree",
+        node_payload={
+            "access_mode": "read_only",
+            "semantic_stage": "discovery",
+            "effect_contract": "read_only_semantic",
+        },
+    )
+    executor = RecordingExecutor()
+
+    execution_context = executor._execution_context(
+        context,
+        working_dir="/disposable/exact-baseline",
+    )
+
+    assert execution_context.working_dir == "/disposable/exact-baseline"
+    assert context.worktree_path == "/canonical/leased-worktree"
+
+
 class RecordingOutputSink:
     def __init__(self) -> None:
         self.calls: list[tuple[GraphDispatchContext, list[str]]] = []
@@ -1043,8 +1082,17 @@ async def test_executor_runs_without_output_callback() -> None:
 
     assert executor.started == [context]
     assert executor.submitted == [context]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_runner_submit_after_success_is_idempotent() -> None:
+    context = _context()
+    executor = RecordingExecutor()
+
+    await executor._run_agent(context, DoubleSubmitAgent([]))
+
+    assert executor.submitted == [context]
     assert executor.failures == []
-    assert agent.submitted is True
 
 
 @pytest.mark.asyncio
@@ -1818,6 +1866,163 @@ def test_execution_context_preserves_explicit_node_tools() -> None:
     execution_context = executor._execution_context(context)
 
     assert execution_context.available_tools == ["read_file"]
+
+
+def _semantic_discovery_context() -> GraphDispatchContext:
+    declaration = _event(
+        "output_record_accepted",
+        {
+            "record_id": "semantic-schema-plan-v1",
+            "record_kind": "graph_record",
+            "record_type": "semantic_schema_declaration",
+            "producer_node_id": "routine-snapshot",
+            "port": "semantic_schema_declaration",
+            "schema": "SemanticSchemaDeclaration",
+            "schema_version": 1,
+            "value": {
+                "schema_id": "plan",
+                "version": 1,
+                "semantic_role": "implementation_plan",
+                "json_schema": {
+                    "type": "object",
+                    "required": ["batches"],
+                    "properties": {
+                        "batches": {"type": "array", "minItems": 1},
+                    },
+                    "additionalProperties": False,
+                },
+                "authority": "routine_snapshot",
+            },
+        },
+        1,
+    )
+    return _context(
+        node_id="discovery-1",
+        node_kind="worker",
+        node_role="discovery",
+        graph_events=[declaration],
+        node_payload={
+            "task_region_id": "discovery",
+            "semantic_schema_id": "plan",
+            "semantic_schema_version": 1,
+            "outputs": [
+                {
+                    "port": "semantic_artifact",
+                    "schema": "SemanticArtifact",
+                    "required": True,
+                }
+            ],
+        },
+    )
+
+
+def test_discovery_submission_contract_shapes_prompt_and_codex_tool() -> None:
+    context = _semantic_discovery_context()
+    execution_context = RecordingExecutor()._execution_context(context)
+
+    assert execution_context.submission_contract is not None
+    output = execution_context.submission_contract.outputs[0]
+    assert output.port == "semantic_artifact"
+    assert output.schema_name == "SemanticArtifact"
+    assert output.semantic_schema_id == "plan"
+    assert output.semantic_schema_version == 1
+    assert output.content_json_schema == {
+        "type": "object",
+        "required": ["batches"],
+        "properties": {"batches": {"type": "array", "minItems": 1}},
+        "additionalProperties": False,
+    }
+    assert '"semantic_schema_id": "plan"' in execution_context.prompt
+    assert '"content_json_schema"' in execution_context.prompt
+
+    codex_prompt = build_codex_server_prompt(execution_context)
+    assert "**submit**(outputs=...)" in codex_prompt
+    assert "do not call submit() without outputs" in codex_prompt
+    assert '"required":["semantic_artifact"]' in codex_prompt
+
+    submit = next(
+        spec
+        for spec in build_dynamic_tool_specs(context=execution_context)
+        if spec["name"] == "submit"
+    )
+    assert submit["inputSchema"]["required"] == ["outputs"]
+    assert submit["inputSchema"]["properties"]["outputs"]["required"] == ["semantic_artifact"]
+    assert (
+        submit["inputSchema"]["properties"]["outputs"]["properties"]["semantic_artifact"]
+        == output.content_json_schema
+    )
+
+
+def test_semantic_submit_wraps_only_authored_content_and_validates_precisely() -> None:
+    context = _semantic_discovery_context()
+
+    with pytest.raises(
+        ValueError,
+        match=r"node discovery-1 submit missing required output port semantic_artifact.*plan@1",
+    ):
+        _semantic_output_records_from_submit_args(context, {"outputs": {}})
+    with pytest.raises(
+        ValueError,
+        match=r"output port semantic_artifact expected schema=SemanticArtifact, "
+        r"semantic identity=plan@1; content validation failed",
+    ):
+        _semantic_output_records_from_submit_args(context, {"outputs": {"semantic_artifact": {}}})
+    with pytest.raises(
+        ValueError,
+        match=r"output port semantic_artifact expected schema=SemanticArtifact, "
+        r"semantic identity=plan@1; trusted identity fields are not authorable: "
+        r"\['producer_node_id'\]",
+    ):
+        _semantic_output_records_from_submit_args(
+            context,
+            {
+                "outputs": {
+                    "semantic_artifact": {
+                        "batches": [{"batch_id": "batch-1"}],
+                        "producer_node_id": "spoofed-node",
+                    }
+                }
+            },
+        )
+
+    records = _semantic_output_records_from_submit_args(
+        context,
+        {"outputs": {"semantic_artifact": {"batches": [{"batch_id": "batch-1"}]}}},
+    )
+
+    assert len(records) == 1
+    record = records[0]
+    assert record["producer_node_id"] == "discovery-1"
+    assert record["port"] == "semantic_artifact"
+    assert record["schema"] == "SemanticArtifact"
+    assert cast(dict[str, Any], record["value"])["schema_id"] == "plan"
+    assert cast(dict[str, Any], record["value"])["content"] == {
+        "batches": [{"batch_id": "batch-1"}]
+    }
+
+
+def test_worker_redispatch_prompt_includes_bounded_prior_attempt_failure() -> None:
+    failure = _event(
+        "agent_died",
+        {
+            "lease_id": "lease-old",
+            "node_id": "discovery-1",
+            "generation": 1,
+            "execution_id": "exec-old",
+            "reason": "submit callback rejected: semantic_artifact content missing batches",
+        },
+        2,
+    )
+    context = replace(
+        _semantic_discovery_context(),
+        graph_events=[*_semantic_discovery_context().graph_events, failure],
+    )
+
+    prompt = RecordingExecutor()._execution_context(context).prompt
+
+    assert '"prior_attempt_failure"' in prompt
+    assert '"event_type": "agent_died"' in prompt
+    assert "semantic_artifact content missing batches" in prompt
 
 
 @pytest.mark.asyncio

@@ -12,9 +12,10 @@ from orchestrator.graph import (
     RELIABLE_PLAN_INCIDENT_ID,
     FakeClock,
     SequentialIdGenerator,
+    compile_routine,
     thaw_json,
 )
-from orchestrator.graph_runtime import GraphController, seed_run
+from orchestrator.graph_runtime import GraphController
 
 
 pytestmark = pytest.mark.slow
@@ -95,7 +96,34 @@ async def test_controller_resolves_semantic_artifact_reference_before_acceptance
     # Durable product-path reproduction for the incident-informed skeleton.
     run_id = RELIABLE_PLAN_INCIDENT_ID
     try:
-        seeded = await seed_run(sessions, routine, run_id=run_id, clock=clock, id_gen=ids)
+        compiled = compile_routine(routine, clock, ids, run_id=run_id)
+        compiled = [
+            event.model_copy(
+                update={
+                    "payload": {
+                        **event.payload,
+                        "outputs": [
+                            *event.payload["outputs"],
+                            {
+                                "port": "semantic_artifact",
+                                "direction": "output",
+                                "schema": "SemanticArtifact",
+                                "record_layers": ["graph_record"],
+                            },
+                        ],
+                    }
+                }
+            )
+            if event.event_type == "node_created" and event.payload.get("kind") == "worker"
+            else event
+            for event in compiled
+        ]
+        seeded = await controller.handle_command(
+            run_id,
+            0,
+            "seed_compiled_events",
+            {"events": compiled},
+        )
         accepted = await controller.handle_command(run_id, seeded.projection_position, "accept_run")
         started = await controller.handle_command(run_id, accepted.projection_position, "start")
         scheduled = await controller.handle_command(

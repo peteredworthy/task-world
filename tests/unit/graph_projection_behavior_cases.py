@@ -347,6 +347,7 @@ def _assert_event_outcome(event_type: str, before: GraphProjection, after: Graph
             == {
                 "runner_baseline_recorded": "baseline_captured",
                 "runner_submission_staged": "submission_staged",
+                "runner_completion_witnessed": "completion_witnessed",
                 "runner_boundary_mismatch": "submission_staged",
                 "runner_recovery_requested": "recovery_requested",
                 "runner_recovery_completed": "recovered",
@@ -887,6 +888,34 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
         "new_state": "completed",
     }
     runner_staged = _event("runner_submission_staged", runner_staged_payload, 3)
+    runner_witness_staged_payload = {
+        **runner_staged_payload,
+        "payload_hash": "sha256:" + "d" * 64,
+        "payload_size_bytes": 15,
+        "staged_snapshot_ref": "refs/orchestrator/snapshots/snapshot-2",
+        "staged_commit_sha": "d" * 40,
+    }
+    runner_witness_staged = _event("runner_submission_staged", runner_witness_staged_payload, 3)
+    runner_completion_witnessed_payload: dict[str, object] = {
+        "execution_id": "execution-1",
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "staged_payload_hash": runner_witness_staged_payload["payload_hash"],
+        "staged_payload_size_bytes": runner_witness_staged_payload["payload_size_bytes"],
+        "staged_snapshot_id": "snapshot-2",
+        "staged_snapshot_ref": runner_witness_staged_payload["staged_snapshot_ref"],
+        "staged_commit_sha": runner_witness_staged_payload["staged_commit_sha"],
+        "staged_tree_sha": _RUNNER_TREE_SHA,
+        "staged_boundary_hash": _RUNNER_STAGED_HASH,
+        "runner_return_kind": "successful_return",
+        "final_snapshot_id": "snapshot-3",
+        "final_snapshot_ref": "refs/orchestrator/snapshots/snapshot-3",
+        "final_commit_sha": "e" * 40,
+        "final_tree_sha": _RUNNER_TREE_SHA,
+        "boundary_hash": _RUNNER_STAGED_HASH,
+        "boundary_entries": _RUNNER_STAGED_ENTRIES,
+    }
     changing_payloads: tuple[
         tuple[str, tuple[EventEnvelope, ...], dict[str, object], frozenset[str]], ...
     ] = (
@@ -1239,6 +1268,7 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
     runner_names = (
         "runner_baseline_recorded",
         "runner_submission_staged",
+        "runner_completion_witnessed",
         "runner_boundary_mismatch",
         "runner_recovery_requested",
         "runner_recovery_completed",
@@ -1265,6 +1295,12 @@ def behavior_cases() -> tuple[ProjectionBehaviorCase, ...]:
             "runner_submission_staged",
             (*runner_context, runner_baseline),
             runner_staged_payload,
+            frozenset({"execution"}),
+        ),
+        (
+            "runner_completion_witnessed",
+            (*runner_context, runner_baseline, runner_witness_staged),
+            runner_completion_witnessed_payload,
             frozenset({"execution"}),
         ),
         (

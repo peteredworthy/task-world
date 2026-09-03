@@ -1590,6 +1590,123 @@ def test_callback_rejects_completion_without_required_output_record() -> None:
     )
 
 
+def test_callback_recognizes_concrete_required_port_absent_from_static_contract() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "role": "discovery",
+                "state": "running",
+                "outputs": [
+                    {
+                        "port": "failure_record",
+                        "schema": "FailureRecord",
+                        "required": True,
+                    }
+                ],
+            },
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {"node_id": "worker-1", "lease_id": "lease-1", "generation": 1},
+            2,
+        ),
+    ]
+    failure_record = {
+        "record_id": "failure-1",
+        "record_kind": "graph_record",
+        "record_type": "failure_record",
+        "producer_node_id": "worker-1",
+        "port": "failure_record",
+        "schema": "FailureRecord",
+        "value": {
+            "failed_node_id": "worker-1",
+            "phase": "runtime",
+            "error_class": "adversarial_test",
+            "retryable": False,
+        },
+    }
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            observed_graph_position=2,
+            payload={"payload_hash": "hash-failure", "output_records": [failure_record]},
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+
+
+def test_semantic_concrete_outputs_do_not_fall_back_to_generic_worker_ports() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "role": "discovery",
+                "state": "running",
+                "outputs": [
+                    {
+                        "port": "semantic_artifact",
+                        "schema": "SemanticArtifact",
+                        "required": True,
+                    }
+                ],
+            },
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {"node_id": "worker-1", "lease_id": "lease-1", "generation": 1},
+            2,
+        ),
+    ]
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            observed_graph_position=2,
+            payload={
+                "payload_hash": "hash-artifact",
+                "output_records": [
+                    {
+                        "record_id": "artifact-reference-1",
+                        "record_kind": "graph_record",
+                        "record_type": "artifact_reference",
+                        "producer_node_id": "worker-1",
+                        "port": "artifact_reference",
+                        "schema": "ArtifactReference",
+                        "value": {
+                            "artifact_id": "docs/out.txt",
+                            "artifact_type": "run_output",
+                            "uri": "docs/out.txt",
+                            "summary": "submitted artifact",
+                            "source_record_ids": [],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == (
+        "output record at index 0 uses unknown output port: artifact_reference"
+    )
+
+
 def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
     events = [
         *_active_lease_events(),
@@ -4572,6 +4689,730 @@ def test_patch_rejected_after_run_cancellation() -> None:
     }
 
 
+def test_human_operator_can_repair_paused_graph_before_resume() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-failed",
+                "kind": "worker",
+                "role": "builder",
+                "state": "failed",
+                "task_region_id": "region-1",
+                "objective": "Retry the failed work.",
+                "acceptance": ["Replacement completes the failed work"],
+                "access_mode": "write",
+                "effect_contract": "effectful_write",
+            },
+            1,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_patch",
+        {
+            "patch_id": "operator-repair",
+            "base_graph_position": 1,
+            "ops": [
+                {"op": "retire_node", "node_id": "worker-failed"},
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-replacement",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                        "objective": "Retry the failed work.",
+                        "acceptance": ["Replacement completes the failed work"],
+                        "access_mode": "write",
+                        "effect_contract": "effectful_write",
+                    },
+                },
+            ],
+        },
+        context=PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=1,
+            actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            actor_role="human",
+            proposed_by_node_id="human-operator",
+        ),
+    )
+
+    assert any(event.event_type == "graph_patch_accepted" for event in output)
+    assert any(
+        event.event_type == "node_state_changed"
+        and event.payload["node_id"] == "worker-failed"
+        and event.payload["new_state"] == "retired"
+        for event in output
+    )
+
+
+def test_paused_human_patch_must_be_current_equivalent_failed_node_repair() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-failed",
+                "kind": "worker",
+                "role": "builder",
+                "state": "failed",
+                "task_region_id": "region-1",
+                "semantic_stage": "discovery",
+                "access_mode": "read_only",
+            },
+            1,
+        ),
+    ]
+    context = PatchCommandContext(
+        run_id="run-1",
+        current_graph_position=1,
+        actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+        actor_role="human",
+        proposed_by_node_id="human-operator",
+    )
+
+    stale = _apply(
+        events,
+        "submit_patch",
+        {
+            "patch_id": "stale-repair",
+            "base_graph_position": 0,
+            "ops": [
+                {"op": "retire_node", "node_id": "worker-failed"},
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "replacement",
+                        "kind": "worker",
+                        "role": "builder",
+                        "task_region_id": "region-1",
+                        "semantic_stage": "discovery",
+                        "objective": "Retry discovery.",
+                        "acceptance": ["Produce the discovery artifact"],
+                        "access_mode": "read_only",
+                    },
+                },
+            ],
+        },
+        context=context,
+    )
+    unsafe = _apply(
+        events,
+        "submit_patch",
+        {
+            "patch_id": "unsafe-repair",
+            "base_graph_position": 1,
+            "ops": [{"op": "retire_node", "node_id": "worker-failed"}],
+        },
+        context=context,
+    )
+
+    assert stale[0].event_type == "graph_patch_rejected"
+    assert stale[0].payload["reason"] == "paused human repair requires the current graph position"
+    assert unsafe[0].event_type == "graph_patch_rejected"
+    assert unsafe[0].payload["reason"] == (
+        "paused human repair requires exactly one executable replacement node"
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "reason_fragment"),
+    [
+        ("drop_bound_requirements", "preserve bound_requirement_ids"),
+        ("drop_input_contract", "preserve inputs"),
+        ("drop_requirement_edge", "preserve required incoming edge"),
+        ("drop_semantic_edge", "preserve required outgoing edge"),
+        ("alter_selector", "preserve required outgoing edge"),
+        ("alter_hydration", "preserve required outgoing edge"),
+        ("alter_consumer", "preserve required outgoing edge"),
+    ],
+)
+def test_paused_human_repair_preserves_failed_node_semantic_topology(
+    mutation: str,
+    reason_fragment: str,
+) -> None:
+    requirement_input = {
+        "port": "requirement_1",
+        "direction": "input",
+        "schema": "Requirement",
+        "required": True,
+    }
+    semantic_output = {
+        "port": "semantic_artifact",
+        "direction": "output",
+        "schema": "SemanticArtifact",
+        "record_layers": ["graph_record"],
+        "required": True,
+    }
+    semantic_selector = {
+        "record_type": "semantic_artifact",
+        "schema": "SemanticArtifact",
+        "semantic_schema_id": "implementation-plan",
+        "semantic_schema_version": 1,
+        "authority_status": "accepted",
+    }
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "requirement-a", "kind": "requirement", "state": "completed"},
+            1,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-failed",
+                "kind": "worker",
+                "role": "discovery",
+                "state": "failed",
+                "task_region_id": "discovery-region",
+                "semantic_stage": "discovery",
+                "semantic_schema_id": "implementation-plan",
+                "semantic_schema_version": 1,
+                "access_mode": "read_only",
+                "base_snapshot_selection": "run_baseline",
+                "bound_requirement_ids": ["requirement-a"],
+                "inputs": [requirement_input],
+                "outputs": [semantic_output],
+                "objective": "Retry discovery.",
+                "acceptance": ["Produce the same typed plan"],
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {"node_id": "verifier-a", "kind": "verifier", "state": "planned"},
+            3,
+        ),
+        _event(
+            "node_created",
+            {"node_id": "verifier-other", "kind": "verifier", "state": "planned"},
+            4,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "requirement-to-old",
+                "from_node_id": "requirement-a",
+                "from_port": "requirement",
+                "to_node_id": "worker-failed",
+                "to_port": "requirement_1",
+                "required": True,
+                "accepted_record_selector": {"record_type": "requirement_record"},
+                "prompt_hydration_policy": "structured_json",
+            },
+            5,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "old-to-verifier",
+                "from_node_id": "worker-failed",
+                "from_port": "semantic_artifact",
+                "to_node_id": "verifier-a",
+                "to_port": "semantic_artifact",
+                "required": True,
+                "accepted_record_selector": semantic_selector,
+                "prompt_hydration_policy": "structured_json",
+            },
+            6,
+        ),
+    ]
+    replacement: dict[str, Any] = {
+        "node_id": "worker-replacement",
+        "kind": "worker",
+        "role": "discovery",
+        "state": "planned",
+        "task_region_id": "discovery-region",
+        "semantic_stage": "discovery",
+        "semantic_schema_id": "implementation-plan",
+        "semantic_schema_version": 1,
+        "access_mode": "read_only",
+        "base_snapshot_selection": "run_baseline",
+        "bound_requirement_ids": ["requirement-a"],
+        "inputs": [requirement_input],
+        "outputs": [semantic_output],
+        "objective": "Retry discovery.",
+        "acceptance": ["Produce the same typed plan"],
+    }
+    requirement_edge: dict[str, Any] | None = {
+        "op": "create_edge",
+        "edge_id": "requirement-to-replacement",
+        "from_node_id": "requirement-a",
+        "from_port": "requirement",
+        "to_node_id": "worker-replacement",
+        "to_port": "requirement_1",
+        "required": True,
+        "accepted_record_selector": {"record_type": "requirement_record"},
+        "prompt_hydration_policy": "structured_json",
+    }
+    semantic_edge: dict[str, Any] | None = {
+        "op": "create_edge",
+        "edge_id": "replacement-to-verifier",
+        "from_node_id": "worker-replacement",
+        "from_port": "semantic_artifact",
+        "to_node_id": "verifier-a",
+        "to_port": "semantic_artifact",
+        "required": True,
+        "accepted_record_selector": semantic_selector,
+        "prompt_hydration_policy": "structured_json",
+    }
+    if mutation == "drop_bound_requirements":
+        replacement["bound_requirement_ids"] = []
+    elif mutation == "drop_input_contract":
+        replacement["inputs"] = []
+    elif mutation == "drop_requirement_edge":
+        requirement_edge = None
+    elif mutation == "drop_semantic_edge":
+        semantic_edge = None
+    elif mutation == "alter_selector":
+        assert semantic_edge is not None
+        semantic_edge["accepted_record_selector"] = {
+            **semantic_selector,
+            "semantic_schema_version": 2,
+        }
+    elif mutation == "alter_hydration":
+        assert semantic_edge is not None
+        semantic_edge["prompt_hydration_policy"] = "inline_summary"
+    else:
+        assert semantic_edge is not None
+        semantic_edge["to_node_id"] = "verifier-other"
+    ops = [
+        {"op": "retire_node", "node_id": "worker-failed"},
+        {"op": "create_node", "node": replacement},
+        *[edge for edge in (requirement_edge, semantic_edge) if edge is not None],
+    ]
+
+    output = _apply(
+        events,
+        "submit_patch",
+        {"patch_id": f"repair-{mutation}", "base_graph_position": 6, "ops": ops},
+        context=PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=6,
+            actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            actor_role="human",
+            proposed_by_node_id="human-operator",
+        ),
+    )
+
+    assert output[0].event_type == "graph_patch_rejected"
+    assert reason_fragment in output[0].payload["reason"]
+
+
+def _live_shaped_blocked_legacy_repair() -> tuple[list[EventEnvelope], dict[str, Any]]:
+    old_id = "worker-reliable-plan-recovery"
+    replacement_id = "worker-reliable-plan-recovery-v2"
+    reason = "submission quality gate contract is invalid: worker effect_contract is missing"
+    authority = {
+        "allowed_actions": ["submit_records", "request_clarification", "raise_appeal"],
+        "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+    }
+    old_node = {
+        "node_id": old_id,
+        "kind": "worker",
+        "role": "fixer",
+        "state": "blocked",
+        "task_region_id": "reliable-plan-recovery-attempt",
+        "attempt_number": 2,
+        "candidate_id": "semantic-artifact-recovery-4b5fcd8b",
+        "failed_candidate_id": (
+            "semantic-artifact-exec-2b7cc9e419e141679ef1c6188a7f3a87-semantic_artifact"
+        ),
+        "base_snapshot_selection": "run_baseline",
+        "access_mode": "write",
+        "semantic_stage": "corrective_work",
+        "semantic_schema_id": "reliable-plan-implementation-plan",
+        "semantic_schema_version": 1,
+        "bound_requirement_ids": ["dynamic_feature_acceptance"],
+        "objective": "Repair the failed reliable-plan implementation candidate.",
+        "scope": "Preserve the accepted plan and correct the failed implementation.",
+        "acceptance": ["Replacement produces a verifiable candidate and semantic artifact"],
+        "invariants": ["Preserve accepted reliable-plan semantics"],
+        "prohibited_actions": ["Do not widen the accepted plan"],
+        "authority": authority,
+    }
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-discovery",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event("node_created", old_node, 2),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-recovery",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "planned",
+            },
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "failed-report-to-old",
+                "from_node_id": "verifier-discovery",
+                "from_port": "verification_report",
+                "to_node_id": old_id,
+                "to_port": "verification_report",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "record_id": "failed-verification-live",
+                },
+                "prompt_hydration_policy": "structured_json",
+            },
+            4,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "old-candidate-to-verifier",
+                "from_node_id": old_id,
+                "from_port": "candidate",
+                "to_node_id": "verifier-recovery",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
+                "prompt_hydration_policy": "structured_json",
+            },
+            5,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "old-semantic-to-verifier",
+                "from_node_id": old_id,
+                "from_port": "semantic_artifact",
+                "to_node_id": "verifier-recovery",
+                "to_port": "semantic_artifact",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "semantic_artifact",
+                    "schema": "SemanticArtifact",
+                    "semantic_schema_id": "reliable-plan-implementation-plan",
+                    "semantic_schema_version": 1,
+                },
+                "prompt_hydration_policy": "structured_json",
+            },
+            6,
+        ),
+        _event(
+            "lease_granted",
+            {"lease_id": "lease-old", "node_id": old_id, "generation": 1},
+            7,
+        ),
+        _event(
+            "lease_revoked",
+            {"lease_id": "lease-old", "node_id": old_id, "generation": 1, "reason": reason},
+            8,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": f"failure-{old_id}-lease-old",
+                "record_kind": "graph_record",
+                "record_type": "failure_record",
+                "producer_node_id": old_id,
+                "port": "failure_record",
+                "schema": "FailureRecord",
+                "value": {
+                    "failed_node_id": old_id,
+                    "phase": "runtime",
+                    "failure_class": "infrastructure_failure",
+                    "error_class": "runtime_death_recovery_required",
+                    "retryable": True,
+                    "lease_id": "lease-old",
+                    "reason": reason,
+                },
+            },
+            9,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": f"recovery-plan-{old_id}-lease-old",
+                "record_kind": "output",
+                "record_type": "recovery_plan",
+                "producer_node_id": old_id,
+                "port": "recovery_plan",
+                "schema": "RecoveryPlan",
+                "value": {
+                    "action": "pause",
+                    "responsible_actor": "controller",
+                    "graph_changes": [
+                        {"op": "set_node_state", "node_id": old_id, "state": "blocked"}
+                    ],
+                    "reason": reason,
+                    "failure_class": "infrastructure_failure",
+                    "retry_basis": "no_differentiating_action",
+                },
+            },
+            10,
+        ),
+        _event(
+            "node_deferred",
+            {
+                "node_id": old_id,
+                "reason": f"recovery_authorization_required:failure-{old_id}-lease-old",
+            },
+            11,
+        ),
+    ]
+    replacement = {**old_node, "node_id": replacement_id, "state": "planned"}
+    replacement["effect_contract"] = "effectful_write"
+    patch = {
+        "patch_id": "repair-live-blocked-worker",
+        "base_graph_position": 11,
+        "ops": [
+            {"op": "retire_node", "node_id": old_id},
+            {"op": "create_node", "node": replacement},
+            {
+                "op": "create_edge",
+                "edge_id": "failed-report-to-replacement",
+                "from_node_id": "verifier-discovery",
+                "from_port": "verification_report",
+                "to_node_id": replacement_id,
+                "to_port": "verification_report",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "record_id": "failed-verification-live",
+                },
+                "prompt_hydration_policy": "structured_json",
+            },
+            {
+                "op": "create_edge",
+                "edge_id": "replacement-candidate-to-verifier",
+                "from_node_id": replacement_id,
+                "from_port": "candidate",
+                "to_node_id": "verifier-recovery",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
+                "prompt_hydration_policy": "structured_json",
+            },
+            {
+                "op": "create_edge",
+                "edge_id": "replacement-semantic-to-verifier",
+                "from_node_id": replacement_id,
+                "from_port": "semantic_artifact",
+                "to_node_id": "verifier-recovery",
+                "to_port": "semantic_artifact",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "semantic_artifact",
+                    "schema": "SemanticArtifact",
+                    "semantic_schema_id": "reliable-plan-implementation-plan",
+                    "semantic_schema_version": 1,
+                },
+                "prompt_hydration_policy": "structured_json",
+            },
+        ],
+    }
+    return events, patch
+
+
+def test_paused_human_can_repair_exact_live_shaped_blocked_legacy_worker() -> None:
+    events, patch = _live_shaped_blocked_legacy_repair()
+
+    output = _apply(
+        events,
+        "submit_patch",
+        patch,
+        context=PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=11,
+            actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            actor_role="human",
+            proposed_by_node_id="human-operator",
+        ),
+    )
+
+    assert output[0].event_type == "graph_patch_accepted", output[0].payload.get("reason")
+    created = next(event for event in output if event.event_type == "node_created")
+    assert created.payload["node_id"] == "worker-reliable-plan-recovery-v2"
+    assert created.payload["effect_contract"] == "effectful_write"
+    assert len([event for event in output if event.event_type == "edge_created"]) == 3
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "stale",
+        "leased",
+        "missing_blocker",
+        "changed_semantics",
+        "extra_edge",
+        "still_invalid",
+        "completed_state",
+        "forged_timeout",
+        "forged_baseline_failure",
+        "changed_recovery_lineage",
+        "changed_priority",
+        "unknown_field",
+    ],
+)
+def test_paused_human_live_shaped_legacy_repair_fails_closed(mutation: str) -> None:
+    events, patch = _live_shaped_blocked_legacy_repair()
+    if mutation == "stale":
+        patch["base_graph_position"] = 10
+    elif mutation == "leased":
+        events.append(
+            _event(
+                "lease_granted",
+                {
+                    "lease_id": "lease-active",
+                    "node_id": "worker-reliable-plan-recovery",
+                    "generation": 2,
+                },
+                12,
+            )
+        )
+        patch["base_graph_position"] = 12
+    elif mutation == "missing_blocker":
+        events = events[:9]
+        patch["base_graph_position"] = 8
+    elif mutation == "changed_semantics":
+        patch["ops"][1]["node"]["scope"] = "Widen the accepted plan."
+    elif mutation == "extra_edge":
+        patch["ops"].append(
+            {
+                "op": "create_edge",
+                "edge_id": "extra-topology",
+                "from_node_id": "worker-reliable-plan-recovery-v2",
+                "from_port": "candidate",
+                "to_node_id": "verifier-discovery",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
+            }
+        )
+    elif mutation == "still_invalid":
+        del patch["ops"][1]["node"]["effect_contract"]
+    elif mutation == "completed_state":
+        patch["ops"][1]["node"]["state"] = "completed"
+    elif mutation == "forged_timeout":
+        patch["ops"][1]["node"]["acceptance_command_timeout_seconds"] = 3600
+    elif mutation == "forged_baseline_failure":
+        patch["ops"][1]["node"]["accepted_baseline_failure_fingerprints"] = [
+            "forged-baseline-failure"
+        ]
+    elif mutation == "changed_recovery_lineage":
+        patch["ops"][1]["node"]["recovery_of_node_id"] = "different-node"
+    elif mutation == "changed_priority":
+        patch["ops"][1]["node"]["priority"] = "critical"
+    else:
+        patch["ops"][1]["node"]["future_unreviewed_contract"] = "unsafe"
+    position = max(event.position for event in events)
+
+    output = _apply(
+        events,
+        "submit_patch",
+        patch,
+        context=PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=position,
+            actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            actor_role="human",
+            proposed_by_node_id="human-operator",
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_rejected"]
+    assert output[0].payload["patch_id"] == "repair-live-blocked-worker"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("role", "builder"),
+        ("task_region_id", "different-region"),
+        ("attempt_number", 3),
+        ("candidate_id", "different-candidate"),
+        ("failed_candidate_id", "different-failed-candidate"),
+        ("semantic_stage", "effectful_batch"),
+        ("semantic_schema_id", "different-schema"),
+        ("semantic_schema_version", 2),
+        ("bound_requirement_ids", ["different-requirement"]),
+        ("objective", "Different objective."),
+        ("scope", "Different scope."),
+        ("acceptance", ["Different acceptance"]),
+        ("invariants", ["Different invariant"]),
+        ("prohibited_actions", ["Different prohibition"]),
+        (
+            "authority",
+            {
+                "allowed_actions": ["submit_records"],
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+            },
+        ),
+    ],
+)
+def test_paused_human_live_repair_rejects_every_persisted_contract_mutation(
+    field: str,
+    value: Any,
+) -> None:
+    events, patch = _live_shaped_blocked_legacy_repair()
+    patch["ops"][1]["node"][field] = value
+
+    output = _apply(
+        events,
+        "submit_patch",
+        patch,
+        context=PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=11,
+            actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            actor_role="human",
+            proposed_by_node_id="human-operator",
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_rejected"]
+
+
+def test_non_human_patch_remains_rejected_while_graph_is_paused() -> None:
+    events = [_event("run_lifecycle_changed", {"to_state": "paused"}, 0)]
+
+    output = _apply(
+        events,
+        "submit_patch",
+        {
+            "patch_id": "planner-while-paused",
+            "base_graph_position": 0,
+            "ops": [],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload["reason"] == "run_not_active:paused"
+
+
 def test_patch_accept_adds_default_worker_write_authority() -> None:
     output = _apply(
         [],
@@ -4592,6 +5433,7 @@ def test_patch_accept_adds_default_worker_write_authority() -> None:
                         "attempt_number": 1,
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 }
@@ -4616,6 +5458,7 @@ def _discovery_read_only_worker_node(**overrides: Any) -> dict[str, Any]:
         "attempt_number": 1,
         "objective": "Investigate root cause and report findings.",
         "access_mode": "read_only",
+        "effect_contract": "read_only_semantic",
         "acceptance": ["root cause identified and documented"],
     }
     node.update(overrides)
@@ -4951,6 +5794,7 @@ def test_patch_accepts_authority_request_edge_to_worker_authority_input() -> Non
                         "candidate_id": "candidate-docs-authorized",
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 },
@@ -5054,6 +5898,7 @@ def test_gap_planner_corrective_work_patch_accepts_through_submit_patch() -> Non
                         "task_region_id": "corrective_work_region",
                         "objective": "Produce a corrective candidate that resolves the classified gap.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["corrective candidate resolves the classified gap"],
                     },
                 }
@@ -5107,6 +5952,17 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
                     "worker_node": {
                         "node_id": "worker-revision-2",
                         "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "objective": "Produce a corrected candidate.",
+                        "access_mode": "write",
+                        "effect_contract": "effectful_write",
+                        "acceptance": ["candidate resolves the failed requirement"],
+                    },
+                    "verifier_node": {
+                        "node_id": "verifier-revision-2",
+                        "kind": "verifier",
+                        "role": "verifier",
                         "state": "planned",
                     },
                 },
@@ -5147,6 +6003,7 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
         "revision_created",
         "node_created",
         "node_created",
+        "node_created",
         "appeal_opened",
         "node_authority_changed",
         "node_authority_changed",
@@ -5154,14 +6011,17 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
     ]
     assert output[1].payload["kind"] == "gate"
     assert output[3].payload["kind"] == "worker"
-    assert output[4].payload["kind"] == "appeal"
+    assert output[4].payload["kind"] == "verifier"
+    assert output[5].payload["kind"] == "appeal"
+    assert output[2].payload["worker_node"] == output[3].payload
+    assert output[2].payload["verifier_node"] == output[4].payload
     assert all(
         event.payload["patch_id"] == "patch-v1"
         for event in output
         if event.event_type in {"node_created", "edge_created"}
     )
-    assert output[6].payload["resource_claims"] == [{"mode": "read", "scope": "repo"}]
-    assert output[7].payload["allowed_actions"] == ["submit_records"]
+    assert output[7].payload["resource_claims"] == [{"mode": "read", "scope": "repo"}]
+    assert output[8].payload["allowed_actions"] == ["submit_records"]
 
 
 def test_patch_reject_emits_rejection() -> None:
@@ -5224,6 +6084,8 @@ def test_mixed_valid_and_invalid_concrete_port_patch_rejects_atomically_with_dia
                         "state": "planned",
                         "objective": "Read the requirement.",
                         "access_mode": "read_only",
+                        "effect_contract": "read_only_semantic",
+                        "semantic_stage": "discovery",
                         "acceptance": ["requirement read"],
                         "inputs": [
                             {
@@ -5471,6 +6333,44 @@ def test_schedule_tick_grants_leases() -> None:
         "node_state_changed",
     ]
     assert output[1].payload["node_id"] == "worker-1"
+
+
+def test_schedule_tick_increments_generation_for_same_node_successor() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "ready"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-old",
+                "generation": 1,
+                "execution_id": "exec-old",
+                "base_snapshot_id": "S0",
+            },
+            2,
+        ),
+        _event(
+            "lease_revoked",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-old",
+                "generation": 1,
+                "reason": "runner_recovered",
+            },
+            3,
+        ),
+        _event(
+            "node_state_changed",
+            {"node_id": "worker-1", "new_state": "ready", "trigger": "runtime_retry"},
+            4,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
+
+    granted = next(event for event in output if event.event_type == "lease_granted")
+    assert granted.payload["generation"] == 2
 
 
 def test_schedule_tick_path_in_scope_write_claim_blocks_overlapping_path() -> None:
@@ -8504,6 +9404,8 @@ def test_agent_died_revokes_active_lease_and_requires_differentiating_recovery()
         "reason": "process_exit",
         "attempt_number": 0,
     }
+    assert leases_view(projection)["lease-1"].state == "revoked"
+    assert node_state(projection, "worker-1") == "blocked"
     assert output[3].payload == {
         "record_id": "recovery-plan-worker-1-lease-1",
         "record_kind": "output",
@@ -8529,8 +9431,59 @@ def test_agent_died_revokes_active_lease_and_requires_differentiating_recovery()
         "reason": "missing_health_evidence_or_changed_recovery_action",
         "attempt_number": 0,
     }
-    assert leases_view(projection)["lease-1"].state == "revoked"
-    assert node_state(projection, "worker-1") == "blocked"
+
+
+def test_agent_died_invalid_execution_contract_is_terminal_invalid_plan_failure() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "submission quality gate contract is invalid: worker effect_contract is missing",
+            "failure_class": "invalid_plan_failure",
+            "error_class": "invalid_execution_contract",
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "output_record_accepted",
+        "node_state_changed",
+    ]
+    assert output[2].payload["value"] == {
+        "failed_node_id": "worker-1",
+        "phase": "dispatch",
+        "failure_class": "invalid_plan_failure",
+        "error_class": "invalid_execution_contract",
+        "retryable": False,
+        "lease_id": "lease-1",
+        "execution_id": "exec-1",
+        "lease_generation": 1,
+        "reason": "submission quality gate contract is invalid: worker effect_contract is missing",
+    }
+    assert output[3].payload["new_state"] == "failed"
+    assert not any(
+        event.event_type in {"runtime_retry_scheduled", "recovery_plan_created"}
+        or event.payload.get("record_type") == "recovery_plan"
+        for event in output
+    )
 
 
 def test_agent_died_check_missing_command_fails_without_retry() -> None:
@@ -8921,7 +9874,7 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
         "node_id": "worker-1",
         "new_state": "failed",
         "trigger": "max_attempts_exhausted",
-        "reason": "max_attempts_exhausted",
+        "reason": "process_exit",
         "attempt_number": 2,
         "max_attempts": 2,
     }
@@ -9951,10 +10904,18 @@ def test_submit_patch_accepts_edge_between_revision_attempt_embedded_nodes() -> 
                     "failed_candidate_id": "cand-1",
                     "worker_node": {
                         "node_id": "worker-revision-2",
+                        "kind": "worker",
+                        "role": "builder",
                         "state": "planned",
+                        "objective": "Produce a corrected candidate.",
+                        "access_mode": "write",
+                        "effect_contract": "effectful_write",
+                        "acceptance": ["candidate resolves the failed requirement"],
                     },
                     "verifier_node": {
                         "node_id": "verifier-revision-2",
+                        "kind": "verifier",
+                        "role": "verifier",
                         "state": "planned",
                     },
                 },

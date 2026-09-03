@@ -753,12 +753,24 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         run_id,
         started.projection_position,
         "agent_died",
-        {"lease_id": lease_id, "execution_id": execution_id, "reason": "process_exited"},
+        {
+            "lease_id": lease_id,
+            "execution_id": execution_id,
+            "reason": "process_exited",
+            "retry_backoff_seconds": 5,
+        },
     )
     projection_after_death = rebuild_projection(await _read_events(session_factory, run_id))
-    relearnt = await controller.handle_command(
+    before_backoff = await controller.handle_command(
         run_id,
         died.projection_position,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+    )
+    clock.advance(5)
+    relearnt = await controller.handle_command(
+        run_id,
+        before_backoff.projection_position,
         "schedule_tick",
         {"lease_seconds": 60, "base_snapshot_id": "S0"},
     )
@@ -775,11 +787,16 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
     assert died.events[2].payload["record_type"] == "failure_record"
     assert died.events[4].payload["record_type"] == "recovery_plan"
     assert died.events[4].payload["value"]["action"] == "retry"
+    assert died.events[4].payload["value"]["retry_basis"] == "retry_backoff_only"
     assert leases_view(projection_after_death)[lease_id].state == "revoked"
-    assert node_states_view(projection_after_death)["worker-1"] == "ready"
+    assert node_states_view(projection_after_death)["worker-1"] == "blocked"
     assert any(event.event_type == "runtime_retry_scheduled" for event in died.events)
+    assert [event.event_type for event in before_backoff.events] == ["node_deferred"]
+    assert str(before_backoff.events[0].payload["reason"]).startswith("retry_backoff_until:")
+    assert before_backoff.outbox_items == []
     assert [event.event_type for event in relearnt.events] == [
         "node_ready",
+        "node_state_changed",
         "lease_granted",
         "agent_dispatch_requested",
         "node_state_changed",
@@ -789,6 +806,68 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
     assert leases_view(projection_after_relearn)[new_lease_id].state == "active"
     assert call_log == [first.outbox_items[0].event_id, relearnt.outbox_items[0].event_id]
     assert await _outbox_statuses(session_factory) == ["completed", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_agent_died_without_retry_basis_fails_closed(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, session_factory = file_db
+    run_id = "agent-dies-without-retry-basis"
+    await _seed_runnable_worker(session_factory, run_id)
+    clock = FixedClock()
+    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    first = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
+    lease_id = str(first.outbox_items[0].payload["lease_id"])
+    execution_id = str(first.outbox_items[0].payload["execution_id"])
+    started = await controller.handle_command(
+        run_id,
+        first.projection_position,
+        "acknowledge_start",
+        {
+            "node_id": "worker-1",
+            "lease_id": lease_id,
+            "lease_generation": 1,
+            "execution_id": execution_id,
+        },
+    )
+
+    died = await controller.handle_command(
+        run_id,
+        started.projection_position,
+        "agent_died",
+        {"lease_id": lease_id, "execution_id": execution_id, "reason": "process_exited"},
+    )
+    scheduled = await controller.handle_command(
+        run_id,
+        died.projection_position,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+    )
+
+    assert not any(event.event_type == "runtime_retry_scheduled" for event in died.events)
+    failure = next(
+        event
+        for event in died.events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "failure_record"
+    )
+    assert failure.payload["value"]["error_class"] == "runtime_death_recovery_required"
+    recovery_plan = next(
+        event
+        for event in died.events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "recovery_plan"
+    )
+    assert recovery_plan.payload["value"]["action"] == "pause"
+    projection = rebuild_projection(await _read_events(session_factory, run_id))
+    assert leases_view(projection)[lease_id].state == "revoked"
+    assert node_states_view(projection)["worker-1"] == "blocked"
+    assert [event.event_type for event in scheduled.events] == ["node_deferred"]
+    assert str(scheduled.events[0].payload["reason"]).startswith("recovery_authorization_required:")
+    assert scheduled.outbox_items == []
 
 
 @pytest.mark.asyncio

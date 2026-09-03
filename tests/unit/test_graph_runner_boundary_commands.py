@@ -15,6 +15,7 @@ from orchestrator.graph import (
     apply_command,
     boundary_manifest_hash,
     derive_recovery_paths,
+    execution_attempts_view,
     initial_projection,
     map_set,
     ProjectionReplayConflictError,
@@ -124,7 +125,12 @@ def _apply(projection, command: str, payload: dict[str, object]):
         except BoundaryValidationError:
             payload["boundary_hash"] = HASH
     elif (
-        command in {"stage_runner_submission", "finalize_runner_execution"}
+        command
+        in {
+            "stage_runner_submission",
+            "witness_runner_completion",
+            "finalize_runner_execution",
+        }
         and "boundary_entries" in payload
     ):
         tree_key = "staged_tree_sha" if command == "stage_runner_submission" else "final_tree_sha"
@@ -137,6 +143,32 @@ def _apply(projection, command: str, payload: dict[str, object]):
         snapshot_id = str(payload[f"{prefix}_snapshot_id"])
         payload.setdefault("%s_snapshot_ref" % prefix, f"refs/orchestrator/snapshots/{snapshot_id}")
         payload.setdefault("%s_commit_sha" % prefix, OID)
+    if command == "finalize_runner_execution":
+        attempt = execution_attempts_view(projection).get(str(payload.get("execution_id", "")))
+        if attempt is not None and attempt.state == "submission_staged":
+            witness_payload = {
+                **payload,
+                "staged_payload_hash": attempt.payload_hash,
+                "staged_payload_size_bytes": attempt.payload_size_bytes,
+                "staged_snapshot_id": attempt.staged_snapshot_id,
+                "staged_snapshot_ref": attempt.staged_snapshot_ref,
+                "staged_commit_sha": attempt.staged_commit_sha,
+                "staged_tree_sha": attempt.staged_tree_sha,
+                "staged_boundary_hash": attempt.staged_boundary_hash,
+                "runner_return_kind": "successful_return",
+            }
+            witnessed = _apply_raw(projection, "witness_runner_completion", witness_payload)
+            if any(event.event_type == "runner_boundary_mismatch" for event in witnessed):
+                # Older assertions focus on the mismatch/recovery pair. The
+                # new witness itself is covered explicitly below.
+                return witnessed[1:]
+            if not witnessed or witnessed[0].event_type != "runner_completion_witnessed":
+                return witnessed
+            projection = reduce_event(projection, witnessed[0])
+    return _apply_raw(projection, command, payload)
+
+
+def _apply_raw(projection, command: str, payload: dict[str, object]):
     return apply_command(
         projection,
         [],
@@ -146,6 +178,92 @@ def _apply(projection, command: str, payload: dict[str, object]):
         FakeClock(),
         SequentialIdGenerator(),
     )
+
+
+def _witness_payload(projection, **final_overrides: object) -> dict[str, object]:
+    attempt = execution_attempts_view(projection)["exec"]
+    payload: dict[str, object] = {
+        "execution_id": "exec",
+        "node_id": "node",
+        "lease_id": "lease",
+        "lease_generation": 1,
+        "staged_payload_hash": attempt.payload_hash,
+        "staged_payload_size_bytes": attempt.payload_size_bytes,
+        "staged_snapshot_id": attempt.staged_snapshot_id,
+        "staged_snapshot_ref": attempt.staged_snapshot_ref,
+        "staged_commit_sha": attempt.staged_commit_sha,
+        "staged_tree_sha": attempt.staged_tree_sha,
+        "staged_boundary_hash": attempt.staged_boundary_hash,
+        "runner_return_kind": "successful_return",
+        "final_snapshot_id": "final",
+        "final_snapshot_ref": "refs/orchestrator/snapshots/final",
+        "final_commit_sha": OID,
+        "final_tree_sha": OID,
+        "boundary_entries": [
+            entry.model_dump(mode="json") for entry in attempt.staged_boundary_entries
+        ],
+    }
+    payload.update(final_overrides)
+    return payload
+
+
+def test_completion_witness_is_required_idempotent_and_replayable() -> None:
+    staged = _staged_projection()
+    final_payload = _witness_payload(staged)
+    for key in tuple(final_payload):
+        if key.startswith("staged_") or key == "runner_return_kind":
+            final_payload.pop(key)
+    final_payload["boundary_hash"] = boundary_manifest_hash(
+        final_payload["final_tree_sha"], final_payload["boundary_entries"]
+    )
+    rejected = _apply_raw(staged, "finalize_runner_execution", final_payload)
+    assert rejected[0].event_type == "command_rejected"
+    assert "not durably witnessed" in str(rejected[0].payload["reason"])
+
+    witness_payload = _witness_payload(staged)
+    witnessed_events = _apply(staged, "witness_runner_completion", witness_payload)
+    assert [event.event_type for event in witnessed_events] == ["runner_completion_witnessed"]
+    witnessed = reduce_event(staged, witnessed_events[0])
+    attempt = execution_attempts_view(witnessed)["exec"]
+    assert attempt.state == "completion_witnessed"
+    assert attempt.completion_disposition == "completion_witnessed"
+    assert _apply(witnessed, "witness_runner_completion", witness_payload) == []
+
+    finalized_events = _apply(witnessed, "finalize_runner_execution", final_payload)
+    assert finalized_events[0].event_type == "runner_execution_finalized"
+    finalized = witnessed
+    for event in finalized_events:
+        finalized = reduce_event(finalized, event)
+    attempt = execution_attempts_view(finalized)["exec"]
+    assert attempt.state == "finalized"
+    assert attempt.completion_disposition == "finalized_accepted"
+
+
+def test_post_submit_mutation_is_witnessed_then_restored_not_finalized() -> None:
+    staged = _staged_projection()
+    mutated_entry = _entry("src/a.py", status="modified", fingerprint="sha256:" + "c" * 64)
+    witness_payload = _witness_payload(staged, boundary_entries=[mutated_entry])
+    events = _apply(
+        staged,
+        "witness_runner_completion",
+        witness_payload,
+    )
+    assert [event.event_type for event in events] == [
+        "runner_completion_witnessed",
+        "runner_boundary_mismatch",
+        "runner_recovery_requested",
+    ]
+    after = staged
+    for event in events:
+        after = reduce_event(after, event)
+    attempt = execution_attempts_view(after)["exec"]
+    assert attempt.state == "recovery_requested"
+    assert attempt.runner_return_kind == "successful_return"
+    # Recovery is requested but not yet proven complete, so the last durable
+    # completion fact remains the witness rather than claiming restoration.
+    assert attempt.completion_disposition == "completion_witnessed"
+    assert _apply(after, "witness_runner_completion", witness_payload) == []
+    assert not any(event.event_type == "runner_execution_finalized" for event in events)
 
 
 def _staged_projection(
@@ -535,6 +653,7 @@ def test_boundary_mismatch_recovery_retries_when_attempts_remain() -> None:
         "attempt_number": 2,
     }
     assert node_states_view(projection).get("node") == "ready"
+    assert execution_attempts_view(projection)["exec"].retry_scheduled is True
 
 
 def test_boundary_mismatch_recovery_fails_when_attempts_are_exhausted() -> None:
@@ -549,7 +668,7 @@ def test_boundary_mismatch_recovery_fails_when_attempts_are_exhausted() -> None:
         "node_id": "node",
         "new_state": "failed",
         "trigger": "max_attempts_exhausted",
-        "reason": "max_attempts_exhausted",
+        "reason": "boundary_mismatch",
         "attempt_number": 3,
         "max_attempts": 3,
     }
@@ -674,7 +793,6 @@ def test_runner_boundary_commands_stage_without_publication_then_request_proven_
         "lease_revoked",
         "runtime_retry_scheduled",
         "node_state_changed",
-        "cleanup_requested",
         "cleanup_requested",
         "cleanup_requested",
     ]
@@ -952,7 +1070,7 @@ def test_exact_duplicate_recovery_completion_is_idempotent_and_changed_fields_co
         item.payload["snapshot_role"]
         for item in completion_events
         if item.event_type == "cleanup_requested"
-    ] == ["baseline", "staged", "final"]
+    ] == ["baseline", "final"]
     assert _apply(recovered, "complete_runner_recovery", completion) == []
     changed_accounting = {**completion, "restored_paths": [], "removed_paths": ["src/a.py"]}
     assert [
@@ -1147,13 +1265,25 @@ def _changed_recovery_request_payload(
             )
     elif field == "max_attempts":
         changed["max_attempts"] = 4
+    elif field == "error_detail":
+        changed["error_detail"] = "different managed runner failure"
     else:
         raise AssertionError(field)
     return changed
 
 
 @pytest.mark.parametrize(
-    "field", ["refs", "commits", "trees", "manifests", "reason", "paths", "max_attempts"]
+    "field",
+    [
+        "refs",
+        "commits",
+        "trees",
+        "manifests",
+        "reason",
+        "paths",
+        "max_attempts",
+        "error_detail",
+    ],
 )
 def test_recovery_request_command_duplicate_conflicts_for_every_identity_field(field: str) -> None:
     projection, payload, _ = _pending_recovery_request()
@@ -1166,7 +1296,17 @@ def test_recovery_request_command_duplicate_conflicts_for_every_identity_field(f
 
 
 @pytest.mark.parametrize(
-    "field", ["refs", "commits", "trees", "manifests", "reason", "paths", "max_attempts"]
+    "field",
+    [
+        "refs",
+        "commits",
+        "trees",
+        "manifests",
+        "reason",
+        "paths",
+        "max_attempts",
+        "error_detail",
+    ],
 )
 def test_recovery_request_replay_conflicts_for_every_identity_field(field: str) -> None:
     projection, payload, requested = _pending_recovery_request()
@@ -1177,6 +1317,77 @@ def test_recovery_request_replay_conflicts_for_every_identity_field(field: str) 
 
     with pytest.raises(ProjectionReplayConflictError):
         reduce_event(projection, duplicate)
+
+
+def test_recovery_error_detail_is_canonical_bounded_and_checkpointed() -> None:
+    projection = _staged_projection(attempt_number=3, max_attempts=3)
+    entries = [_entry("src/a.py", status="modified", fingerprint="sha256:" + "c" * 64)]
+    requested = _apply(
+        projection,
+        "request_runner_recovery",
+        {
+            "execution_id": "exec",
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "reason": "runner_died",
+            "error_detail": "\x00exact transport failure\n" + "x" * 5_000,
+            "max_attempts": 3,
+            "recovery_snapshot_id": "recovery",
+            "recovery_snapshot_ref": "refs/orchestrator/snapshots/recovery",
+            "recovery_commit_sha": OID,
+            "final_tree_sha": OID,
+            "boundary_hash": boundary_manifest_hash(OID, entries),
+            "boundary_entries": entries,
+        },
+    )
+
+    detail = requested[0].payload["error_detail"]
+    assert isinstance(detail, str)
+    assert detail.startswith("�exact transport failure\n")
+    assert len(detail) == 4_096
+    reconstructed = projection_from_checkpoint(
+        projection_to_checkpoint(reduce_event(projection, requested[0]))
+    )
+    assert execution_attempts_view(reconstructed)["exec"].recovery_error_detail == detail
+    request_payload = requested[0].payload
+    requested_paths = tuple(request_payload["paths"])
+    proof = recovery_proof_hash(
+        execution_id="exec",
+        recovery_id=request_payload["recovery_id"],
+        node_id="node",
+        lease_id="lease",
+        lease_generation=1,
+        baseline_snapshot_id=request_payload["baseline_snapshot_id"],
+        baseline_tree_sha=request_payload["baseline_tree_sha"],
+        requested_paths=requested_paths,
+        restored_paths=requested_paths,
+        removed_paths=(),
+    )
+    completed = _apply(
+        reconstructed,
+        "complete_runner_recovery",
+        {
+            "execution_id": "exec",
+            "recovery_id": request_payload["recovery_id"],
+            "node_id": "node",
+            "lease_id": "lease",
+            "lease_generation": 1,
+            "baseline_snapshot_id": request_payload["baseline_snapshot_id"],
+            "baseline_tree_sha": request_payload["baseline_tree_sha"],
+            "requested_paths": list(requested_paths),
+            "proof_hash": proof,
+            "restored_paths": list(requested_paths),
+            "removed_paths": [],
+        },
+    )
+    failure = next(
+        event
+        for event in completed
+        if event.event_type == "node_state_changed" and event.payload.get("new_state") == "failed"
+    )
+    assert failure.payload["trigger"] == "max_attempts_exhausted"
+    assert failure.payload["reason"] == detail
 
 
 def test_managed_cleanup_is_a_codec_safe_final_invariant_blocker_until_exact_application() -> None:

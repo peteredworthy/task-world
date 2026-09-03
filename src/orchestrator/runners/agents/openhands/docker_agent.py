@@ -53,6 +53,7 @@ from orchestrator.runners.types import (
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    RunnerRuntimeObservationCapability,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentRunnerType
@@ -522,6 +523,13 @@ class DockerOpenHandsAgent:
             agent_runner_type=AgentRunnerType.OPENHANDS_DOCKER,
             name="OpenHands (Docker)",
             version=None,
+            runtime_observation=RunnerRuntimeObservationCapability(
+                mode="unsupported",
+                reason=(
+                    "OpenHands Docker owns a container but does not expose a reusable-PID-safe "
+                    "host process identity"
+                ),
+            ),
         )
 
     @staticmethod

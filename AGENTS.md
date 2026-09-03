@@ -66,6 +66,7 @@ uv run orchestrator run list --status active
 uv run orchestrator run create <routine> --project <path> --config '<json>'
 uv run orchestrator run agents <run-id>
 uv run orchestrator run start <id> --agent <type>
+uv run orchestrator --json server-status
 ```
 
 ## Architecture

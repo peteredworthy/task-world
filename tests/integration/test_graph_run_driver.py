@@ -49,6 +49,7 @@ from orchestrator.runners.types import (
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    RunnerRuntimeObservationCapability,
     SubmitCallback,
 )
 from orchestrator.state.factory import create_run_from_routine
@@ -121,6 +122,18 @@ class HoldingSubmitAgent(SubmitAgent):
     def __init__(self) -> None:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
+        self.process: asyncio.subprocess.Process | None = None
+
+    @property
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+            name="holding-real-child",
+            runtime_observation=RunnerRuntimeObservationCapability(
+                mode="host_process",
+                reason="integration runner reports its owned host subprocess",
+            ),
+        )
 
     async def execute(
         self,
@@ -132,11 +145,19 @@ class HoldingSubmitAgent(SubmitAgent):
         on_agent_metadata: AgentMetadataCallback | None = None,
         on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
-        del context, on_checklist_update, on_output, on_grade, on_agent_metadata, on_escalation
+        del context, on_checklist_update, on_output, on_grade, on_escalation
+        self.process = await asyncio.create_subprocess_exec("/bin/sleep", "60")
+        assert on_agent_metadata is not None
+        await on_agent_metadata({"pid": self.process.pid})
         self.started.set()
-        await self.release.wait()
-        await on_submit()
-        return ExecutionResult(success=True)
+        try:
+            await self.release.wait()
+            await on_submit()
+            return ExecutionResult(success=True)
+        finally:
+            if self.process.returncode is None:
+                self.process.terminate()
+            await self.process.wait()
 
 
 class WritingSubmitAgent(SubmitAgent):

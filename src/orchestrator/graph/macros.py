@@ -217,11 +217,17 @@ def expand_patch_macros(
 ) -> list[dict[str, Any]]:
     """Expand validated macro invocations into patch operations."""
 
-    expanded = list(ops)
+    macro_ops: list[dict[str, Any]] = []
     for invocation in invocations:
         invocation = _validate_invocation(invocation)
-        expanded.extend(_expand_macro(invocation.macro, invocation.args, proposed_by_node_id))
-    return expanded
+        macro_ops.extend(_expand_macro(invocation.macro, invocation.args, proposed_by_node_id))
+    # A raw operator edge may intentionally reconnect a replacement created by
+    # a macro in the same atomic patch.  Emit every macro-created node before
+    # raw operations so reducer relationship checks never observe a transient
+    # dangling endpoint; retain all other user and macro ordering.
+    macro_nodes = [operation for operation in macro_ops if operation.get("op") == "create_node"]
+    macro_remainder = [operation for operation in macro_ops if operation.get("op") != "create_node"]
+    return [*macro_nodes, *ops, *macro_remainder]
 
 
 def _expand_macro(
@@ -1046,6 +1052,9 @@ def _worker_node(
         node["objective"] = objective
     if access_mode is not None:
         node["access_mode"] = access_mode
+        node["effect_contract"] = (
+            "read_only_semantic" if access_mode == "read_only" else "effectful_write"
+        )
     if acceptance is not None:
         node["acceptance"] = acceptance
     if access_mode_override_justification is not None:

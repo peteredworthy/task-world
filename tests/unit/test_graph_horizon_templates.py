@@ -37,6 +37,15 @@ def test_horizon_templates_include_required_purposes_with_allowed_ops() -> None:
         assert template["expected_successor_readiness"]
         assert template["ops"]
         assert all(op["op"] in PLANNER_OPS for op in template["ops"])
+        for op in template["ops"]:
+            node = op.get("node")
+            if not isinstance(node, dict) or node.get("kind") != "worker":
+                continue
+            assert node["effect_contract"] == (
+                "read_only_semantic"
+                if node.get("access_mode") == "read_only"
+                else "effectful_write"
+            )
 
 
 @pytest.mark.parametrize(

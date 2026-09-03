@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -62,15 +63,27 @@ _SQLITE_BUSY_TIMEOUT_MS = 5000
 
 
 def _harden_sqlite_connection(engine: AsyncEngine) -> None:
-    """Set WAL + busy_timeout on every new connection of a file-backed engine."""
+    """Establish persistent WAL once and busy_timeout on every new connection."""
+
+    wal_lock = threading.Lock()
+    wal_initialized = False
 
     @event.listens_for(engine.sync_engine, "connect")
     def _set_sqlite_pragmas(  # pyright: ignore[reportUnusedFunction]
         dbapi_connection: Any, _record: object
     ) -> None:
+        nonlocal wal_initialized
         cursor = dbapi_connection.cursor()
         try:
-            cursor.execute("PRAGMA journal_mode=WAL")
+            # WAL mode is persistent database state. Reissuing the mode-changing
+            # pragma on every NullPool connection takes the SQLite schema lock
+            # and dominates short graph command transactions. Establish it once
+            # per injected engine, while retaining the per-connection busy
+            # timeout required for writer contention.
+            with wal_lock:
+                if not wal_initialized:
+                    cursor.execute("PRAGMA journal_mode=WAL")
+                    wal_initialized = True
             cursor.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
         finally:
             cursor.close()

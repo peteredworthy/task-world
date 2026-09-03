@@ -17,6 +17,7 @@ MAX_BOUNDARY_MANIFEST_BYTES = 256 * 1024
 MAX_CACHE_ROOT_ITEMS = 1_024
 MAX_CACHE_ROOT_BYTES = 64 * 1024
 MAX_BOUNDARY_STATUS_CHARS = 128
+MAX_RUNNER_ERROR_DETAIL_CHARS = 4_096
 SNAPSHOT_REF_PREFIX = "refs/orchestrator/snapshots/"
 # Authoritative persistence and replay limit for one complete EventEnvelope.
 # This is deliberately an envelope limit, rather than a payload-only limit, so
@@ -26,6 +27,18 @@ MAX_EVENT_ENVELOPE_BYTES = 32 * 1024
 
 class BoundaryValidationError(ValueError):
     """A bounded, canonical runner-boundary value was invalid."""
+
+
+def sanitize_runner_error_detail(value: str | None) -> str | None:
+    """Canonicalize one durable runner diagnostic without unbounded controls."""
+    if value is None:
+        return None
+    normalized = "".join(
+        char if ord(char) >= 32 or char in {"\n", "\t"} else "�" for char in value
+    ).strip()
+    if not normalized:
+        return None
+    return normalized[:MAX_RUNNER_ERROR_DETAIL_CHARS]
 
 
 def validate_repo_relative_path(value: str) -> str:

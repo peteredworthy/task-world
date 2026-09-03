@@ -492,10 +492,14 @@ class GraphNodeDetailSummaryModel(Base):
     Per-list totals and revision metadata live in reserved ``prompt_summary`` JSON.
     """
 
-    __tablename__ = "graph_node_detail_summaries"
+    # This read model is disposable and rebuilt from ``events_v2``.  Keep the
+    # pre-semantic-contract table inert: ``init_db`` deliberately does not
+    # alter existing SQLite tables, so reusing its name would leave current
+    # ORM reads pointed at a row shape that lacks the fields below.
+    __tablename__ = "graph_node_detail_summaries_v2"
     __table_args__ = (
-        Index("idx_graph_node_detail_summaries_run", "run_id"),
-        Index("idx_graph_node_detail_summaries_run_position", "run_id", "position"),
+        Index("idx_graph_node_detail_summaries_v2_run", "run_id"),
+        Index("idx_graph_node_detail_summaries_v2_run_position", "run_id", "position"),
     )
 
     run_id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -522,7 +526,7 @@ class GraphNodeDetailSummaryModel(Base):
 class GraphNodeDetailSummaryCheckpointModel(Base):
     """Disposable node-detail summary rebuild checkpoint derived from events_v2."""
 
-    __tablename__ = "graph_node_detail_summary_checkpoints"
+    __tablename__ = "graph_node_detail_summary_checkpoints_v2"
 
     run_id: Mapped[str] = mapped_column(String, primary_key=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -584,6 +588,58 @@ class GraphOutboxModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class GraphRuntimeSupervisionModel(Base):
+    """Durable graph-driver liveness observation owned by reconciliation."""
+
+    __tablename__ = "graph_runtime_supervision"
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    observed_position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    progress_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    last_progress_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_reconciled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    no_progress_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    driver_generation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    driver_state: Mapped[str] = mapped_column(String, nullable=False, default="absent")
+    last_action: Mapped[str] = mapped_column(String, nullable=False, default="observed")
+    stalled_execution_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    stall_deadline_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    staged_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    witnessed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    finalized_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    active_lease_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expired_lease_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    disposition_counts: Mapped[dict[str, int]] = mapped_column(JSON, nullable=False, default=dict)
+    root_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class GraphSubmissionGateAuditModel(Base):
+    """Immutable, bounded gate provenance for baseline and submission attempts."""
+
+    __tablename__ = "graph_submission_gate_audits"
+    __table_args__ = (
+        Index(
+            "idx_graph_submission_gate_audits_execution_id",
+            "run_id",
+            "execution_id",
+            "id",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    run_id: Mapped[str] = mapped_column(String, nullable=False)
+    node_id: Mapped[str] = mapped_column(String, nullable=False)
+    execution_id: Mapped[str] = mapped_column(String, nullable=False)
+    phase: Mapped[str] = mapped_column(String, nullable=False)
+    base_snapshot_id: Mapped[str] = mapped_column(String, nullable=False)
+    base_tree_sha: Mapped[str] = mapped_column(String, nullable=False)
+    candidate_tree_sha: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    failure_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    report: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class ProjectionCheckpointModel(Base):

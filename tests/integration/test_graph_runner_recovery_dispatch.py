@@ -11,22 +11,34 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import subprocess
+import threading
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
+from httpx import ASGITransport, AsyncClient
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.artifacts import FilesystemArtifactStore
+from orchestrator.api import create_app
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
-from orchestrator.git import GitError, SelectiveRestoreResult, WorktreeError, snapshot
+from orchestrator.git import (
+    GitError,
+    SelectiveRestoreResult,
+    WorktreeError,
+    restore_paths,
+    snapshot,
+)
 from orchestrator.graph import (
+    canonical_callback_payload_bytes,
+    callback_payload_identity,
     node_states_view,
     EventEnvelope,
     GraphCommandContext,
@@ -37,6 +49,7 @@ from orchestrator.graph import (
 )
 from orchestrator.graph_runtime import (
     GraphController,
+    GraphDispatchContext,
     GraphDispatchExecutor,
     GraphEventStore,
     OutboxDispatcher,
@@ -142,6 +155,38 @@ class FailingWorktreeRecoveryRestorer:
         raise WorktreeError("concrete worktree recovery failure")
 
 
+class DelayedRealRecoveryRestorer:
+    """Pause one real Git restore so async-loop and lock behavior is observable."""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.completed = threading.Event()
+        self.started_at: float | None = None
+
+    def __call__(
+        self,
+        worktree_path: str | Path,
+        snapshot_id: str,
+        paths: list[str],
+        *,
+        expected_tree_sha: str | None = None,
+    ) -> SelectiveRestoreResult:
+        self.started_at = perf_counter()
+        self.started.set()
+        if not self.release.wait(timeout=5):
+            raise TimeoutError("test did not release the delayed real restore")
+        try:
+            return restore_paths(
+                worktree_path,
+                snapshot_id,
+                paths,
+                expected_tree_sha=expected_tree_sha,
+            )
+        finally:
+            self.completed.set()
+
+
 @dataclass(frozen=True)
 class RecoveryFixture:
     controller: GraphController
@@ -150,6 +195,17 @@ class RecoveryFixture:
     baseline_snapshot_id: str
     baseline_tree_sha: str
     execution_id: str
+
+
+@dataclass(frozen=True)
+class WitnessedFixture:
+    controller: GraphController
+    executor: GraphDispatchExecutor
+    dispatcher: OutboxDispatcher
+    context: GraphDispatchContext
+    repo: Path
+    execution_id: str
+    staged_ref: str
 
 
 @pytest.fixture
@@ -247,11 +303,15 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
         },
     )
     assert [event.event_type for event in mismatch.events] == [
+        "runner_completion_witnessed",
         "runner_boundary_mismatch",
         "runner_recovery_requested",
     ]
-    assert len(mismatch.outbox_items) == 1
-    recovery_item = mismatch.outbox_items[0]
+    assert [item.kind for item in mismatch.outbox_items] == [
+        "snapshot_publish",
+        "runner_recovery",
+    ]
+    recovery_item = mismatch.outbox_items[1]
     assert recovery_item.kind == "runner_recovery"
     assert recovery_item.payload["classification"] == "runner_recovery_pending"
     await _complete_prior_agent_dispatches(session_factory, "runner-recovery")
@@ -266,6 +326,10 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
         worktree_execution_lock=shared_lock,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
+    published = await dispatcher.dispatch_pending(
+        run_id="runner-recovery", allowed_kinds=frozenset({"snapshot_publish"})
+    )
+    assert [item.kind for item in published] == ["snapshot_publish", "snapshot_publish"]
 
     lock_held = asyncio.Event()
     release_lock = asyncio.Event()
@@ -300,8 +364,9 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
     assert [item.kind for item in completed_items] == ["runner_recovery"]
     assert completed_items[0].outbox_id == recovery_item.outbox_id
     pending_cleanups = await dispatcher.pending_items(run_id="runner-recovery")
+    # The staged candidate remains durable and inspectable after recovery, so
+    # only baseline/final transient refs become eligible for cleanup.
     assert [item.kind for item in pending_cleanups] == [
-        "snapshot_cleanup",
         "snapshot_cleanup",
         "snapshot_cleanup",
     ]
@@ -309,9 +374,9 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
     assert [item.kind for item in completed_cleanups] == [
         "snapshot_cleanup",
         "snapshot_cleanup",
-        "snapshot_cleanup",
     ]
     assert await dispatcher.pending_items(run_id="runner-recovery") == []
+    assert _ref_exists(repo, staged.ref)
     assert competing_observations == [
         ("changed by execution\n", True),
         ("changed by execution\n", True),
@@ -338,6 +403,7 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
         "restored_paths": ["README.md"],
         "removed_paths": ["execution-created.txt"],
         "recovery_scope": "selective",
+        "disposition": "restored_boundary_mismatch",
         "proof_hash": recovery_proof_hash(
             execution_id=execution_id,
             recovery_id=recovery_id,
@@ -396,6 +462,102 @@ async def test_runner_recovery_outbox_restores_selectively_is_idempotent_and_hol
 
 
 @pytest.mark.asyncio
+async def test_slow_real_recovery_restore_keeps_product_health_responsive(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    """A real delayed Git restore must not starve the API's sole asyncio loop."""
+    _, session_factory = recovery_db
+    fixture = await _recovery_fixture(session_factory, tmp_path, "recovery-health")
+    restorer = DelayedRealRecoveryRestorer()
+    executor = _executor(
+        session_factory,
+        fixture.controller,
+        fixture.repo,
+        tmp_path,
+        runner_recovery_restorer=restorer,
+    )
+    app = create_app(db_path=":memory:", routine_dirs=[])
+
+    async def health_after_restore_starts() -> tuple[int, float]:
+        while not restorer.started.is_set():
+            await asyncio.sleep(0.001)
+        assert restorer.started_at is not None
+        async with AsyncClient(
+            transport=ASGITransport(app=app),  # type: ignore[arg-type]
+            base_url="http://test",
+        ) as client:
+            response = await client.get("/health")
+        return response.status_code, perf_counter() - restorer.started_at
+
+    health_task = asyncio.create_task(health_after_restore_starts())
+    release_timer = threading.Timer(0.8, restorer.release.set)
+    release_timer.start()
+    dispatch_task = asyncio.create_task(executor.dispatch(fixture.item))
+    try:
+        status_code, elapsed = await asyncio.wait_for(health_task, timeout=2)
+        assert status_code == 200
+        assert elapsed < 0.3
+    finally:
+        restorer.release.set()
+        release_timer.cancel()
+    await asyncio.wait_for(dispatch_task, timeout=3)
+    assert restorer.completed.is_set()
+    assert (fixture.repo / "README.md").read_text() == "baseline\n"
+    assert not (fixture.repo / "execution-created.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_recovery_waits_for_real_restore_before_releasing_worktree_lock(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    """Cancellation cannot overlap a later worktree mutation with the restore thread."""
+    _, session_factory = recovery_db
+    fixture = await _recovery_fixture(session_factory, tmp_path, "recovery-cancel-lock")
+    restorer = DelayedRealRecoveryRestorer()
+    shared_lock = asyncio.Lock()
+    executor = GraphDispatchExecutor(
+        session_factory,
+        fixture.controller,
+        StaticGraphAgentFactory(AgentRunnerType.CLI_SUBPROCESS),
+        worktree_path=fixture.repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "cancel-lock-artifacts"),
+        worktree_execution_lock=shared_lock,
+        runner_recovery_restorer=restorer,
+    )
+
+    dispatch_task = asyncio.create_task(executor.dispatch(fixture.item))
+    await asyncio.wait_for(asyncio.to_thread(restorer.started.wait), timeout=2)
+    dispatch_task.cancel()
+    await asyncio.sleep(0.05)
+    assert shared_lock.locked()
+    assert not dispatch_task.done()
+
+    competitor_entered = asyncio.Event()
+    competitor_observations: list[bool] = []
+
+    async def mutate_after_recovery() -> None:
+        async with shared_lock:
+            competitor_observations.append(restorer.completed.is_set())
+            (fixture.repo / "after-recovery.txt").write_text("serialized mutation\n")
+            competitor_entered.set()
+
+    competitor = asyncio.create_task(mutate_after_recovery())
+    await asyncio.sleep(0.05)
+    assert not competitor_entered.is_set()
+    assert competitor_observations == []
+
+    restorer.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(dispatch_task, timeout=3)
+    await asyncio.wait_for(competitor, timeout=2)
+
+    assert competitor_observations == [True]
+    assert (fixture.repo / "README.md").read_text() == "baseline\n"
+    assert not (fixture.repo / "execution-created.txt").exists()
+    assert (fixture.repo / "after-recovery.txt").read_text() == "serialized mutation\n"
+
+
+@pytest.mark.asyncio
 async def test_runner_recovery_dispatching_outbox_is_redelivered_after_restart(
     recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
 ) -> None:
@@ -412,11 +574,9 @@ async def test_runner_recovery_dispatching_outbox_is_redelivered_after_restart(
     assert [item.kind for item in pending_cleanups] == [
         "snapshot_cleanup",
         "snapshot_cleanup",
-        "snapshot_cleanup",
     ]
     completed_cleanups = await dispatcher.dispatch_pending(run_id="recovery-restart")
     assert [item.kind for item in completed_cleanups] == [
-        "snapshot_cleanup",
         "snapshot_cleanup",
         "snapshot_cleanup",
     ]
@@ -604,6 +764,111 @@ async def test_runner_recovery_restores_rename_copy_and_file_directory_transitio
     assert (fixture.repo / "unrelated.txt").read_text() == "preserve this external change\n"
 
 
+@pytest.mark.asyncio
+async def test_concurrent_witnessed_finalize_and_recovery_has_one_durable_winner(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    """Production finalization and restart recovery race through one SQLite log."""
+    _, session_factory = recovery_db
+    fixture = await _witnessed_fixture(session_factory, tmp_path)
+
+    results = await asyncio.gather(
+        fixture.executor._finalize_runner_execution(fixture.context),
+        fixture.executor._request_runner_recovery(
+            fixture.context,
+            "runner_died",
+            error_detail="concurrent restart observed no process owner",
+        ),
+        return_exceptions=True,
+    )
+
+    events = await _events(session_factory, "recovery-finalize-race")
+    finalized = [
+        item
+        for item in events
+        if item.event_type == "runner_execution_finalized"
+        and item.payload.get("execution_id") == fixture.execution_id
+    ]
+    requested = [
+        item
+        for item in events
+        if item.event_type == "runner_recovery_requested"
+        and item.payload.get("execution_id") == fixture.execution_id
+    ]
+    assert (len(finalized), len(requested)) in {(1, 0), (0, 1)}
+
+    if requested:
+        await fixture.dispatcher.dispatch_pending(
+            run_id="recovery-finalize-race",
+            allowed_kinds=frozenset({"runner_recovery"}),
+        )
+    final_events = await _events(session_factory, "recovery-finalize-race")
+    accepted = [
+        item
+        for item in final_events
+        if item.event_type == "callback_accepted"
+        and item.payload.get("execution_id") == fixture.execution_id
+    ]
+    recovered = [
+        item
+        for item in final_events
+        if item.event_type == "runner_recovery_completed"
+        and item.payload.get("execution_id") == fixture.execution_id
+    ]
+    assert (len(finalized), len(accepted), len(recovered)) in {(1, 1, 0), (0, 0, 1)}
+    attempt = execution_attempts_view(
+        await fixture.controller.read_projection("recovery-finalize-race")
+    )[fixture.execution_id]
+    assert attempt.state in {"finalized", "recovered"}
+    assert attempt.completion_disposition in {
+        "finalized_accepted",
+        "restored_boundary_mismatch",
+    }
+    assert sum(not isinstance(item, Exception) for item in results) >= 1
+    assert _ref_exists(fixture.repo, fixture.staged_ref)
+
+
+@pytest.mark.asyncio
+async def test_restart_after_finalization_before_outbox_ack_does_not_refinalize(
+    recovery_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], tmp_path: Path
+) -> None:
+    """A crash after the atomic append may redeliver effects, never acceptance."""
+    _, session_factory = recovery_db
+    fixture = await _witnessed_fixture(session_factory, tmp_path)
+    await fixture.executor._finalize_runner_execution(fixture.context)
+    before = await _events(session_factory, "recovery-finalize-race")
+    assert _event_types(before).count("runner_execution_finalized") == 1
+    assert _event_types(before).count("callback_accepted") == 1
+
+    pending = await fixture.dispatcher.pending_items(run_id="recovery-finalize-race")
+    assert pending
+    await _set_outbox_status(session_factory, pending[0].outbox_id, "dispatching")
+    restarted_executor = GraphDispatchExecutor(
+        session_factory,
+        fixture.controller,
+        StaticGraphAgentFactory(AgentRunnerType.CLI_SUBPROCESS),
+        worktree_path=fixture.repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "race-artifacts"),
+    )
+    restarted_dispatcher = OutboxDispatcher(session_factory, restarted_executor, FixedClock())
+    report = await recover(
+        session_factory,
+        restarted_dispatcher,
+        run_id="recovery-finalize-race",
+    )
+    await restarted_executor.reconcile_execution_attempts("recovery-finalize-race")
+
+    after = await _events(session_factory, "recovery-finalize-race")
+    assert _event_types(after).count("runner_execution_finalized") == 1
+    assert _event_types(after).count("callback_accepted") == 1
+    assert not any(
+        item.event_type in {"runner_recovery_requested", "runner_recovery_completed"}
+        and item.payload.get("execution_id") == fixture.execution_id
+        for item in after
+    )
+    assert any(item.outbox_id == pending[0].outbox_id for item in report.redispatched)
+
+
 def _executor(
     session_factory: async_sessionmaker[AsyncSession],
     controller: GraphController,
@@ -716,6 +981,11 @@ async def _recovery_fixture(
     )
     item = next(item for item in result.outbox_items if item.kind == "runner_recovery")
     await _complete_prior_agent_dispatches(session_factory, run_id)
+    await OutboxDispatcher(
+        session_factory,
+        _executor(session_factory, controller, repo, tmp_path),
+        FixedClock(),
+    ).dispatch_pending(run_id=run_id, allowed_kinds=frozenset({"snapshot_publish"}))
     return RecoveryFixture(
         controller=controller,
         repo=repo,
@@ -723,6 +993,121 @@ async def _recovery_fixture(
         baseline_snapshot_id=baseline.id,
         baseline_tree_sha=recorded_tree_sha,
         execution_id=execution_id,
+    )
+
+
+async def _witnessed_fixture(
+    session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+) -> WitnessedFixture:
+    run_id = "recovery-finalize-race"
+    repo = tmp_path / run_id
+    _init_repo(repo)
+    baseline = snapshot(repo, "race baseline")
+    controller, lease = await _active_worker_lease(session_factory, baseline.id, run_id=run_id)
+    node_id = str(lease["node_id"])
+    lease_id = str(lease["lease_id"])
+    execution_id = str(lease["execution_id"])
+    generation = int(lease["generation"])
+    entries = [_entry("README.md", "clean", _fingerprint("baseline\n"))]
+    await _command(
+        controller,
+        run_id,
+        "record_runner_baseline",
+        {
+            "execution_id": execution_id,
+            "node_id": node_id,
+            "lease_id": lease_id,
+            "lease_generation": generation,
+            "baseline_snapshot_id": baseline.id,
+            "baseline_snapshot_ref": baseline.ref,
+            "baseline_commit_sha": baseline.commit_sha,
+            "baseline_tree_sha": baseline.tree_sha,
+            "entries": entries,
+            "boundary_hash": boundary_manifest_hash(baseline.tree_sha, entries),
+            "cache_roots": [],
+        },
+    )
+    staged = snapshot(repo, "race staged", snapshot_id="e" * 32)
+    callback_payload: dict[str, object] = {"output_records": []}
+    artifact_store = FilesystemArtifactStore(tmp_path / "race-artifacts")
+    payload_ref = await artifact_store.put(
+        canonical_callback_payload_bytes(callback_payload),
+        media_type="application/json",
+        encoding="utf-8",
+    )
+    payload_hash, _ = callback_payload_identity(callback_payload)
+    await _command(
+        controller,
+        run_id,
+        "stage_runner_submission",
+        {
+            "execution_id": execution_id,
+            "node_id": node_id,
+            "lease_id": lease_id,
+            "lease_generation": generation,
+            "base_snapshot_id": baseline.id,
+            "observed_graph_position": await controller.current_position(run_id),
+            "idempotency_key": "race-submit",
+            "payload": callback_payload,
+            "payload_ref": payload_ref.model_dump(mode="json"),
+            "payload_hash": payload_hash,
+            "is_mutating": False,
+            "complete_node": False,
+            "new_state": "completed",
+            "staged_snapshot_id": staged.id,
+            "staged_snapshot_ref": staged.ref,
+            "staged_commit_sha": staged.commit_sha,
+            "staged_tree_sha": staged.tree_sha,
+            "boundary_hash": boundary_manifest_hash(staged.tree_sha, entries),
+            "boundary_entries": entries,
+        },
+    )
+    final = snapshot(repo, "race final", snapshot_id="f" * 32)
+    attempt = execution_attempts_view(await controller.read_projection(run_id))[execution_id]
+    await _command(
+        controller,
+        run_id,
+        "witness_runner_completion",
+        {
+            "execution_id": execution_id,
+            "node_id": node_id,
+            "lease_id": lease_id,
+            "lease_generation": generation,
+            "staged_payload_hash": attempt.payload_hash,
+            "staged_payload_size_bytes": attempt.payload_size_bytes,
+            "staged_snapshot_id": staged.id,
+            "staged_snapshot_ref": staged.ref,
+            "staged_commit_sha": staged.commit_sha,
+            "staged_tree_sha": staged.tree_sha,
+            "staged_boundary_hash": attempt.staged_boundary_hash,
+            "runner_return_kind": "successful_return",
+            "final_snapshot_id": final.id,
+            "final_snapshot_ref": final.ref,
+            "final_commit_sha": final.commit_sha,
+            "final_tree_sha": final.tree_sha,
+            "boundary_hash": boundary_manifest_hash(final.tree_sha, entries),
+            "boundary_entries": entries,
+        },
+    )
+    await _complete_prior_agent_dispatches(session_factory, run_id)
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        StaticGraphAgentFactory(AgentRunnerType.CLI_SUBPROCESS),
+        worktree_path=repo,
+        artifact_store=artifact_store,
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
+    await dispatcher.dispatch_pending(run_id=run_id, allowed_kinds=frozenset({"snapshot_publish"}))
+    context = await executor._reattached_execution_context(run_id, attempt)
+    return WitnessedFixture(
+        controller=controller,
+        executor=executor,
+        dispatcher=dispatcher,
+        context=context,
+        repo=repo,
+        execution_id=execution_id,
+        staged_ref=staged.ref,
     )
 
 
@@ -827,6 +1212,11 @@ async def _topology_recovery_fixture(
     )
     await _complete_prior_agent_dispatches(session_factory, run_id)
     item = next(item for item in result.outbox_items if item.kind == "runner_recovery")
+    await OutboxDispatcher(
+        session_factory,
+        _executor(session_factory, controller, repo, tmp_path),
+        FixedClock(),
+    ).dispatch_pending(run_id=run_id, allowed_kinds=frozenset({"snapshot_publish"}))
     return RecoveryFixture(
         controller=controller,
         repo=repo,
@@ -871,6 +1261,7 @@ async def _command(
     if command_type in {
         "record_runner_baseline",
         "stage_runner_submission",
+        "witness_runner_completion",
         "finalize_runner_execution",
         "request_runner_recovery",
     }:
@@ -883,7 +1274,7 @@ async def _command(
         elif command_type == "stage_runner_submission":
             entries_key = "boundary_entries"
             tree_key = "staged_tree_sha"
-        elif command_type == "finalize_runner_execution":
+        elif command_type in {"witness_runner_completion", "finalize_runner_execution"}:
             entries_key = "boundary_entries"
             tree_key = "final_tree_sha"
         else:
@@ -896,6 +1287,33 @@ async def _command(
                 payload.get("cache_status_evidence", []),
                 authority_hash,
             )
+        if command_type == "finalize_runner_execution":
+            attempt = execution_attempts_view(await controller.read_projection(run_id))[
+                str(payload["execution_id"])
+            ]
+            witnessed = await _command(
+                controller,
+                run_id,
+                "witness_runner_completion",
+                {
+                    **payload,
+                    "staged_payload_hash": attempt.payload_hash,
+                    "staged_payload_size_bytes": attempt.payload_size_bytes,
+                    "staged_snapshot_id": attempt.staged_snapshot_id,
+                    "staged_snapshot_ref": attempt.staged_snapshot_ref,
+                    "staged_commit_sha": attempt.staged_commit_sha,
+                    "staged_tree_sha": attempt.staged_tree_sha,
+                    "staged_boundary_hash": attempt.staged_boundary_hash,
+                    "runner_return_kind": "successful_return",
+                },
+                expected_position=expected_position,
+            )
+            if any(
+                event.event_type in {"runner_boundary_mismatch", "command_rejected"}
+                for event in witnessed.events
+            ):
+                return witnessed
+            expected_position = witnessed.projection_position
         return await controller.handle_runtime_boundary_command(
             run_id,
             await controller.current_position(run_id)
@@ -1054,6 +1472,18 @@ def _init_repo(path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+    )
+
+
+def _ref_exists(repo: Path, ref: str) -> bool:
+    return (
+        subprocess.run(
+            ["git", "show-ref", "--verify", "--quiet", ref],
+            cwd=repo,
+            check=False,
+            timeout=30,
+        ).returncode
+        == 0
     )
 
 

@@ -5,8 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+import pytest
 
 from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
+from orchestrator.runners import (
+    SubmissionAcknowledgement,
+    SubmissionContract,
+    SubmissionOutputContract,
+)
 
 
 def _tool_names(mcp: FastMCP) -> set[str]:
@@ -35,6 +41,78 @@ async def test_verifier_server_has_graph_grade_tool() -> None:
 
     mcp = build_graph_mcp_server(on_submit_graph_patch, on_grade)
     assert "graph_grade" in _tool_names(mcp)
+
+
+@pytest.mark.parametrize(
+    ("disposition", "message"),
+    [
+        ("rejected", "submission rejected: acceptance command failed"),
+        ("durably_staged", "durably staged; pending runner completion and not yet accepted"),
+        ("finalized_accepted", "submission is durably finalized and accepted"),
+    ],
+)
+async def test_semantic_worker_server_exposes_three_way_submit_acknowledgement(
+    disposition: str,
+    message: str,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def on_submit_graph_patch(payload: dict[str, Any]) -> str:
+        return "ok"
+
+    async def on_submit(args: dict[str, Any]) -> SubmissionAcknowledgement:
+        calls.append(args)
+        return SubmissionAcknowledgement.model_validate(
+            {
+                "disposition": disposition,
+                "message": message,
+                "execution_id": "execution-1",
+                "graph_position": 12,
+            }
+        )
+
+    contract = SubmissionContract(
+        outputs=(
+            SubmissionOutputContract(
+                port="semantic_artifact",
+                schema_name="SemanticArtifact",
+                semantic_schema_id="plan",
+                semantic_schema_version=1,
+                semantic_role="implementation_plan",
+                content_json_schema={
+                    "type": "object",
+                    "required": ["batches"],
+                    "properties": {"batches": {"type": "array"}},
+                },
+            ),
+        )
+    )
+    mcp = build_graph_mcp_server(
+        on_submit_graph_patch,
+        None,
+        allowed_tools=[],
+        on_submit=on_submit,
+        submission_contract=contract,
+    )
+
+    assert _tool_names(mcp) == {"submit"}
+    submit_tool = next(tool for tool in await mcp.list_tools() if tool.name == "submit")
+    assert submit_tool.inputSchema["required"] == ["outputs"]
+    outputs_schema = submit_tool.inputSchema["properties"]["outputs"]
+    assert outputs_schema["required"] == ["semantic_artifact"]
+    assert outputs_schema["additionalProperties"] is False
+    assert outputs_schema["properties"]["semantic_artifact"] == {
+        "type": "object",
+        "required": ["batches"],
+        "properties": {"batches": {"type": "array"}},
+    }
+    result = await mcp.call_tool(
+        "submit", {"outputs": {"semantic_artifact": {"batches": [{"batch_id": "b1"}]}}}
+    )
+    assert calls == [{"outputs": {"semantic_artifact": {"batches": [{"batch_id": "b1"}]}}}]
+    rendered = " ".join(str(item) for item in result)
+    assert disposition in rendered
+    assert message in rendered
 
 
 async def test_verifier_empty_allowlist_does_not_expose_planner_macros() -> None:

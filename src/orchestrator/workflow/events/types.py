@@ -1,9 +1,11 @@
 """Workflow event types for observability."""
 
 from datetime import datetime, timezone
-from typing import Any
+import math
+import re
+from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RunStatus, TaskStatus
 
@@ -35,6 +37,161 @@ class RunStatusChanged(WorkflowEvent):
     new_status: RunStatus | str = RunStatus.DRAFT
     pause_reason: str | None = None
     last_error: str | None = None  # Human-readable error detail when paused due to error
+
+
+class GraphRuntimeReconciled(WorkflowEvent):
+    """Canonical retry/action fact for independent graph liveness recovery."""
+
+    event_type: str = "graph_runtime_reconciled"
+    graph_position: int
+    progress_fingerprint: str
+    no_progress_attempts: int
+    driver_generation: int
+    driver_state: str
+    action: str
+    stalled_execution_id: str | None = None
+    stall_deadline_at: datetime | None = None
+    staged_count: int = 0
+    witnessed_count: int = 0
+    finalized_count: int = 0
+    active_lease_count: int = 0
+    expired_lease_count: int = 0
+    disposition_counts: dict[str, int] = Field(default_factory=dict)
+    root_error: str | None = None
+
+
+class GraphRunnerRuntimeObserved(WorkflowEvent):
+    """Canonical bounded liveness fact for one dispatched runner process."""
+
+    event_type: str = "graph_runner_runtime_observed"
+    node_id: str
+    execution_id: str
+    lease_id: str
+    lease_generation: int
+    runner_type: str = Field(default="unknown", min_length=1, max_length=128)
+    state: Literal[
+        "not_yet_reported",
+        "exact_identity_available",
+        "invalid_metadata",
+        "unreported",
+        "unsupported",
+        "non_process_owning",
+        "never_started",
+        "missing",
+        "exited",
+    ]
+    pid: int | None = Field(default=None, gt=0)
+    process_create_time: float | None = Field(default=None, allow_inf_nan=False)
+    command_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    reason: str = Field(
+        default="legacy runtime observation did not record a bounded reason",
+        min_length=1,
+        max_length=1_000,
+    )
+    root_error: str | None = Field(default=None, max_length=1_000)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_runtime_state(cls, value: Any) -> Any:
+        """Normalize old observations without inventing exact process identity.
+
+        Historical ``started``/``alive`` was only equivalent to the modern
+        exact state when the event actually carried the complete reusable-PID
+        identity. Incomplete legacy facts become an explicit failed-closed
+        observation instead of being upgraded to evidence they never held.
+        """
+        if isinstance(value, dict):
+            raw = cast(dict[str, Any], value)
+        else:
+            return value
+        legacy_state = raw.get("state")
+        if legacy_state in {"started", "alive"}:
+            normalized: dict[str, Any] = dict(raw)
+            if _runtime_identity_payload_is_exact(raw):
+                normalized.update(
+                    state="exact_identity_available",
+                    reason=(
+                        f"legacy {legacy_state} observation normalized after validating "
+                        "exact process identity"
+                    ),
+                    root_error=None,
+                )
+            else:
+                detail = (
+                    f"legacy {legacy_state} observation lacked a complete valid exact "
+                    "process identity"
+                )
+                normalized.update(
+                    state="invalid_metadata",
+                    pid=None,
+                    process_create_time=None,
+                    command_sha256=None,
+                    reason=detail,
+                    root_error=detail,
+                )
+            return normalized
+        if any(
+            raw.get(field) is not None for field in ("pid", "process_create_time", "command_sha256")
+        ) and not _runtime_identity_payload_is_exact(raw):
+            raise ValueError(
+                "runner process identity must contain a positive integer PID, finite "
+                "create time, and lowercase 64-hex command hash"
+            )
+        return raw
+
+    @model_validator(mode="after")
+    def validate_runtime_state_evidence(self) -> "GraphRunnerRuntimeObserved":
+        """Bind each categorical state to the evidence it is allowed to claim."""
+        identity_values = (self.pid, self.process_create_time, self.command_sha256)
+        has_any_identity = any(value is not None for value in identity_values)
+        has_exact_identity = all(value is not None for value in identity_values)
+        if has_any_identity and not has_exact_identity:
+            raise ValueError("runner process identity must be complete or absent")
+
+        if self.state in {"exact_identity_available", "exited"} and not has_exact_identity:
+            raise ValueError(f"{self.state} requires a complete exact process identity")
+        if self.state not in {"exact_identity_available", "missing", "exited"}:
+            if has_any_identity:
+                raise ValueError(f"{self.state} cannot carry an exact process identity")
+
+        error_states = {"invalid_metadata", "unreported", "never_started", "missing"}
+        if self.state in error_states and self.root_error is None:
+            raise ValueError(f"{self.state} requires a bounded root_error")
+        if self.state not in error_states and self.root_error is not None:
+            raise ValueError(f"{self.state} cannot carry root_error")
+        return self
+
+
+def _runtime_identity_payload_is_exact(payload: dict[str, Any]) -> bool:
+    """Return whether an unvalidated event payload contains exact identity."""
+    pid = payload.get("pid")
+    create_time = payload.get("process_create_time")
+    command_sha256 = payload.get("command_sha256")
+    return (
+        isinstance(pid, int)
+        and not isinstance(pid, bool)
+        and pid > 0
+        and isinstance(create_time, (int, float))
+        and not isinstance(create_time, bool)
+        and math.isfinite(create_time)
+        and isinstance(command_sha256, str)
+        and re.fullmatch(r"[0-9a-f]{64}", command_sha256) is not None
+    )
+
+
+class GraphSubmissionGateAudited(WorkflowEvent):
+    """Canonical bounded provenance for one graph submission-gate execution."""
+
+    event_type: str = "graph_submission_gate_audited"
+    node_id: str
+    execution_id: str
+    phase: str
+    base_snapshot_id: str
+    base_tree_sha: str
+    candidate_tree_sha: str | None = None
+    status: str
+    failure_fingerprint: str | None = None
+    report: dict[str, Any]
 
 
 class ChecklistGateEvaluated(WorkflowEvent):

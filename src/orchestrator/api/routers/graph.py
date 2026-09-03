@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-
 from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -17,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.deps import (
     get_artifact_store_resolver,
+    get_crash_barrier_status_reader,
     get_global_config,
     get_graph_store,
     get_run_repository,
@@ -31,7 +31,13 @@ from orchestrator.artifacts import (
 )
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import GlobalConfig, RunStatus
-from orchestrator.db import GraphOutboxModel, RunRepository
+from orchestrator.db import (
+    EventV2Model,
+    GraphOutboxModel,
+    GraphRuntimeSupervisionRepository,
+    GraphSubmissionGateAuditRepository,
+    RunRepository,
+)
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -47,6 +53,8 @@ from orchestrator.graph import (
     check_command_reference,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
+    execution_attempts_view,
+    leases_view,
     node_contract_summary,
     project_decision_view,
     project_graph_topology,
@@ -66,12 +74,14 @@ from orchestrator.graph import (
     task_region_snapshot_authority_view,
 )
 from orchestrator.graph_runtime import (
+    CrashBarrier,
     GRAPH_READ_CONTRACTS,
     GraphController,
     GraphExpectedPositionMismatch,
     GraphPatchAttemptPage,
     GraphReadModelUnavailable,
     StaleProjectionError,
+    bounded_crash_barrier_readback,
     bound_graph_json,
     bound_node_detail_owner,
 )
@@ -86,6 +96,7 @@ from orchestrator.graph_runtime.store import (
     PydanticCollectionContract,
 )
 from orchestrator.state import RunNotFoundError
+from orchestrator.workflow import GraphRunnerRuntimeObserved
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
 
@@ -453,6 +464,31 @@ class GraphHealthResponse(ApiModel):
     detail_meta: dict[str, dict[str, int | bool]]
 
 
+class GraphRuntimeHealthResponse(ApiModel):
+    """Bounded durable runtime ownership and submission protocol readback."""
+
+    run_id: str
+    graph_position: int
+    driver: dict[str, Any] | None
+    attempt_counts: dict[str, int]
+    attempts: list[dict[str, Any]]
+    attempts_truncated: bool
+    lease_counts: dict[str, int]
+    runner_runtime: list[dict[str, Any]]
+    runner_runtime_truncated: bool
+    dispositions: dict[str, int]
+    gate_audits: list[dict[str, Any]]
+    next_gate_audit_cursor: int | None
+
+
+class CrashBarrierStatusResponse(ApiModel):
+    """Bounded file-backed crash-drill status for one exact run."""
+
+    run_id: str
+    enabled: bool
+    state: dict[str, Any] | None
+
+
 def _empty_dict_items() -> list[dict[str, Any]]:
     return []
 
@@ -765,7 +801,7 @@ def _event_to_response(
     payload_mode: Literal["full", "summary"] = "full",
 ) -> GraphEventResponse:
     payload, metadata = _bounded_rendered_payload(
-        _event_payload(event, payload_mode=payload_mode),
+        graph_event_payload(event, payload_mode=payload_mode),
         contract_key="events_full" if payload_mode == "full" else "events_summary",
     )
     return GraphEventResponse(
@@ -909,12 +945,14 @@ def _bounded_rendered_payload(
     )
 
 
-def _event_payload(
+def graph_event_payload(
     event: EventEnvelope,
     *,
     payload_mode: Literal["full", "summary"],
 ) -> dict[str, Any]:
     payload = dict(event.payload)
+    if event.event_type == "command_rejected" or event.event_type.startswith("callback_rejected_"):
+        payload.setdefault("disposition", "rejected")
     if payload_mode == "full":
         return payload
     return _summary_payload(payload)
@@ -929,6 +967,7 @@ def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "blocker",
         "blockers",
         "command_type",
+        "disposition",
         "command_definition",
         "execution_id",
         "generation",
@@ -2226,13 +2265,19 @@ def build_bounded_graph_health_response(
         "scheduler",
         "leases",
         "expired_leases",
-        "failed_nodes",
         "final_invariant_blockers",
         "pending_gates",
         "review_blockers",
     ]
     if not health.summaries_complete:
-        unavailable = ["compact_event_summaries", *unavailable, "patches", "verifier", "run_state"]
+        unavailable = [
+            "compact_event_summaries",
+            *unavailable,
+            "failed_nodes",
+            "patches",
+            "verifier",
+            "run_state",
+        ]
         status: Literal["partial", "complete", "unavailable"] = "unavailable"
         section_status: dict[str, Literal["partial", "complete", "unavailable"]] = {
             name: "unavailable" for name in unavailable
@@ -2245,6 +2290,7 @@ def build_bounded_graph_health_response(
         status = "partial"
         section_status = {
             "run_state": "complete",
+            "failed_nodes": "complete",
             "patches": "complete",
             "verifier": "complete",
             **{name: "unavailable" for name in unavailable},
@@ -2258,7 +2304,7 @@ def build_bounded_graph_health_response(
         active_leases=0 if empty else None,
         suspended_leases=0 if empty else None,
         expired_leases=0 if empty else None,
-        failed_nodes=0 if empty else None,
+        failed_nodes=health.failed_nodes_total,
         final_blockers=0 if empty else None,
         patches_accepted=health.patches_accepted,
         patches_rejected=health.patches_rejected,
@@ -2270,13 +2316,19 @@ def build_bounded_graph_health_response(
         run_id=run_id,
         event_count=health.event_count,
         run_state=health.run_state,
-        status="empty" if health.event_count == 0 and health.summaries_complete else status,
+        status=(
+            "empty"
+            if health.event_count == 0 and health.summaries_complete
+            else "blocked"
+            if health.failed_nodes_total
+            else status
+        ),
         health_status=status,
         facts_status=status,
         unavailable_checks=unavailable,
         section_status=section_status,
         counts=counts,
-        failed_nodes=[],
+        failed_nodes=[GraphHealthFailedNodeResponse(**row) for row in health.failed_nodes],
         expired_leases=[],
         blockers=[],
         recent_patch_decisions=[
@@ -2292,6 +2344,10 @@ def build_bounded_graph_health_response(
         detail_meta={}
         if empty
         else {
+            "failed_nodes": {
+                "total": health.failed_nodes_total or 0,
+                "truncated": health.failed_nodes_truncated,
+            },
             "recent_patch_decisions": {
                 "total": health.patch_decisions_total or 0,
                 "truncated": health.patch_decisions_truncated,
@@ -3579,6 +3635,195 @@ async def get_graph_health(
         run_id, detail_limit=_GRAPH_HEALTH_MAX_DETAILS
     )
     return build_bounded_graph_health_response(run_id, health)
+
+
+@router.get("/{run_id}/graph/crash-barrier", response_model=CrashBarrierStatusResponse)
+async def get_graph_crash_barrier_status(
+    run_id: str,
+    service: Any = Depends(get_workflow_service),
+    barrier: CrashBarrier = Depends(get_crash_barrier_status_reader),
+) -> CrashBarrierStatusResponse:
+    """Read exact-run crash-drill state directly from its durable file boundary."""
+    try:
+        await service.get_run(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    state = barrier.read_status()
+    if state is None:
+        return CrashBarrierStatusResponse(run_id=run_id, enabled=False, state=None)
+    readback = bounded_crash_barrier_readback(state)
+    if readback.get("run_id") != run_id:
+        return CrashBarrierStatusResponse(run_id=run_id, enabled=False, state=None)
+    return CrashBarrierStatusResponse(run_id=run_id, enabled=True, state=readback)
+
+
+@router.get("/{run_id}/graph/runtime-health", response_model=GraphRuntimeHealthResponse)
+async def get_graph_runtime_health(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+    service: Any = Depends(get_workflow_service),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+    gate_cursor: int = Query(default=0, ge=0),
+    gate_limit: int = Query(default=10, ge=1, le=20),
+) -> GraphRuntimeHealthResponse:
+    """Return DB-backed driver facts plus authoritative staged/witness state."""
+    try:
+        await service.get_run(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    try:
+        checkpoint = await graph_store.read_current_projection_view(run_id)
+    except GraphReadModelUnavailable as error:
+        _raise_read_model_unavailable(error)
+    attempts = execution_attempts_view(checkpoint.projection) if checkpoint is not None else {}
+    leases = leases_view(checkpoint.projection) if checkpoint is not None else {}
+    attempt_rows = [
+        {
+            "execution_id": execution_id,
+            "node_id": attempt.node_id,
+            "state": attempt.state,
+            "lease_id": attempt.lease_id,
+            "lease_generation": attempt.lease_generation,
+            "completion_disposition": attempt.completion_disposition,
+            "recovery_reason": attempt.recovery_reason,
+            "recovery_error_detail": attempt.recovery_error_detail,
+        }
+        for execution_id, attempt in sorted(attempts.items())
+    ]
+    disposition_counts: dict[str, int] = {}
+    for attempt in attempts.values():
+        if attempt.completion_disposition is not None:
+            disposition_counts[attempt.completion_disposition] = (
+                disposition_counts.get(attempt.completion_disposition, 0) + 1
+            )
+    async with session_factory() as session:
+        supervision = await GraphRuntimeSupervisionRepository(session).get(run_id)
+        audits = await GraphSubmissionGateAuditRepository(session).list_for_run(
+            run_id, after_id=gate_cursor, limit=gate_limit
+        )
+        runtime_event_rows = list(
+            await session.scalars(
+                select(EventV2Model)
+                .where(
+                    EventV2Model.aggregate_id == run_id,
+                    EventV2Model.event_type == "graph_runner_runtime_observed",
+                )
+                .order_by(EventV2Model.position.desc())
+                .limit(21)
+            )
+        )
+    audit_rows: list[dict[str, Any]] = []
+    for audit in audits:
+        raw_commands: object = audit.report.get("results") or audit.report.get("commands") or []
+        commands = (
+            cast(list[dict[str, Any]], raw_commands) if isinstance(raw_commands, list) else []
+        )
+        bounded_commands = [
+            {
+                key: command.get(key)
+                for key in (
+                    "command",
+                    "command_sha256",
+                    "source",
+                    "status",
+                    "exit_code",
+                    "duration_ms",
+                    "stdout_sha256",
+                    "stderr_sha256",
+                    "stdout_bytes",
+                    "stderr_bytes",
+                    "stdout_truncated",
+                    "stderr_truncated",
+                )
+            }
+            for command in commands[:8]
+        ]
+        audit_rows.append(
+            {
+                "id": audit.id,
+                "phase": audit.phase,
+                "node_id": audit.node_id,
+                "execution_id": audit.execution_id,
+                "base_snapshot_id": audit.base_snapshot_id,
+                "base_tree_sha": audit.base_tree_sha,
+                "candidate_tree_sha": audit.candidate_tree_sha,
+                "status": audit.status,
+                "failure_fingerprint": audit.failure_fingerprint,
+                "created_at": audit.created_at.isoformat(),
+                "commands": bounded_commands,
+            }
+        )
+    active_leases = sum(lease.state == "active" for lease in leases.values())
+    suspended_leases = sum(lease.state == "suspended" for lease in leases.values())
+    runtime_rows: list[dict[str, Any]] = []
+    for event_row in runtime_event_rows[:20]:
+        observation = GraphRunnerRuntimeObserved.model_validate(json.loads(event_row.payload))
+        payload = observation.model_dump(mode="json")
+        runtime_rows.append(
+            {
+                key: payload.get(key)
+                for key in (
+                    "timestamp",
+                    "node_id",
+                    "execution_id",
+                    "lease_id",
+                    "lease_generation",
+                    "runner_type",
+                    "state",
+                    "pid",
+                    "process_create_time",
+                    "command_sha256",
+                    "reason",
+                    "root_error",
+                )
+            }
+        )
+    return GraphRuntimeHealthResponse(
+        run_id=run_id,
+        graph_position=checkpoint.position if checkpoint is not None else 0,
+        driver=(
+            {
+                "observed_position": supervision.observed_position,
+                "last_progress_at": supervision.last_progress_at.isoformat(),
+                "last_reconciled_at": supervision.last_reconciled_at.isoformat(),
+                "no_progress_attempts": supervision.no_progress_attempts,
+                "generation": supervision.driver_generation,
+                "state": supervision.driver_state,
+                "last_action": supervision.last_action,
+                "stalled_execution_id": supervision.stalled_execution_id,
+                "stall_deadline_at": (
+                    supervision.stall_deadline_at.isoformat()
+                    if supervision.stall_deadline_at is not None
+                    else None
+                ),
+                "expired_lease_count": supervision.expired_lease_count,
+                "root_error": supervision.root_error,
+            }
+            if supervision is not None
+            else None
+        ),
+        attempt_counts={
+            "total": len(attempts),
+            "staged": sum(value.state == "submission_staged" for value in attempts.values()),
+            "witnessed": sum(value.state == "completion_witnessed" for value in attempts.values()),
+            "finalized": sum(value.state == "finalized" for value in attempts.values()),
+        },
+        attempts=attempt_rows[:20],
+        attempts_truncated=len(attempt_rows) > 20,
+        lease_counts={
+            "total": len(leases),
+            "active": active_leases,
+            "suspended": suspended_leases,
+            "expired": sum(lease.state == "expired" for lease in leases.values()),
+            "released": sum(lease.state == "released" for lease in leases.values()),
+            "revoked": sum(lease.state == "revoked" for lease in leases.values()),
+        },
+        runner_runtime=runtime_rows,
+        runner_runtime_truncated=len(runtime_event_rows) > 20,
+        dispositions=disposition_counts,
+        gate_audits=audit_rows,
+        next_gate_audit_cursor=(audits[-1].id if len(audits) == gate_limit else None),
+    )
 
 
 @router.get("/{run_id}/graph/topology", response_model=GraphTopologyResponse, deprecated=True)

@@ -1,9 +1,11 @@
 """Integration tests for graph compatibility projection endpoints."""
 
+import asyncio
 import json
 
 from datetime import datetime, timezone
 from hashlib import sha256
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -12,7 +14,11 @@ from httpx import AsyncClient
 from sqlalchemy import delete, event, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from orchestrator.api import advance_graph_archival_maintenance_once, build_expired_lease_rows
+from orchestrator.api import (
+    advance_graph_archival_maintenance_once,
+    build_expired_lease_rows,
+    get_crash_barrier_status_reader,
+)
 from orchestrator.config import RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import (
@@ -27,6 +33,7 @@ from orchestrator.db import (
     GraphRegionViewEntryModel,
     GraphTopologyViewEntryModel,
     RunModel,
+    SqliteEventStore,
 )
 from orchestrator.graph import (
     Actor,
@@ -40,11 +47,22 @@ from orchestrator.graph import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
 from orchestrator.graph_runtime import (
+    CRASH_BARRIER_AUTHORIZATION,
+    CrashBarrierObservation,
+    CrashBarrierPlanConfig,
+    CrashBarrierPlanState,
+    CrashBarrierTarget,
+    FileCrashBarrier,
     GraphController,
     GraphEventStore,
     OutboxDispatcher,
     OutboxItem,
     seed_run,
+)
+from orchestrator.workflow import (
+    GraphRunnerRuntimeObserved,
+    GraphRuntimeReconciled,
+    GraphSubmissionGateAudited,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
 
@@ -210,6 +228,87 @@ async def _save_manual_graph_run(app: Any, run_id: str) -> None:
     async with session_factory() as session:
         await save_run(session, run)
         await session.commit()
+
+
+async def test_crash_barrier_http_readback_uses_exact_durable_run_state(
+    _shared_app_fixture: tuple[AsyncClient, Any, Path, Path, Any],
+    tmp_path: Path,
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = "crash-barrier-http-readback"
+    await _save_manual_graph_run(app, run_id)
+    state_dir = tmp_path / "crash-barrier-http"
+    config = CrashBarrierPlanConfig(
+        schema_version=2,
+        authorization=CRASH_BARRIER_AUTHORIZATION,
+        run_id=run_id,
+        nonce="crash_barrier_http_nonce",
+        target=CrashBarrierTarget(kind="worker", semantic_stage="effectful_batch"),
+        slots=("after_staging_pre_witness", "after_witness_pre_finalization"),
+    )
+    writer = FileCrashBarrier(config, state_dir=state_dir)
+    observation = CrashBarrierObservation(
+        run_id=run_id,
+        node_id="effectful-worker",
+        execution_id="execution-1",
+        lease_id="lease-1",
+        lease_generation=1,
+        node_kind="worker",
+        node_role="builder",
+        semantic_stage="effectful_batch",
+        point="after_staging_pre_witness",
+        attempt_state="submission_staged",
+    )
+    wait_task = asyncio.create_task(
+        writer.wait_if_armed(
+            run_id=run_id,
+            execution_id=observation.execution_id,
+            point=observation.point,
+            observation=observation,
+        )
+    )
+    try:
+        for _ in range(200):
+            state = writer.read_status()
+            if isinstance(state, CrashBarrierPlanState) and state.slots[0].status == "reached":
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError("crash barrier did not reach slot 1")
+
+        app.dependency_overrides[get_crash_barrier_status_reader] = lambda: FileCrashBarrier(
+            config, state_dir=state_dir
+        )
+        response = await client.get(f"/api/runs/{run_id}/graph/crash-barrier")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["run_id"] == run_id
+        assert body["enabled"] is True
+        assert body["state"]["schema_version"] == 2
+        assert len(body["state"]["config_hash"]) == 64
+        assert len(body["state"]["slots"]) == 2
+        assert body["state"]["slots"][0] == {
+            "slot": 1,
+            "point": "after_staging_pre_witness",
+            "status": "reached",
+            "node_id": "effectful-worker",
+            "execution_id": "execution-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "owner_pid": body["state"]["slots"][0]["owner_pid"],
+            "owner_create_time": body["state"]["slots"][0]["owner_create_time"],
+            "reached_at": body["state"]["slots"][0]["reached_at"],
+            "released_at": None,
+        }
+        assert body["state"]["slots"][0]["owner_pid"] > 0
+        assert "release_token" not in response.text
+    finally:
+        app.dependency_overrides.pop(get_crash_barrier_status_reader, None)
+        state = writer.read_status()
+        if isinstance(state, CrashBarrierPlanState) and state.slots[0].status == "reached":
+            writer.release(slot=1)
+        await wait_task
 
 
 async def _seed_graph_run(
@@ -706,6 +805,171 @@ async def test_graph_health_returns_an_empty_bounded_snapshot_for_a_saved_run(
     assert health["detail_meta"] == {}
 
 
+async def test_runtime_health_reads_bounded_canonical_facts_without_process_state(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-runtime-health-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    timestamp = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        store = SqliteEventStore(session)
+        await store.append(
+            GraphRuntimeReconciled(
+                run_id=run_id,
+                timestamp=timestamp,
+                graph_position=41,
+                progress_fingerprint="durable-semantic-progress",
+                no_progress_attempts=2,
+                driver_generation=5,
+                driver_state="missing",
+                action="stalled_submission_rearmed",
+                stalled_execution_id="exec-stalled",
+                staged_count=1,
+                active_lease_count=1,
+                expired_lease_count=1,
+                root_error="runner completion witness missing",
+            )
+        )
+        await store.append(
+            GraphSubmissionGateAudited(
+                run_id=run_id,
+                timestamp=timestamp,
+                node_id="worker-1",
+                execution_id="exec-stalled",
+                phase="submission",
+                base_snapshot_id="snapshot-1",
+                base_tree_sha="a" * 40,
+                candidate_tree_sha="b" * 40,
+                status="failed",
+                failure_fingerprint="c" * 64,
+                report={
+                    "results": [
+                        {
+                            "command": "uv run pytest",
+                            "command_sha256": "d" * 64,
+                            "source": "project_test_command",
+                            "status": "failed",
+                            "exit_code": 1,
+                            "duration_ms": 25,
+                            "stdout_tail": "sensitive bounded diagnostic",
+                            "stderr_tail": "failure detail",
+                            "stdout_sha256": "e" * 64,
+                            "stderr_sha256": "f" * 64,
+                            "stdout_bytes": 28,
+                            "stderr_bytes": 14,
+                            "stdout_truncated": False,
+                            "stderr_truncated": False,
+                        }
+                    ]
+                },
+            )
+        )
+        await store.append(
+            GraphRunnerRuntimeObserved(
+                run_id=run_id,
+                timestamp=timestamp,
+                node_id="worker-1",
+                execution_id="exec-stalled",
+                lease_id="lease-1",
+                lease_generation=2,
+                runner_type="cli_subprocess",
+                state="missing",
+                pid=12345,
+                process_create_time=123.5,
+                command_sha256="1" * 64,
+                reason="verified child identity disappeared",
+                root_error="verified child identity disappeared",
+            )
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/runtime-health?gate_limit=1")
+
+    assert response.status_code == 200
+    health = response.json()
+    assert health["driver"] == {
+        "observed_position": 41,
+        "last_progress_at": timestamp.isoformat(),
+        "last_reconciled_at": timestamp.isoformat(),
+        "no_progress_attempts": 2,
+        "generation": 5,
+        "state": "missing",
+        "last_action": "stalled_submission_rearmed",
+        "stalled_execution_id": "exec-stalled",
+        "stall_deadline_at": None,
+        "expired_lease_count": 1,
+        "root_error": "runner completion witness missing",
+    }
+    assert len(health["gate_audits"]) == 1
+    assert health["gate_audits"][0]["status"] == "failed"
+    assert health["gate_audits"][0]["commands"][0]["stdout_sha256"] == "e" * 64
+    assert "sensitive bounded diagnostic" not in response.text
+    assert health["runner_runtime"] == [
+        {
+            "timestamp": "2026-09-02T12:00:00Z",
+            "node_id": "worker-1",
+            "execution_id": "exec-stalled",
+            "lease_id": "lease-1",
+            "lease_generation": 2,
+            "runner_type": "cli_subprocess",
+            "state": "missing",
+            "pid": 12345,
+            "process_create_time": 123.5,
+            "command_sha256": "1" * 64,
+            "reason": "verified child identity disappeared",
+            "root_error": "verified child identity disappeared",
+        }
+    ]
+    assert health["runner_runtime_truncated"] is False
+
+
+async def test_runtime_health_normalizes_legacy_runner_observation_through_typed_model(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-runtime-legacy-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    timestamp = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        session.add(
+            EventV2Model(
+                aggregate_id=run_id,
+                event_type="graph_runner_runtime_observed",
+                version=1,
+                timestamp=timestamp.isoformat(),
+                payload=json.dumps(
+                    {
+                        "event_type": "graph_runner_runtime_observed",
+                        "timestamp": timestamp.isoformat(),
+                        "run_id": run_id,
+                        "node_id": "worker-legacy",
+                        "execution_id": "execution-legacy",
+                        "lease_id": "lease-legacy",
+                        "lease_generation": 1,
+                        "runner_type": "cli_subprocess",
+                        "state": "alive",
+                    }
+                ),
+            )
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/runtime-health")
+
+    assert response.status_code == 200
+    runtime = response.json()["runner_runtime"]
+    assert len(runtime) == 1
+    assert runtime[0]["state"] == "invalid_metadata"
+    assert runtime[0]["pid"] is None
+    assert runtime[0]["process_create_time"] is None
+    assert runtime[0]["command_sha256"] is None
+    assert runtime[0]["root_error"] == runtime[0]["reason"]
+    assert "legacy alive" in runtime[0]["reason"]
+
+
 async def test_graph_health_reduces_current_typed_events_to_compact_operator_facts(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
@@ -858,8 +1122,13 @@ async def test_graph_health_reduces_current_typed_events_to_compact_operator_fac
     assert health["counts"]["verifier_passed"] == 1
     assert health["counts"]["verifier_failed"] == 1
     assert health["counts"]["expired_leases"] is None
+    assert health["counts"]["failed_nodes"] == 1
     assert "expired_leases" in health["unavailable_checks"]
-    assert health["failed_nodes"] == []
+    assert "failed_nodes" not in health["unavailable_checks"]
+    assert health["failed_nodes"] == [
+        {"node_id": "verifier-expired", "reason": "lease_expired_without_callback"}
+    ]
+    assert health["detail_meta"]["failed_nodes"] == {"total": 1, "truncated": False}
     assert health["expired_leases"] == []
     assert health["blockers"] == []
     assert health["verifier"] == {
@@ -1557,6 +1826,69 @@ async def test_archival_append_keeps_published_rows_while_dirty(
     current = await client.get(f"/api/runs/{run_id}/graph/topology")
     assert current.status_code == 200
     assert current.json()["event_count"] == 2
+
+
+async def test_archival_checkpoint_advances_by_projection_semantics(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """Neutral usage advances a clean view; a real topology change does not."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-archival-semantic-neutral-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        await store.append_events(
+            run_id,
+            0,
+            [_event("node_created", {"node_id": "worker-1", "kind": "worker"})],
+        )
+        await store.rebuild_archival_views(run_id)
+        await session.commit()
+
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            1,
+            [
+                _event(
+                    "node_usage_recorded",
+                    {
+                        "node_id": "worker-1",
+                        "node_kind": "worker",
+                        "execution_id": "execution-1",
+                        "usage_index": 0,
+                        "usage_count": 1,
+                        "usage_key": "execution-1:0",
+                        "model": "test-model",
+                        "gen_ai_usage_input_tokens": 2,
+                        "gen_ai_usage_output_tokens": 3,
+                    },
+                )
+            ],
+        )
+        await session.commit()
+        checkpoint = await session.get(GraphArchivalViewCheckpointModel, run_id)
+    assert checkpoint is not None
+    assert checkpoint.position == 2
+    assert checkpoint.target_position is None
+    current = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert current.status_code == 200
+    assert current.json()["event_count"] == 2
+
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            2,
+            [_event("node_created", {"node_id": "worker-2", "kind": "worker"})],
+        )
+        await session.commit()
+        checkpoint = await session.get(GraphArchivalViewCheckpointModel, run_id)
+    assert checkpoint is not None
+    assert checkpoint.position == 2
+    assert checkpoint.target_position == 3
+    stale = await client.get(f"/api/runs/{run_id}/graph/topology")
+    assert stale.status_code == 503
 
 
 async def test_node_collection_prefix_publishes_without_worker_state(

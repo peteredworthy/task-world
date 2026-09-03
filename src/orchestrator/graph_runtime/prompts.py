@@ -11,6 +11,7 @@ from orchestrator.graph import (
     planner_generations_view,
     edges_view,
     environment_failures_view,
+    execution_attempts_view,
     file_state_records_view,
     input_bindings_view,
     last_deferred_reasons_view,
@@ -24,6 +25,8 @@ from orchestrator.graph import (
     record_payloads_view,
     ready_nodes_view,
     routine_snapshot_dynamic_feature_view,
+    semantic_schema_declarations_view,
+    thaw_json,
     DEFAULT_NODE_CONTRACTS,
     EventEnvelope,
     GraphProjection,
@@ -195,6 +198,7 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
                     "- Check nodes must include command_definition or command_binding; for dynamic_feature final invariant checks, use command_binding='dynamic_feature_hidden_oracle'.",
                     "- Every required check, including final invariant checks, must have a failure continuation: bind failed check_result evidence into a gap planner or corrective-work path so a failed check cannot leave the graph quiescent with no schedulable recovery node.",
                     "- For gap planners, follow gap_analysis_contract and prefer corrective_work_region for corrective worker/verifier patches.",
+                    "- A write worker cannot evade declared-batch semantics by using corrective_work. Use effectful_batch for implementation correction; use semantic_plan_revision only with exact failed SemanticArtifact and plan-verification record/topology facts from the packet.",
                     "- For gap planners, gap_analysis_obligations are blocking; do not submit a no-op patch while any obligation is present.",
                     "- Gap planners must call submit_graph_patch even when no corrective mutation is safe; use a no-op patch with ops: [] for no-gap decisions.",
                     "- If feedback says the patch is stale, malformed, or rejected, submit a corrected patch.",
@@ -448,7 +452,67 @@ def _worker_contract_packet(context: GraphDispatchContext) -> dict[str, Any]:
             packet[key] = [item for item in cast(list[Any], value) if isinstance(item, str)]
     if context.requirements:
         packet["bound_requirements"] = list(context.requirements)
+    raw_outputs = node.get("outputs")
+    if isinstance(raw_outputs, list):
+        packet["outputs"] = [
+            dict(cast(dict[str, Any], output))
+            for output in cast(list[Any], raw_outputs)
+            if isinstance(output, dict)
+        ]
+    schema_id = node.get("semantic_schema_id")
+    schema_version = node.get("semantic_schema_version")
+    if (
+        isinstance(schema_id, str)
+        and isinstance(schema_version, int)
+        and not isinstance(schema_version, bool)
+    ):
+        packet["semantic_schema_id"] = schema_id
+        packet["semantic_schema_version"] = schema_version
+        declaration = semantic_schema_declarations_view(context.graph_projection).get(
+            (schema_id, schema_version)
+        )
+        if declaration is not None:
+            packet["semantic_role"] = declaration.value.semantic_role
+            packet["content_json_schema"] = thaw_json(declaration.value.json_schema)
+    prior_failure = _latest_same_node_failure(context)
+    if prior_failure is not None:
+        packet["prior_attempt_failure"] = prior_failure
     return packet
+
+
+def _latest_same_node_failure(context: GraphDispatchContext) -> dict[str, Any] | None:
+    """Expose bounded canonical redispatch feedback when graph history carries it."""
+    attempts = [
+        attempt
+        for attempt in execution_attempts_view(context.graph_projection).values()
+        if attempt.node_id == context.node_id and attempt.recovery_error_detail is not None
+    ]
+    if attempts:
+        latest = max(
+            attempts,
+            key=lambda attempt: (attempt.lease_generation, attempt.execution_id),
+        )
+        return {
+            "event_type": "runner_recovery_requested",
+            "detail": _bounded_text(latest.recovery_error_detail or "previous attempt failed"),
+        }
+    for event in reversed(context.graph_events):
+        if event.event_type not in {
+            "agent_died",
+            "runner_recovery_requested",
+            "runtime_retry_scheduled",
+            "callback_rejected_conflict",
+            "callback_rejected_stale",
+        }:
+            continue
+        if event.payload.get("node_id") != context.node_id:
+            continue
+        detail = event.payload.get("detail") or event.payload.get("reason")
+        return {
+            "event_type": event.event_type,
+            "detail": _bounded_text(detail or "previous attempt failed"),
+        }
+    return None
 
 
 def _worker_authority_packet(context: GraphDispatchContext) -> dict[str, Any]:
@@ -515,16 +579,36 @@ def _dynamic_feature_prompt_lines(
     dynamic_feature: dict[str, Any],
 ) -> list[str]:
     lines: list[str] = []
+    read_only_semantic = node.get("effect_contract") == "read_only_semantic" or (
+        node.get("effect_contract") is None
+        and node.get("access_mode") == "read_only"
+        and node.get("semantic_stage") == "discovery"
+    )
     for source_key, prompt_key in (
         ("feature_spec_path", "dynamic_feature_spec_path"),
         ("feature_spec_content", "dynamic_feature_spec_content"),
-        ("acceptance_command", "dynamic_acceptance_command"),
+        (
+            "acceptance_command",
+            (
+                "downstream_acceptance_command"
+                if read_only_semantic
+                else "dynamic_acceptance_command"
+            ),
+        ),
     ):
         value = dynamic_feature.get(source_key)
         if isinstance(value, str) and value:
             lines.append(f"{prompt_key}: {_bounded_text(value)}")
 
     if node.get("kind") != "worker":
+        return lines
+
+    if read_only_semantic:
+        lines.append(
+            "dynamic_worker_instruction: Analyze the repository and submit only the typed "
+            "semantic artifact. Do not modify repository files and do not execute "
+            "downstream_acceptance_command; effectful workers and checks own that evidence."
+        )
         return lines
 
     role = node.get("role")
@@ -610,6 +694,13 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
                 ),
             },
             "corrective_region": "corrective_work_region",
+            "corrective_categories": {
+                "implementation": "create_effectful_batch with failed batch evidence",
+                "semantic_plan_revision": (
+                    "create_revision_attempt with exact failed implementation-plan artifact, "
+                    "failed plan-verification report, schema, requirements, and consumer edges"
+                ),
+            },
             "repository_edits": "forbidden",
         }
         packet["gap_analysis_obligations"] = _gap_analysis_obligations(
@@ -1035,6 +1126,7 @@ def _planner_patch_examples(
                             "candidate_id": "candidate-example",
                             "objective": "Implement a candidate that satisfies the bound requirements.",
                             "access_mode": "write",
+                            "effect_contract": "effectful_write",
                             "acceptance": ["candidate satisfies the bound requirements"],
                         },
                     },
@@ -1067,6 +1159,93 @@ def _planner_patch_examples(
         )
 
     if context.node_role == "gap_planner":
+        examples.append(
+            {
+                "purpose": "semantic_plan_revision",
+                "instruction": (
+                    "Replace every example identity with exact accepted evidence IDs; "
+                    "this shape is valid only for a failed typed implementation-plan artifact."
+                ),
+                "patch_id": "example-semantic-plan-revision",
+                "base_graph_position": base_position,
+                "ops": [
+                    {
+                        "op": "create_revision_attempt",
+                        "task_region_id": "plan-revision-region",
+                        "failed_candidate_id": "accepted-semantic-plan-record-id",
+                        "worker_node": {
+                            "node_id": "worker-semantic-plan-revision",
+                            "kind": "worker",
+                            "role": "fixer",
+                            "state": "planned",
+                            "task_region_id": "plan-revision-region",
+                            "candidate_id": "revised-semantic-plan",
+                            "failed_candidate_id": "accepted-semantic-plan-record-id",
+                            "recovery_of_record_id": "accepted-semantic-plan-record-id",
+                            "semantic_stage": "corrective_work",
+                            "semantic_schema_id": "declared-implementation-plan-schema",
+                            "semantic_schema_version": 1,
+                            "bound_requirement_ids": ["exact-bound-requirement-id"],
+                            "objective": "Revise the exact failed semantic plan artifact.",
+                            "access_mode": "write",
+                            "effect_contract": "effectful_write",
+                            "acceptance": ["The failed plan-verification grade is corrected."],
+                        },
+                        "verifier_node": {
+                            "node_id": "verifier-semantic-plan-revision",
+                            "kind": "verifier",
+                            "role": "verifier",
+                            "state": "planned",
+                            "task_region_id": "plan-revision-region",
+                            "failed_candidate_id": "accepted-semantic-plan-record-id",
+                        },
+                    },
+                    {
+                        "op": "create_edge",
+                        "edge_id": "failed-plan-report-to-revision",
+                        "from_node_id": "exact-plan-verifier-node-id",
+                        "from_port": "verification_report",
+                        "to_node_id": "worker-semantic-plan-revision",
+                        "to_port": "verification_report",
+                        "required": True,
+                        "accepted_record_selector": {
+                            "record_id": "exact-failed-plan-report-id",
+                            "record_type": "verification_report",
+                            "schema": "VerificationReport",
+                            "outcome": "failed",
+                        },
+                    },
+                    {
+                        "op": "create_edge",
+                        "edge_id": "revised-plan-candidate-to-verifier",
+                        "from_node_id": "worker-semantic-plan-revision",
+                        "from_port": "candidate",
+                        "to_node_id": "verifier-semantic-plan-revision",
+                        "to_port": "candidate_under_test",
+                        "required": True,
+                        "accepted_record_selector": {
+                            "record_type": "candidate",
+                            "schema": "ImplementationCandidate",
+                        },
+                    },
+                    {
+                        "op": "create_edge",
+                        "edge_id": "revised-plan-artifact-to-verifier",
+                        "from_node_id": "worker-semantic-plan-revision",
+                        "from_port": "semantic_artifact",
+                        "to_node_id": "verifier-semantic-plan-revision",
+                        "to_port": "semantic_artifact",
+                        "required": True,
+                        "accepted_record_selector": {
+                            "record_type": "semantic_artifact",
+                            "schema": "SemanticArtifact",
+                            "semantic_schema_id": "declared-implementation-plan-schema",
+                            "semantic_schema_version": 1,
+                        },
+                    },
+                ],
+            }
+        )
         examples.append(
             {
                 "purpose": "no_gap_no_op_patch",

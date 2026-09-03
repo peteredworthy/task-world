@@ -95,6 +95,7 @@ def _worker(node_id: str, region: str, candidate: str = "cand") -> dict[str, Any
             "candidate_id": candidate,
             "objective": "Implement a candidate that satisfies the bound requirements.",
             "access_mode": "write",
+            "effect_contract": "effectful_write",
             "acceptance": ["candidate satisfies the bound requirements"],
         },
     }
@@ -190,6 +191,7 @@ _CORRECTIVE_WORKER = {
         "candidate_id": "cand-fix",
         "objective": "Produce a corrective candidate that resolves the classified gap.",
         "access_mode": "write",
+        "effect_contract": "effectful_write",
         "acceptance": ["corrective candidate resolves the classified gap"],
     },
 }

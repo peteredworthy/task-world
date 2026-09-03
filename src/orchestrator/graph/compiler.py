@@ -643,6 +643,15 @@ class _Compiler:
                     },
                 ],
                 "artifacts": [artifact.model_dump(mode="json") for artifact in task.artifacts],
+                "access_mode": "write",
+                "effect_contract": "effectful_write",
+                # Required routine checks are part of the worker's authoritative
+                # pre-staging contract as well as downstream check nodes.
+                "acceptance_commands": _worker_acceptance_commands(task),
+                "acceptance_command_timeout_seconds": (task.acceptance_command_timeout_seconds),
+                "accepted_baseline_failure_fingerprints": (
+                    task.accepted_baseline_failure_fingerprints
+                ),
                 "fan_out": task.fan_out.model_dump(mode="json")
                 if task.fan_out is not None
                 else None,
@@ -1148,6 +1157,7 @@ def _dynamic_feature_inputs(
         "feature_spec_content",
         "feature_spec_content_source",
         "acceptance_command",
+        "acceptance_command_timeout_seconds",
         "hidden_oracle_command",
         "patch_budget",
         "gap_policy_profile",
@@ -1157,6 +1167,15 @@ def _dynamic_feature_inputs(
             selected[key] = _compact_text(value, max_chars=8000)
         elif value is not None:
             selected[key] = _json_safe(value)
+
+    timeout = selected.get("acceptance_command_timeout_seconds", 180.0)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+        raise ValueError("acceptance_command_timeout_seconds must be numeric")
+    if timeout <= 0 or timeout > 3600:
+        raise ValueError(
+            "acceptance_command_timeout_seconds must be greater than 0 and at most 3600"
+        )
+    selected["acceptance_command_timeout_seconds"] = float(timeout)
 
     selected.setdefault("hidden_oracle_command", "")
     selected.setdefault("patch_budget", 8)
@@ -1192,6 +1211,22 @@ def _worker_write_paths(task: TaskConfig) -> list[str]:
     if candidates and not paths:
         raise ValueError("task declares implementation/artifact paths but none are repo-relative")
     return paths or ["."]
+
+
+def _worker_acceptance_commands(task: TaskConfig) -> list[str]:
+    """Return required routine checks in stable order without duplicates."""
+    items = list(task.auto_verify.items)
+    if task.fan_out is not None and task.fan_out.auto_verify is not None:
+        items.extend(task.fan_out.auto_verify.items)
+    commands: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        command = item.cmd.strip()
+        if not item.must or command in seen:
+            continue
+        seen.add(command)
+        commands.append(command)
+    return commands
 
 
 def _selector_for_edge_port(port: str) -> dict[str, Any] | None:

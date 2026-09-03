@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from functools import partial
 from pathlib import Path
@@ -37,9 +38,23 @@ from orchestrator.runners import AgentRunnerExecutor, fetch_codex_models
 from orchestrator.runners.agent_detector import ToolDetector
 
 if TYPE_CHECKING:
-    from orchestrator.graph_runtime import GraphDispatchContext
+    from orchestrator.graph_runtime import (
+        CrashBarrier,
+        GraphDispatchContext,
+        RunnerOwnedProcessRegistry,
+    )
     from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
     from orchestrator.graph_runtime.store import GraphEventStore
+
+
+def get_crash_barrier_status_reader() -> "CrashBarrier":
+    """Build a stateless reader over the process-external crash-barrier files."""
+    from orchestrator.graph_runtime import crash_barrier_from_environment
+
+    return crash_barrier_from_environment(
+        os.environ,
+        state_dir=Path.cwd() / ".orchestrator" / "state" / "crash-barriers",
+    )
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -400,6 +415,29 @@ def make_workflow_preparer(
     return _prepare
 
 
+class GraphRunnerCallbacks:
+    """Injected graph driver plus its ownership-safe lifecycle drain boundary."""
+
+    def __init__(
+        self,
+        run: Callable[[str], Awaitable[None]],
+        quiesce_run: Callable[[str, str, bool], Awaitable[None]],
+    ) -> None:
+        self._run = run
+        self._quiesce_run = quiesce_run
+
+    async def __call__(self, run_id: str) -> None:
+        await self._run(run_id)
+
+    async def quiesce_run(
+        self,
+        run_id: str,
+        reason: str,
+        retry_after_recovery: bool,
+    ) -> None:
+        await self._quiesce_run(run_id, reason, retry_after_recovery)
+
+
 def make_graph_runner(
     session_factory: async_sessionmaker[AsyncSession],
     service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]],
@@ -408,7 +446,9 @@ def make_graph_runner(
     journal_max_bytes: int = 64 * 1024 * 1024,
     graph_mcp_registry: "GraphMcpExecutionRegistry | None" = None,
     base_url: str | None = None,
-) -> Callable[[str], Awaitable[None]]:
+    process_registry: "RunnerOwnedProcessRegistry | None" = None,
+    crash_barrier: "CrashBarrier | None" = None,
+) -> GraphRunnerCallbacks:
     """Return a graph run driver callback for ``SignalConsumer``.
 
     ``graph_mcp_registry`` is accepted here so callers (``api/app.py``) can
@@ -423,14 +463,20 @@ def make_graph_runner(
     the ``http://localhost:8000`` fallback, since worktree/dev instances
     commonly listen on other ports.
     """
-    from orchestrator.graph_runtime import RunnerOwnedProcessRegistry
+    from orchestrator.graph_runtime import (
+        RunnerOwnedProcessRegistry,
+        crash_barrier_from_environment,
+    )
     from orchestrator.runners import OutputBatcher
 
     output_batcher = OutputBatcher(
         session_factory=session_factory,
         connection_manager=connection_manager,
     )
-    process_registry = RunnerOwnedProcessRegistry()
+    process_registry = process_registry or RunnerOwnedProcessRegistry()
+    crash_barrier = crash_barrier or crash_barrier_from_environment(
+        os.environ, reconcile_process_loss=True
+    )
 
     async def on_agent_output(context: "GraphDispatchContext", lines: list[str]) -> None:
         task_id = str(
@@ -444,27 +490,43 @@ def make_graph_runner(
                 context.run_id, task_id, attempt_num, line, node_id=context.node_id
             )
 
-    async def _run(run_id: str) -> None:
+    driver: Any | None = None
+
+    def _driver() -> Any:
         from orchestrator.graph_runtime import build_graph_runtime
         from orchestrator.workflow.graph_driver import GraphRunDriver
 
-        driver = GraphRunDriver(
-            session_factory,
-            service_factory,
-            on_agent_output=on_agent_output,
-            artifact_stores=artifact_stores,
-            process_registry=process_registry,
-            journal_max_bytes=journal_max_bytes,
-            runtime_builder=partial(
-                build_graph_runtime,
+        nonlocal driver
+        if driver is None:
+            driver = GraphRunDriver(
+                session_factory,
+                service_factory,
+                on_agent_output=on_agent_output,
+                artifact_stores=artifact_stores,
+                process_registry=process_registry,
                 journal_max_bytes=journal_max_bytes,
-                graph_mcp_registry=graph_mcp_registry,
-                base_url=base_url or "http://localhost:8000",
-            ),
-        )
+                runtime_builder=partial(
+                    build_graph_runtime,
+                    journal_max_bytes=journal_max_bytes,
+                    graph_mcp_registry=graph_mcp_registry,
+                    base_url=base_url or "http://localhost:8000",
+                    crash_barrier=crash_barrier,
+                ),
+            )
+        return driver
+
+    async def _run(run_id: str) -> None:
         try:
-            await driver.run(run_id)
+            await _driver().run(run_id)
         finally:
             await output_batcher.flush_immediate()
 
-    return _run
+    async def _quiesce_run(
+        run_id: str,
+        reason: str,
+        retry_after_recovery: bool,
+    ) -> None:
+        await _driver().quiesce_run(run_id, reason, retry_after_recovery)
+        await output_batcher.flush_immediate()
+
+    return GraphRunnerCallbacks(_run, _quiesce_run)

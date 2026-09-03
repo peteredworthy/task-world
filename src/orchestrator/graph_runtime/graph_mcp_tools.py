@@ -11,15 +11,22 @@ shared ``graph_tool_routing.route_tool_call`` so the normalization logic
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Sequence
+from typing import Annotated, Any, cast
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools import Tool
+from pydantic import WithJsonSchema
 
-from orchestrator.runners import validate_reliable_plan_tool_specs
+from orchestrator.runners import submission_tool_input_schema, validate_reliable_plan_tool_specs
 from orchestrator.runners.graph_tool_routing import route_tool_call
-from orchestrator.runners.types import GradeCallback, GraphPatchCallback
+from orchestrator.runners.types import (
+    GradeCallback,
+    GraphPatchCallback,
+    SubmissionContract,
+    SubmissionAcknowledgement,
+    SubmitCallback,
+)
 
 _GRAPH_MCP_ALLOWLIST = frozenset(
     {
@@ -45,7 +52,7 @@ async def _noop_checklist(*_args: Any, **_kwargs: Any) -> None:
     return None
 
 
-async def _noop_submit() -> None:
+async def _noop_submit(*_args: Any, **_kwargs: Any) -> None:
     return None
 
 
@@ -55,6 +62,8 @@ def build_graph_mcp_server(
     *,
     allowed_tools: Sequence[str] | None = None,
     required_tools: Sequence[str] = (),
+    on_submit: SubmitCallback | None = None,
+    submission_contract: SubmissionContract | None = None,
 ) -> FastMCP:
     """Build a fresh MCP server exposing the graph tools for one execution.
 
@@ -98,6 +107,43 @@ def build_graph_mcp_server(
             on_grade=on_grade,
             allowlist=_GRAPH_MCP_ALLOWLIST | {"grade"},
             agent_label="claude_cli-graph-exec",
+        )
+
+    if submission_contract is not None and submission_contract.requires_arguments:
+        contract_summary = ", ".join(
+            f"{output.port}: {output.schema_name} "
+            f"{output.semantic_schema_id}@{output.semantic_schema_version}"
+            for output in submission_contract.outputs
+            if output.content_json_schema is not None
+        )
+
+        async def submit(outputs: dict[str, Any]) -> str:
+            """Submit model-authored content keyed by the required output port."""
+            callback = on_submit or _noop_submit
+            typed_callback = cast(
+                Callable[[dict[str, Any] | None], Awaitable[SubmissionAcknowledgement | None]],
+                callback,
+            )
+            acknowledgement = await typed_callback({"outputs": outputs})
+            return (
+                acknowledgement.model_dump_json()
+                if acknowledgement is not None
+                else '{"disposition":"durably_staged","message":"submission is durably staged and pending runner completion; it is not yet accepted"}'
+            )
+
+        input_schema = submission_tool_input_schema(submission_contract)
+        outputs_schema = cast(
+            dict[str, Any],
+            cast(dict[str, Any], input_schema["properties"])["outputs"],
+        )
+        submit.__annotations__["outputs"] = Annotated[
+            dict[str, Any], WithJsonSchema(outputs_schema)
+        ]
+
+        mcp.add_tool(
+            submit,
+            name="submit",
+            description=f"Submit required graph outputs. Contract: {contract_summary}",
         )
 
     async def submit_graph_patch(

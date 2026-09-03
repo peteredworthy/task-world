@@ -511,6 +511,7 @@ def test_dynamic_nodes_inherit_authority_hash(operation: str) -> None:
                 "candidate_id": "candidate-dynamic",
                 "objective": "Implement a candidate that satisfies the bound requirements.",
                 "access_mode": "write",
+                "effect_contract": "effectful_write",
                 "acceptance": ["candidate satisfies the bound requirements"],
             },
         },
@@ -521,7 +522,15 @@ def test_dynamic_nodes_inherit_authority_hash(operation: str) -> None:
         "revision": {
             "op": "create_revision_attempt",
             "task_region_id": "dynamic",
-            "worker_node": {"node_id": "worker-revision", "kind": "worker", "role": "builder"},
+            "worker_node": {
+                "node_id": "worker-revision",
+                "kind": "worker",
+                "role": "builder",
+                "objective": "Produce a corrected candidate.",
+                "access_mode": "write",
+                "effect_contract": "effectful_write",
+                "acceptance": ["candidate resolves the failed requirement"],
+            },
             "verifier_node": {
                 "node_id": "verifier-revision",
                 "kind": "verifier",
@@ -574,6 +583,7 @@ def test_dynamic_nodes_reject_explicit_authority_mismatch(operation: str) -> Non
                 "cache_authority_hash": "0" * 64,
                 "objective": "Implement a candidate that satisfies the bound requirements.",
                 "access_mode": "write",
+                "effect_contract": "effectful_write",
                 "acceptance": ["candidate satisfies the bound requirements"],
             },
         },
@@ -605,25 +615,27 @@ def test_dynamic_nodes_reject_explicit_authority_mismatch(operation: str) -> Non
             "appealed_node_id": "verifier-authority-s-t",
         },
     }
-    with pytest.raises(ValueError, match="differs from routine snapshot"):
-        apply_command(
-            projection,
-            events,
-            "submit_patch",
-            {
-                "patch_id": f"patch-mismatch-{operation}",
-                "base_graph_position": 0,
-                "ops": [operations[operation]],
-            },
-            PatchCommandContext(
-                run_id="run-authority",
-                current_graph_position=0,
-                proposed_by_node_id="planner-s",
-                actor_role="controller",
-            ),
-            FakeClock(),
-            SequentialIdGenerator(),
-        )
+    emitted = apply_command(
+        projection,
+        events,
+        "submit_patch",
+        {
+            "patch_id": f"patch-mismatch-{operation}",
+            "base_graph_position": 0,
+            "ops": [operations[operation]],
+        },
+        PatchCommandContext(
+            run_id="run-authority",
+            current_graph_position=0,
+            proposed_by_node_id="planner-s",
+            actor_role="controller",
+        ),
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert [event.event_type for event in emitted] == ["graph_patch_rejected"]
+    assert "differs from routine snapshot" in emitted[0].payload["reason"]
 
 
 def _schedule_projection(

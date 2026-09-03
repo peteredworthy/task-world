@@ -11,10 +11,10 @@ Covers:
   - Assert run can continue from the correct step/task after restart
 """
 
-import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
+import shutil
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -28,18 +28,17 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-_TMP_DIR = Path(__file__).parent.parent.parent / "tmp"
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+async def session_factory(
+    tmp_path: Path,
+) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     """File-based SQLite so a second session can read the same persisted state."""
-    _TMP_DIR.mkdir(exist_ok=True)
-    db_path = _TMP_DIR / f"test_recovery_{uuid.uuid4().hex}.db"
+    db_path = tmp_path / "test_recovery.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -48,6 +47,7 @@ async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], 
     db_path.unlink(missing_ok=True)
     Path(str(db_path) + "-wal").unlink(missing_ok=True)
     Path(str(db_path) + "-shm").unlink(missing_ok=True)
+    shutil.rmtree(tmp_path / ".orchestrator", ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

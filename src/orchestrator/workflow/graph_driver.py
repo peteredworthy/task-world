@@ -391,6 +391,8 @@ class GraphLoopDispatcher(Protocol):
 class GraphLoopExecutor(Protocol):
     def is_running(self, execution_id: str) -> bool: ...
 
+    def can_heartbeat(self, execution_id: str) -> bool: ...
+
     async def wait_for_all(
         self,
         *,
@@ -733,6 +735,52 @@ class GraphRunDriver:
                 sorted(leaked)[:20],
             )
         return outcome
+
+    async def quiesce_run(
+        self,
+        run_id: str,
+        reason: str,
+        retry_after_recovery: bool,
+    ) -> None:
+        """Drain only recovery/snapshot effects after exact runner cancellation."""
+        run = await self._get_run(run_id)
+        if run.execution_mode != "graph":
+            return
+        if not run.worktree_path or run.agent_runner_type is None:
+            raise ValueError("graph lifecycle quiescence requires a worktree and runner")
+        runtime_kwargs: dict[str, Any] = {
+            "worktree_path": Path(run.worktree_path),
+            "runner_type": run.agent_runner_type,
+            "runner_config": run.agent_runner_config,
+            "artifact_store": await self._artifact_stores.for_run(run),
+        }
+        if self._on_agent_output is not None:
+            runtime_kwargs["on_agent_output"] = self._on_agent_output
+        if self._on_agent_usage is not None:
+            runtime_kwargs["on_agent_usage"] = self._on_agent_usage
+        if self._process_registry is not None:
+            runtime_kwargs["process_registry"] = self._process_registry
+        _controller, executor = self._runtime_builder(
+            self._session_factory,
+            self._clock,
+            self._id_gen,
+            **runtime_kwargs,
+        )
+        dispatcher = self._dispatcher_factory(self._session_factory, executor, self._clock)
+        await executor.request_run_quiescence_recovery(
+            run_id,
+            reason,
+            retry_after_recovery,
+        )
+        allowed_kinds = frozenset({"runner_recovery", "snapshot_publish", "snapshot_cleanup"})
+        for _attempt in range(8):
+            completed = await dispatcher.dispatch_pending(
+                run_id=run_id,
+                allowed_kinds=allowed_kinds,
+            )
+            if not completed:
+                return
+        raise RuntimeError(f"graph lifecycle quiescence did not converge for run {run_id}")
 
     async def _handle_command_at_head(
         self,
@@ -1120,6 +1168,9 @@ async def _renew_running_leases_near_expiry(
             continue
         execution_id = lease.get("execution_id")
         if not isinstance(execution_id, str) or not executor.is_running(execution_id):
+            continue
+        can_heartbeat = getattr(executor, "can_heartbeat", None)
+        if not callable(can_heartbeat) or not can_heartbeat(execution_id):
             continue
         lease_id = lease.get("lease_id")
         node_id = lease.get("node_id")

@@ -633,9 +633,15 @@ class RunRepository:
             for m in result.scalars().all()
         ]
 
-    async def list_liveness_records_by_status(self, status: RunStatus) -> list[RunLivenessRecord]:
-        """List minimal run records needed for startup liveness checks."""
-        result = await self._session.execute(
+    async def list_liveness_records_by_status(
+        self,
+        status: RunStatus,
+        *,
+        after_run_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[RunLivenessRecord]:
+        """List a deterministic, optionally bounded page of liveness records."""
+        query = (
             select(
                 RunModel.id,
                 RunModel.repo_name,
@@ -643,8 +649,17 @@ class RunRepository:
                 RunModel.execution_mode,
                 RunModel.runner_type,
                 RunModel.runner_config,
-            ).where(RunModel.status == status.value)
+            )
+            .where(RunModel.status == status.value)
+            .order_by(RunModel.id)
         )
+        if after_run_id is not None:
+            query = query.where(RunModel.id > after_run_id)
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("limit must be positive")
+            query = query.limit(limit)
+        result = await self._session.execute(query)
         return [
             RunLivenessRecord(
                 id=row.id,

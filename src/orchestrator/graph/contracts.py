@@ -179,6 +179,7 @@ def validate_output_record(
     node_role: str | None,
     record_payload: dict[str, Any],
     index: int,
+    declared_outputs: list[dict[str, Any]] | None = None,
 ) -> str | None:
     contract = DEFAULT_NODE_CONTRACTS.contract_for(node_kind, node_role)
     if contract is None:
@@ -186,14 +187,38 @@ def validate_output_record(
     port = _canonical_port(record_payload.get("port"))
     if not isinstance(port, str) or not port:
         return f"output record at index {index} missing port"
+    concrete_output = next(
+        (
+            output
+            for output in declared_outputs or []
+            if _canonical_port(output.get("port")) == port
+        ),
+        None,
+    )
+    strict_semantic_ports = any(
+        output.get("schema") == "SemanticArtifact"
+        or output.get("record_type") == "semantic_artifact"
+        for output in declared_outputs or []
+    )
     port_contract = output_port_contract(contract, port)
-    if port_contract is None:
+    if (
+        declared_outputs is not None
+        and strict_semantic_ports
+        and concrete_output is None
+        and port != "file_state"
+    ):
+        return f"output record at index {index} uses unknown output port: {port}"
+    if concrete_output is None and port_contract is None:
         return f"output record at index {index} uses unknown output port: {port}"
     record_type = record_payload.get("record_type")
     if record_type is not None:
         if not isinstance(record_type, str) or not record_type:
             return f"output record at index {index} has invalid record_type"
-        if record_type not in port_contract.record_types:
+        if (
+            concrete_output is None
+            and port_contract is not None
+            and record_type not in port_contract.record_types
+        ):
             return (
                 f"output record at index {index} has incompatible record_type for "
                 f"{port}: {record_type}"
@@ -212,8 +237,13 @@ def validate_output_record(
     ):
         return f"output record at index {index} has invalid schema_version"
     schema = record_payload.get("schema")
+    concrete_schema = concrete_output.get("schema") if concrete_output is not None else None
+    if isinstance(concrete_schema, str) and schema != concrete_schema:
+        return f"output record at index {index} has incompatible schema for {port}: {schema}"
     if (
         isinstance(schema, str)
+        and concrete_output is None
+        and port_contract is not None
         and port_contract.schemas
         and schema not in port_contract.schemas
         and schema not in port_contract.selector_aliases

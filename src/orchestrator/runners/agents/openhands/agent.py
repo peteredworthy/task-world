@@ -64,6 +64,7 @@ from orchestrator.runners.types import (
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    RunnerRuntimeObservationCapability,
     QuotaBucket,
     SubmitCallback,
 )
@@ -477,6 +478,10 @@ class OpenHandsAgent:
             agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
             name="OpenHands",
             version=None,
+            runtime_observation=RunnerRuntimeObservationCapability(
+                mode="non_process_owning",
+                reason="OpenHands local runs its agent loop in the orchestrator process",
+            ),
         )
 
     @staticmethod

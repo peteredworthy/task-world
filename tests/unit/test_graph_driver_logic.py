@@ -236,6 +236,9 @@ class RecordingExecutor:
     def is_running(self, execution_id: str) -> bool:
         return execution_id in self.running_execution_ids
 
+    def can_heartbeat(self, execution_id: str) -> bool:
+        return execution_id in self.running_execution_ids
+
     async def wait_for_all(
         self,
         *,
@@ -1723,11 +1726,7 @@ def test_outcome_classification() -> None:
     )
 
     assert missing_input_blocked.completed is False
-    assert missing_input_blocked.blocked_reason == (
-        "graph quiescent with non-terminal node(s): "
-        "check-final=planned: missing_required_input:verification_evidence "
-        "(verification_evidence from verifier-primary=failed)"
-    )
+    assert missing_input_blocked.blocked_reason == ("graph has failed node(s): verifier-primary")
 
     environment_blocked = project_graph_outcome(
         "run-9",

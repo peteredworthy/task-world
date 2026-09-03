@@ -9,7 +9,10 @@ This document provides a high-level overview of the Orchestrator project structu
 **Backend API Server (FastAPI):**
 ```bash
 # Start the supervised backend on port 8000
-uv run orchestrator serve --reload
+uv run orchestrator serve
+
+# Explicit development-only reload (Uvicorn is the single restart owner)
+uv run orchestrator serve --reload --no-supervisor
 ```
 
 Every official `orchestrator serve` launch creates a timestamped session under
@@ -17,14 +20,28 @@ Every official `orchestrator serve` launch creates a timestamped session under
 `process.log` contains merged Uvicorn/application output and whose fsynced
 `lifecycle.jsonl` records supervisor/child PIDs, commands, attempts, exact exit
 codes or signals, restart delays, clean shutdown, and crash-loop exhaustion.
-`supervisor-state.json` is atomically replaced and lets the next launch identify
-an unterminated prior session. It includes the child's process group and kernel
-creation time so a subsequent supervisor can verify and reclaim an orphaned
-server without signaling a reused PID. The new session records whether the stale
-child was reclaimed, already gone, or unsafe to signal; an unsafe match aborts
-startup. A child exit accompanied by a Python traceback is also recorded as
-`fatal_python_exception`. Use `--log-dir PATH` to relocate this evidence or
-`--no-supervisor` only for deliberate low-level debugging.
+`supervisor-state.json` is atomically replaced and lets readback classify a dead
+or identity-mismatched owner as `abrupt_supervisor_loss`. It includes supervisor,
+serving-child, and collector creation/command identity so a subsequent supervisor
+can reclaim orphans without signaling reused PIDs. The supervisor independently
+checks the serving HTTP endpoint and restarts a process group after a configurable
+bounded failure count, even when a non-serving parent remains alive. The new
+session records whether stale children and collectors were reclaimed, already
+gone, or unsafe to signal; an unsafe match aborts startup. A child exit accompanied
+by a Python traceback is also recorded as `fatal_python_exception`. Use
+`--log-dir PATH` to relocate this evidence. `--reload` is development-only and is
+accepted only with `--no-supervisor`, preventing competing restart owners.
+`orchestrator --json server-status` provides a bounded operator readback and
+revalidates the recorded supervisor PID, process group, creation time, and command
+before reporting an active state; a dead or mismatched owner is reported as
+`abrupt_supervisor_loss` even when the atomic state file still says `running`.
+Every child attempt appends a fsynced `log_collector_drained` record with its
+attempt, collector PID, return code, and any signal needed for bounded draining.
+When reclaiming legacy supervisor state, the recorded collector PID is inspected
+before identity completeness is required: a definitively absent PID is safe to
+classify as `not_running`, while a live PID or unavailable inspection still
+requires the full recorded PID/process-group/create-time/command identity and
+otherwise refuses startup.
 
 For a failure, inspect these in order:
 
@@ -214,6 +231,7 @@ task-world/
 │   │   ├── contracts.py       # Typed node/port contract registry
 │   │   ├── macros.py          # Planner-facing macro expansion to low-level patch ops
 │   │   ├── patch_validator.py # Pure graph patch validation
+│   │   ├── semantic_applicability.py # Fact-backed write-worker semantic classification
 │   │   ├── projection_collections.py # FrozenMap and persistent update primitives
 │   │   ├── projection_models.py # Frozen grouped GraphProjection and canonical record ownership
 │   │   ├── projection_queries.py # Public, copy-out projection query boundary
@@ -453,6 +471,110 @@ The remaining `workflow/delegation/` code is generic fan-out task bookkeeping,
 not the super-parent carrier. Delegation command fencing, idempotency records,
 result records, and review blockers are recorded through `DelegationRecorder`,
 which wraps the immutable `DelegationState` value object.
+
+### Managed graph submission protocol
+
+Managed runner submission is a four-boundary durable protocol:
+`baseline_captured` → `submission_staged` → `completion_witnessed` →
+`finalized`. The submit tool runs while the runner turn is still active and can
+therefore report only `rejected` or `durably_staged`; it must never synchronously
+claim `finalized_accepted`. Successful runner return triggers a separate final
+worktree capture and `runner_completion_witnessed` event. Only that witness can
+authorize the later atomic finalization that records `runner_execution_finalized`,
+accepts callback/output records, completes the node, binds downstream inputs,
+and releases the lease. `finalized_accepted` is consequently a durable activity
+and runtime-health readback disposition, not an in-turn tool acknowledgement.
+
+Restart reconciliation validates the exact staged CAS hash/size, staged and
+final Git ref/commit/tree identities, execution and lease generation, and final
+boundary before finalizing a witnessed attempt exactly once. A staged attempt
+without a completion witness fails closed into managed restoration and retry;
+legacy histories never infer a witness. Recovery retains the staged Git ref and
+CAS identity for inspection while cleaning only transient baseline/final/recovery
+refs. Durable dispositions distinguish `restored_unwitnessed`,
+`restored_boundary_mismatch`, `restored_artifact_missing`, and
+`restored_artifact_corrupt`, so missing/corrupt evidence is not mislabeled as a
+worktree-boundary mismatch.
+
+Before a worker starts, the runtime executes the same required commands declared
+by the routine's `auto_verify` contract plus the configured repository merge
+gate and records a tree-bound baseline. Submission reruns that contract against
+the exact candidate tree before staging. A failure remains blocking unless its
+complete stable fingerprint was present in the baseline and that fingerprint is
+explicitly authorized by the durable node contract; prose claims that a failure
+is "unrelated" have no effect. `graph_submission_gate_audited` workflow events
+are canonical for baseline, failed, and successful attempts. The
+`graph_submission_gate_audits` SQL table is a disposable bounded read model keyed
+by canonical event position, not an independent source of truth.
+
+Independent liveness reconciliation scans ACTIVE graph runs in bounded keyset
+pages. Its retry budget is derived from semantic graph progress and canonical
+`graph_runtime_reconciled` events, so restarting the server or merely keeping an
+async task alive cannot reset the budget. An owned driver with a staged,
+unwitnessed execution past its durable staging deadline, an expired active
+execution lease, or a canonically observed missing runner process is quiesced
+and re-armed; exhaustion enqueues an ordinary pause signal. Every runner declares
+its runtime-observation capability. CLI and production Codex runners promise a
+host-process identity and must report their child PID through the public metadata
+callback before a bounded deadline; invalid, absent, never-started, and missing
+metadata fail closed. OpenHands local is explicitly non-process-owning, injected
+Codex transports and OpenHands Docker explicitly report unsupported identity
+semantics, and no runner silently bypasses observation. The graph executor records
+runner type, a bounded reason, and reuse-safe PID/create-time/command-hash facts as
+canonical `graph_runner_runtime_observed` events. Lease renewal is allowed only
+while that exact identity remains alive. On liveness transfer, the shared process
+registry invokes the exact runner's cancellation boundary before replacing the
+driver. `graph_runtime_supervision` is the disposable observation cache used to
+avoid unbounded event scans.
+
+Manual graph pause and cancel use a per-run quiescence fence. Once the workflow
+row enters `STOPPING`, the signal consumer blocks driver admission and re-arm,
+cancels and awaits the outer driver, invokes the exact runner cancellation
+boundary and awaits every registry owner, then drains only runner-recovery and
+owned snapshot effects. It verifies that driver ownership, runner ownership,
+and canonical active leases are all absent before applying `PAUSED` or
+`CANCELLED`. Agent dispatch is status-checked before reservation and again
+before task creation, so a pending or newly produced dispatch cannot cross the
+fence. A failed proof leaves the row in `STOPPING` with
+`graph_quiescence_failed` evidence and the lifecycle signal unprocessed for
+retry. Liveness replacement uses the same ordering, with runner-loss recovery
+instead of manual-cancellation recovery.
+
+Controlled live recovery drills may arm one exact graph crash boundary through
+`ORCHESTRATOR_GRAPH_CRASH_BARRIER`. The value is a strict JSON object containing
+`schema_version: 1`, `authorization:
+"operator-authorized-live-crash-drill"`, the exact `run_id`, exact
+`execution_id`, and one `point`: `after_staging_pre_witness` or
+`after_witness_pre_finalization`. The feature is disabled when the variable is
+absent or blank; any other malformed or unauthorized value fails startup
+closed. At the exact boundary the executor atomically writes a bounded state
+record under `.orchestrator/state/crash-barriers/` and waits for the matching
+opaque release token in its sibling `.release` file. This makes arrival and
+release externally observable and deterministic without inferring timing. A
+persisted `reached` record owned by a prior process is marked
+`consumed_after_process_loss` and cannot stop recovery a second time.
+
+Schema 2 preserves that exact-execution contract while supporting the production
+case where execution IDs do not exist until scheduling. It requires the same
+authorization literal, an exact run ID, a bounded nonce, the fixed target
+`{"kind":"worker","semantic_stage":"effectful_batch"}`, and exactly the ordered
+slots `after_staging_pre_witness` then `after_witness_pre_finalization`. A file
+lock plus atomic replacement binds slot 1 to the first matching canonical
+execution observation. Slot 2 can bind only to a distinct higher-generation
+successor of that same node after the projection proves slot 1 recovered as
+`restored_unwitnessed` with retry authorized. Each slot persists its node,
+execution, lease/generation, serving PID/create-time, configuration hash, opaque
+token, timestamps, and status. A replacement serving process consumes a reached
+slot only when the old PID is definitively absent; live, reused, inaccessible,
+or malformed identity/state fails closed.
+
+Operators can use `orchestrator --json crash-barrier-status` or
+`GET /api/runs/{id}/graph/crash-barrier` for bounded readback without disclosure
+of release tokens. `orchestrator --json crash-barrier-crash --slot N` acts only
+when the selected slot is reached and its PID/create-time exactly matches the
+official supervisor's current isolated serving child after fresh kernel identity
+verification. It signals only that child's process group and refuses missing,
+stale, reused, uninspectable, or mismatched identities.
 
 ### Immutable Graph Projection
 
@@ -803,6 +925,8 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/artifacts/{sha256_hex}?offset=0&limit=65536` | Authenticated, run-referenced byte range after complete blob verification (`0 <= offset`, `1 <= limit <= 1,048,576`) |
 | GET | `/api/runs/{id}/graph/events` | Graph event log for a run |
 | GET | `/api/runs/{id}/graph/health` | Bounded graph health snapshot: scheduler, lease, blocker, patch, verifier, and pending-gate facts; no raw event payloads |
+| GET | `/api/runs/{id}/graph/runtime-health?gate_cursor=0&gate_limit=10` | Bounded durable driver/reconciliation, verified runner-process identity/heartbeat, staged/witness/finalized attempt, lease/disposition, and submission-gate audit facts; diagnostic output tails are omitted |
+| GET | `/api/runs/{id}/graph/crash-barrier` | Bounded exact-run crash-drill plan and slot identities; release capabilities are never returned |
 | GET | `/api/runs/{id}/graph/scheduler` | Graph scheduler buckets and leases |
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
 | GET | `/api/runs/{id}/graph/patches` | Graph patch proposal/result readback |
@@ -909,7 +1033,14 @@ orchestrator run agents <run-id>
 orchestrator runs replay-journal --since 2026-03-09T10:00:00Z
 
 # Development server
-orchestrator serve --reload
+orchestrator serve --reload --no-supervisor
+
+# Bounded process-state readback (JSON)
+orchestrator --json server-status
+
+# Disabled-by-default operator-authorized graph recovery drill
+orchestrator --json crash-barrier-status
+orchestrator --json crash-barrier-crash --slot 1
 ```
 
 ---

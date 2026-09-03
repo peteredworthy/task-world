@@ -24,6 +24,7 @@ from orchestrator.graph import (
     VerificationReportRecord,
     apply_command,
     build_projection,
+    classify_write_worker_semantics,
     compile_routine,
     expand_patch_macros,
     initial_projection,
@@ -158,6 +159,292 @@ def _verification_report(
             "evaluated_record_ids": evaluated_record_ids,
         }
     )
+
+
+def _semantic_plan_revision_facts(
+    mutation: str | None = None,
+) -> tuple[Any, dict[str, Any], list[dict[str, Any]]]:
+    artifact_id = "accepted-plan"
+    report_id = "plan-verification-failed"
+    worker_id = "worker-plan-revision"
+    consumer_id = "verifier-plan-revision"
+    declaration = _declaration().model_dump(mode="json")
+    artifact = _artifact(batches=[{"batch_id": "batch-1"}]).model_dump(mode="json")
+    artifact["value"]["requirement_ids"] = ["requirement-1"]
+    report = {
+        "record_id": report_id,
+        "record_kind": "verification",
+        "record_type": "verification_report",
+        "producer_node_id": "verifier-plan",
+        "port": "verification_report",
+        "schema": "VerificationReport",
+        "candidate_id": artifact_id,
+        "candidate_record_id": artifact_id,
+        "candidate_record_ids": [artifact_id],
+        "task_region_id": "plan-verification",
+        "outcome": "failed",
+        "value": {"outcome": "failed", "grades": []},
+        "evaluated_record_ids": [artifact_id, "requirement-1"],
+    }
+    discovery = {
+        "node_id": "worker-discovery",
+        "kind": "worker",
+        "role": "discovery",
+        "state": "completed",
+        "access_mode": "read_only",
+        "effect_contract": "read_only_semantic",
+        "semantic_stage": "discovery",
+        "semantic_schema_id": "ordered-batch-plan",
+        "semantic_schema_version": 1,
+    }
+    plan_verifier = {
+        "node_id": "verifier-plan",
+        "kind": "verifier",
+        "role": "verifier",
+        "state": "completed",
+        "semantic_stage": "plan_verification",
+        "semantic_schema_id": "ordered-batch-plan",
+        "semantic_schema_version": 1,
+    }
+    consumer = {
+        "node_id": consumer_id,
+        "kind": "verifier",
+        "role": "verifier",
+        "state": "planned",
+        "task_region_id": "plan-revision",
+        "failed_candidate_id": artifact_id,
+    }
+    node = {
+        "node_id": worker_id,
+        "kind": "worker",
+        "role": "fixer",
+        "state": "planned",
+        "task_region_id": "plan-revision",
+        "candidate_id": "revised-plan",
+        "failed_candidate_id": artifact_id,
+        "recovery_of_record_id": artifact_id,
+        "access_mode": "write",
+        "effect_contract": "effectful_write",
+        "semantic_stage": "corrective_work",
+        "semantic_schema_id": "ordered-batch-plan",
+        "semantic_schema_version": 1,
+        "bound_requirement_ids": ["REQ-1"],
+        "objective": "Revise the rejected typed plan.",
+        "acceptance": ["The revised plan fixes the failed grade."],
+    }
+    edges = [
+        {
+            "op": "create_edge",
+            "edge_id": "failed-report-to-revision",
+            "from_node_id": "verifier-plan",
+            "from_port": "verification_report",
+            "to_node_id": worker_id,
+            "to_port": "verification_report",
+            "required": True,
+            "dependency_type": "input_binding",
+            "accepted_record_selector": {
+                "record_id": report_id,
+                "record_type": "verification_report",
+                "schema": "VerificationReport",
+                "outcome": "failed",
+            },
+        },
+        {
+            "op": "create_edge",
+            "edge_id": "revision-candidate-to-verifier",
+            "from_node_id": worker_id,
+            "from_port": "candidate",
+            "to_node_id": consumer_id,
+            "to_port": "candidate_under_test",
+            "required": True,
+            "dependency_type": "input_binding",
+            "accepted_record_selector": {
+                "record_type": "candidate",
+                "schema": "ImplementationCandidate",
+            },
+        },
+        {
+            "op": "create_edge",
+            "edge_id": "revision-artifact-to-verifier",
+            "from_node_id": worker_id,
+            "from_port": "semantic_artifact",
+            "to_node_id": consumer_id,
+            "to_port": "semantic_artifact",
+            "required": True,
+            "dependency_type": "input_binding",
+            "accepted_record_selector": {
+                "record_type": "semantic_artifact",
+                "schema": "SemanticArtifact",
+                "semantic_schema_id": "ordered-batch-plan",
+                "semantic_schema_version": 1,
+            },
+        },
+    ]
+    if mutation == "artifact_role":
+        artifact["value"]["semantic_role"] = "implementation_result"
+    elif mutation == "artifact_schema":
+        artifact["value"]["schema_id"] = "different-plan"
+    elif mutation == "artifact_version":
+        artifact["value"]["schema_version"] = 2
+        artifact["schema_version"] = 2
+    elif mutation == "artifact_authority":
+        artifact["value"]["authority_status"] = "rejected"
+    elif mutation == "artifact_producer":
+        artifact["producer_node_id"] = "verifier-plan"
+    elif mutation == "failed_recovery_mismatch":
+        node["failed_candidate_id"] = "different-plan"
+    elif mutation == "node_schema":
+        node["semantic_schema_id"] = "different-plan"
+    elif mutation == "node_requirement":
+        node["bound_requirement_ids"] = ["MISSING"]
+    elif mutation == "report_outcome":
+        report["outcome"] = "passed"
+        report["value"]["outcome"] = "passed"
+    elif mutation == "report_candidate":
+        report["candidate_id"] = "different-plan"
+    elif mutation == "report_evaluated_artifact":
+        report["evaluated_record_ids"] = ["requirement-1"]
+    elif mutation == "report_evaluated_requirement":
+        report["evaluated_record_ids"] = [artifact_id]
+    elif mutation == "report_source_stage":
+        plan_verifier["semantic_stage"] = "effectful_batch"
+    elif mutation == "selector_report":
+        edges[0]["accepted_record_selector"]["record_id"] = "different-report"
+    elif mutation == "selector_outcome":
+        edges[0]["accepted_record_selector"]["outcome"] = "passed"
+    elif mutation == "semantic_consumer_schema":
+        edges[2]["accepted_record_selector"]["semantic_schema_version"] = 2
+    elif mutation == "semantic_consumer":
+        consumer["failed_candidate_id"] = "different-plan"
+    elif mutation == "candidate_consumer_missing":
+        edges.pop(1)
+
+    requirement = {
+        "record_id": "requirement-1",
+        "record_kind": "graph_record",
+        "record_type": "requirement_record",
+        "producer_node_id": "requirement-1",
+        "port": "requirement",
+        "schema": "RequirementRecord",
+        "value": {"id": "REQ-1", "text": "Required behavior", "must": True},
+    }
+    projection = build_projection(
+        [
+            event("node_created", {"node_id": "routine-snapshot", "kind": "artifact"}),
+            event("output_record_accepted", declaration, position=1),
+            event(
+                "node_created",
+                {"node_id": "requirement-1", "kind": "requirement"},
+                position=2,
+            ),
+            event("output_record_accepted", requirement, position=3),
+            event("node_created", discovery, position=4),
+            event("output_record_accepted", artifact, position=5),
+            event("node_created", plan_verifier, position=6),
+            event("output_record_accepted", report, position=7),
+            event("node_created", consumer, position=8),
+        ]
+    )
+    return projection, node, edges
+
+
+def test_semantic_plan_revision_is_classified_only_from_exact_typed_lineage() -> None:
+    projection, node, edges = _semantic_plan_revision_facts()
+
+    assert (
+        classify_write_worker_semantics(node["node_id"], node, projection, edges=edges)
+        == "semantic_plan_revision"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "artifact_role",
+        "artifact_schema",
+        "artifact_version",
+        "artifact_authority",
+        "artifact_producer",
+        "failed_recovery_mismatch",
+        "node_schema",
+        "node_requirement",
+        "report_outcome",
+        "report_candidate",
+        "report_evaluated_artifact",
+        "report_evaluated_requirement",
+        "report_source_stage",
+        "selector_report",
+        "selector_outcome",
+        "semantic_consumer_schema",
+        "semantic_consumer",
+        "candidate_consumer_missing",
+    ],
+)
+def test_semantic_plan_revision_lineage_mutations_fail_closed(mutation: str) -> None:
+    projection, node, edges = _semantic_plan_revision_facts(mutation)
+
+    assert (
+        classify_write_worker_semantics(node["node_id"], node, projection, edges=edges)
+        != "semantic_plan_revision"
+    )
+
+
+def test_declared_batch_write_worker_cannot_relabel_itself_corrective_work() -> None:
+    projection, node, edges = _semantic_plan_revision_facts()
+    node["recovery_of_record_id"] = None
+
+    patch = PatchEnvelope(
+        patch_id="relabelled-implementation",
+        proposed_by_node_id="planner-1",
+        base_graph_position=0,
+        ops=[PatchOp(op="create_node", node=node), *[PatchOp(**edge) for edge in edges]],
+    )
+    result = validate_patch(patch, 0, [], projection, "human")
+
+    assert result.accepted is False
+    assert result.rejection_reason == (
+        "implementation against a declared batch plan must use effectful_batch semantics"
+    )
+
+
+def test_composite_revision_attempt_uses_same_semantic_plan_revision_classifier() -> None:
+    projection, worker, edges = _semantic_plan_revision_facts()
+    worker["node_id"] = "worker-composite-plan-revision"
+    verifier_id = "verifier-composite-plan-revision"
+    verifier = {
+        "node_id": verifier_id,
+        "kind": "verifier",
+        "role": "verifier",
+        "state": "planned",
+        "task_region_id": worker["task_region_id"],
+        "failed_candidate_id": worker["failed_candidate_id"],
+    }
+    for edge in edges:
+        if edge["from_node_id"] == "worker-plan-revision":
+            edge["from_node_id"] = worker["node_id"]
+        if edge["to_node_id"] == "worker-plan-revision":
+            edge["to_node_id"] = worker["node_id"]
+        if edge["to_node_id"] == "verifier-plan-revision":
+            edge["to_node_id"] = verifier_id
+    patch = PatchEnvelope(
+        patch_id="composite-semantic-plan-revision",
+        proposed_by_node_id="planner-1",
+        base_graph_position=0,
+        ops=[
+            PatchOp(
+                op="create_revision_attempt",
+                task_region_id=worker["task_region_id"],
+                failed_candidate_id=worker["failed_candidate_id"],
+                worker_node=worker,
+                verifier_node=verifier,
+            ),
+            *[PatchOp(**edge) for edge in edges],
+        ],
+    )
+
+    result = validate_patch(patch, 0, [], projection, "planner")
+
+    assert result.accepted is True, result.rejection_reason
 
 
 def test_compiler_seeds_versioned_run_scoped_semantic_schema_as_accepted_record() -> None:
@@ -581,6 +868,7 @@ def test_reliable_plan_successor_only_patch_fails_closed_with_diagnostics() -> N
             "state": "planned",
             "objective": "Bypass verification.",
             "access_mode": "write",
+            "effect_contract": "effectful_write",
             "acceptance": ["write happened"],
         },
         {
@@ -800,6 +1088,7 @@ def test_reliable_plan_successor_stage_cannot_masquerade_as_write_worker() -> No
                             "kind": "worker",
                             "role": "implementer",
                             "access_mode": "write",
+                            "effect_contract": "effectful_write",
                             "objective": "Masquerade as the successor planner.",
                             "acceptance": ["implementation happened"],
                         }

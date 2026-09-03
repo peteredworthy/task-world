@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from orchestrator.runners.types import (
     ChecklistUpdateCallback,
@@ -21,6 +22,7 @@ from orchestrator.runners.types import (
     ExecutionResult,
     GradeCallback,
     SubmitCallback,
+    SubmitCallbackResult,
 )
 from orchestrator.config.enums import ChecklistStatus
 
@@ -175,16 +177,24 @@ class SubmitExecutor:
     def __call__(self, action: Any, conversation: Any = None) -> Any:
         if self._make_obs is None:
             raise RuntimeError("observation_factory not provided")
-        coro = self._callback()
+        empty_callback = cast(Callable[[], Awaitable[object]], self._callback)
+        coro = empty_callback()
         future = asyncio.run_coroutine_threadsafe(  # pyright: ignore[reportUnknownVariableType]
             coro,  # pyright: ignore[reportArgumentType]
             self._loop,
         )
         try:
-            future.result(timeout=60)  # pyright: ignore[reportUnknownMemberType]
+            acknowledgement = cast(
+                SubmitCallbackResult,
+                future.result(timeout=60),  # pyright: ignore[reportUnknownMemberType]
+            )
         except Exception as e:
             return self._make_obs(f"ERROR submitting: {e}")
-        return self._make_obs("Task submitted for verification.")
+        if acknowledgement is not None:
+            return self._make_obs(acknowledgement.model_dump_json())
+        return self._make_obs(
+            '{"disposition":"durably_staged","message":"submission is durably staged and pending runner completion; it is not yet accepted"}'
+        )
 
 
 class SetGradeExecutor:

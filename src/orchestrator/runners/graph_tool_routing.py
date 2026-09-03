@@ -11,6 +11,7 @@ adapter has to duplicate it.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from orchestrator.config.enums import ChecklistStatus
@@ -20,6 +21,7 @@ from orchestrator.runners.types import (
     GradeCallback,
     GraphPatchCallback,
     SubmitCallback,
+    SubmissionAcknowledgement,
 )
 from orchestrator.runners.planner_tools import GRAPH_PLANNER_TOOL_ORDER
 
@@ -75,7 +77,8 @@ async def route_tool_call(
 
     Tool routing:
     - ``update_checklist`` -> ``on_checklist_update(req_id, status, note)``
-    - ``submit``           -> ``on_submit()``
+    - ``submit``           -> ``on_submit(args)`` for typed output submissions,
+      retaining ``on_submit()`` for an empty ordinary submission
     - ``submit_graph_patch`` -> ``on_submit_graph_patch(payload)``
     - a name in ``GRAPH_MACRO_TOOL_NAMES`` -> ``on_submit_graph_patch(payload)``
       after macro-specific normalization
@@ -99,8 +102,18 @@ async def route_tool_call(
         return ""
 
     if tool_name == "submit":
-        await on_submit()
-        return ""
+        if args:
+            typed_submit = cast(
+                Callable[[dict[str, Any] | None], Awaitable[SubmissionAcknowledgement | None]],
+                on_submit,
+            )
+            acknowledgement = await typed_submit(dict(args))
+        else:
+            empty_submit = cast(
+                Callable[[], Awaitable[SubmissionAcknowledgement | None]], on_submit
+            )
+            acknowledgement = await empty_submit()
+        return acknowledgement.model_dump_json() if acknowledgement is not None else ""
 
     if tool_name == "submit_graph_patch":
         if on_submit_graph_patch is None:

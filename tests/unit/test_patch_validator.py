@@ -103,6 +103,32 @@ def _validate(
     )
 
 
+def _revision_worker(node_id: str = "worker-revision-1", **overrides: Any) -> dict[str, Any]:
+    node: dict[str, Any] = {
+        "node_id": node_id,
+        "kind": "worker",
+        "role": "builder",
+        "state": "planned",
+        "objective": "Produce a corrected implementation candidate.",
+        "access_mode": "write",
+        "effect_contract": "effectful_write",
+        "acceptance": ["candidate satisfies the failed requirement"],
+    }
+    node.update(overrides)
+    for key in [key for key, value in node.items() if value is None]:
+        node.pop(key)
+    return node
+
+
+def _revision_verifier(node_id: str = "verifier-revision-1") -> dict[str, Any]:
+    return {
+        "node_id": node_id,
+        "kind": "verifier",
+        "role": "verifier",
+        "state": "planned",
+    }
+
+
 def test_patch_at_current_position_accepted() -> None:
     result = _validate(
         _patch([{"op": "create_node", "node": {"node_id": "note-1", "kind": "artifact"}}])
@@ -597,12 +623,8 @@ def test_create_edge_accepts_revision_attempt_embedded_worker_in_same_patch() ->
                     "op": "create_revision_attempt",
                     "task_region_id": "task-1",
                     "failed_candidate_id": "candidate-1",
-                    "worker_node": {
-                        "node_id": "worker-revision-1",
-                        "kind": "worker",
-                        "role": "builder",
-                        "state": "planned",
-                    },
+                    "worker_node": _revision_worker(),
+                    "verifier_node": _revision_verifier(),
                 },
                 {
                     "op": "create_edge",
@@ -633,11 +655,8 @@ def test_create_edge_accepts_revision_attempt_embedded_worker_with_default_kind(
                     "op": "create_revision_attempt",
                     "task_region_id": "task-1",
                     "failed_candidate_id": "candidate-1",
-                    "worker_node": {
-                        "node_id": "worker-revision-1",
-                        "role": "builder",
-                        "state": "planned",
-                    },
+                    "worker_node": _revision_worker(kind=None),
+                    "verifier_node": _revision_verifier(),
                 },
                 {
                     "op": "create_edge",
@@ -798,6 +817,7 @@ def test_create_edge_rejects_binding_policy_incompatible_with_target_cardinality
                         "state": "planned",
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 },
@@ -844,6 +864,7 @@ def test_create_edge_accepts_known_prompt_hydration_policy() -> None:
                         "state": "planned",
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 },
@@ -886,6 +907,7 @@ def test_create_edge_rejects_unknown_prompt_hydration_policy() -> None:
                         "state": "planned",
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 },
@@ -1061,6 +1083,7 @@ def test_gap_planner_can_append_corrective_work_region() -> None:
                         "task_region_id": "corrective_work_region",
                         "objective": "Produce a corrective candidate that resolves the classified gap.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["corrective candidate resolves the classified gap"],
                     },
                 },
@@ -1582,16 +1605,8 @@ def test_create_edge_accepts_revision_attempt_embedded_nodes_in_same_patch() -> 
                     "op": "create_revision_attempt",
                     "task_region_id": "task-1",
                     "failed_candidate_id": "candidate-1",
-                    "worker_node": {
-                        "node_id": "worker-revision-2",
-                        "kind": "worker",
-                        "role": "builder",
-                    },
-                    "verifier_node": {
-                        "node_id": "verifier-revision-2",
-                        "kind": "verifier",
-                        "role": "verifier",
-                    },
+                    "worker_node": _revision_worker("worker-revision-2"),
+                    "verifier_node": _revision_verifier("verifier-revision-2"),
                 },
                 {
                     "op": "create_edge",
@@ -1691,6 +1706,7 @@ def test_create_node_rejects_worker_without_acceptance() -> None:
                         "state": "planned",
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                     },
                 }
             ]
@@ -1714,6 +1730,7 @@ def test_create_node_rejects_worker_with_malformed_acceptance() -> None:
                         "state": "planned",
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": "run the tests",
                     },
                 }
@@ -1741,11 +1758,101 @@ def test_create_node_accepts_worker_with_full_contract() -> None:
                         "state": "planned",
                         "objective": "Implement a candidate that satisfies the bound requirements.",
                         "access_mode": "write",
+                        "effect_contract": "effectful_write",
                         "acceptance": ["candidate satisfies the bound requirements"],
                     },
                 }
             ]
         )
+    )
+
+    assert result.accepted is True
+
+
+def test_create_node_rejects_new_worker_missing_effect_contract() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "objective": "Implement the requested candidate.",
+                        "access_mode": "write",
+                        "acceptance": ["candidate satisfies the requirements"],
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "worker node requires a valid effect_contract: worker-1"
+
+
+@pytest.mark.parametrize(
+    ("access_mode", "effect_contract"),
+    [
+        ("read_only", "effectful_write"),
+        ("write", "read_only_semantic"),
+    ],
+)
+def test_create_node_rejects_effect_contract_conflicting_with_access_mode(
+    access_mode: str,
+    effect_contract: str,
+) -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "objective": "Implement the requested candidate.",
+                        "access_mode": access_mode,
+                        "effect_contract": effect_contract,
+                        "acceptance": ["candidate satisfies the requirements"],
+                    },
+                }
+            ]
+        )
+    )
+
+    assert result.accepted is False
+    assert (
+        result.rejection_reason
+        == "worker node effect_contract conflicts with access_mode: worker-1"
+    )
+
+
+def test_existing_live_shape_legacy_discovery_replays_without_rewrite() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-discovery-retry-1",
+                    "kind": "worker",
+                    "role": "discovery",
+                    "state": "ready",
+                    "access_mode": "read_only",
+                    "semantic_stage": "discovery",
+                },
+                position=215,
+            )
+        ]
+    )
+
+    result = _validate(
+        _patch([], base_graph_position=215),
+        current_position=215,
+        projection=projection,
     )
 
     assert result.accepted is True
@@ -1805,7 +1912,7 @@ def test_gap_planner_corrective_worker_requires_worker_contract() -> None:
     assert result.rejection_reason == "worker node requires objective: worker-corrective"
 
 
-def test_create_revision_attempt_worker_node_is_not_contract_checked() -> None:
+def test_create_revision_attempt_worker_node_is_contract_checked() -> None:
     result = _validate(
         _patch(
             [
@@ -1824,7 +1931,8 @@ def test_create_revision_attempt_worker_node_is_not_contract_checked() -> None:
         )
     )
 
-    assert result.accepted is True
+    assert result.accepted is False
+    assert result.rejection_reason == "worker node requires objective: worker-revision-3"
 
 
 def _discovery_worker_node(**overrides: Any) -> dict[str, Any]:
@@ -1835,9 +1943,14 @@ def _discovery_worker_node(**overrides: Any) -> dict[str, Any]:
         "state": "planned",
         "objective": "Implement a candidate that satisfies the bound requirements.",
         "access_mode": "write",
+        "effect_contract": "effectful_write",
         "acceptance": ["candidate satisfies the bound requirements"],
     }
     node.update(overrides)
+    if "effect_contract" not in overrides:
+        node["effect_contract"] = (
+            "read_only_semantic" if node.get("access_mode") == "read_only" else "effectful_write"
+        )
     return node
 
 
@@ -2012,7 +2125,7 @@ def test_non_discovery_worker_roles_may_declare_write_access_mode(role: str) -> 
     assert result.accepted is True
 
 
-def test_create_revision_attempt_discovery_worker_is_not_access_mode_gated() -> None:
+def test_create_revision_attempt_discovery_worker_is_access_mode_gated() -> None:
     result = _validate(
         _patch(
             [
@@ -2026,4 +2139,8 @@ def test_create_revision_attempt_discovery_worker_is_not_access_mode_gated() -> 
         )
     )
 
-    assert result.accepted is True
+    assert result.accepted is False
+    assert result.rejection_reason == (
+        "discovery worker cannot declare access_mode write; "
+        "use a separate effectful artifact-writer region: worker-revision-3"
+    )

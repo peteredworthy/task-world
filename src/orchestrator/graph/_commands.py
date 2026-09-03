@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 import posixpath
-from typing import Any, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
 from pydantic import ValidationError
 
@@ -14,7 +14,6 @@ from orchestrator.graph.callbacks import (
     validate_callback,
     callback_payload_identity,
 )
-from orchestrator.graph.command_bindings import canonicalize_check_command_definition
 from orchestrator.graph.command_models import (
     AcceptRunCommand,
     AcknowledgeStartCommand,
@@ -120,8 +119,9 @@ from orchestrator.graph.semantic_artifacts import (
     validate_semantic_artifact_content,
 )
 from orchestrator.graph.patch_validator import (
-    MODE_RANK,
-    resource_claim_dicts,
+    iter_patch_node_payloads,
+    normalize_patch_node_payload,
+    normalize_patch_nodes,
     validate_patch,
 )
 from orchestrator.graph.projections import (
@@ -291,6 +291,7 @@ _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES = frozenset(
         "plan_region_marked_suspect",
         "run_lifecycle_changed",
         "runner_submission_staged",
+        "runner_completion_witnessed",
         "runtime_retry_scheduled",
     }
 )
@@ -298,6 +299,7 @@ _CACHE_COMPACT_RUNNER_EVENT_PAYLOAD_TYPES = frozenset(
     {
         "runner_baseline_recorded",
         "runner_submission_staged",
+        "runner_completion_witnessed",
         "runner_boundary_mismatch",
         "runner_recovery_requested",
         "runner_execution_finalized",
@@ -1417,6 +1419,8 @@ def _output_record_contract_conflict(
         return f"output records produced by unknown node: {expected_producer_node_id}"
     node_role = node_roles_view(projection).get(expected_producer_node_id)
     typed_role = node_role if isinstance(node_role, str) else None
+    node_payload = node_payload_view(projection, expected_producer_node_id) or {}
+    typed_declared_outputs = _typed_declared_outputs(node_payload.get("outputs"))
     for index, raw_record in enumerate(typed_raw_records):
         if not isinstance(raw_record, dict):
             return f"malformed output record at index {index}"
@@ -1463,6 +1467,7 @@ def _output_record_contract_conflict(
             node_role=typed_role,
             record_payload=record_payload,
             index=index,
+            declared_outputs=typed_declared_outputs,
         )
         if error is not None:
             return error
@@ -1999,8 +2004,8 @@ def _required_output_record_conflict(
         return f"output records produced by unknown node type: {node_kind}"
 
     payload = node_payload_view(projection, expected_producer_node_id) or {}
-    declared_outputs = payload.get("outputs")
-    if isinstance(declared_outputs, list):
+    declared_outputs = _typed_declared_outputs(payload.get("outputs"))
+    if declared_outputs is not None:
         # A concrete node declaration is the executable contract. This is
         # essential for specialized workers such as reliable-plan discovery,
         # whose sole required result is a SemanticArtifact rather than the
@@ -2026,7 +2031,11 @@ def _required_output_record_conflict(
         for raw_record in cast(list[Any], raw_records)
         if isinstance(raw_record, dict)
         for canonical_port in [
-            _output_record_contract_port(contract, cast(dict[str, Any], raw_record))
+            _output_record_contract_port(
+                contract,
+                cast(dict[str, Any], raw_record),
+                declared_outputs=cast(list[object], declared_outputs),
+            )
         ]
         if canonical_port is not None
     }
@@ -2036,9 +2045,22 @@ def _required_output_record_conflict(
     return None
 
 
+def _typed_declared_outputs(value: object) -> list[dict[str, Any]] | None:
+    """Return well-formed concrete output declarations when a node has them."""
+    if not isinstance(value, list):
+        return None
+    return [
+        cast(dict[str, Any], raw_output)
+        for raw_output in cast(list[object], value)
+        if isinstance(raw_output, dict)
+    ]
+
+
 def _output_record_contract_port(
     contract: Any,
     record_payload: dict[str, Any],
+    *,
+    declared_outputs: list[object] | None = None,
 ) -> str | None:
     record_payload = dict(record_payload)
     if record_payload.get("record_kind") == "file_state":
@@ -2048,6 +2070,24 @@ def _output_record_contract_port(
     port = record_payload.get("port")
     if not isinstance(port, str):
         return None
+    if declared_outputs is not None:
+        concrete_ports: set[str] = set()
+        strict_semantic_ports = False
+        for raw_item in declared_outputs:
+            if not isinstance(raw_item, dict):
+                continue
+            item = cast(dict[str, Any], raw_item)
+            declared_port = item.get("port")
+            if isinstance(declared_port, str):
+                concrete_ports.add(declared_port)
+            strict_semantic_ports = strict_semantic_ports or (
+                item.get("schema") == "SemanticArtifact"
+                or item.get("record_type") == "semantic_artifact"
+            )
+        if port in concrete_ports:
+            return port
+        if strict_semantic_ports:
+            return None
     if output_port_contract(contract, port) is None:
         return None
     return port
@@ -2744,7 +2784,13 @@ def _apply_patch_command(
 ) -> list[EventEnvelope]:
     actor_role = context.actor_role
     run_state = query_run_state(projection)
-    if run_state is not None and run_state != "active":
+    paused_human_actor = (
+        run_state == "paused"
+        and context.actor is not None
+        and context.actor.kind == ActorKind.HUMAN
+        and actor_role == "human"
+    )
+    if run_state is not None and run_state != "active" and not paused_human_actor:
         return [
             _command_rejected(
                 make_event,
@@ -2796,6 +2842,40 @@ def _apply_patch_command(
                 rejected_payload,
             )
         ]
+
+    try:
+        patch = normalize_patch_nodes(patch, projection, events)
+    except ValueError as exc:
+        return [
+            make_event(
+                "graph_patch_rejected",
+                _patch_rejected_payload(
+                    patch,
+                    actor_role,
+                    reason=str(exc),
+                    read_set_diff=None,
+                ),
+            )
+        ]
+
+    if paused_human_actor:
+        repair_rejection = _paused_human_repair_rejection(
+            projection,
+            patch,
+            current_position=context.current_graph_position,
+        )
+        if repair_rejection is not None:
+            return [
+                make_event(
+                    "graph_patch_rejected",
+                    _patch_rejected_payload(
+                        patch,
+                        actor_role,
+                        reason=repair_rejection,
+                        read_set_diff=None,
+                    ),
+                )
+            ]
 
     current_position = context.current_graph_position
     events_since_base = [event for event in events if event.position > patch.base_graph_position]
@@ -2975,6 +3055,271 @@ def _apply_patch_command(
     return output
 
 
+def _paused_human_repair_rejection(
+    projection: GraphProjection,
+    patch: PatchEnvelope,
+    *,
+    current_position: int,
+) -> str | None:
+    """Restrict the paused exception to an exact executable-node replacement."""
+    if patch.base_graph_position != current_position:
+        return "paused human repair requires the current graph position"
+    ops = [op.model_dump(mode="json", exclude_none=True) for op in patch.ops]
+    if any(op.get("op") not in {"retire_node", "create_node", "create_edge"} for op in ops):
+        return "paused human repair permits only retire_node, create_node, and create_edge"
+    retire_ops = [op for op in ops if op.get("op") == "retire_node"]
+    if len(retire_ops) != 1:
+        return "paused human repair requires exactly one executable node retirement"
+    retired_id = retire_ops[0].get("node_id")
+    if not isinstance(retired_id, str):
+        return "paused human repair may retire only an eligible executable node"
+    retired = node_payload_view(projection, retired_id)
+    if retired is None:
+        return "paused human repair target is not readable"
+    retired = normalize_patch_node_payload(
+        projection,
+        {"node": retired},
+        node_key="node",
+        default_kind=str(retired.get("kind", "worker")),
+    )
+    retired_state = node_states_view(projection).get(retired_id)
+    legacy_contract_repair = retired_state == "blocked" and (
+        _blocked_legacy_invalid_contract_repair_allowed(projection, retired_id, retired)
+    )
+    if retired_state != "failed" and not legacy_contract_repair:
+        return "paused human repair may retire only an eligible executable node"
+
+    created_nodes = [
+        cast(dict[str, Any], op["node"])
+        for op in ops
+        if op.get("op") == "create_node" and isinstance(op.get("node"), dict)
+    ]
+    if len(created_nodes) != 1:
+        return "paused human repair requires exactly one executable replacement node"
+    executable_replacements = [
+        node
+        for node in created_nodes
+        if node.get("kind") in {"worker", "verifier", "check", "planner"}
+    ]
+    if len(executable_replacements) != 1:
+        return "paused human repair requires exactly one executable replacement node"
+    replacement = executable_replacements[0]
+    replacement_id = replacement.get("node_id")
+    if not isinstance(replacement_id, str) or replacement_id == retired_id:
+        return "paused human repair replacement must have a distinct node id"
+    if replacement.get("state") != "planned":
+        return "paused human repair replacement must be planned"
+    if legacy_contract_repair:
+        expected_effect_contract = (
+            "effectful_write" if retired.get("access_mode") == "write" else "read_only_semantic"
+        )
+        if replacement.get("effect_contract") != expected_effect_contract:
+            return "paused human legacy repair may add only the access-derived effect_contract"
+    elif retired.get("effect_contract") != replacement.get("effect_contract"):
+        return "paused human repair replacement must preserve effect_contract"
+    try:
+        retired_contract = _closed_paused_repair_node_payload(
+            retired,
+            strict_authority_mirrors=False,
+        )
+        replacement_contract = _closed_paused_repair_node_payload(
+            replacement,
+            strict_authority_mirrors=True,
+        )
+    except ValueError as exc:
+        return f"paused human repair node contract is not closed: {exc}"
+    retired_contract["node_id"] = replacement_id
+    retired_contract["state"] = "planned"
+    retired_contract["patch_id"] = replacement_contract["patch_id"]
+    if legacy_contract_repair:
+        retired_contract["effect_contract"] = replacement_contract["effect_contract"]
+    if retired_contract != replacement_contract:
+        differing_fields = sorted(
+            field
+            for field in retired_contract.keys() | replacement_contract.keys()
+            if retired_contract.get(field) != replacement_contract.get(field)
+        )
+        changed = differing_fields[0] if differing_fields else "unknown field"
+        return f"paused human repair replacement must preserve {changed}"
+
+    patch_edges = [op for op in ops if op.get("op") == "create_edge"]
+    required_adjacent_edges = [
+        edge
+        for edge in edges_view(projection).values()
+        if edge.required and (edge.to_node_id == retired_id or edge.from_node_id == retired_id)
+    ]
+    matched_patch_edge_ids: set[str] = set()
+    for edge in required_adjacent_edges:
+        if edge.to_node_id == retired_id:
+            matched_candidates = [
+                candidate
+                for candidate in patch_edges
+                if _paused_repair_edge_matches(
+                    edge.model_dump(mode="json", exclude_none=True),
+                    candidate,
+                    retired_id=retired_id,
+                    replacement_id=replacement_id,
+                    direction="incoming",
+                )
+            ]
+            if len(matched_candidates) != 1:
+                return f"paused human repair must preserve required incoming edge {edge.edge_id}"
+        else:
+            matched_candidates = [
+                candidate
+                for candidate in patch_edges
+                if _paused_repair_edge_matches(
+                    edge.model_dump(mode="json", exclude_none=True),
+                    candidate,
+                    retired_id=retired_id,
+                    replacement_id=replacement_id,
+                    direction="outgoing",
+                )
+            ]
+            if len(matched_candidates) != 1:
+                return f"paused human repair must preserve required outgoing edge {edge.edge_id}"
+        matched_edge_id = matched_candidates[0].get("edge_id")
+        if not isinstance(matched_edge_id, str) or matched_edge_id in matched_patch_edge_ids:
+            return "paused human repair must recreate each required edge exactly once"
+        matched_patch_edge_ids.add(matched_edge_id)
+    if len(patch_edges) != len(required_adjacent_edges):
+        return "paused human repair must recreate exactly the required adjacent topology"
+    return None
+
+
+def _closed_paused_repair_node_payload(
+    node: dict[str, Any],
+    *,
+    strict_authority_mirrors: bool,
+) -> dict[str, Any]:
+    """Return the complete closed NodeCreated contract with explicit defaults."""
+    known_fields = set(NodeCreatedPayload.model_fields)
+    known_fields.update(
+        field.alias
+        for field in NodeCreatedPayload.model_fields.values()
+        if isinstance(field.alias, str)
+    )
+    unknown_fields = sorted(set(node) - known_fields)
+    if unknown_fields:
+        raise ValueError(f"unknown fields: {', '.join(unknown_fields)}")
+    typed = NodeCreatedPayload.model_validate(node)
+    normalized = typed.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude_none=False,
+        exclude_unset=False,
+    )
+    if typed.authority is not None:
+        authority_fields = {
+            "allowed_actions": typed.authority.allowed_actions,
+            "resource_claims": [
+                claim.model_dump(mode="json", exclude_none=False, exclude_unset=False)
+                for claim in typed.authority.resource_claims
+            ],
+            "preconditions": typed.authority.preconditions,
+        }
+        for field, authority_value in authority_fields.items():
+            normalized_value = normalized[field]
+            if field == "resource_claims":
+                normalized_value = [
+                    claim.model_dump(mode="json", exclude_none=False, exclude_unset=False)
+                    for claim in typed.resource_claims
+                ]
+            if strict_authority_mirrors and field in node and normalized_value != authority_value:
+                raise ValueError(f"{field} conflicts with authority")
+            normalized[field] = authority_value
+    return normalized
+
+
+def _blocked_legacy_invalid_contract_repair_allowed(
+    projection: GraphProjection,
+    node_id: str,
+    node: dict[str, Any],
+) -> bool:
+    """Recognize only the historical missing-effect contract death blocker."""
+    if (
+        node.get("kind") not in {"worker", "verifier", "check", "planner"}
+        or node.get("effect_contract") is not None
+        or node.get("access_mode") not in {"read_only", "write"}
+    ):
+        return False
+    if any(
+        lease.node_id == node_id and lease.state in {"active", "suspended"}
+        for lease in leases_view(projection).values()
+    ):
+        return False
+    deferred_reason = last_deferred_reasons_view(projection).get(node_id)
+    if not isinstance(deferred_reason, str) or not deferred_reason.startswith(
+        "recovery_authorization_required:"
+    ):
+        return False
+    failure_record_id = deferred_reason.removeprefix("recovery_authorization_required:")
+    failure = output_record_payloads_view(projection).get(failure_record_id)
+    if not (
+        isinstance(failure, FailureRecord)
+        and failure.producer_node_id == node_id
+        and failure.value.failed_node_id == node_id
+        and failure.value.failure_class == "infrastructure_failure"
+        and failure.value.error_class == "runtime_death_recovery_required"
+        and failure.value.retryable
+        and isinstance(failure.value.reason, str)
+        and "submission quality gate contract is invalid" in failure.value.reason
+        and "effect_contract is missing" in failure.value.reason
+    ):
+        return False
+    recovery_plans = [
+        record
+        for record in output_record_payloads_view(projection).values()
+        if isinstance(record, RecoveryPlanRecord)
+        and record.producer_node_id == node_id
+        and record.value.action == "pause"
+        and record.value.failure_class == "infrastructure_failure"
+        and record.value.retry_basis == "no_differentiating_action"
+        and record.value.reason == failure.value.reason
+    ]
+    return len(recovery_plans) == 1
+
+
+def _paused_repair_edge_matches(
+    existing: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    retired_id: str,
+    replacement_id: str,
+    direction: Literal["incoming", "outgoing"],
+) -> bool:
+    if direction == "incoming":
+        if (
+            existing.get("to_node_id") != retired_id
+            or candidate.get("to_node_id") != replacement_id
+            or candidate.get("from_node_id") != existing.get("from_node_id")
+        ):
+            return False
+    elif (
+        existing.get("from_node_id") != retired_id
+        or candidate.get("from_node_id") != replacement_id
+        or candidate.get("to_node_id") != existing.get("to_node_id")
+    ):
+        return False
+    fields = (
+        "from_port",
+        "to_port",
+        "accepted_record_selector",
+        "binding_policy",
+        "prompt_hydration_policy",
+        "freshness_policy",
+        "purpose",
+        "description",
+        "selection",
+        "metadata",
+    )
+    if any(candidate.get(field) != existing.get(field) for field in fields):
+        return False
+    return (candidate.get("required") is not False) == bool(existing.get("required", True)) and (
+        candidate.get("dependency_type") or "input_binding"
+    ) == existing.get("dependency_type", "input_binding")
+
+
 def _patch_rejected_payload(
     patch: PatchEnvelope,
     actor_role: str,
@@ -2997,11 +3342,10 @@ def _patch_rejected_payload(
 
 
 def _request_record_validation_error(patch: PatchEnvelope) -> str | None:
-    for op in patch.ops:
-        if op.op != "create_node" or not isinstance(op.node, dict):
-            continue
+    ops = [op.model_dump(mode="json", exclude_none=True) for op in patch.ops]
+    for _op_name, _node_key, node in iter_patch_node_payloads(ops):
         try:
-            _request_record_bindings_for_node(dict(op.node))
+            _request_record_bindings_for_node(node)
         except ValueError as exc:
             return safe_exception_reason(
                 exc,
@@ -3013,10 +3357,8 @@ def _request_record_validation_error(patch: PatchEnvelope) -> str | None:
 
 def _successor_planner_node_ids(patch: PatchEnvelope) -> list[str]:
     node_ids: list[str] = []
-    for op in patch.ops:
-        if op.op != "create_node" or not isinstance(op.node, dict):
-            continue
-        node = op.node
+    ops = [op.model_dump(mode="json", exclude_none=True) for op in patch.ops]
+    for _op_name, _node_key, node in iter_patch_node_payloads(ops):
         if node.get("kind") != "planner" or node.get("role") != "planner":
             continue
         node_id = node.get("node_id")
@@ -4583,14 +4925,11 @@ def _planner_session_id(
 
 
 def _next_lease_generation(projection: GraphProjection, node_id: str) -> int:
-    if not _is_chain_planner(projection, node_id):
-        return 1
     session_id = planner_sessions_view(projection).get(node_id)
     generations = [
         lease.generation
         for lease in leases_view(projection).values()
-        if session_id is not None
-        and lease.session_id == session_id
+        if (lease.node_id == node_id or (session_id is not None and lease.session_id == session_id))
         and lease.generation is not None
     ]
     return max(generations, default=0) + 1
@@ -4700,12 +5039,7 @@ def _apply_agent_died(
     node_id = str(lease.node_id)
     generation = lease.generation
     reason = payload.reason
-    # Criterion 2: the class is fixed here, before any branch below chooses
-    # retry vs terminal failure.  Every `agent_died` reason is by definition an
-    # execution or runner death with no graded result, so there is nothing to
-    # dispatch on yet; when `invalid_plan_failure` gains a producer (chunk 5)
-    # this is the seam that grows a classifier.
-    failure_class: FailureClass = "infrastructure_failure"
+    failure_class: FailureClass = payload.failure_class
     event_payload = {
         "lease_id": lease_id,
         "node_id": node_id,
@@ -4713,6 +5047,46 @@ def _apply_agent_died(
         "execution_id": lease_execution_id if isinstance(lease_execution_id, str) else execution_id,
         "reason": reason,
     }
+
+    if failure_class == "invalid_plan_failure":
+        return [
+            make_event("agent_died", event_payload),
+            make_event(
+                "lease_revoked",
+                _typed_lease_event_payload(
+                    "lease_revoked",
+                    {
+                        "lease_id": lease_id,
+                        "node_id": node_id,
+                        "generation": generation,
+                        "reason": reason,
+                    },
+                ),
+            ),
+            make_event(
+                "output_record_accepted",
+                _failure_record_payload(
+                    node_id=node_id,
+                    phase="dispatch",
+                    failure_class="invalid_plan_failure",
+                    error_class=payload.error_class or "invalid_execution_contract",
+                    retryable=False,
+                    lease_id=lease_id,
+                    execution_id=event_payload.get("execution_id"),
+                    generation=generation,
+                    reason=reason,
+                ),
+            ),
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "failed",
+                    "trigger": "invalid_execution_contract",
+                    "reason": reason,
+                },
+            ),
+        ]
 
     if non_gap_planner_has_accepted_patch(projection, node_id):
         return [
@@ -4857,7 +5231,7 @@ def _apply_agent_died(
                     "node_id": node_id,
                     "new_state": "failed",
                     "trigger": "max_attempts_exhausted",
-                    "reason": "max_attempts_exhausted",
+                    "reason": reason,
                     "attempt_number": attempt_number,
                     "max_attempts": max_attempts,
                 },
@@ -6079,9 +6453,6 @@ def _patch_op_events(
     if op.op == "create_node" and isinstance(op.node, dict):
         node_payload = dict(op.node)
         node_payload["patch_id"] = patch_id
-        node_payload.setdefault("state", "planned")
-        _ensure_default_node_authority(node_payload)
-        canonicalize_check_command_definition(node_payload, events, projection=projection)
         if node_payload.get("kind") == "planner" and node_payload.get("role") == "planner":
             if inherited_session_id is not None:
                 node_payload.setdefault("session_id", inherited_session_id)
@@ -6132,68 +6503,34 @@ def _patch_op_events(
             ),
         ]
     if op.op == "create_gate":
-        node_payload = _node_payload_for_op(projection, op_payload, default_kind="gate")
+        node_payload = dict(op.node or {})
         node_payload["patch_id"] = patch_id
         return [make_event("node_created", node_payload)]
     if op.op == "create_revision_attempt":
-        worker_raw = op_payload.get("worker_node")
-        verifier_raw = op_payload.get("verifier_node")
-        worker_node = dict(cast(dict[str, Any], worker_raw)) if isinstance(worker_raw, dict) else {}
-        verifier_node = (
-            dict(cast(dict[str, Any], verifier_raw)) if isinstance(verifier_raw, dict) else {}
-        )
+        worker_node = dict(op.worker_node or {})
+        verifier_node = dict(op.verifier_node or {})
         task_region_id = str(op_payload.get("task_region_id", "revision"))
-        worker_node.setdefault("node_id", f"worker-revision-{task_region_id}")
-        worker_node.setdefault("kind", "worker")
-        worker_node.setdefault("state", "planned")
         worker_node["patch_id"] = patch_id
-        verifier_node.setdefault("node_id", f"verifier-revision-{task_region_id}")
-        verifier_node.setdefault("kind", "verifier")
-        verifier_node.setdefault("state", "planned")
         verifier_node["patch_id"] = patch_id
-        events = [
+        revision_node = {
+            "node_id": f"revision-{task_region_id}",
+            "kind": "task_projection",
+            "state": "planned",
+        }
+        return [
             make_event(
                 "revision_created",
                 {
-                    "node": {
-                        "node_id": f"revision-{task_region_id}",
-                        "kind": "task_projection",
-                        "state": "planned",
-                    },
+                    "node": revision_node,
                     "worker_node": worker_node,
                     "verifier_node": verifier_node,
                 },
-            )
+            ),
+            make_event("node_created", worker_node),
+            make_event("node_created", verifier_node),
         ]
-        for node_key, default_kind in (("worker_node", "worker"), ("verifier_node", "verifier")):
-            raw_node = op_payload.get(node_key)
-            if isinstance(raw_node, dict):
-                events.append(
-                    make_event(
-                        "node_created",
-                        {
-                            **_node_payload_for_op(
-                                projection,
-                                {"node": raw_node, **op_payload},
-                                default_kind=default_kind,
-                            ),
-                            "patch_id": patch_id,
-                        },
-                    )
-                )
-        if len(events) == 1:
-            events.append(
-                make_event(
-                    "node_created",
-                    {
-                        **_node_payload_for_op(projection, op_payload, default_kind="worker"),
-                        "patch_id": patch_id,
-                    },
-                )
-            )
-        return events
     if op.op == "create_appeal":
-        node_payload = _node_payload_for_op(projection, op_payload, default_kind="appeal")
+        node_payload = dict(op.node or {})
         node_payload["patch_id"] = patch_id
         appeal_payload = {
             key: value for key, value in op_payload.items() if key not in {"op", "node"}
@@ -6231,32 +6568,6 @@ def _patch_op_events(
             )
         ]
     return []
-
-
-def _ensure_default_node_authority(node_payload: dict[str, Any]) -> None:
-    if node_payload.get("kind") != "worker":
-        return
-    raw_authority = node_payload.get("authority")
-    authority = dict(cast(dict[str, Any], raw_authority)) if isinstance(raw_authority, dict) else {}
-    authority.setdefault(
-        "allowed_actions",
-        ["submit_records", "request_clarification", "raise_appeal"],
-    )
-    if node_payload.get("access_mode") == "read_only":
-        existing_claims = authority.get("resource_claims")
-        has_ranked_claim = any(
-            isinstance(claim.get("mode"), str) and claim["mode"] in MODE_RANK
-            for claim in resource_claim_dicts(existing_claims)
-        )
-        if not has_ranked_claim:
-            claims_list: list[Any] = (
-                list(cast(list[Any], existing_claims)) if isinstance(existing_claims, list) else []
-            )
-            claims_list.append({"mode": "read", "scope": "repo", "paths": ["."]})
-            authority["resource_claims"] = claims_list
-    elif "resource_claims" not in authority:
-        authority["resource_claims"] = [{"mode": "write", "scope": "repo", "paths": ["."]}]
-    node_payload["authority"] = authority
 
 
 def _ensure_optional_session_carryover_input(node_payload: dict[str, Any]) -> None:
@@ -6469,49 +6780,20 @@ def _op_payload(op: PatchOp) -> dict[str, Any]:
     return op.model_dump(exclude_none=True)
 
 
-def _node_payload_for_op(
-    projection: GraphProjection, op_payload: dict[str, Any], *, default_kind: str
-) -> dict[str, Any]:
-    raw_node = op_payload.get("node")
-    node_payload = dict(cast(dict[str, Any], raw_node)) if isinstance(raw_node, dict) else {}
-    node_id = node_payload.get("node_id")
-    if not isinstance(node_id, str):
-        for key in ("node_id", "gate_id", "appeal_node_id", "revision_node_id"):
-            value = op_payload.get(key)
-            if isinstance(value, str):
-                node_id = value
-                break
-    node_payload["node_id"] = node_id if isinstance(node_id, str) else default_kind
-    node_payload.setdefault("kind", default_kind)
-    node_payload.setdefault("state", "planned")
-    for key in (
-        "task_region_id",
-        "attempt_number",
-        "candidate_id",
-        "predecessor_node_ids",
-        "appealed_node_id",
-        "failed_candidate_id",
-    ):
-        if key in op_payload and key not in node_payload:
-            node_payload[key] = op_payload[key]
-    _ensure_default_node_authority(node_payload)
-    is_new_format = cache_authority_is_new_format(projection)
-    projected_hash = cache_authority_binding(projection).hash
-    supplied_hash = node_payload.get("cache_authority_hash")
-    if supplied_hash is not None and (not is_new_format or supplied_hash != projected_hash):
-        raise ValueError("dynamic node cache_authority_hash differs from routine snapshot")
-    if is_new_format:
-        node_payload["cache_authority_hash"] = projected_hash
-    return node_payload
-
-
 def _node_created_event(
     projection: GraphProjection,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     payload: dict[str, Any],
 ) -> EventEnvelope:
     """Single authority-normalizing constructor for command-created nodes."""
-    normalized = _node_payload_for_op(projection, {"node": payload}, default_kind="worker")
+    raw_kind = payload.get("kind")
+    default_kind = raw_kind if isinstance(raw_kind, str) else "worker"
+    normalized = normalize_patch_node_payload(
+        projection,
+        {"node": payload},
+        node_key="node",
+        default_kind=default_kind,
+    )
     return make_event("node_created", normalized)
 
 

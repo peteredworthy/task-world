@@ -5,7 +5,10 @@ from dataclasses import dataclass, field
 import posixpath
 from typing import Any, cast
 
-from orchestrator.graph.command_bindings import is_known_check_command_binding
+from orchestrator.graph.command_bindings import (
+    canonicalize_check_command_definition,
+    is_known_check_command_binding,
+)
 from orchestrator.graph.contracts import (
     binding_policy,
     merge_bound_record_ids,
@@ -16,12 +19,15 @@ from orchestrator.graph.models import (
     EdgeProjection,
     EventEnvelope,
     PatchEnvelope,
+    PatchOp,
     SemanticArtifactRecord,
     VerificationReportRecord,
     normalize_record_selector,
     record_selector_matches,
 )
 from orchestrator.graph.projection_queries import (
+    cache_authority_binding,
+    cache_authority_is_new_format,
     edges_view,
     input_bindings_view,
     node_kinds_view,
@@ -37,6 +43,10 @@ from orchestrator.graph.projection_queries import (
 from orchestrator.graph.projections import GraphProjection
 from orchestrator.graph.semantic_artifacts import (
     accepted_semantic_declaration,
+)
+from orchestrator.graph.semantic_applicability import (
+    accepted_declared_batch_ids,
+    classify_write_worker_semantics,
 )
 
 
@@ -89,6 +99,13 @@ PLANNER_SUCCESSOR_PORTS = {
     "verification_report",
 }
 
+_PATCH_NODE_SPECS: dict[str, tuple[tuple[str, str], ...]] = {
+    "create_node": (("node", "worker"),),
+    "create_gate": (("node", "gate"),),
+    "create_appeal": (("node", "appeal"),),
+    "create_revision_attempt": (("worker_node", "worker"), ("verifier_node", "verifier")),
+}
+
 
 def classify_event(event: EventEnvelope) -> str:
     """Classify whether an event can invalidate a stale patch read-set."""
@@ -127,6 +144,135 @@ def op_read_set(op: dict[str, Any]) -> set[str]:
     return set()
 
 
+def normalize_patch_nodes(
+    patch: PatchEnvelope,
+    projection: GraphProjection,
+    events: Sequence[EventEnvelope] = (),
+) -> PatchEnvelope:
+    """Return the canonical node representation used by validation and events.
+
+    Patch ingress never infers a worker effect contract. Structural defaults,
+    authority normalization, cache authority, and deterministic check bindings
+    are applied once here for every operation capable of emitting a node.
+    """
+    normalized_ops: list[dict[str, Any]] = []
+    for raw_op in patch.ops:
+        op = raw_op.model_dump(mode="json", exclude_none=True)
+        op_name = op.get("op")
+        specs = _PATCH_NODE_SPECS.get(str(op_name), ())
+        for node_key, default_kind in specs:
+            raw_node = op.get(node_key)
+            if op_name == "create_node" and not isinstance(raw_node, dict):
+                continue
+            default_node_id: str | None = None
+            if op_name == "create_revision_attempt":
+                task_region_id = op.get("task_region_id")
+                region = task_region_id if isinstance(task_region_id, str) else "revision"
+                default_node_id = f"{default_kind}-revision-{region}"
+            op[node_key] = normalize_patch_node_payload(
+                projection,
+                op,
+                node_key=node_key,
+                default_kind=default_kind,
+                default_node_id=default_node_id,
+                events=events,
+            )
+        normalized_ops.append(op)
+    return patch.model_copy(
+        update={"ops": [PatchOp.model_validate(op) for op in normalized_ops]},
+        deep=True,
+    )
+
+
+def iter_patch_node_payloads(
+    ops: Sequence[Mapping[str, Any]],
+) -> list[tuple[str, str, dict[str, Any]]]:
+    nodes: list[tuple[str, str, dict[str, Any]]] = []
+    for op in ops:
+        op_name = op.get("op")
+        if not isinstance(op_name, str):
+            continue
+        for node_key, _default_kind in _PATCH_NODE_SPECS.get(op_name, ()):
+            node = op.get(node_key)
+            if isinstance(node, dict):
+                nodes.append((op_name, node_key, cast(dict[str, Any], node)))
+    return nodes
+
+
+def normalize_patch_node_payload(
+    projection: GraphProjection,
+    op: Mapping[str, Any],
+    *,
+    node_key: str,
+    default_kind: str,
+    default_node_id: str | None = None,
+    events: Sequence[EventEnvelope] = (),
+) -> dict[str, Any]:
+    """Normalize one patch-created node without granting missing authority."""
+    raw_node = op.get(node_key)
+    node = dict(cast(Mapping[str, Any], raw_node)) if isinstance(raw_node, Mapping) else {}
+    node_id = node.get("node_id")
+    if not isinstance(node_id, str):
+        for key in ("node_id", "gate_id", "appeal_node_id", "revision_node_id"):
+            value = op.get(key)
+            if isinstance(value, str):
+                node_id = value
+                break
+    node["node_id"] = node_id if isinstance(node_id, str) else (default_node_id or default_kind)
+    node.setdefault("kind", default_kind)
+    node.setdefault("state", "planned")
+    for key in (
+        "task_region_id",
+        "attempt_number",
+        "candidate_id",
+        "predecessor_node_ids",
+        "appealed_node_id",
+        "failed_candidate_id",
+    ):
+        if key in op and key not in node:
+            node[key] = op[key]
+    _ensure_default_node_authority(node)
+    is_new_format = cache_authority_is_new_format(projection)
+    projected_hash = cache_authority_binding(projection).hash
+    supplied_hash = node.get("cache_authority_hash")
+    if supplied_hash is not None and (not is_new_format or supplied_hash != projected_hash):
+        raise ValueError("dynamic node cache_authority_hash differs from routine snapshot")
+    if is_new_format:
+        node["cache_authority_hash"] = projected_hash
+    canonicalize_check_command_definition(node, list(events), projection=projection)
+    return node
+
+
+def _ensure_default_node_authority(node: dict[str, Any]) -> None:
+    if node.get("kind") != "worker":
+        return
+    raw_authority = node.get("authority")
+    authority = (
+        dict(cast(Mapping[str, Any], raw_authority)) if isinstance(raw_authority, Mapping) else {}
+    )
+    authority.setdefault(
+        "allowed_actions",
+        ["submit_records", "request_clarification", "raise_appeal"],
+    )
+    if node.get("access_mode") == "read_only":
+        existing_claims = authority.get("resource_claims")
+        has_ranked_claim = any(
+            isinstance(claim.get("mode"), str) and claim["mode"] in MODE_RANK
+            for claim in resource_claim_dicts(existing_claims)
+        )
+        if not has_ranked_claim:
+            claims = (
+                list(cast(Sequence[Any], existing_claims))
+                if isinstance(existing_claims, list)
+                else []
+            )
+            claims.append({"mode": "read", "scope": "repo", "paths": ["."]})
+            authority["resource_claims"] = claims
+    elif "resource_claims" not in authority:
+        authority["resource_claims"] = [{"mode": "write", "scope": "repo", "paths": ["."]}]
+    node["authority"] = authority
+
+
 def validate_patch(
     patch: PatchEnvelope,
     current_position: int,
@@ -134,6 +280,10 @@ def validate_patch(
     projection: GraphProjection,
     actor_role: str,
 ) -> PatchValidationResult:
+    try:
+        patch = normalize_patch_nodes(patch, projection, events_since_base)
+    except ValueError as exc:
+        return PatchValidationResult(accepted=False, rejection_reason=str(exc))
     ops = [_op_to_dict(op) for op in patch.ops]
 
     stale_result = _validate_staleness(patch, current_position, events_since_base, ops)
@@ -183,44 +333,56 @@ def validate_patch(
                     accepted=False,
                     rejection_reason=f"cannot retire active node: {node_id}",
                 )
-        elif op_name == "create_node":
-            node = op.get("node")
-            if isinstance(node, dict):
-                typed_node = cast(dict[str, Any], node)
-                contract_error = validate_node_payload(typed_node)
-                if contract_error is not None:
-                    return PatchValidationResult(
-                        accepted=False,
-                        rejection_reason=contract_error,
-                    )
-                kind = typed_node.get("kind")
-                role = typed_node.get("role")
-                if actor_role == "gap_planner":
-                    gap_planner_error = _validate_gap_planner_node(typed_node)
-                    if gap_planner_error is not None:
-                        return PatchValidationResult(
-                            accepted=False,
-                            rejection_reason=gap_planner_error,
-                        )
-                if kind in EXECUTABLE_NODE_KINDS and not isinstance(role, str):
-                    return PatchValidationResult(
-                        accepted=False,
-                        rejection_reason=f"executable node requires role: {kind}",
-                    )
-                if kind == "worker":
-                    worker_contract_error = _validate_worker_contract(typed_node)
-                    if worker_contract_error is not None:
-                        return PatchValidationResult(
-                            accepted=False,
-                            rejection_reason=worker_contract_error,
-                        )
-                if kind == "check":
-                    check_command_error = _validate_check_command(typed_node, actor_role)
-                    if check_command_error is not None:
-                        return PatchValidationResult(
-                            accepted=False,
-                            rejection_reason=check_command_error,
-                        )
+    seen_created_node_ids: set[str] = set()
+    existing_node_ids = set(node_kinds_view(projection))
+    for _op_name, _node_key, typed_node in iter_patch_node_payloads(ops):
+        node_id = typed_node.get("node_id")
+        if not isinstance(node_id, str) or not node_id:
+            continue
+        if node_id in seen_created_node_ids or node_id in existing_node_ids:
+            return PatchValidationResult(
+                accepted=False,
+                rejection_reason=f"duplicate node id: {node_id}",
+            )
+        seen_created_node_ids.add(node_id)
+    for op_name, node_key, typed_node in iter_patch_node_payloads(ops):
+        expected_kind = dict(_PATCH_NODE_SPECS[op_name])[node_key]
+        kind = typed_node.get("kind")
+        if op_name != "create_node" and kind != expected_kind:
+            return PatchValidationResult(
+                accepted=False,
+                rejection_reason=f"{op_name} {node_key} must have kind {expected_kind}",
+            )
+        contract_error = validate_node_payload(typed_node)
+        if contract_error is not None:
+            return PatchValidationResult(accepted=False, rejection_reason=contract_error)
+        role = typed_node.get("role")
+        if actor_role == "gap_planner":
+            gap_planner_error = _validate_gap_planner_node(typed_node)
+            if gap_planner_error is not None:
+                return PatchValidationResult(
+                    accepted=False,
+                    rejection_reason=gap_planner_error,
+                )
+        if kind in EXECUTABLE_NODE_KINDS and not isinstance(role, str):
+            return PatchValidationResult(
+                accepted=False,
+                rejection_reason=f"executable node requires role: {kind}",
+            )
+        if kind == "worker":
+            worker_contract_error = _validate_worker_contract(typed_node)
+            if worker_contract_error is not None:
+                return PatchValidationResult(
+                    accepted=False,
+                    rejection_reason=worker_contract_error,
+                )
+        if kind == "check":
+            check_command_error = _validate_check_command(typed_node, actor_role)
+            if check_command_error is not None:
+                return PatchValidationResult(
+                    accepted=False,
+                    rejection_reason=check_command_error,
+                )
 
     topology_error = _validate_typed_topology(ops, projection, patch.patch_id)
     if topology_error is not None:
@@ -243,11 +405,11 @@ def validate_patch(
     if planner_successor_error is not None:
         return PatchValidationResult(accepted=False, rejection_reason=planner_successor_error)
 
-    dynamic_region_error = _validate_dynamic_region_dependencies(ops, actor_role)
+    dynamic_region_error = _validate_dynamic_region_dependencies(ops, actor_role, projection)
     if dynamic_region_error is not None:
         return PatchValidationResult(accepted=False, rejection_reason=dynamic_region_error)
 
-    semantic_stage_error = _validate_semantic_stage_invariants(ops, projection)
+    semantic_stage_error = _validate_semantic_stage_invariants(ops, projection, actor_role)
     if semantic_stage_error is not None:
         return PatchValidationResult(
             accepted=False,
@@ -278,44 +440,26 @@ def _validate_typed_topology(
 
     for op in ops:
         op_name = op.get("op")
-        if op_name == "create_node":
-            node = op.get("node")
-            if not isinstance(node, dict):
-                return "create_node requires node payload", None
-            duplicate_error = _register_created_node(
-                cast(dict[str, Any], node),
-                created_nodes,
-                seen_node_ids,
-                projection,
-                missing_message="create_node requires node_id",
-            )
-            if duplicate_error is not None:
-                return duplicate_error, None
-        elif op_name == "create_revision_attempt":
-            for node_key, default_kind in (
-                ("worker_node", "worker"),
-                ("verifier_node", "verifier"),
-            ):
-                node = op.get(node_key)
-                if not isinstance(node, dict):
-                    continue
-                duplicate_error = _register_created_node(
-                    cast(dict[str, Any], node),
-                    created_nodes,
-                    seen_node_ids,
-                    projection,
-                    missing_message=f"create_revision_attempt {node_key} requires node_id",
-                    default_kind=default_kind,
-                )
-                if duplicate_error is not None:
-                    return duplicate_error, None
-        elif op_name == "create_edge":
+        if op_name == "create_node" and not isinstance(op.get("node"), dict):
+            return "create_node requires node payload", None
+        if op_name == "create_edge":
             edge_id = op.get("edge_id")
             if not isinstance(edge_id, str) or not edge_id:
                 return "create_edge requires edge_id", None
             if edge_id in seen_edge_ids or edge_id in edges_view(projection):
                 return f"duplicate edge id: {edge_id}", None
             seen_edge_ids.add(edge_id)
+
+    for op_name, node_key, node in iter_patch_node_payloads(ops):
+        duplicate_error = _register_created_node(
+            node,
+            created_nodes,
+            seen_node_ids,
+            projection,
+            missing_message=f"{op_name} {node_key} requires node_id",
+        )
+        if duplicate_error is not None:
+            return duplicate_error, None
 
     for op in ops:
         if op.get("op") != "create_edge":
@@ -483,14 +627,9 @@ def _concrete_node_payload(
     ops: list[dict[str, Any]],
     projection: GraphProjection,
 ) -> dict[str, Any] | None:
-    for op in ops:
-        if op.get("op") != "create_node":
-            continue
-        node = op.get("node")
-        if isinstance(node, dict):
-            typed_node = cast(dict[str, Any], node)
-            if typed_node.get("node_id") == node_id:
-                return typed_node
+    for _op_name, _node_key, node in iter_patch_node_payloads(ops):
+        if node.get("node_id") == node_id:
+            return node
     return node_payload_view(projection, node_id)
 
 
@@ -620,6 +759,15 @@ def _validate_worker_contract(node: dict[str, Any]) -> str | None:
     if access_mode not in ("read_only", "write"):
         return f"worker node access_mode must be read_only or write: {node_id}"
 
+    effect_contract = node.get("effect_contract")
+    if effect_contract not in ("read_only_semantic", "effectful_write"):
+        return f"worker node requires a valid effect_contract: {node_id}"
+    expected_effect_contract = (
+        "read_only_semantic" if access_mode == "read_only" else "effectful_write"
+    )
+    if effect_contract != expected_effect_contract:
+        return f"worker node effect_contract conflicts with access_mode: {node_id}"
+
     acceptance = node.get("acceptance")
     if not acceptance:
         return f"worker node requires acceptance: {node_id}"
@@ -664,10 +812,6 @@ def _validate_worker_contract(node: dict[str, Any]) -> str | None:
 
 
 def _validate_check_command(node: dict[str, Any], actor_role: str) -> str | None:
-    command_definition = node.get("command_definition")
-    if isinstance(command_definition, dict):
-        return None
-
     hidden_oracle_command = node.get("hidden_oracle_command")
     if isinstance(hidden_oracle_command, str) and hidden_oracle_command.strip():
         if actor_role in {"planner", "gap_planner"}:
@@ -675,6 +819,10 @@ def _validate_check_command(node: dict[str, Any], actor_role: str) -> str | None
             if isinstance(node_id, str):
                 return f"check node cannot expose hidden_oracle_command; use command_binding: {node_id}"
             return "check node cannot expose hidden_oracle_command; use command_binding"
+        return None
+
+    command_definition = node.get("command_definition")
+    if isinstance(command_definition, dict):
         return None
 
     command_binding = node.get("command_binding")
@@ -743,13 +891,7 @@ def _validate_no_forbidden_cycles(
 def _validate_planner_successor_bindings(ops: list[dict[str, Any]]) -> str | None:
     successor_ids: set[str] = set()
     required_ports_by_successor: dict[str, set[str]] = {}
-    for op in ops:
-        if op.get("op") != "create_node":
-            continue
-        node = op.get("node")
-        if not isinstance(node, dict):
-            continue
-        typed_node = cast(dict[str, Any], node)
+    for _op_name, _node_key, typed_node in iter_patch_node_payloads(ops):
         if typed_node.get("kind") != "planner" or typed_node.get("role") != "planner":
             continue
         node_id = typed_node.get("node_id")
@@ -789,6 +931,7 @@ def _validate_planner_successor_bindings(ops: list[dict[str, Any]]) -> str | Non
 def _validate_dynamic_region_dependencies(
     ops: list[dict[str, Any]],
     actor_role: str,
+    projection: GraphProjection,
 ) -> str | None:
     created_nodes = _created_nodes_by_id(ops)
 
@@ -796,10 +939,22 @@ def _validate_dynamic_region_dependencies(
         return None
 
     incoming_ports = _required_incoming_ports_by_node(ops, set(created_nodes))
+    all_edges = [edge.model_dump(mode="json") for edge in edges_view(projection).values()]
+    all_edges.extend(op for op in ops if op.get("op") == "create_edge")
     for node_id, node in created_nodes.items():
         kind = node.get("kind")
         role = node.get("role")
         ports = incoming_ports.get(node_id, set())
+        semantic_plan_revision = (
+            classify_write_worker_semantics(
+                node_id,
+                node,
+                projection,
+                edges=all_edges,
+                nodes=created_nodes,
+            )
+            == "semantic_plan_revision"
+        )
         if (
             kind == "planner"
             and role == "gap_planner"
@@ -807,12 +962,17 @@ def _validate_dynamic_region_dependencies(
         ):
             return "gap planner requires verification input edge"
         if (
-            actor_role != "gap_planner"
+            actor_role not in {"gap_planner", "human"}
             and _is_corrective_worker(node_id, node)
+            and not semantic_plan_revision
             and "classified_gap" not in ports
         ):
             return "corrective worker requires classified_gap input edge"
-        if node.get("semantic_stage") == "corrective_work":
+        if (
+            actor_role != "human"
+            and node.get("semantic_stage") == "corrective_work"
+            and not semantic_plan_revision
+        ):
             if "verification_report" not in ports:
                 return "corrective worker requires exact failed verification_report input edge"
             if "check_result" not in ports:
@@ -829,13 +989,14 @@ def _validate_dynamic_region_dependencies(
 def _validate_semantic_stage_invariants(
     ops: list[dict[str, Any]],
     projection: GraphProjection,
+    actor_role: str,
 ) -> str | None:
     """Enforce reliable-plan semantics on staged nodes, not merely prompts."""
     created = _created_nodes_by_id(ops)
     edge_ops = [op for op in ops if op.get("op") == "create_edge"]
     all_edges = [edge.model_dump(mode="json") for edge in edges_view(projection).values()]
     all_edges.extend(edge_ops)
-    declared_batches = _accepted_declared_batch_ids(projection)
+    declared_batches = accepted_declared_batch_ids(projection)
     known_payloads = {
         node_id: payload
         for node_id in node_kinds_view(projection)
@@ -872,6 +1033,13 @@ def _validate_semantic_stage_invariants(
     for node_id, node in created.items():
         kind = node.get("kind")
         stage = node.get("semantic_stage")
+        write_applicability = classify_write_worker_semantics(
+            node_id,
+            node,
+            projection,
+            edges=all_edges,
+            nodes=created,
+        )
         if stage == "discovery":
             if kind != "worker" or node.get("role") != "discovery":
                 return "semantic discovery stage must be a discovery worker"
@@ -912,13 +1080,17 @@ def _validate_semantic_stage_invariants(
             ):
                 return "plan verification requires an accepted exact schema declaration"
 
-        if stage == "corrective_work":
+        if (
+            actor_role != "human"
+            and stage == "corrective_work"
+            and write_applicability != "semantic_plan_revision"
+        ):
             correction_error = _corrective_evidence_error(node_id, node, all_edges, projection)
             if correction_error is not None:
                 return correction_error
 
         if kind == "worker" and node.get("access_mode") == "write" and declared_batches:
-            if stage != "effectful_batch":
+            if write_applicability == "invalid_declared_batch_write":
                 return "implementation against a declared batch plan must use effectful_batch semantics"
 
         if stage == "effectful_batch" and kind == "worker":
@@ -1742,27 +1914,6 @@ def _batch_verifier_topology_error(
     return None
 
 
-def _accepted_declared_batch_ids(projection: GraphProjection) -> set[str]:
-    batch_ids: set[str] = set()
-    for record in output_record_payloads_view(projection).values():
-        if not isinstance(record, SemanticArtifactRecord):
-            continue
-        if record.value.authority_status != "accepted" or record.value.content is None:
-            continue
-        raw_batches = record.value.content.get("batches")
-        if not isinstance(raw_batches, Sequence) or isinstance(raw_batches, (str, bytes)):
-            continue
-        for raw_batch in cast(Sequence[Any], raw_batches):
-            if isinstance(raw_batch, str):
-                batch_ids.add(raw_batch)
-            elif isinstance(raw_batch, Mapping):
-                typed_batch = cast(Mapping[str, Any], raw_batch)
-                batch_id = typed_batch.get("batch_id", typed_batch.get("id"))
-                if isinstance(batch_id, str):
-                    batch_ids.add(batch_id)
-    return batch_ids
-
-
 def _selector_field(edge: dict[str, Any], field: str) -> Any:
     selector = edge.get("accepted_record_selector")
     return cast(dict[str, Any], selector).get(field) if isinstance(selector, dict) else None
@@ -1809,13 +1960,7 @@ def _validate_no_poisoned_final_invariant_edges(
 
 def _created_nodes_by_id(ops: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     created_nodes: dict[str, dict[str, Any]] = {}
-    for op in ops:
-        if op.get("op") != "create_node":
-            continue
-        node = op.get("node")
-        if not isinstance(node, dict):
-            continue
-        typed_node = cast(dict[str, Any], node)
+    for _op_name, _node_key, typed_node in iter_patch_node_payloads(ops):
         node_id = typed_node.get("node_id")
         if isinstance(node_id, str):
             created_nodes[node_id] = typed_node

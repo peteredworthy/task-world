@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol, cast
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
     StringConstraints,
     field_validator,
     model_validator,
@@ -29,6 +30,7 @@ from orchestrator.graph.boundary_types import (
     boundary_manifest_hash,
     validate_git_oid,
     validate_recovery_paths,
+    sanitize_runner_error_detail,
     validate_repo_relative_path,
     validate_snapshot_ref,
     validate_sha256,
@@ -279,6 +281,7 @@ class StageRunnerSubmissionCommand(SubmitCallbackCommand):
     cache_status_evidence: list[CacheStatusEvidence] = Field(
         default_factory=_empty_cache_status_evidence
     )
+    validation_witness: dict[str, Any] | None = None
 
     @field_validator("payload_hash", "boundary_hash")
     @classmethod
@@ -320,7 +323,70 @@ class StageRunnerSubmissionCommand(SubmitCallbackCommand):
             raise ValueError("boundary_hash does not match staged manifest")
         validate_snapshot_ref(self.staged_snapshot_ref, self.staged_snapshot_id)
         validate_git_oid(self.staged_commit_sha)
+        if self.validation_witness is not None:
+            _validate_submission_witness(
+                self.validation_witness,
+                node_id=self.node_id,
+                execution_id=self.execution_id,
+                lease_id=self.lease_id,
+                lease_generation=self.lease_generation,
+                base_snapshot_id=self.base_snapshot_id,
+                snapshot_id=self.staged_snapshot_id,
+                snapshot_ref=self.staged_snapshot_ref,
+                commit_sha=self.staged_commit_sha,
+                tree_sha=self.staged_tree_sha,
+                boundary_hash=self.boundary_hash,
+            )
         return self
+
+
+def _validate_submission_witness(
+    witness: dict[str, Any],
+    *,
+    node_id: str,
+    execution_id: str,
+    lease_id: str,
+    lease_generation: int,
+    base_snapshot_id: str,
+    snapshot_id: str,
+    snapshot_ref: str,
+    commit_sha: str,
+    tree_sha: str,
+    boundary_hash: str,
+) -> None:
+    validate_callback_json(witness)
+    expected = {
+        "schema_version": 1,
+        "node_id": node_id,
+        "execution_id": execution_id,
+        "lease_id": lease_id,
+        "lease_generation": lease_generation,
+        "base_snapshot_id": base_snapshot_id,
+    }
+    if any(witness.get(key) != value for key, value in expected.items()):
+        raise ValueError("validation_witness execution identity does not match staging")
+    if witness.get("disposition") not in {
+        "passed",
+        "baseline_exempted",
+        "no_configured_commands",
+    }:
+        raise ValueError("validation_witness disposition is not successful")
+    commands = witness.get("commands")
+    if (
+        not isinstance(commands, (list, tuple))
+        or len(cast(list[Any] | tuple[Any, ...], commands)) > 8
+    ):
+        raise ValueError("validation_witness commands are invalid or unbounded")
+    boundary = witness.get("validated_boundary")
+    expected_boundary = {
+        "snapshot_id": snapshot_id,
+        "snapshot_ref": snapshot_ref,
+        "commit_sha": commit_sha,
+        "tree_sha": tree_sha,
+        "boundary_hash": boundary_hash,
+    }
+    if not isinstance(boundary, dict) or boundary != expected_boundary:
+        raise ValueError("validation_witness does not match staged boundary")
 
 
 class FinalizeRunnerExecutionCommand(StrictCommandPayload):
@@ -380,6 +446,42 @@ class FinalizeRunnerExecutionCommand(StrictCommandPayload):
         return self
 
 
+class WitnessRunnerCompletionCommand(FinalizeRunnerExecutionCommand):
+    """Persist a successful runner return and its exact final boundary.
+
+    ``callback_payload`` is deliberately forbidden here: the staged CAS
+    identity is the sole callback authority and is resolved only when the
+    witnessed attempt is finalized.
+    """
+
+    staged_payload_hash: CommandIdentifier
+    staged_payload_size_bytes: int = Field(ge=0)
+    staged_snapshot_id: CommandIdentifier
+    staged_snapshot_ref: CommandIdentifier
+    staged_commit_sha: CommandIdentifier
+    staged_tree_sha: CommandIdentifier
+    staged_boundary_hash: CommandIdentifier
+    runner_return_kind: Literal["successful_return"]
+
+    @field_validator("staged_payload_hash", "staged_boundary_hash")
+    @classmethod
+    def staged_hashes_are_sha256(cls, value: str) -> str:
+        return validate_sha256(value)
+
+    @field_validator("staged_tree_sha")
+    @classmethod
+    def staged_tree_is_git_oid(cls, value: str) -> str:
+        return validate_git_oid(value)
+
+    @model_validator(mode="after")
+    def staged_snapshot_is_well_formed(self) -> "WitnessRunnerCompletionCommand":
+        if self.callback_payload is not None:
+            raise ValueError("completion witness must not carry callback_payload")
+        validate_snapshot_ref(self.staged_snapshot_ref, self.staged_snapshot_id)
+        validate_git_oid(self.staged_commit_sha)
+        return self
+
+
 class RequestRunnerRecoveryCommand(StrictCommandPayload):
     """Record cleanup for a managed execution which did not reach finalization."""
 
@@ -387,8 +489,15 @@ class RequestRunnerRecoveryCommand(StrictCommandPayload):
     node_id: CommandIdentifier
     lease_id: CommandIdentifier
     lease_generation: int = Field(ge=0)
-    reason: Literal["runner_died", "cancelled"]
+    reason: Literal[
+        "runner_died",
+        "cancelled",
+        "staged_artifact_missing",
+        "staged_artifact_corrupt",
+    ]
+    error_detail: str | None = Field(default=None, max_length=4_096)
     max_attempts: int = Field(default=0, ge=0)
+    retry_after_recovery: StrictBool = False
     recovery_snapshot_id: CommandIdentifier | None = None
     recovery_snapshot_ref: CommandIdentifier | None = None
     recovery_commit_sha: CommandIdentifier | None = None
@@ -406,6 +515,13 @@ class RequestRunnerRecoveryCommand(StrictCommandPayload):
     @classmethod
     def boundary_is_sha256(cls, value: str) -> str:
         return validate_sha256(value)
+
+    @field_validator("error_detail", mode="before")
+    @classmethod
+    def canonical_error_detail(cls, value: object) -> str | None:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("error_detail must be a string")
+        return sanitize_runner_error_detail(value)
 
     @field_validator("final_tree_sha")
     @classmethod
@@ -540,6 +656,10 @@ class AgentDiedCommand(StrictCommandPayload):
     max_attempts: int = Field(default=0, ge=0)
     retry_backoff_seconds: int = Field(default=0, ge=0)
     health_evidence_record_id: CommandIdentifier | None = None
+    failure_class: Literal["infrastructure_failure", "invalid_plan_failure"] = (
+        "infrastructure_failure"
+    )
+    error_class: Literal["invalid_execution_contract"] | None = None
     # Set by the driver when its per-node orphan-recovery budget
     # (MAX_NODE_RECOVERIES_PER_DRIVE) is exhausted: the caller is stating that
     # it will not attempt recovery for this node again, so the kernel must
@@ -750,6 +870,7 @@ __all__ = [
     "StrictCommandPayload",
     "SubmitCallbackCommand",
     "StageRunnerSubmissionCommand",
+    "WitnessRunnerCompletionCommand",
     "FinalizeRunnerExecutionCommand",
     "CompleteRunnerRecoveryCommand",
     "SubmitPatchCommand",

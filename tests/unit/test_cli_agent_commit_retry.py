@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 
 from orchestrator.git import WorktreeCommitError
-from orchestrator.runners import CLIAgent
+from orchestrator.runners import CLIAgent, SubmissionAcknowledgement
 from orchestrator.runners.errors import AgentExecutionError
 from orchestrator.runners.types import ExecutionContext
 
@@ -27,9 +27,10 @@ from orchestrator.runners.types import ExecutionContext
 class _FakeStdin:
     def __init__(self) -> None:
         self.closed = False
+        self.writes: list[bytes] = []
 
-    def write(self, _data: bytes) -> None:
-        return None
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
 
     async def drain(self) -> None:
         return None
@@ -92,11 +93,20 @@ async def test_commit_gate_failure_reprompts_then_resubmits(tmp_path: object) ->
     spawned: list[_FakeProcess] = []
     submit_calls: list[int] = []
 
-    async def on_submit() -> None:
+    acknowledgements: list[SubmissionAcknowledgement] = []
+
+    async def on_submit() -> SubmissionAcknowledgement:
         submit_calls.append(1)
         if len(submit_calls) == 1:
             raise WorktreeCommitError(str(tmp_path), "pyright: error — type partially unknown")
-        return None  # second submit succeeds (agent fixed the lint)
+        acknowledgement = SubmissionAcknowledgement(
+            disposition="durably_staged",
+            message="durably staged; pending runner completion and not yet accepted",
+            execution_id="execution-1",
+            graph_position=12,
+        )
+        acknowledgements.append(acknowledgement)
+        return acknowledgement
 
     agent = CLIAgent(
         command="sh",  # on PATH; not "claude", so no mcp-json / claude args
@@ -110,6 +120,79 @@ async def test_commit_gate_failure_reprompts_then_resubmits(tmp_path: object) ->
     assert result.success is True
     assert len(submit_calls) == 2  # first rejected by gate, retried, succeeded
     assert len(spawned) == 2  # initial build + one fix pass
+    assert [item.disposition for item in acknowledgements] == ["durably_staged"]
+
+
+async def test_quality_gate_rejection_reprompts_with_actionable_output(
+    tmp_path: object,
+) -> None:
+    spawned: list[_FakeProcess] = []
+    submit_calls: list[int] = []
+
+    async def on_submit() -> None:
+        submit_calls.append(1)
+        if len(submit_calls) == 1:
+            raise ValueError(
+                "submit callback rejected: submission quality gate failed with "
+                "exit code 7; command='uv run pytest'; Bounded output tail: "
+                "test_example failed"
+            )
+
+    agent = CLIAgent(
+        command="sh",
+        parser=None,
+        subprocess_factory=_factory(spawned),
+        max_commit_fix_attempts=1,
+    )
+
+    result = await agent.execute(_ctx(tmp_path), _noop_checklist, on_submit, on_output=None)
+
+    assert result.success is True
+    assert len(submit_calls) == 2
+    assert len(spawned) == 2
+    correction_prompt = b"".join(spawned[1].stdin.writes).decode("utf-8")
+    assert "authoritative validation checks" in correction_prompt
+    assert "uv run pytest" in correction_prompt
+    assert "test_example failed" in correction_prompt
+
+
+async def test_typed_rejected_ack_reprompts_then_accepts_finalized_readback(
+    tmp_path: object,
+) -> None:
+    spawned: list[_FakeProcess] = []
+    acknowledgements = [
+        SubmissionAcknowledgement(
+            disposition="rejected",
+            message="submission rejected: acceptance command failed",
+            execution_id="execution-1",
+            graph_position=11,
+        ),
+        SubmissionAcknowledgement(
+            disposition="finalized_accepted",
+            message="submission is durably finalized and accepted",
+            execution_id="execution-1",
+            graph_position=19,
+        ),
+    ]
+
+    async def on_submit() -> SubmissionAcknowledgement:
+        return acknowledgements.pop(0)
+
+    agent = CLIAgent(
+        command="sh",
+        parser=None,
+        subprocess_factory=_factory(spawned),
+        max_commit_fix_attempts=1,
+    )
+
+    result = await agent.execute(_ctx(tmp_path), _noop_checklist, on_submit, on_output=None)
+
+    assert result.success is True
+    assert acknowledgements == []
+    assert len(spawned) == 2
+    correction_prompt = b"".join(spawned[1].stdin.writes).decode("utf-8")
+    assert '"disposition":"rejected"' in correction_prompt
+    assert "acceptance command failed" in correction_prompt
 
 
 async def test_commit_gate_failure_is_bounded_then_raises(tmp_path: object) -> None:

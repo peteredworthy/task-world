@@ -276,6 +276,37 @@ def ensure_snapshot_ref(
     )
 
 
+def verify_snapshot_ref(
+    worktree_path: str | Path,
+    snapshot_id: str,
+    *,
+    expected_ref: str,
+    expected_commit_sha: str,
+    expected_tree_sha: str,
+) -> SnapshotResult:
+    """Verify an exact owned snapshot identity without repairing or publishing it."""
+    path = _require_worktree_path(worktree_path)
+    snapshot_id = _validate_snapshot_id(snapshot_id)
+    ref = f"{SNAPSHOT_REF_PREFIX}/{snapshot_id}"
+    if expected_ref != ref:
+        raise WorktreeError("Snapshot verification ref does not match its snapshot id")
+    env = _git_env()
+    actual_commit = _run_git(path, ["rev-parse", "--verify", ref], env).stdout.strip()
+    if actual_commit != expected_commit_sha:
+        raise WorktreeError("Snapshot verification ref does not match owned commit")
+    actual_tree = _run_git(
+        path, ["rev-parse", "--verify", f"{actual_commit}^{{tree}}"], env
+    ).stdout.strip()
+    if actual_tree != expected_tree_sha:
+        raise WorktreeError("Snapshot verification commit does not match owned tree")
+    return SnapshotResult(
+        id=snapshot_id,
+        ref=ref,
+        commit_sha=actual_commit,
+        tree_sha=actual_tree,
+    )
+
+
 @dataclass(frozen=True)
 class SelectiveRestoreResult:
     """Accounting for a selective, idempotent snapshot restoration."""

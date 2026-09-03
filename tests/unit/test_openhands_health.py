@@ -30,6 +30,7 @@ def test_agent_info() -> None:
     agent = OpenHandsAgent()
     assert agent.info.agent_runner_type == AgentRunnerType.OPENHANDS_LOCAL
     assert agent.info.name == "OpenHands"
+    assert agent.info.runtime_observation.mode == "non_process_owning"
 
 
 def test_custom_tools_parameter() -> None:

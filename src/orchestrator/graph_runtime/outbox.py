@@ -101,22 +101,22 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
         }
         payload.update(event.payload)
         return "runner_recovery", payload
+    if event.event_type == "runner_completion_witnessed":
+        return (
+            "snapshot_publish",
+            {
+                "event_id": event.event_id,
+                "run_id": event.run_id,
+                "classification": "completion_witness_snapshot_publish_pending",
+                "snapshot_id": event.payload["final_snapshot_id"],
+                "snapshot_ref": event.payload["final_snapshot_ref"],
+                "commit_sha": event.payload["final_commit_sha"],
+                "tree_sha": event.payload["final_tree_sha"],
+            },
+        )
     if event.event_type == "runner_submission_staged":
-        owns_file_state_snapshot = event.payload.get("owns_file_state_snapshot")
-        if not isinstance(owns_file_state_snapshot, bool):
-            # Historical staged events predate the explicit ownership bit.
-            callback = cast(object, event.payload.get("payload"))
-            records_raw: object = (
-                cast(dict[str, object], callback).get("output_records")
-                if isinstance(callback, dict)
-                else None
-            )
-            records = cast(list[object], records_raw) if isinstance(records_raw, list) else None
-            owns_file_state_snapshot = isinstance(records, list) and any(
-                _is_owned_file_state_snapshot(record, event.payload) for record in records
-            )
-        if not owns_file_state_snapshot:
-            return None
+        # The managed ref is recovery evidence even when no accepted
+        # FileStateRecord will ultimately take ownership of it.
         payload = {
             "event_id": event.event_id,
             "run_id": event.run_id,
@@ -128,23 +128,6 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
         }
         return "snapshot_publish", payload
     return None
-
-
-def _is_owned_file_state_snapshot(record: object, staged: dict[str, object]) -> bool:
-    if not isinstance(record, dict):
-        return False
-    file_state = cast(dict[str, object], record)
-    git = file_state.get("git")
-    if not isinstance(git, dict):
-        return False
-    identity = cast(dict[str, object], git)
-    return (
-        file_state.get("record_kind") == "file_state"
-        and file_state.get("snapshot_id") == staged["staged_snapshot_id"]
-        and identity.get("ref") == staged["staged_snapshot_ref"]
-        and identity.get("commit_sha") == staged["staged_commit_sha"]
-        and identity.get("tree_sha") == staged["staged_tree_sha"]
-    )
 
 
 async def append_outbox_rows(

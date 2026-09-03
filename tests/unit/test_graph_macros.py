@@ -79,6 +79,7 @@ def test_create_work_region_macro_expands_to_valid_patch() -> None:
     assert worker["authority"]["resource_claims"] == [
         {"mode": "write", "scope": "repo", "paths": ["."]}
     ]
+    assert worker["effect_contract"] == "effectful_write"
     verifier = patch.ops[1].node
     assert verifier is not None
     assert "candidate_id" not in verifier

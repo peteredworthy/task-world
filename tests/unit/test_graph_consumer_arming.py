@@ -21,10 +21,14 @@ class _ServiceFactory:
 
 
 def _consumer(graph_runner: Any) -> SignalConsumer:
+    async def active(_run_id: str) -> bool:
+        return True
+
     return SignalConsumer(
         session_factory=None,  # type: ignore[arg-type]
         create_service=_ServiceFactory(),
         graph_runner=graph_runner,
+        graph_run_status_checker=active,
     )
 
 
@@ -39,9 +43,9 @@ async def test_arm_graph_run_starts_once_and_guards_double_arm() -> None:
 
     consumer = _consumer(runner)
 
-    assert consumer.arm_graph_run("run-1") is True
+    assert await consumer.arm_graph_run("run-1") is True
     # Second arm while the first driver task is still running → guarded.
-    assert consumer.arm_graph_run("run-1") is False
+    assert await consumer.arm_graph_run("run-1") is False
     await asyncio.sleep(0)  # let the driver task start
     assert started == ["run-1"]
 
@@ -49,14 +53,14 @@ async def test_arm_graph_run_starts_once_and_guards_double_arm() -> None:
     release.set()
     await asyncio.sleep(0)
     await asyncio.sleep(0)
-    assert consumer.arm_graph_run("run-1") is True
+    assert await consumer.arm_graph_run("run-1") is True
     release.set()
 
 
 @pytest.mark.asyncio
 async def test_arm_graph_run_noop_without_graph_runner() -> None:
     consumer = _consumer(None)
-    assert consumer.arm_graph_run("run-1") is False
+    assert await consumer.arm_graph_run("run-1") is False
 
 
 @pytest.mark.asyncio
@@ -74,7 +78,7 @@ async def test_quiesce_graph_run_cancels_and_awaits_before_rearming() -> None:
             stopped.set()
 
     consumer = _consumer(runner)
-    assert consumer.arm_graph_run("run-1") is True
+    assert await consumer.arm_graph_run("run-1") is True
     await started.wait()
 
     await consumer._quiesce_graph_run("run-1")
@@ -82,5 +86,5 @@ async def test_quiesce_graph_run_cancels_and_awaits_before_rearming() -> None:
     assert stopped.is_set()
     assert "run-1" not in consumer._active_graph_runs
     assert "run-1" not in consumer._graph_driver_tasks
-    assert consumer.arm_graph_run("run-1") is True
+    assert await consumer.arm_graph_run("run-1") is True
     await consumer._quiesce_graph_run("run-1")

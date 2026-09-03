@@ -6,7 +6,6 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 LOG_ROOT="${TASK_WORLD_LOG_DIR:-$ROOT/.orchestrator/logs/dev}"
-SERVER_LOG_ROOT="${ORCHESTRATOR_SERVER_LOG_DIR:-$ROOT/.orchestrator/logs/server}"
 RUN_LOG_DIR="$LOG_ROOT/$(date +%Y%m%d-%H%M%S)"
 COMBINED_LOG="$RUN_LOG_DIR/dev.log"
 BACKEND_LOG="$RUN_LOG_DIR/backend.log"
@@ -134,66 +133,37 @@ wait_for_backend() {
   return 1
 }
 
-# --- Kill stale uvicorn processes on port 8000 ---
-# Two uvicorn processes sharing the same DB cause executor death loops:
-# requests get load-balanced between them, and one has no executor for the run.
+# Never infer ownership from a listening port and signal it. The supervised
+# production-shaped launch can reclaim its own recorded child identities; this
+# development launcher fails closed and asks the operator to resolve conflicts.
 STALE_PIDS=$(lsof -ti :8000 2>/dev/null || true)
 if [ -n "$STALE_PIDS" ]; then
-  log "Found existing process(es) on port 8000 (PIDs: $(echo $STALE_PIDS | tr '\n' ' '))"
-  log "Killing to prevent duplicate-server executor death loop..."
-  echo "$STALE_PIDS" | xargs kill 2>/dev/null || true
-  # Allow the backend to pause work and drain its signal consumer before force.
-  STALE_DEADLINE=$((SECONDS + 10))
-  REMAINING=$(lsof -ti :8000 2>/dev/null || true)
-  while [ -n "$REMAINING" ] && [ "$SECONDS" -lt "$STALE_DEADLINE" ]; do
-    sleep 0.25
-    REMAINING=$(lsof -ti :8000 2>/dev/null || true)
-  done
-  # Force-kill only processes that outlived the graceful shutdown window.
-  if [ -n "$REMAINING" ]; then
-    log "Force-killing remaining processes: $REMAINING"
-    echo "$REMAINING" | xargs kill -9 2>/dev/null || true
-    sleep 1
-  fi
-  log "Port 8000 cleared."
+  log "ERROR: Port 8000 is already owned by PID(s): $(echo $STALE_PIDS | tr '\n' ' ')"
+  log "Refusing to signal processes whose identity this launcher cannot verify."
+  exit 1
 fi
 
-# --- Kill stale Vite processes on port 5173 ---
-# Same issue: orphaned Vite processes hold the port, then die, leaving the UI unreachable.
 STALE_VITE=$(lsof -ti :5173 2>/dev/null || true)
 if [ -n "$STALE_VITE" ]; then
-  log "Found existing process(es) on port 5173 (PIDs: $(echo $STALE_VITE | tr '\n' ' '))"
-  log "Killing stale Vite processes..."
-  echo "$STALE_VITE" | xargs kill 2>/dev/null || true
-  sleep 1
-  REMAINING_VITE=$(lsof -ti :5173 2>/dev/null || true)
-  if [ -n "$REMAINING_VITE" ]; then
-    log "Force-killing remaining: $REMAINING_VITE"
-    echo "$REMAINING_VITE" | xargs kill -9 2>/dev/null || true
-    sleep 1
-  fi
-  log "Port 5173 cleared."
+  log "ERROR: Port 5173 is already owned by PID(s): $(echo $STALE_VITE | tr '\n' ' ')"
+  log "Refusing to signal processes whose identity this launcher cannot verify."
+  exit 1
 fi
 
-# Backend (the official CLI owns durable supervision and restart policy)
-log "Starting supervised backend on http://localhost:8000 ..."
+# Backend development uses Uvicorn's reloader as its single restart owner.
+# Production-shaped/manual launches omit --reload and retain durable supervision.
+log "Starting development backend with reload on http://localhost:8000 ..."
 (
   cd "$ROOT"
-  ORCHESTRATOR_SKIP_STALE_PORT_KILL=1 uv run orchestrator serve --reload --log-dir "$SERVER_LOG_ROOT"
+  uv run orchestrator serve --reload --no-supervisor
 ) > >(timestamp_stream "backend" "$BACKEND_LOG") 2>&1 &
 BACKEND_PID=$!
-log "Backend supervisor PID $BACKEND_PID"
+log "Backend development reloader PID $BACKEND_PID"
 
-# Compatibility pointers for existing debugging habits. The canonical evidence
-# remains in the timestamped server session directory.
-for _ in $(seq 1 50); do
-  if [ -e "$SERVER_LOG_ROOT/latest/process.log" ]; then
-    ln -sfn "$SERVER_LOG_ROOT/latest/process.log" "$ROOT/server_output.log"
-    ln -sfn "$SERVER_LOG_ROOT/latest/process.log" "$ROOT/server.log"
-    break
-  fi
-  sleep 0.1
-done
+# Compatibility pointers for existing debugging habits. Development output is
+# captured by this script because reload deliberately bypasses the supervisor.
+ln -sfn "$BACKEND_LOG" "$ROOT/server_output.log"
+ln -sfn "$BACKEND_LOG" "$ROOT/server.log"
 
 if ! wait_for_backend; then
   cleanup

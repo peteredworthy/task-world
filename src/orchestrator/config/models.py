@@ -247,6 +247,8 @@ class TaskConfig(BaseModel):
     model_overrides: dict[str, dict[str, str]] | None = None
     requirements: list[RequirementConfig] = Field(default_factory=lambda: [])
     auto_verify: AutoVerifyConfig = Field(default_factory=AutoVerifyConfig)
+    accepted_baseline_failure_fingerprints: list[str] = Field(default_factory=list)
+    acceptance_command_timeout_seconds: float = Field(default=180.0, gt=0, le=3600)
     verifier: VerifierConfig = Field(default_factory=VerifierConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
     artifacts: list[ArtifactSpec] = Field(default_factory=lambda: [])
@@ -280,6 +282,18 @@ class TaskConfig(BaseModel):
             if normalized not in normalized_paths:
                 normalized_paths.append(normalized)
         return normalized_paths
+
+    @field_validator("accepted_baseline_failure_fingerprints")
+    @classmethod
+    def _validate_baseline_failure_fingerprints(cls, values: list[str]) -> list[str]:
+        if len(values) > 8:
+            raise ValueError("accepted_baseline_failure_fingerprints may contain at most 8 items")
+        for index, value in enumerate(values):
+            if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+                raise ValueError(
+                    f"accepted_baseline_failure_fingerprints[{index}] must be lowercase SHA-256 hex"
+                )
+        return list(dict.fromkeys(values))
 
     @model_validator(mode="after")
     def _validate_task_config(self) -> "TaskConfig":

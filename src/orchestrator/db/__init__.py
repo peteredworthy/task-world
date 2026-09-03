@@ -27,6 +27,8 @@ from orchestrator.db.orm.models import (  # noqa: F401
     GraphRegionViewEntryModel,
     GraphTopologyViewEntryModel,
     GraphOutboxModel,
+    GraphRuntimeSupervisionModel,
+    GraphSubmissionGateAuditModel,
     InteractionLogArtifactModel,
     ProjectionCheckpointModel,
     ReliablePlanQualificationModel,
@@ -38,6 +40,12 @@ from orchestrator.db.orm.models import (  # noqa: F401
 from orchestrator.db.access.reliable_plan_qualifications import (
     ReliablePlanQualificationReferenceError,
     ReliablePlanQualificationRepository,
+)
+from orchestrator.db.access.graph_runtime_supervision import (
+    GraphRuntimeSupervisionRecord,
+    GraphRuntimeSupervisionRepository,
+    GraphSubmissionGateAuditRecord,
+    GraphSubmissionGateAuditRepository,
 )
 
 # Connection management
@@ -214,6 +222,12 @@ __all__ = [
     "GraphRegionViewEntryModel",
     "GraphTopologyViewEntryModel",
     "GraphOutboxModel",
+    "GraphRuntimeSupervisionModel",
+    "GraphRuntimeSupervisionRecord",
+    "GraphRuntimeSupervisionRepository",
+    "GraphSubmissionGateAuditModel",
+    "GraphSubmissionGateAuditRecord",
+    "GraphSubmissionGateAuditRepository",
     "InteractionLogArtifactModel",
     "ProjectionCheckpointModel",
     "ReliablePlanQualificationModel",

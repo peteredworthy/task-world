@@ -552,6 +552,7 @@ async def test_activity_includes_graph_rejected_command_verifier_and_blocker_fac
             "Graph command rejected: command=submit_patch; reason=malformed patch: missing patch_id"
         ),
         "decision": "rejected",
+        "disposition": "rejected",
         "command_type": "submit_patch",
         "reason": "malformed patch: missing patch_id",
     }

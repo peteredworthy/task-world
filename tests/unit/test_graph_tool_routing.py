@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from orchestrator.config import ChecklistStatus
+from orchestrator.runners import SubmissionAcknowledgement
 from orchestrator.runners.graph_tool_routing import (
     GRAPH_MACRO_TOOL_NAMES,
     normalize_macro_tool_payload,
@@ -23,6 +25,46 @@ async def _noop_checklist(req_id: str, status: ChecklistStatus, note: str | None
 
 async def _noop_submit() -> None:
     pass
+
+
+@pytest.mark.parametrize(
+    ("disposition", "message"),
+    [
+        ("rejected", "submission rejected: acceptance command failed"),
+        ("durably_staged", "durably staged; pending runner completion and not yet accepted"),
+        ("finalized_accepted", "submission is durably finalized and accepted"),
+    ],
+)
+async def test_submit_route_returns_three_way_typed_acknowledgement(
+    disposition: str,
+    message: str,
+) -> None:
+    async def submit() -> SubmissionAcknowledgement:
+        return SubmissionAcknowledgement(
+            disposition=disposition,
+            message=message,
+            execution_id="execution-1",
+            graph_position=12,
+        )
+
+    result = await route_tool_call(
+        "submit",
+        {},
+        _noop_checklist,
+        submit,
+        allowlist=_ALLOWLIST,
+    )
+
+    assert f'"disposition":"{disposition}"' in result
+    assert message in result
+    assert '"graph_position":12' in result
+
+
+def test_submit_acknowledgement_rejects_non_protocol_disposition() -> None:
+    with pytest.raises(ValidationError):
+        SubmissionAcknowledgement.model_validate(
+            {"disposition": "accepted", "message": "ambiguous generic success"}
+        )
 
 
 def test_normalize_patch_payload_raw_fields() -> None:

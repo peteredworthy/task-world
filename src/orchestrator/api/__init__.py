@@ -14,6 +14,7 @@ from orchestrator.api.deps import (
     get_artifact_store_resolver,
     get_codex_models_fn,
     get_connection_manager,
+    get_crash_barrier_status_reader,
     get_runner_executor,
 )
 from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
@@ -103,11 +104,13 @@ __all__ = [
     "UpdateChecklistRequest",
     "create_app",
     "advance_graph_archival_maintenance_once",
+    "activity_payload_for_mode",
     "run_graph_archival_maintenance",
     "compute_run_totals_from_attempts",
     "compute_cost_rollup",
     "estimate_cost",
     "build_graph_patch_attempts_response",
+    "graph_event_payload",
     "build_graph_health_response",
     "build_expired_lease_rows",
     "build_final_invariant_blockers_response",
@@ -120,6 +123,7 @@ __all__ = [
     "get_agent_runner_display_name",
     "get_agent_runner_icon",
     "get_connection_manager",
+    "get_crash_barrier_status_reader",
     "get_runner_executor",
     "load_cost_rollup_facts",
     "is_clarification_pause_reason",
@@ -165,6 +169,18 @@ def build_graph_patch_attempts_response(*args: Any, **kwargs: Any) -> Any:
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
     return _graph_router.build_graph_patch_attempts_response(*args, **kwargs)
+
+
+def graph_event_payload(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.graph_event_payload(*args, **kwargs)
+
+
+def activity_payload_for_mode(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.runs as _runs_router  # noqa: PLC0415
+
+    return _runs_router.activity_payload_for_mode(*args, **kwargs)
 
 
 def build_graph_health_response(*args: Any, **kwargs: Any) -> Any:

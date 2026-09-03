@@ -37,6 +37,7 @@ _DISCOVERY_WORKER: dict[str, Any] = {
     "attempt_number": 1,
     "objective": "Investigate the failure and report findings.",
     "access_mode": "read_only",
+    "effect_contract": "read_only_semantic",
     "acceptance": ["root cause identified and documented"],
     "scope": "docs/ and tests/ only",
     "bound_requirement_ids": ["REQ-1"],
